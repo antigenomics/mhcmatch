@@ -57,6 +57,11 @@ pm.find_source("NLVPMVATV", max_subs=1)
 # pseudosequence allele similarity + rare-allele diffusion
 ps = mhcmatch.Pseudoseq("mhc1")
 ps.neighbors("HLA-A*02:01", candidates=store.alleles("mhc1"))
+
+# diffusion-powered forward scorer (rescues rare alleles by borrowing from groove-neighbours)
+am = store.anchor_model("mhc1")          # learned anchor weights + bounded-prior shrinkage
+am.score("NLVPMVATV", "HLA-A*02:01")     # anchor log-odds; am.score(..., raw=True) disables borrowing
+
 mhcmatch.logo.motif(store, "HLA-A*02:01", "mhc1")
 ```
 

@@ -130,15 +130,23 @@ class Pseudoseq:
             groups[find(a)].append(a)
         return list(groups.values())
 
-    def shrink(self, prefs, allele, anchor=None, candidates=None) -> dict:
+    def shrink(self, prefs, allele, anchor=None, candidates=None, prior_strength=None) -> dict:
         """Kernel-weighted empirical-Bayes pooling of a per-anchor residue distribution.
 
         ``prefs``: ``{allele: Counter(residue -> count)}`` for one anchor. Returns the shrunk
-        probability dict for ``allele``: ``(n_a π_a + Σ_b K_ab n_b π_b) / (n_a + Σ_b K_ab n_b)``.
-        Limits: ``h -> 0`` recovers the raw per-allele distribution; ``h -> ∞`` the global pool.
+        probability dict for ``allele``.
+
+        With ``prior_strength=None`` (default) this is the counts-weighted form
+        ``(n_a π_a + Σ_b K_ab n_b π_b) / (n_a + Σ_b K_ab n_b)`` with limits ``h -> 0`` (raw
+        per-allele) and ``h -> ∞`` (global pool). With ``prior_strength=τ`` it uses the
+        fixed-concentration form ``(n_a π_a + τ m_a) / (n_a + τ)`` where ``m_a`` is the
+        kernel-weighted neighbour mean -- a bounded prior that prevents one large neighbour from
+        swamping a rare allele's own peptides and self-adapts to ``n_a`` (appendix §4, Prop. on
+        bias--variance). The latter is the recommended default for the forward scorer.
         """
         na = normalize_allele(allele)
-        pooled = Counter(prefs.get(allele, Counter()))
+        own = Counter(prefs.get(allele, Counter()))
+        nbr = Counter()
         cands = candidates if candidates is not None else prefs.keys()
         for b in cands:
             if normalize_allele(b) == na:
@@ -147,6 +155,19 @@ class Pseudoseq:
             if k <= 0:
                 continue
             for res, c in prefs.get(b, Counter()).items():
-                pooled[res] += k * c
-        total = sum(pooled.values())
-        return {res: c / total for res, c in pooled.items()} if total > 0 else {}
+                nbr[res] += k * c
+
+        if prior_strength is None:
+            pooled = own + nbr
+            total = sum(pooled.values())
+            return {res: c / total for res, c in pooled.items()} if total > 0 else {}
+
+        n_own, m = sum(own.values()), sum(nbr.values())
+        total = n_own + (prior_strength if m > 0 else 0.0)
+        if total <= 0:
+            return {}
+        pooled = {res: c for res, c in own.items()}
+        if m > 0:
+            for res, c in nbr.items():
+                pooled[res] = pooled.get(res, 0.0) + prior_strength * (c / m)
+        return {res: c / total for res, c in pooled.items()}
