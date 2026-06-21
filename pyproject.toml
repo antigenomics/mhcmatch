@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mhcmatch"
+version = "0.0.1a0"
+description = "Peptide-MHC presentation, cross-reactivity and motif tools on the seqtree substrate"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "ISALGO laboratory", email = "mikhail.shugay@gmail.com" }]
+keywords = ["MHC", "HLA", "epitope", "neoantigen", "immunology", "bioinformatics"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = ["seqtree>=0.0.4a0", "numpy"]
+
+[project.optional-dependencies]
+test = ["pytest>=7.4"]
+logo = ["logomaker", "matplotlib"]   # only needed to render logos; PWM/bits compute is numpy-only
+pmhc = ["pandas"]                    # convenience IO for large tables
+
+[project.urls]
+Homepage = "https://github.com/antigenomics/mhcmatch"
+Repository = "https://github.com/antigenomics/mhcmatch"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mhcmatch"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/mhcmatch/data" = "mhcmatch/data"

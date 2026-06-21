@@ -1,0 +1,364 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amsthm}
+\usepackage{mathtools}
+\usepackage{graphicx}
+\usepackage{dsfont}
+% Old-style journal look, matching the seqtree appendix (OldStandard text+math, small-caps
+% headings, run-in paragraph leaders). Requires lualatex -- pinned in .latexmkrc / Makefile.
+\usepackage{OldStandard}
+\usepackage{unicode-math}
+\setmathfont{OldStandard-Math.otf}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+
+\linespread{1.15}
+\setlength{\parindent}{2em}
+\titleformat{\section}{\normalfont\large\scshape\bfseries}{\thesection.}{0.6em}{}
+\titleformat{\subsection}{\normalfont\scshape\bfseries}{\thesubsection.}{0.5em}{}
+\titleformat{\paragraph}[runin]{\bfseries\scshape}{}{0pt}{}[.]
+\titlespacing*{\paragraph}{\parindent}{0.4em}{0.6em}
+
+\newtheoremstyle{oldplain}{}{}{\itshape}{}{\scshape}{.}{.5em}{}
+\newtheoremstyle{oldrem}{}{}{\normalfont}{}{\scshape}{.}{.5em}{}
+\theoremstyle{oldplain}
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}{Lemma}
+\newtheorem{proposition}{Proposition}
+\newtheorem{corollary}{Corollary}
+\theoremstyle{oldrem}
+\newtheorem{definition}{Definition}
+\newtheorem{assumption}{Assumption}
+\newtheorem{remark}{Remark}
+
+\DeclareMathOperator{\Poisson}{Poisson}
+\DeclareMathOperator{\Binomial}{Binomial}
+\DeclareMathOperator{\Var}{Var}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator{\MI}{I}
+\newcommand{\Pzero}{P_{0}}
+\newcommand{\Pdata}{P_{\mathrm{data}}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Prob}{\mathbb{P}}
+\newcommand{\one}{\mathds{1}}
+\newcommand{\dTCR}{d_{\mathrm{TCR}}}
+\newcommand{\ESS}{\mathrm{ESS}}
+
+\title{\scshape Presentation-aware E-values, cross-allele pseudosequence diffusion, and
+proteome-scale peptide matching for peptide--MHC analysis}
+\author{Mikhail Shugay\textsuperscript{1,2,3}\thanks{Correspondence:
+  \href{mailto:mikhail.shugay@gmail.com}{mikhail.shugay@gmail.com}}}
+\date{%
+  \small
+  \textsuperscript{1}Institute of Translational Medicine, Russian National Medical State University, Moscow, Russia\\
+  \textsuperscript{2}Department of Genomics of Adaptive Immunity, Shemyakin--Ovchinnikov Institute of Bioorganic Chemistry RAS, Moscow, Russia\\
+  \textsuperscript{3}Institute of Molecular Biology NAS RA, Erevan, Armenia\\[6pt]
+  \normalsize\textit{mhcmatch technical appendix}%
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This appendix develops the mathematical and statistical theory of \texttt{mhcmatch}, the applied
+peptide--MHC layer built on the \texttt{seqtree} fuzzy-search substrate. We take as given the
+control-calibrated E-value of the \texttt{seqtree} appendix (\texttt{evalue.tex}) and specialize it
+to MHC \emph{presentation}, whose null is allele-conditional and anchor-constrained. We restate the
+anchor / TCR-facing decomposition and the per-allele presentation-aware E-value (the \emph{forward}
+restriction problem), then the \emph{reverse} problem---peptide to presenting allele---as a
+neighbour-vote posterior with a binomial-tail confidence E-value, together with its non-binder
+filter and class-II promiscuity treatment. The central contribution is a \emph{cross-allele
+diffusion} model: each allele is represented by its 34-residue groove pseudosequence, and per-anchor
+preference distributions are smoothed by kernel-weighted empirical-Bayes shrinkage toward
+groove-similar alleles, with the per-anchor relevance of each groove position \emph{learned} from
+data (a mutual-information feature importance that separates, e.g., the MHC-I B-pocket governing P2
+from the F-pocket governing P$\Omega$). This rescues rare alleles with few peptides---lifting the
+\texttt{seqtree} limitation that distinct alleles are distinct, never-pooled nulls---and we give its
+hierarchical-Bayes interpretation, effective sample size, limiting cases, and bias--variance
+trade-off. We then treat proteome-scale scanning (sliding-window presentation with multiple-testing
+control; near-exact neoantigen source identification), motif logos with length distributions, the
+composition rules for the planned stability / affinity / cleavage / expression / immunogenicity
+predictors, and the benchmark protocol against NetMHCpan, NetMHCIIpan, MixMHCpred and MixMHC2pred.
+\end{abstract}
+
+\section{Scope and relation to the substrate}\label{sec:scope}
+\texttt{seqtree} provides a payload-agnostic fuzzy-search core and a control-calibrated E-value: for
+a query $q$ and a scope $\theta$, with an empirical background $\Pzero$ estimated from a matched
+control of size $M$ and a target set of size $N$, the expected number of chance neighbours is
+$\widehat E(q,\theta)=(N/M)\,n_C(q,\theta)$, with $p_{\mathrm{any}}=1-e^{-\widehat E}$ and
+$p_{\mathrm{enrich}}=\Prob(\Poisson(\widehat E)\ge n_D)$ (\texttt{seqtree} appendix, Def.\ of the
+E-value; Poisson/Chen--Stein bound; Karlin--Altschul~\cite{Karlin1990,Altschul1990} as the
+i.i.d.\ special case). We do not re-derive that theory; we \emph{specialize} it.
+
+For peptide--MHC the relevant background is not V(D)J generation but \emph{presentation}, which is
+allele-conditional and constrains the anchor positions. \texttt{mhcmatch} owns four developments on
+top of the substrate: (i) the productionized forward/reverse presentation E-value
+(\S\ref{sec:forward}--\ref{sec:reverse}); (ii) the cross-allele \emph{pseudosequence diffusion}
+model that pools statistics across groove-similar alleles (\S\ref{sec:diffusion}, the headline);
+(iii) proteome-scale scanning and near-exact source identification (\S\ref{sec:proteome}); and
+(iv) motif logos (\S\ref{sec:logos}). Planned predictors and the comparison protocol are
+\S\ref{sec:predictors}--\ref{sec:bench}; limitations are \S\ref{sec:limits}.
+
+\section{Anchor decomposition and the per-allele presentation E-value}\label{sec:forward}
+A presented peptide of length $L$ factorizes $\sigma=(\sigma_A,\sigma_T)$ into MHC-facing
+\emph{anchors} $A(a,L)$ and TCR-facing positions $T$. For class~I the buried anchors are
+$\{\mathrm{P2},\mathrm{P}\Omega\}$ (the B- and F-pockets); for the class~II 9-mer core they are
+$\{\mathrm{P1},\mathrm{P4},\mathrm{P6},\mathrm{P9}\}$. \emph{Presentation} fixes $\sigma_A$;
+\emph{recognition} reads $\sigma_T$. Dolton~et~al.~\cite{Dolton2023} exhibit one HLA-A\*02:01 TCR
+cross-reacting with three epitopes through a shared central motif with the anchors irrelevant, which
+motivates two complementary maskings, each realized by a per-position weight vector $w$ over a
+\texttt{seqtree} \texttt{PositionalMatrix}:
+\begin{equation}\label{eq:masks}
+  \text{(recognition)}\quad w_i=\one[i\in T];\qquad
+  \text{(presentation)}\quad w_i=\one[i\in A(a,L)].
+\end{equation}
+In \texttt{mhcmatch} these are exposed by \texttt{Store.decompose}, which returns both readouts with
+the masked positions written as the spare symbol \texttt{X}.
+
+\paragraph{Forward problem.} For a candidate restriction allele $a$ with an anchor-masked presented
+control $C_a$ of size $M_a$ and target peptidome of size $N_a$, the presentation-aware E-value is the
+substrate E-value on allele-restricted, anchor-conditioned indices,
+\begin{equation}\label{eq:forward}
+  \widehat E(q,\theta;a)=\frac{N_a}{M_a}\,n_{C_a}(\sigma_T,\theta),\qquad
+  p_{\mathrm{enrich}}=\Prob\!\big(\Poisson(\widehat E)\ge n^T_{D_a}\big),
+\end{equation}
+i.e.\ significance is computed on the TCR-facing readout only, so shared anchors (presentation, not
+recognition) do not inflate within-allele hits. The analytic null for rare $a$ is taken up in
+\S\ref{sec:diffusion}.
+
+\section{Reverse problem: peptide to presenting allele}\label{sec:reverse}
+The forward E-value answers ``is $q$ a binder of a \emph{given} $a$?''. Restriction prediction asks
+the reverse: which alleles present $q$? We flip the weights in~\eqref{eq:masks} to the
+\emph{presentation} mode and index reference peptides by their anchor signature
+(\texttt{layout.presentation\_features}; class~I N/C-pocket residues
+$\mathrm{P1\,P2\,P3}$, $\mathrm{P}(\Omega{-}1)$, $\mathrm{P}\Omega$, class~II core
+$\mathrm{P1\,P4\,P6\,P9}$). For a query
+we widen the scope on its signature until it has $n\in[10,100]$ non-exact neighbours, and tally their
+alleles, $k_a$ votes out of $n$.
+
+\begin{definition}[Ranking and confidence]\label{def:reverse}
+The \emph{ranking} score is the neighbour vote fraction $\hat p(a\mid q)=k_a/n$, a posterior over the
+panel. The \emph{confidence} score is the per-allele enrichment over the panel background frequency
+$f_a$,
+\begin{equation}\label{eq:conf}
+  E_a=-\log_{10}\Prob\!\big(\Binomial(n,f_a)\ge k_a\big),
+\end{equation}
+the upper binomial tail; a peptide binds $a$ iff $E_a\ge-\log_{10}\alpha$ and $k_a>0$.
+\end{definition}
+
+\begin{remark}[Why vote fraction, not enrichment, ranks]
+On a skewed panel the dominant true allele has a large expected count $n f_a$, so the
+enrichment~\eqref{eq:conf} \emph{penalises} it; the vote fraction does not. Hence $\hat p$ ranks and
+$E_a$ gates. This separation, validated on \texttt{pmhc\_data} (per-(peptide, allele) ROC-AUC
+$0.90$--$0.99$, \texttt{seqtree/bench/bench\_mhc\_guess.py}), is what \texttt{Store.restriction}
+implements.
+\end{remark}
+
+\paragraph{Class-II register trick.} The class-II core register inside a longer peptide is unknown;
+full deconvolution clusters it~\cite{Andreatta2017,Alvarez2019}. We use a one-pass proxy: pick the
+single 9-mer window whose P1 is a large hydrophobic and whose P4/P6/P9 avoid Pro/Gly, and take that
+core's $\{$P1,P4,P6,P9$\}$. Committing to one register makes an allele's peptides share a consistent
+signature and is what lifts class-II ROC-AUC into the $0.9$ range.
+
+\paragraph{Non-binder filter and promiscuity.} A peptide that binds \emph{no} panel allele has small
+$\max_a E_a$ (real-vs-random rejection); one that does not bind a \emph{specific} $a$ has
+$E_a<-\log_{10}\alpha$. The global statistic $E_{\mathrm{glob}}=\sum_a 10^{-E_a}$ is the expected
+number of panel alleles presenting $q$ by chance. Class~II is genuinely multi-label (an open groove
+with loosely specified pockets presents one peptide on many alleles), so the panel positive set is
+\emph{every} observed restricting allele and the non-binder test is ``binds none of the panel''.
+
+\section{MHC pseudosequence model and cross-allele diffusion}\label{sec:diffusion}
+\texttt{seqtree} deliberately treats distinct alleles as distinct, never-pooled nulls. This is
+correct but wasteful: rare alleles carry few presented peptides, so both~\eqref{eq:forward}
+and~\eqref{eq:conf} are noisy exactly where data are thin---the equity problem of
+Glynn~et~al.~\cite{Glynn2025}. \texttt{mhcmatch} lifts the limitation by making the allele a
+\emph{sequence} the same engine can compare, and diffusing statistics along groove similarity.
+
+\paragraph{Pseudosequence.} Each allele $a$ is represented by its NetMHCpan-style 34-residue groove
+pseudosequence $s_a\in\Sigma^{34}$~\cite{Reynisson2020}: the polymorphic, peptide-contacting
+positions (class~I $\alpha_1/\alpha_2$; class~II $\alpha_1$ + $\beta_1$). Per-allele binding can be
+predicted from $s_a$ alone~\cite{Glynn2025,BassaniSternberg2017}, so groove distance is a meaningful
+allele distance.
+
+\subsection{Anchor-factored similarity kernel}
+The presentation motif factorizes by pocket: anchor $j$'s residue preference is governed by the
+groove positions lining pocket $j$, and different pockets are spatially separated (the class-I
+B-pocket sets P2, the F-pocket sets P$\Omega$). We therefore use a \emph{per-anchor} kernel rather
+than one global allele distance. For anchor $j$ let $w_j\in\R_{\ge0}^{34}$ weight the groove
+positions, and define
+\begin{equation}\label{eq:kernel}
+  d_j(a,b)=\sum_{p=1}^{34} w_{j,p}\,\one[s_{a,p}\neq s_{b,p}],\qquad
+  K_j(a,b)=\exp\!\big(-d_j(a,b)/h_j\big),
+\end{equation}
+a weighted-Hamming kernel with bandwidth $h_j>0$ (ambiguous positions $\texttt{X}$ are skipped).
+Setting $w_j\equiv 1$ recovers a single un-factored kernel.
+
+\begin{definition}[Learned per-anchor relevance]\label{def:weights}
+Let $A_j$ be the allele's modal residue at peptide anchor $j$ (from its presented set) and $S_p$ the
+groove residue at pseudosequence position $p$, both viewed as categorical variables over the allele
+panel. The relevance of position $p$ to anchor $j$ is the mutual information
+\begin{equation}\label{eq:mi}
+  w_{j,p}\;\propto\;\MI(S_p;A_j)=\sum_{x,y}\hat{\Prob}(S_p{=}x,A_j{=}y)\,
+  \log_2\frac{\hat{\Prob}(S_p{=}x,A_j{=}y)}{\hat{\Prob}(S_p{=}x)\,\hat{\Prob}(A_j{=}y)},
+\end{equation}
+normalized to mean one over $p$. Equivalently $w_j$ may be fit by maximizing the held-out predictive
+log-likelihood of the shrinkage model below under an $\ell_1$/entropy penalty, which selects each
+anchor's pocket positions. \eqref{eq:mi} is the ``feature importance'' that says which groove
+residues drive P2 versus P$\Omega$.
+\end{definition}
+
+\subsection{Kernel-shrinkage pooling}
+Write $\theta_{a,j}$ for allele $a$'s empirical residue distribution at anchor $j$ over its $n_a$
+peptides. We shrink it toward groove-similar alleles:
+\begin{equation}\label{eq:shrink}
+  \hat\theta_{a,j}
+  =\frac{n_a\,\theta_{a,j}+\sum_{b\neq a}K_j(a,b)\,n_b\,\theta_{b,j}}
+        {n_a+\sum_{b\neq a}K_j(a,b)\,n_b},
+  \qquad
+  \ESS_{a,j}=n_a+\sum_{b\neq a}K_j(a,b)\,n_b .
+\end{equation}
+\begin{proposition}[Hierarchical-Bayes reading and limits]\label{prop:shrink}
+\eqref{eq:shrink} is the posterior mean of a Dirichlet--multinomial in which the neighbour-weighted
+counts form the prior pseudocounts: $\hat\theta_{a,j}=\E[\theta\mid \text{counts}]$ with
+concentration $\ESS_{a,j}$. As $h_j\to0$, $K_j(a,b)\to0$ for $b\neq a$ and
+$\hat\theta_{a,j}\to\theta_{a,j}$ (no pooling); as $h_j\to\infty$, $K_j(a,b)\to1$ and
+$\hat\theta_{a,j}\to(\sum_b n_b\theta_{b,j})/\sum_b n_b$ (the global pool).
+\end{proposition}
+\noindent (Both limits are implemented and unit-tested in \texttt{Pseudoseq.shrink}.)
+
+\begin{proposition}[Bias--variance and bandwidth]\label{prop:bv}
+Treat each $\theta_{b,j}$ as an unbiased estimate of allele $b$'s truth $\theta^\star_{b,j}$ with
+variance $\propto 1/n_b$. The pooled estimator has variance $O(1/\ESS_{a,j})$ and bias
+$\big\|\sum_b \kappa_b(\theta^\star_{b,j}-\theta^\star_{a,j})\big\|$, where
+$\kappa_b=K_j(a,b)n_b/\ESS_{a,j}$ is the borrowed mass. The mean-squared error is minimized by
+borrowing more (smaller effective $h_j$ penalty) when $n_a$ is small and groove neighbours are close,
+and less when $n_a$ is large; calibrating $h_j$ by cross-validated predictive likelihood realizes
+this trade-off automatically.
+\end{proposition}
+
+\paragraph{Pooled null and restored E-value.} For a rare allele the analytic presented null is built
+from the shrunk anchor marginals: assuming approximate position independence in the anchor block
+(the maximum-entropy presented distribution of~\cite{TiffeauMayer2026} conditioned on the motif),
+$\widehat{\Pzero}(\sigma_A\mid a)\approx\prod_{j}\hat\theta_{a,j}(\sigma_{A_j})$, which feeds a usable
+$\widehat E$ in~\eqref{eq:forward}--\eqref{eq:conf} where the raw per-allele control was too small.
+The estimator is a smoothed null: its bias is controlled by the borrowed mass on dissimilar alleles
+(Prop.~\ref{prop:bv}), vanishing as the panel around $a$ becomes dense and groove-tight.
+
+\subsection{Clustering and promiscuity}
+Thresholding $K_j$ (or the un-factored $K$) yields single-linkage allele \emph{clusters} of
+functionally similar alleles (\texttt{Pseudoseq.cluster}). A peptide presented across a cluster is
+\emph{promiscuous}; its promiscuity is the spread of its positive alleles over the clustering, and
+the cluster is the natural unit over which to pool nulls when per-allele data are thin (especially
+class~II). This is the principled cross-allele similarity that the substrate omits.
+
+\section{Proteome-scale matching}\label{sec:proteome}
+\paragraph{Presentation scan.} To find all presented peptides in a protein we slide every
+binding-length window (class~I $8$--$11$; class~II $\ge13$ with the register-anchored core) and
+evaluate~\eqref{eq:conf} per window and allele. With $W$ windows and $|\mathcal A|$ panel alleles the
+test is multiple: under the null the expected number of windows called for allele $a$ is
+$\approx W\alpha$, so we control the family either by Bonferroni / max-statistic thresholds (FWER) or
+by Benjamini--Hochberg on the $p_{\mathrm{enrich}}$ across the $W\times|\mathcal A|$ grid
+(FDR)~\cite{Benjamini1995}. \texttt{scan\_protein} reports per-window binders; the grid-level
+correction is a calibration step.
+
+\paragraph{Same-MHC versus TCR-facing search.} At proteome scale two notions of ``similar peptide''
+are distinguished by which mask of~\eqref{eq:masks} is indexed: \emph{same-MHC} similarity indexes
+the presentation signature (peptides likely presented by the same allele), \emph{TCR-facing}
+similarity indexes the anchor-masked central motif (similar T-cell recognition, the basis of
+cross-reactivity). Both run on the C++ \texttt{KmerIndex} seed-and-gather.
+
+\paragraph{Molecular mimicry.} A self or foreign peptide $p$ is a candidate cross-reactive mimic of a
+neoantigen $\nu$ iff (i) it is presented by a compatible allele, (ii) the TCR-facing distance
+$\dTCR(p,\nu)=\sum_i w_i\,\mathrm{pen}(p_i,\nu_i)\le\theta$ (anchors zeroed), and (iii) the hit is
+significant against the per-allele presented background, $\widehat E\le\alpha$. Condition (iii)
+deflates motifs common in the allele's peptidome and elevates surprisingly shared ones. This
+connects to the neoantigen-quality program of \L{}uksza~et~al.: the quality $Q=R\times D$
+\cite{Luksza2022,Luksza2017} multiplies a recognition / non-self term $R$ (the cross-reactivity
+distance to known antigens) by a self-discrimination term $D$ (differential MHC binding), and to the
+close-to-self ``shell'' picture of~\cite{TiffeauMayer2026}; \texttt{mhcmatch} supplies a calibrated
+E-value for the $R$ component.
+
+\paragraph{Near-exact source identification.} Given a neoantigen we identify the self peptide it
+derives from---its parent protein and the mutated position---by full-sequence (unmasked)
+$\le m$-mismatch search over all length-$L$ windows of the reference proteome. Under an
+i.i.d.\ background of composition $\{q_c\}$ the expected number of chance windows within $m$
+substitutions of a query in a proteome of $R$ residues is
+\begin{equation}\label{eq:source}
+  \E[\#\text{chance}]\approx R\sum_{i=0}^{m}\binom{L}{i}\bar q^{\,L-i}(1-\bar q)^{i},
+  \qquad \bar q=\textstyle\sum_c q_c^2 ,
+\end{equation}
+the Karlin--Altschul/birthday count specialized to the Hamming ball (the empirical-background variant
+reuses \texttt{seqtree} §KA). For $m\in\{0,1\}$ and $L\ge8$, \eqref{eq:source} is $\ll1$, so a hit is
+essentially certainly the true source rather than coincidence---\texttt{Proteome.find\_source}
+returns it with the differing residue flagged.
+
+\section{Motif logos and length distributions}\label{sec:logos}
+For an allele's presented set (class~I peptides of a fixed length; class~II register-anchored 9-mer
+cores) the per-position information content is
+\begin{equation}\label{eq:ic}
+  I_i=\log_2 20-H_i-e(n_i),\qquad H_i=-\sum_{c}f_{i,c}\log_2 f_{i,c},
+\end{equation}
+with $f_{i,c}$ the residue frequency at position $i$ and $e(n_i)$ the small-sample entropy correction
+for $n_i$ counts (negligible for the deep \texttt{pmhc\_data} alleles). The logo draws letter $c$ at
+height $f_{i,c}I_i$ bits; columns at the anchors stand tall (e.g.\ A\*02:01 shows P2$=$L,
+P$\Omega\in\{$V,L$\}$), the TCR-facing columns are flat. The length distribution is reported as a
+companion histogram. Columns may be confidence-weighted by $n$ (or by the shortlist
+$\ge2$-publication support). \texttt{logo.motif} returns the numeric logo; \texttt{logo.render} draws
+it.
+
+\section{Planned predictors and their composition}\label{sec:predictors}
+Presentation is necessary but not sufficient for immunogenicity. Each planned predictor scores a
+distinct biophysical or population term and \emph{composes} with the presentation evidence on the log
+scale; for peptide $\sigma$ and allele $a$ the combined log-odds is
+\begin{equation}\label{eq:combine}
+  \log\frac{\Prob(\text{immunogenic})}{\Prob(\text{not})}
+  = \beta_0
+  + \beta_{\mathrm{pres}}\,(-\!\log p_{\mathrm{enrich}})
+  + \beta_{\mathrm{aff}}\log\!\tfrac{1}{\mathrm{IC}_{50}}
+  + \beta_{\mathrm{stab}}\,t_{1/2}
+  + \beta_{\mathrm{clv}}\,c_{\mathrm{Cterm}}
+  + \beta_{\mathrm{expr}}\log e_{\mathrm{gene}}
+  + \beta_{\mathrm{imm}}\,\rho_{\mathrm{TCR}} ,
+\end{equation}
+with coefficients fit on labelled outcome data (the user will supply tuning/benchmark sets). The
+terms: \emph{affinity} $\mathrm{IC}_{50}$ and \emph{stability} $t_{1/2}$ are the quantitative
+complements of the binary presentation E-value, regressable on the same anchor features plus the
+pseudosequence; \emph{cleavage} $c_{\mathrm{Cterm}}$ is a position-specific C-terminal generation
+probability (with optional N-terminal trimming); \emph{expression} $e_{\mathrm{gene}}$ and variant
+frequency enter as Bayesian priors multiplying the presentation odds; \emph{immunogenicity}
+$\rho_{\mathrm{TCR}}$ combines physicochemical TCR-facing features with a TCR precursor-frequency /
+generation-probability estimate~\cite{Murugan2012,Elhanati2014} in the $Q=R\times D$ spirit
+of~\cite{Luksza2022}. The precursor-frequency estimator may live in a separate package and be
+consumed here. Each term is a roadmap Phase-2 milestone specified by this subsection.
+
+\section{Benchmark and evaluation methodology}\label{sec:bench}
+We evaluate as a per-(peptide, allele) binary task. \emph{Splits} are by allele \emph{and} by
+peptide: held-out alleles test cross-allele generalization (and the diffusion model of
+\S\ref{sec:diffusion}), held-out peptides within an allele test within-allele recall; clonotype/
+peptide duplicates are collapsed before splitting to prevent leakage. \emph{Metrics} are ROC-AUC,
+PR-AUC against the prevalence baseline, top-1 accuracy, and a real-vs-random noise-rejection AUROC
+(the non-binder filter). \emph{Comparison}: against NetMHCpan-4.1 and NetMHCIIpan-4.0
+\cite{Reynisson2020}, MixMHCpred~\cite{BassaniSternberg2017}, and MixMHC2pred~\cite{Racle2019} on
+matched alleles and shared eluted-ligand / assay test sets, with rank-threshold calibration and an
+explicit \emph{rare-allele subgroup} analysis (the equity axis of~\cite{Glynn2025}) where the
+pseudosequence diffusion is expected to help most. The benchmark datasets and the paper live in a
+dedicated repository; this section fixes the protocol so it stays consistent with the predictors
+defined here.
+
+\section{Assumptions and limitations}\label{sec:limits}
+(i) The analytic pooled null assumes approximate position independence in the anchor block; real
+co-occupancy adds a two-point ($b_2$) correction (the negative-binomial tail of the \texttt{seqtree}
+appendix) that keeps the mean robust while inflating the tail. (ii) Kernel validity rests on a
+faithful pseudosequence; ambiguous (\texttt{X}) positions are skipped and locus-aware normalization
+of allele names is required (class~II especially). (iii) The pooled E-value is a smoothed estimator
+(Prop.~\ref{prop:bv})---its bias must be reported alongside the gain for rare alleles. (iv) The
+class-II register trick is a one-pass proxy for full deconvolution~\cite{Andreatta2017,Alvarez2019}.
+(v) ``Compatible allele'' in mimicry is a user input; cross-reactivity significance is conditional on
+a faithful per-allele presented control. These are the open items tracked in \texttt{ROADMAP.md}.
+
+\bibliographystyle{plain}
+\bibliography{refs}
+
+\end{document}

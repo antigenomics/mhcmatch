@@ -1,0 +1,23 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+
+# Large reference proteomes for source lookup are fetched, not committed
+data/proteomes/
+*.fasta
+*.fasta.gz
+
+# LaTeX build artifacts (keep .tex, .bib, .pdf)
+appendix/*.aux
+appendix/*.log
+appendix/*.out
+appendix/*.bbl
+appendix/*.blg
+appendix/*.fls
+appendix/*.fdb_latexmk
