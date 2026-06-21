@@ -238,6 +238,20 @@ and less when $n_a$ is large; calibrating $h_j$ by cross-validated predictive li
 this trade-off automatically.
 \end{proposition}
 
+\paragraph{Bounded-concentration variant (the practical default).} The counts-weighted
+form~\eqref{eq:shrink} lets one deep neighbour ($K_j n_b\gg n_a$) overwrite a rare allele's own
+peptides. We therefore default to a fixed prior strength $\tau$: shrink toward the kernel-weighted
+neighbour mean $m_{a,j}=\big(\sum_{b}K_j(a,b)n_b\theta_{b,j}\big)/\sum_b K_j(a,b)n_b$,
+\begin{equation}\label{eq:shrink-tau}
+  \hat\theta_{a,j}=\frac{n_a\,\theta_{a,j}+\tau\,m_{a,j}}{n_a+\tau},
+\end{equation}
+so borrowing adds at most $\tau$ pseudocounts and vanishes automatically as $n_a$ grows
+(Prop.~\ref{prop:bv}). Empirically (\texttt{bench/bench\_diffusion.py}; MHC-I human, allele-split
+held-out rank AUC, $\tau=10$) this lifts the AUC of \emph{rare} alleles ($\le 30$ peptides) from
+$0.87$ to $0.92$ on the high-confidence ($\ge2$-publication) set while leaving \emph{frequent}
+alleles unchanged ($\pm0.00$); on the noisier full set the rare-allele gain is smaller but stays
+non-negative and frequent alleles are never harmed---the data-rescue is safe.
+
 \paragraph{Pooled null and restored E-value.} For a rare allele the analytic presented null is built
 from the shrunk anchor marginals: assuming approximate position independence in the anchor block
 (the maximum-entropy presented distribution of~\cite{TiffeauMayer2026} conditioned on the motif),

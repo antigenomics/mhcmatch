@@ -11,6 +11,7 @@
 Theory: ``appendix/mhcmatch.tex``. Roadmap: ``ROADMAP.md``.
 """
 from . import logo, search
+from .diffusion import AnchorModel
 from .proteome import Proteome, SourceHit
 from .pseudoseq import Pseudoseq, learn_anchor_weights, load_pseudo, normalize_allele
 from .store import Decomposition, Restriction, Store, anchor_indices, infer_class
@@ -22,6 +23,7 @@ __all__ = [
     "infer_class",
     "anchor_indices",
     "search",
+    "AnchorModel",
     "Proteome",
     "SourceHit",
     "Pseudoseq",

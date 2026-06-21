@@ -39,7 +39,9 @@ diffusion model, and the downstream predictors.
 | Near-exact source lookup (neoantigen → parent protein) | `mhcmatch.Proteome` | **v0** |
 | Motif logos + length distributions | `mhcmatch.logo` | **v0** |
 | Pseudosequence kernel, clustering, kernel-shrinkage pooling | `mhcmatch.Pseudoseq` | **v0** |
-| Learned per-anchor pocket weights (calibrated) | `Pseudoseq` + fit | Phase 1 |
+| Diffusion forward scorer + learned anchor weights + bounded-prior shrinkage | `mhcmatch.AnchorModel` | **v0.1** (validated, `bench/bench_diffusion.py`) |
+| Per-locus bandwidth `h` / prior-strength `τ` calibration | `Pseudoseq` + fit | Phase 1 |
+| Class-II allele keying (α+β pair) + pseudoseq pair-normalization | — | Phase 1 |
 | Tuned ROC/PR thresholds; FDR over proteome scans | — | Phase 1 |
 | Stability / affinity / cleavage / expression / immunogenicity | — | Phase 2 |
 | NetMHCpan / MixMHCpred head-to-head benchmark + paper | separate repo | Phase 3 |
@@ -77,11 +79,13 @@ diffusion model, and the downstream predictors.
 
 ## 4. Phase 1 — calibration & hardening
 
-- **Learned per-anchor pocket weights** `w_j` (the "feature importance"): fit which groove
-  pseudosequence positions govern each peptide anchor (MHC-I P2/B-pocket vs PΩ/F-pocket; MHC-II
-  P1/P4/P6/P9), then use anchor-factored kernels in `shrink`/`neighbors`. `learn_anchor_weights`
-  ships the MI estimator; Phase 1 calibrates bandwidths `h_j` by held-out predictive likelihood and
-  validates the pooled-null E-value on rare alleles. Appendix §4.
+- **Diffusion forward scorer — done in v0.1** (`mhcmatch.AnchorModel`): learned per-anchor pocket
+  weights `w_j` (MI feature-importance: which groove positions govern MHC-I P2/B-pocket vs
+  PΩ/F-pocket) feed anchor-factored kernels; per-allele anchor distributions are shrunk via a
+  **bounded-concentration** prior (τ) so a deep neighbour can't swamp a rare allele. Validated
+  (`bench/bench_diffusion.py`): rare-allele held-out AUC 0.87→0.92 on the shortlist tier, frequent
+  alleles neutral. Appendix §4. **Remaining (Phase 1):** per-locus `h`/`τ` calibration by
+  cross-validated likelihood; feed the shrunk null into the reverse-problem E-value (`restriction`).
 - **Tuned thresholds**: per-class/species `alpha` and scope (`lo/hi`) from ROC/PR; **FWER/FDR over
   proteome scans** (windows × panel). Appendix §3, §5.
 - **Class-II promiscuity**: multi-label restriction + global `E_glob` non-binder filter; pseudoseq

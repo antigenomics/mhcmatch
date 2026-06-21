@@ -249,6 +249,18 @@ class Store:
         present = "".join(c if i in anchors else layout.MASK for i, c in enumerate(peptide))
         return Decomposition(peptide, tcr, present, tuple(sorted(anchors)))
 
+    # -- diffusion-powered forward scorer -------------------------------------
+    def anchor_model(self, cls="mhc1", h=2.0, prior_strength=10.0, anchors=None, learn_weights=True):
+        """Anchor-factored presentation model with cross-allele kernel-shrinkage diffusion.
+
+        See :class:`mhcmatch.diffusion.AnchorModel`. The diffusion rescues rare alleles by borrowing
+        anchor preferences from groove-similar frequent ones, with a bounded prior strength so a
+        large neighbour cannot swamp a rare allele's own peptides.
+        """
+        from .diffusion import MHC1_ANCHORS, AnchorModel
+        return AnchorModel(self, cls=cls, anchors=anchors or MHC1_ANCHORS, h=h,
+                           prior_strength=prior_strength, learn_weights=learn_weights)
+
     # -- per-allele anchor preferences (feeds pseudoseq diffusion) ------------
     def anchor_preferences(self, cls, anchor):
         """{allele: Counter(residue)} at a 1-based ``anchor`` position (negative from C-term)."""

@@ -126,6 +126,29 @@ def test_learn_anchor_weights_mi():
     assert all(w[p] == 0 for p in range(1, 34))
 
 
+# -- diffusion: rare-allele rescue -------------------------------------------
+def _build(rng, allele, p2, pomega, n, recs):
+    for _ in range(n):
+        mid = [rng.choice(_AA) for _ in range(7)]
+        recs.append({"epitope": mid[0] + p2 + "".join(mid[1:]) + pomega,  # 9-mer, P2=idx1, PΩ=idx8
+                     "mhc_a": allele, "mhc_class": "MHCI"})
+
+
+def test_diffusion_rescues_rare_allele():
+    rng = random.Random(1)
+    recs = []
+    _build(rng, "HLA-A*02:01", "L", "V", 40, recs)   # frequent, canonical A*02 anchors
+    _build(rng, "HLA-B*07:02", "P", "L", 40, recs)   # frequent, distant groove
+    _build(rng, "HLA-A*02:06", "L", "L", 1, recs)    # RARE: never shows PΩ=V on its own
+    store = Store.from_records(recs)
+    am = store.anchor_model("mhc1", h=2.0)
+    q = "AL" + "EEEEEE" + "V"                          # P2=L, PΩ=V -- a classic A*02 peptide
+    raw = am.score(q, "HLA-A*02:06", raw=True)         # off its 1 peptide: PΩ=V unseen
+    diffused = am.score(q, "HLA-A*02:06")              # borrows PΩ=V from groove-neighbour A*02:01
+    assert diffused > raw
+    assert diffused > am.score(q, "HLA-B*07:02")       # A*02-like query prefers the A*02 groove
+
+
 # -- near-exact source lookup -------------------------------------------------
 def test_proteome_source_lookup():
     from mhcmatch import Proteome
