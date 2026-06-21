@@ -141,7 +141,7 @@ def test_diffusion_rescues_rare_allele():
     _build(rng, "HLA-B*07:02", "P", "L", 40, recs)   # frequent, distant groove
     _build(rng, "HLA-A*02:06", "L", "L", 1, recs)    # RARE: never shows PΩ=V on its own
     store = Store.from_records(recs)
-    am = store.anchor_model("mhc1", h=2.0)
+    am = store.anchor_model("mhc1", h=2.0, anchors=(2, -1))  # isolate the rescue on the primary anchors
     q = "AL" + "EEEEEE" + "V"                          # P2=L, PΩ=V -- a classic A*02 peptide
     raw = am.score(q, "HLA-A*02:06", raw=True)         # off its 1 peptide: PΩ=V unseen
     diffused = am.score(q, "HLA-A*02:06")              # borrows PΩ=V from groove-neighbour A*02:01
