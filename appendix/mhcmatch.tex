@@ -4,6 +4,7 @@
 \usepackage{amsmath,amsthm}
 \usepackage{mathtools}
 \usepackage{graphicx}
+\usepackage{subcaption}
 \usepackage{dsfont}
 % Old-style journal look, matching the seqtree appendix (OldStandard text+math, small-caps
 % headings, run-in paragraph leaders). Requires lualatex -- pinned in .latexmkrc / Makefile.
@@ -351,42 +352,60 @@ form no such communities.
   \label{fig:promiscuity}
 \end{figure}
 
-The kernel induces an \emph{allele similarity network} (Fig.~\ref{fig:promiscuity}): nodes are
-alleles, edges join pairs with $K\ge$ a soft threshold (bold above a hard threshold), and greedy
-modularity~\cite{Clauset2004} recovers communities. On human MHC-I these communities reproduce the
-classical HLA supertypes (the A2, A3, A24, B7, B27, B44 groups), giving a data-driven, sequence-only
-account of the cross-allele promiscuity that lets one peptide be presented across a supertype. Mouse
-panels are small and the laboratory H-2 alleles are mutually divergent, so they form few or no
-communities --- consistent with the thin, scattered mouse panels noted above. Rendered with
-Graphviz; \texttt{bench/promiscuity\_graph.py}.
+An empirical counterpart (Fig.~\ref{fig:promiscuity-shared}, all four class\,$\times$\,species panels)
+builds the same network from \emph{observed} co-presentation---edges are the overlap coefficient
+$|P_a\cap P_b|/\min(|P_a|,|P_b|)$ of two alleles' presented-peptide sets---instead of predicted
+groove similarity. Its communities agree with the supertypes, while the extra cross-community edges
+are genuinely promiscuous peptides shared across distinct grooves; it covers alleles that lack a
+pseudosequence (203 vs 166 human MHC-I) and even links the otherwise groove-divergent mouse alleles.
+Quantifying predicted-vs-observed agreement, the Jaccard overlap of the two edge sets (over the
+alleles common to both, human) is $0.19$ for MHC-I ($66/343$ edges) and $0.09$ for MHC-II
+($42/458$): the groove kernel captures the high-confidence supertype core, while observed sharing is
+broader and noisier. The two views are complementary rather than redundant.
 
 \begin{figure}[ht]\centering
-  \includegraphics[width=0.92\linewidth]{promiscuity_mhc1_human.pdf}
-  \caption{Human MHC-I allele similarity / promiscuity network: nodes are alleles (size $\propto$
-  $\log$ presented-set size), edges are pseudosequence-kernel similarity (thin above the soft
-  threshold, bold above the hard threshold), dashed boxes are greedy-modularity communities. The
-  communities recover the classical HLA-I supertypes. \texttt{bench/promiscuity\_graph.py}.}
-  \label{fig:promiscuity}
+  \begin{subfigure}{0.49\linewidth}\includegraphics[width=\linewidth]{promiscuity_shared_mhc1_human.pdf}
+    \caption{MHC-I, human}\end{subfigure}\hfill
+  \begin{subfigure}{0.49\linewidth}\includegraphics[width=\linewidth]{promiscuity_shared_mhc1_mouse.pdf}
+    \caption{MHC-I, mouse}\end{subfigure}
+
+  \begin{subfigure}{0.49\linewidth}\includegraphics[width=\linewidth]{promiscuity_shared_mhc2_human.pdf}
+    \caption{MHC-II, human}\end{subfigure}\hfill
+  \begin{subfigure}{0.49\linewidth}\includegraphics[width=\linewidth]{promiscuity_shared_mhc2_mouse.pdf}
+    \caption{MHC-II, mouse}\end{subfigure}
+  \caption{\emph{Observed} co-presentation networks (shared-epitope overlap coefficient; thin
+  $\ge0.25$, bold $\ge0.5$; greedy-modularity communities), all four class\,$\times$\,species panels.
+  Communities are coarser than the predicted groove network (Fig.~\ref{fig:promiscuity}) because
+  promiscuous peptides bridge supertypes. \texttt{bench/promiscuity\_graph.py}.}
+  \label{fig:promiscuity-shared}
 \end{figure}
 
-\subsection{Per-pocket decomposition (class II)}\label{sec:pockets}
-The anchor-factored weights~\eqref{eq:mi} make the pocket structure explicit. For each MHC-II core
-pocket P1/P4/P6/P9 we learn an independent weight vector $w_j$ over the 34-residue class-II
-pseudosequence; Fig.~\ref{fig:pockets} shows that the relevance concentrates on the polymorphic
-$\beta_1$ segment (positions $16$--$34$) and is near-zero on the largely monomorphic $\alpha_1$
-segment---most sharply for DR, whose $\alpha$ chain (DRA) is invariant---while each pocket reads a
-\emph{partly distinct} subset of those positions. The kernel is thus not one global allele distance
-but a sum of pocket-specific distances, each restricted to the groove residues that line its pocket.
-With this class-II model (alleles keyed by the $\alpha$--$\beta$ pair; cores from the register
-trick), diffusion gives a small but safe rare-allele gain ($0.75\!\to\!0.76$ AUC, frequent unchanged,
-Fig.~\ref{fig:diffauc}); class~II stays harder than class~I (open groove, promiscuity, one-pass
-register).
+\subsection{Per-pocket decomposition}\label{sec:pockets}
+The anchor-factored weights~\eqref{eq:mi} make the pocket structure explicit: for each peptide anchor
+we learn an independent weight vector $w_j$ over the 34 groove positions, per class and species
+(Fig.~\ref{fig:pockets}, all four panels). For MHC-I (human) the two primary pockets read
+\emph{disjoint} groove positions---P2/B-pocket concentrates near positions $7$--$8$, P$\Omega$/F-pocket
+near $18$--$21$---directly recovering the structural pocket layout from presented-peptide statistics
+alone. For MHC-II the relevance sits on the polymorphic $\beta_1$ segment and is near-zero on the
+largely monomorphic $\alpha_1$ (sharpest for DR, whose DRA $\alpha$ chain is invariant). The kernel
+is thus not one global allele distance but a sum of pocket-specific distances, each restricted to the
+residues lining its pocket. Mouse panels are data-limited ($8$--$13$ alleles), so their weights are
+noisier but show the same gross localization. (Class-II alleles are keyed by the $\alpha$--$\beta$
+pair, cores from the register trick; its diffusion gain is small but safe, $0.72\!\to\!0.74$ AUC.)
 
 \begin{figure}[ht]\centering
-  \includegraphics[width=0.9\linewidth]{mhc2_pockets.pdf}
+  \begin{subfigure}{0.49\linewidth}\includegraphics[width=\linewidth]{pockets_mhc1_human.pdf}
+    \caption{MHC-I, human}\end{subfigure}\hfill
+  \begin{subfigure}{0.49\linewidth}\includegraphics[width=\linewidth]{pockets_mhc1_mouse.pdf}
+    \caption{MHC-I, mouse}\end{subfigure}
+
+  \begin{subfigure}{0.49\linewidth}\includegraphics[width=\linewidth]{pockets_mhc2_human.pdf}
+    \caption{MHC-II, human}\end{subfigure}\hfill
+  \begin{subfigure}{0.49\linewidth}\includegraphics[width=\linewidth]{pockets_mhc2_mouse.pdf}
+    \caption{MHC-II, mouse}\end{subfigure}
   \caption{Learned mutual-information relevance $w_{j,p}$ of each groove pseudosequence position $p$
-  (x) for each MHC-II core pocket $j$ (rows), over human class-II alleles. Relevance concentrates on
-  the polymorphic $\beta_1$ region; different pockets emphasize different positions.
+  (x) for each anchor pocket $j$ (rows), per class and species. Different pockets read different
+  groove positions (MHC-I P2 vs P$\Omega$ are disjoint); MHC-II concentrates on $\beta_1$.
   \texttt{bench/make\_figures.py}.}
   \label{fig:pockets}
 \end{figure}

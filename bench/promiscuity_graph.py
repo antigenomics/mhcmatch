@@ -20,7 +20,7 @@ import itertools
 import math
 import os
 import subprocess
-from collections import Counter
+from collections import Counter, defaultdict
 
 import networkx as nx
 
@@ -48,11 +48,29 @@ def _mi_weights(store, cls):
     return [x / mean for x in combined] if mean > 0 else None
 
 
-def build_graph(store, cls, soft, hard, h):
-    # MI-weighted BLOSUM kernel: emphasize the max-MI groove positions, score by BLOSUM Gram distance.
-    ps = Pseudoseq(cls, h=h, weights=_mi_weights(store, cls), metric="blosum")
+def build_graph(store, cls, soft, hard, h, metric="kernel"):
+    """Allele graph. ``metric="kernel"``: predicted groove similarity (MI-weighted BLOSUM kernel).
+    ``metric="shared"``: observed co-presentation -- overlap coefficient of presented-peptide sets,
+    ``|P_a ∩ P_b| / min(|P_a|,|P_b|)`` (edge also carries the raw shared-epitope count)."""
     npep = Counter(store._panel[cls].alleles)
     G = nx.Graph()
+    if metric == "shared":
+        sets = defaultdict(set)
+        for ep, a in zip(store._panel[cls].epitopes, store._panel[cls].alleles):
+            sets[a].add(ep)
+        nodes = [a for a in store.alleles(cls) if sets[a]]
+        for a in nodes:
+            G.add_node(a, n=npep[a])
+        for a, b in itertools.combinations(nodes, 2):
+            inter = len(sets[a] & sets[b])
+            if inter == 0:
+                continue
+            ov = inter / min(len(sets[a]), len(sets[b]))
+            if ov >= soft:
+                G.add_edge(a, b, weight=round(ov, 3), hard=ov >= hard, shared=inter)
+        return G
+    # predicted groove similarity
+    ps = Pseudoseq(cls, h=h, weights=_mi_weights(store, cls), metric="blosum")
     nodes = [a for a in store.alleles(cls) if ps._lookup(a) is not None]
     for a in nodes:
         G.add_node(a, n=npep[a])
@@ -72,9 +90,9 @@ def detect_communities(G):
 def to_dot(G, comms, title):
     comm_of = {n: i for i, c in enumerate(comms) for n in c}
     out = ["graph G {",
-           '  graph [layout=fdp, overlap=false, splines=true, fontname="Helvetica", fontsize=14];',
+           '  graph [layout=fdp, overlap=false, splines=true, fontname="Helvetica", fontsize=16];',
            f'  labelloc="t"; label="{title}";',
-           '  node [shape=circle, style=filled, fontname="Helvetica", fontsize=7, penwidth=1.4];',
+           '  node [shape=circle, style=filled, fontname="Helvetica", fontsize=9, penwidth=1.4];',
            '  edge [color="#d1d5db"];']
     # one Graphviz cluster per (multi-node) community -> dashed outline around the supertype
     for i, c in enumerate(comms):
@@ -102,7 +120,7 @@ def to_dot(G, comms, title):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pmhc-dir", default=os.environ.get("MHCMATCH_PMHC", ""))
-    ap.add_argument("--tier", default="shortlist", choices=("full", "shortlist"))
+    ap.add_argument("--tier", default="full", choices=("full", "shortlist"))
     ap.add_argument("--out", default="appendix")
     ap.add_argument("--soft", type=float, default=0.25)
     ap.add_argument("--hard", type=float, default=0.5)
@@ -113,24 +131,37 @@ def main():
     out = os.path.abspath(args.out)
     os.makedirs(out, exist_ok=True)
     path = os.path.join(args.pmhc_dir, f"pmhc_{args.tier}.tsv.gz")
+    descs = {"kernel": "groove kernel", "shared": "shared-epitope overlap"}
 
     for cls, clabel in (("mhc1", "MHC-I"), ("mhc2", "MHC-II")):
         for species in ("human", "mouse"):
             store = Store.from_pmhc(path, tier=args.tier, species=species, classes=(cls,))
-            G = build_graph(store, cls, args.soft, args.hard, args.h)
-            if G.number_of_nodes() < 2:
-                print(f"# {clabel} {species}: <2 pseudoseq-matched alleles, skipped")
-                continue
-            comms = detect_communities(G)
-            ncc = sum(1 for c in comms if len(c) >= 2)
-            title = (f"{clabel} {species}: {G.number_of_nodes()} alleles, {ncc} communities "
-                     f"(kernel soft {args.soft} / hard {args.hard})")
-            stem = f"promiscuity_{cls}_{species}"
-            (open(os.path.join(out, stem + ".dot"), "w")).write(to_dot(G, comms, title))
-            subprocess.run(["dot", "-Kfdp", "-Tpdf", "-o", os.path.join(out, stem + ".pdf"),
-                            os.path.join(out, stem + ".dot")], check=True)
-            print(f"# {clabel} {species}: {G.number_of_nodes()} alleles, {G.number_of_edges()} "
-                  f"edges, {ncc} communities -> {stem}.pdf")
+            graphs = {}
+            for metric in ("kernel", "shared"):
+                G = build_graph(store, cls, args.soft, args.hard, args.h, metric)
+                graphs[metric] = G
+                if G.number_of_nodes() < 2:
+                    print(f"# {clabel} {species} ({metric}): <2 matched alleles, skipped")
+                    continue
+                comms = detect_communities(G)
+                ncc = sum(1 for c in comms if len(c) >= 2)
+                title = (f"{clabel} {species}: {G.number_of_nodes()} alleles, {ncc} communities "
+                         f"({descs[metric]} soft {args.soft} / hard {args.hard})")
+                stem = f"promiscuity_{'shared_' if metric == 'shared' else ''}{cls}_{species}"
+                (open(os.path.join(out, stem + ".dot"), "w")).write(to_dot(G, comms, title))
+                subprocess.run(["dot", "-Kfdp", "-Tpdf", "-o", os.path.join(out, stem + ".pdf"),
+                                os.path.join(out, stem + ".dot")], check=True)
+                print(f"# {clabel} {species} ({metric}): {G.number_of_nodes()} alleles, "
+                      f"{G.number_of_edges()} edges, {ncc} communities -> {stem}.pdf")
+            # Jaccard agreement of edge sets between predicted (kernel) and observed (shared),
+            # restricted to alleles present in both graphs.
+            common = set(graphs["kernel"].nodes()) & set(graphs["shared"].nodes())
+            ek = {frozenset(e) for e in graphs["kernel"].edges() if set(e) <= common}
+            es = {frozenset(e) for e in graphs["shared"].edges() if set(e) <= common}
+            if ek or es:
+                j = len(ek & es) / len(ek | es)
+                print(f"#   Jaccard(kernel, shared edges | {len(common)} common alleles) = "
+                      f"{j:.3f}  ({len(ek & es)}/{len(ek | es)})")
 
 
 if __name__ == "__main__":
