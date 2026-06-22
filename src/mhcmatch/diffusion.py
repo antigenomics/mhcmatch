@@ -12,7 +12,8 @@ from __future__ import annotations
 import math
 from collections import Counter
 
-from .pseudoseq import Pseudoseq, learn_anchor_weights, load_pseudo, normalize_allele
+from .pseudoseq import (Pseudoseq, learn_anchor_weights, load_pseudo, load_structural_weights,
+                        normalize_allele)
 
 # Presentation-scoring footprint: the N-pocket (P1,P2,P3) + C-pocket (PΩ-1,PΩ). P2/PΩ are the
 # primary buried anchors; P1/P3/PΩ-1 are pocket-proximal auxiliary positions that empirically lift
@@ -34,7 +35,10 @@ class AnchorModel:
     """
 
     def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0,
-                 learn_weights=True, prune_dpi=False):
+                 learn_weights=True, prune_dpi=False, weights="learned"):
+        """``weights``: ``"learned"`` (per-anchor MI over the panel, default), ``"structural"``
+        (contact-frequency weights measured from pMHC structures, :func:`load_structural_weights`),
+        or ``"uniform"``. ``learn_weights=False`` forces uniform (kept for back-compat)."""
         self.cls = cls
         if anchors is None:
             anchors = MHC1_ANCHORS if cls == "mhc1" else MHC2_ANCHORS
@@ -48,15 +52,19 @@ class AnchorModel:
             for cnt in self.prefs[j].values():
                 c.update(cnt)
             self.bg[j] = c
-        seqs = load_pseudo(cls)
-        weights = None
-        if learn_weights:
-            weights = {}
-            for j in self.anchors:
-                modal = {normalize_allele(a): cc.most_common(1)[0][0]
-                         for a, cc in self.prefs[j].items() if cc}
-                weights[j] = learn_anchor_weights(seqs, modal, prune_dpi=prune_dpi)
-        self.ps = Pseudoseq(cls, h=h, weights=weights)
+        if not learn_weights:
+            weights = "uniform"
+        if weights == "structural":
+            w = load_structural_weights(cls)
+            w = {j: w[j] for j in self.anchors if j in w} or None
+        elif weights == "uniform":
+            w = None
+        else:
+            seqs = load_pseudo(cls)
+            w = {j: learn_anchor_weights(seqs, {normalize_allele(a): cc.most_common(1)[0][0]
+                 for a, cc in self.prefs[j].items() if cc}, prune_dpi=prune_dpi)
+                 for j in self.anchors}
+        self.ps = Pseudoseq(cls, h=h, weights=w)
         self._cache = {}
 
     def _candidates(self, j):

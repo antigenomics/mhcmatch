@@ -297,7 +297,7 @@ class Store:
 
     # -- diffusion-powered forward scorer -------------------------------------
     def anchor_model(self, cls="mhc1", h=2.0, prior_strength=10.0, anchors=None, learn_weights=True,
-                     prune_dpi=False):
+                     prune_dpi=False, weights="learned"):
         """Anchor-factored presentation model with cross-allele kernel-shrinkage diffusion.
 
         See :class:`mhcmatch.diffusion.AnchorModel`. The diffusion rescues rare alleles by borrowing
@@ -306,7 +306,7 @@ class Store:
         """
         from .diffusion import AnchorModel
         return AnchorModel(self, cls=cls, anchors=anchors, h=h, prior_strength=prior_strength,
-                           learn_weights=learn_weights, prune_dpi=prune_dpi)
+                           learn_weights=learn_weights, prune_dpi=prune_dpi, weights=weights)
 
     # -- per-allele anchor preferences (feeds pseudoseq diffusion) ------------
     def anchor_preferences(self, cls, anchor):

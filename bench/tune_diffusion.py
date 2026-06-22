@@ -95,7 +95,7 @@ def cv_folds(refcount, k, rng):
 
 
 def evaluate(refcount, cls, h, tau, metric, learn_weights, raw, test, pep_alleles, rare_max=30,
-             prune_dpi=False, ranker="anchor", rng=None, pairs_cap=0):
+             prune_dpi=False, ranker="anchor", rng=None, pairs_cap=0, weights="learned"):
     """Per held-out pMHC ``(peptide, allele)``: rank all panel alleles for the peptide and ask
     whether the held-out allele is recovered in the top 1 / top 5. Returns top1/top5 over the held
     pairs and recovery@5 split by allele rarity. Training drops only the held pair (per-pMHC).
@@ -113,7 +113,7 @@ def evaluate(refcount, cls, h, tau, metric, learn_weights, raw, test, pep_allele
     counts = Counter(store._panel[cls].alleles)
     rare = {a for a in panel if counts[a] <= rare_max}
     model = store.anchor_model(cls, h=h, prior_strength=tau, learn_weights=learn_weights,
-                               prune_dpi=prune_dpi)
+                               prune_dpi=prune_dpi, weights=weights)
     model.ps.metric = metric
     model._cache.clear()
     store._am[cls] = model  # so restriction() reuses this (h, tau, metric) model
@@ -169,6 +169,7 @@ def main():
     ap.add_argument("--cap", type=int, default=20, help="single-split max held-out/allele (--sweep)")
     ap.add_argument("--metric", default="blosum", choices=("blosum", "identity"))
     ap.add_argument("--dpi", action="store_true", help="DPI-prune the per-anchor groove weights")
+    ap.add_argument("--weights", default="learned", choices=("learned", "structural", "uniform"))
     ap.add_argument("--ranker", default="anchor", choices=("anchor", "hybrid"))
     ap.add_argument("--random", type=int, default=10000,
                     help="corpus-AA random peptides for the non-binder baseline AUROC (0 = off)")
@@ -209,7 +210,8 @@ def main():
     summary = {}
     for name, raw in (("raw", True), ("diffuse", False)):
         fc = [evaluate(refcount, args.cls, 2.0, 10, args.metric, True, raw, folds[f], pep_alleles,
-                       prune_dpi=args.dpi, ranker=args.ranker, rng=rng, pairs_cap=args.per_allele)
+                       prune_dpi=args.dpi, ranker=args.ranker, rng=rng, pairs_cap=args.per_allele,
+                       weights=args.weights)
               for f in range(args.folds)]
         fc = [c for c in fc if c]
         pooled = tuple(sum(c[i] for c in fc) for i in range(7))

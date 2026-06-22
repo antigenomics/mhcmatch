@@ -445,6 +445,17 @@ $0.85$ pruned); the prune is for interpretation. Mouse panels are data-limited (
 noisier but with the same gross localization. (Class-II alleles are keyed by the $\alpha$--$\beta$
 pair, cores from the register trick; its diffusion gain is small, $0.72\!\to\!0.74$ AUC.)
 
+\paragraph{Structural validation.} The learned weights are confirmed by structure. Threading the
+pseudosequence onto $318$ MHC-I crystal structures with a fast C++ fitting aligner
+(\texttt{tcren.\_align}; no mmseqs/arda, $\sim$0.1\,s/structure) and counting peptide-anchor
+$\leftrightarrow$ groove-position heavy-atom contacts (\texttt{bench/structural\_pockets.py})
+recovers the same layout from physics alone---P2 contacts pseudosequence positions $\sim$7--8
+(B-pocket), P$\Omega$ positions $\sim$15--17 (F-pocket), overlapping the learned maxima. Substituting
+these \emph{structural} contact-frequency weights into the kernel (\texttt{weights="structural"})
+gives near-identical rare-allele recovery@5 ($0.73$ vs $0.75$ learned, 5-fold CV)---a data-independent
+prior that agrees with the data-learned weights. Class-II structural weights await a class-II
+structure set (the canonical set is overwhelmingly TCR:pMHC-I, one class-II complex).
+
 \begin{figure}[ht]\centering
   \begin{subfigure}{0.49\linewidth}\includegraphics[width=\linewidth]{pockets_mhc1_human.pdf}
     \caption{MHC-I, human}\end{subfigure}\hfill
