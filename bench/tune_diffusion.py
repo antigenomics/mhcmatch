@@ -26,6 +26,17 @@ from mhcmatch import Store  # noqa: E402
 _LABEL = {"mhc1": "MHCI", "mhc2": "MHCII"}
 
 
+def _locus(a):
+    """Coarse MHC locus of an allele name (HLA-A/B/C; class-II DRB/DQB/DPB/...; mouse H-2)."""
+    if a.startswith("HLA-D"):
+        return a.split("*")[0].replace("HLA-", "")[:3]  # DRB / DQB / DQA / DPB / DPA
+    if a.startswith("HLA-"):
+        return a[:5]                                     # HLA-A / HLA-B / HLA-C
+    if a.startswith(("H-2", "I-")):
+        return "H-2"
+    return "other"
+
+
 def _corpus(refcount):
     """Amino-acid frequency and length distribution over all presented peptides."""
     aa, lens = Counter(), Counter()
@@ -169,8 +180,11 @@ def main():
     ap.add_argument("--cap", type=int, default=20, help="single-split max held-out/allele (--sweep)")
     ap.add_argument("--metric", default="blosum", choices=("blosum", "identity"))
     ap.add_argument("--dpi", action="store_true", help="DPI-prune the per-anchor groove weights")
-    ap.add_argument("--weights", default="learned", choices=("learned", "structural", "uniform"))
+    ap.add_argument("--weights", default="learned",
+                    choices=("learned", "structural", "blend", "uniform"))
     ap.add_argument("--ranker", default="anchor", choices=("anchor", "hybrid"))
+    ap.add_argument("--by-locus", action="store_true",
+                    help="per-locus h/tau calibration grid (single split) -> results/locus_<cls>_<sp>.md")
     ap.add_argument("--random", type=int, default=10000,
                     help="corpus-AA random peptides for the non-binder baseline AUROC (0 = off)")
     ap.add_argument("--sweep", action="store_true", help="single-split h/tau grid for tuning")
@@ -182,6 +196,41 @@ def main():
     rng = random.Random(args.seed)
     sp = {"human": "HomoSapiens", "mouse": "MusMusculus"}[args.species]
     refcount = load(os.path.join(args.pmhc_dir, f"pmhc_{args.tier}.tsv.gz"), args.cls, sp)
+
+    if args.by_locus:  # per-locus h/tau calibration on a single split
+        test, pep_alleles = _split(refcount, args.heldout, args.cap, rng)
+        grid = [(h, tau) for h in (0.5, 1.0, 2.0, 4.0) for tau in (5, 10, 20)]
+        os.makedirs(args.out, exist_ok=True)
+        rpath = os.path.join(args.out, f"locus_{args.cls}_{args.species}.md")
+        lines = [f"# per-locus h/tau calibration: {args.species} {_LABEL[args.cls]} ({args.tier}), "
+                 f"single split, metric={args.metric}, weights={args.weights}\n",
+                 "| locus | n_held | best h | best tau | top5 | rare recovery@5 |",
+                 "|---|---|---|---|---|---|"]
+        print(lines[0])
+        for loc in sorted({_locus(a) for a in test}):
+            lt = {a: ps for a, ps in test.items() if _locus(a) == loc}
+            nheld = sum(len(ps) for ps in lt.values())
+            if nheld < 20:  # too few held-out pMHCs to calibrate
+                continue
+            best = None
+            for h, tau in grid:
+                r = evaluate(refcount, args.cls, h, tau, args.metric, True, False, lt, pep_alleles,
+                             prune_dpi=args.dpi, ranker=args.ranker, weights=args.weights)
+                if not r:
+                    continue
+                a1, a5, rr, fr = _rates(r)
+                key = rr if rr == rr else a5  # rank by rareR@5, fall back to top5
+                if best is None or key > best[0]:
+                    best = (key, h, tau, a5, rr)
+            if best:
+                _, h, tau, a5, rr = best
+                row = f"| {loc} | {nheld} | {h} | {tau} | {a5:.3f} | {rr:.3f} |"
+                lines.append(row)
+                print(f"# {loc:<8} n={nheld:<5} best h={h} tau={tau}  top5={a5:.3f} rareR@5={rr:.3f}")
+        with open(rpath, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+        print(f"# wrote {rpath}")
+        return
 
     if args.sweep:  # single-split h/tau tuning grid (no CV)
         test, pep_alleles = _split(refcount, args.heldout, args.cap, rng)

@@ -86,9 +86,16 @@ diffusion model, and the downstream predictors.
   (`bench/bench_diffusion.py`): rare-allele held-out AUC 0.87→0.92 on the shortlist tier, frequent
   alleles neutral. Appendix §4. The shrunk null is now wired into `Store.restriction(diffuse=True)`
   as a binder gate/rescue (vote fraction still ranks; rare alleles with no neighbours get surfaced).
-  **Remaining (Phase 1):** per-locus `h`/`τ` calibration by cross-validated likelihood.
-- **Tuned thresholds**: per-class/species `alpha` and scope (`lo/hi`) from ROC/PR; **FWER/FDR over
-  proteome scans** (windows × panel). Appendix §3, §5.
+  **Per-locus `h`/`τ` calibration — measured** (`tune_diffusion.py --by-locus`): loci differ
+  (HLA-B tolerates wider `h=2`; HLA-A/C prefer `h=0.5`; most prefer `τ=5`), but single-split per-locus
+  rare sets are noisy, so the CV-global `h=2,τ=10` stays the default pending a validated CV-per-locus
+  grid (`bench/results/locus_*.md`). **Structural+learned weight blend — done** (`weights="blend"`,
+  empirical-Bayes prior); MHC-II recovery@5 0.462 ≈ 0.465 learned → class II needs more data, not a
+  better estimator.
+- **FWER/FDR over proteome scans — done**: `scan_protein(correction="bonferroni"|"bh")` controls the
+  family over the voted (window × allele) tests (CLI `scan --correction`); appendix §5.
+  **Allele-name resolution — done**: `resolve_allele()` maps messy input to the canonical key.
+  **Remaining:** per-class/species `alpha` and scope (`lo/hi`) tuned from ROC/PR.
 - **Cross-validated evaluation — done**: `bench/tune_diffusion.py` runs 5-fold, per-pMHC,
   promiscuity-aware (top-5 / recovery@5) CV with a 10k corpus-AA random non-binder baseline; results
   per panel in `bench/results/*.md`. MHC-I rare recovery@5 0.47→0.75 (shortlist) / 0.30→0.44 (full);

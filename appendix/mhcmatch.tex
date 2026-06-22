@@ -312,6 +312,14 @@ near-neutral, top-5 $\approx0.25$) and mouse is too few-allele to be conclusive 
 both are targets for the structure-based extension. Top-1 is \emph{not} the right yardstick here
 (promiscuity makes several alleles correct); top-5/recovery@5 is.
 
+\paragraph{Per-locus calibration.} A single global $(h,\tau)$ need not be optimal for every locus.
+A per-locus grid (\texttt{tune\_diffusion.py --by-locus}) shows the loci do differ---HLA-B tolerates
+wider borrowing ($h{=}2$) than HLA-A/C ($h{=}0.5$), and most prefer a weaker prior ($\tau{=}5$)---but
+the per-locus rare sets on a single split are small and the estimates noisy (HLA-A's apparent
+recovery@5 of $1.0$ is a tiny-sample artifact). We therefore keep the cross-validated global
+$h{=}2,\tau{=}10$ as the production default and treat validated per-locus tuning (a CV grid per locus,
+needing more data) as a calibration refinement rather than promoting single-split optima.
+
 \begin{figure}[ht]\centering
   \includegraphics[width=0.8\linewidth]{diffusion_auc.pdf}
   \caption{Held-out rank AUC for rare ($\le30$ peptides), medium ($31$--$199$) and frequent
@@ -478,7 +486,12 @@ substituting these \emph{structural} contact-frequency weights into the kernel
 pockets P1/P4/P6/P9 map to distinct $\alpha_1$+$\beta_1$ pseudosequence segments, and structural and
 learned weights give indistinguishable (and near-neutral) recovery@5 ($0.464$ vs $0.465$)---confirming
 that the small class-II diffusion gain is intrinsic to the harder class-II problem, not an artifact of
-how the groove weights are estimated.
+how the groove weights are estimated. A convex \emph{blend} (\texttt{weights="blend"}, structure as a
+prior on the learned weights, $\tfrac12$ structural $+\tfrac12$ learned, renormalized) is the
+principled empirical-Bayes choice when the learned weights are data-starved; on the current panels it
+gives indistinguishable recovery@5 ($0.462$ vs $0.465$ learned for MHC-II, 5-fold CV), reinforcing the
+same conclusion---more class-II ligand data, not a better weight estimator, is what the harder class
+needs.
 
 \begin{figure}[ht]\centering
   \begin{subfigure}{0.49\linewidth}\includegraphics[width=\linewidth]{pockets_mhc1_human.pdf}

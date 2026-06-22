@@ -35,10 +35,12 @@ class AnchorModel:
     """
 
     def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0,
-                 learn_weights=True, prune_dpi=False, weights="learned"):
+                 learn_weights=True, prune_dpi=False, weights="learned", blend_alpha=0.5):
         """``weights``: ``"learned"`` (per-anchor MI over the panel, default), ``"structural"``
-        (contact-frequency weights measured from pMHC structures, :func:`load_structural_weights`),
-        or ``"uniform"``. ``learn_weights=False`` forces uniform (kept for back-compat)."""
+        (contact-frequency weights from pMHC structures, :func:`load_structural_weights`),
+        ``"blend"`` (convex mix ``blend_alpha``*structural + (1-``blend_alpha``)*learned, mean-1
+        renormalized per anchor -- structure as a prior that regularizes the data-starved learned
+        weights, useful for class II), or ``"uniform"``. ``learn_weights=False`` forces uniform."""
         self.cls = cls
         if anchors is None:
             anchors = MHC1_ANCHORS if cls == "mhc1" else MHC2_ANCHORS
@@ -54,18 +56,39 @@ class AnchorModel:
             self.bg[j] = c
         if not learn_weights:
             weights = "uniform"
-        if weights == "structural":
-            w = load_structural_weights(cls)
-            w = {j: w[j] for j in self.anchors if j in w} or None
-        elif weights == "uniform":
-            w = None
-        else:
-            seqs = load_pseudo(cls)
-            w = {j: learn_anchor_weights(seqs, {normalize_allele(a): cc.most_common(1)[0][0]
-                 for a, cc in self.prefs[j].items() if cc}, prune_dpi=prune_dpi)
-                 for j in self.anchors}
+        self.weights_mode = weights
+        w = self._build_weights(weights, cls, prune_dpi, blend_alpha)
         self.ps = Pseudoseq(cls, h=h, weights=w)
         self._cache = {}
+
+    def _learned_weights(self, cls, prune_dpi):
+        seqs = load_pseudo(cls)
+        return {j: learn_anchor_weights(seqs, {normalize_allele(a): cc.most_common(1)[0][0]
+                for a, cc in self.prefs[j].items() if cc}, prune_dpi=prune_dpi)
+                for j in self.anchors}
+
+    def _build_weights(self, weights, cls, prune_dpi, blend_alpha):
+        if weights == "uniform":
+            return None
+        if weights == "structural":
+            sw = load_structural_weights(cls)
+            return {j: sw[j] for j in self.anchors if j in sw} or None
+        learned = self._learned_weights(cls, prune_dpi)
+        if weights == "learned":
+            return learned
+        if weights == "blend":  # structural prior + learned data, mean-1 renormalized per anchor
+            sw = load_structural_weights(cls)
+            out = {}
+            for j in self.anchors:
+                lj, sj = learned[j], sw.get(j)
+                if sj is None or len(sj) != len(lj):
+                    out[j] = lj
+                    continue
+                mix = [blend_alpha * sj[p] + (1 - blend_alpha) * lj[p] for p in range(len(lj))]
+                m = sum(mix) / len(mix)
+                out[j] = [x / m for x in mix] if m > 0 else lj
+            return out
+        raise ValueError(f"unknown weights {weights!r} (learned|structural|blend|uniform)")
 
     def _candidates(self, j):
         return list(self.prefs[j].keys())

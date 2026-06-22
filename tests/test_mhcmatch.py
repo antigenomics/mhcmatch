@@ -183,6 +183,19 @@ def test_proteome_source_lookup():
 
 
 # -- CLI ----------------------------------------------------------------------
+# -- structural+learned blended pocket weights (item 2) ----------------------
+def test_blend_weights_build_and_score():
+    import math
+
+    store = _make_store()
+    m = store.anchor_model("mhc1", weights="blend")
+    assert m.weights_mode == "blend"
+    for j in m.anchors:                       # blended weights stay mean-1 normalized per anchor
+        w = m.ps._w(j)
+        assert abs(sum(w) / len(w) - 1.0) < 1e-6
+    assert math.isfinite(m.score("ALAEEEECV", "HLA-A*02:01"))
+
+
 # -- allele-name resolution (item 7) -----------------------------------------
 def test_resolve_allele():
     from mhcmatch import resolve_allele
