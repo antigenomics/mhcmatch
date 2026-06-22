@@ -502,7 +502,7 @@ chain-pair---rather than a $\beta_2$m/chain-length heuristic, which fails becaus
 crystals are often domain-split; this yields $279$ MHC-I and $93$ MHC-II structures. For MHC-I the
 contacts recover the learned layout from physics alone---P2 contacts pseudosequence positions
 $\sim$7--8 (B-pocket), P$\Omega$ positions $\sim$15--17 (F-pocket), overlapping the learned maxima,
-as seen on a representative complex in Fig.~\ref{fig:structural}---and
+as seen on the representative class-I and class-II complexes in Fig.~\ref{fig:structural}---and
 substituting these \emph{structural} contact-frequency weights into the kernel
 (\texttt{weights="structural"}) gives near-identical rare-allele recovery@5 ($0.72$ vs $0.75$ learned,
 5-fold CV): a data-independent prior agreeing with the data-learned one. For MHC-II the four core
@@ -537,15 +537,20 @@ needs.
 \end{figure}
 
 \begin{figure}[ht]\centering
-  \includegraphics[width=0.72\linewidth]{structure3d.png}
-  \caption{The learned pockets on a real structure: a top-down view into the HLA-A*02:01 groove with
-  the influenza M1 peptide GILGFVFTL bound (PDB 1oga, oriented by \texttt{tcren orient}; histo.fyi
-  style---pale translucent surface + cartoon, peptide as sticks). Each groove residue is coloured by
-  the peptide anchor it lies closest to, using the same pocket palette as the per-pocket weights:
-  P1 (orange), P2/B-pocket (blue), P3 (light blue), P$\Omega{-}1$ (green), P$\Omega$/F-pocket
-  (vermillion). The buried primary anchors P2 and P$\Omega$ are labelled; their side chains plug into
-  the blue B-pocket and vermillion F-pocket that the structural contacts (\S\ref{sec:pockets}) and the
-  pruned MI weights (Fig.~\ref{fig:pockets}) both single out. \texttt{bench/structure3d.py} (PyMOL).}
+  \begin{subfigure}{0.49\linewidth}\includegraphics[width=\linewidth]{structure3d.png}
+    \caption{MHC-I: HLA-A*02:01 + GILGFVFTL (1oga)}\end{subfigure}\hfill
+  \begin{subfigure}{0.49\linewidth}\includegraphics[width=\linewidth]{structure3d_mhc2.png}
+    \caption{MHC-II: HLA-DR1 + HA${}_{306\text{--}318}$ (1fyt)}\end{subfigure}
+  \caption{The learned pockets on real structures: top-down views into the peptide-binding groove
+  (PDB 1oga / 1fyt, oriented by \texttt{tcren orient}; histo.fyi style---pale translucent surface +
+  cartoon, peptide as sticks). Each groove residue is coloured by the peptide anchor it lies closest
+  to, using the same pocket palette as the per-pocket weights; the buried primary anchors are
+  labelled (red). \textbf{(a)} The \emph{closed} class-I groove: P2 and P$\Omega$ plug into the blue
+  B-pocket and vermillion F-pocket that the structural contacts (\S\ref{sec:pockets}) and the pruned
+  MI weights (Fig.~\ref{fig:pockets}) both single out. \textbf{(b)} The \emph{open} class-II groove:
+  the longer peptide threads through and protrudes from both ends, with core anchors P1 (orange), P4
+  (green), P6 (purple) and P9 (vermillion) seating into their pockets. \texttt{bench/structure3d.py}
+  (PyMOL).}
   \label{fig:structural}
 \end{figure}
 
