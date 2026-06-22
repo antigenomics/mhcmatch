@@ -1,7 +1,9 @@
 # mhcmatch
 
+[![PyPI](https://img.shields.io/pypi/v/mhcmatch)](https://pypi.org/project/mhcmatch/)
 [![CI](https://github.com/antigenomics/mhcmatch/actions/workflows/ci.yml/badge.svg)](https://github.com/antigenomics/mhcmatch/actions/workflows/ci.yml)
 [![Docs](https://github.com/antigenomics/mhcmatch/actions/workflows/docs.yml/badge.svg)](https://antigenomics.github.io/mhcmatch/)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://pypi.org/project/mhcmatch/)
 [![License](https://img.shields.io/badge/license-GPLv3-green)](LICENSE)
 
 Peptide–MHC presentation, cross-reactivity, and motif tools — the applied peptide–MHC layer on top

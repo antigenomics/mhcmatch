@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mhcmatch"
-version = "0.0.1a0"
+version = "0.1.0"
 description = "Peptide-MHC presentation, cross-reactivity and motif tools on the seqtree substrate"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,7 +12,7 @@ license = { text = "GPL-3.0-or-later" }
 authors = [{ name = "ISALGO laboratory", email = "mikhail.shugay@gmail.com" }]
 keywords = ["MHC", "HLA", "epitope", "neoantigen", "immunology", "bioinformatics"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Programming Language :: Python :: 3",

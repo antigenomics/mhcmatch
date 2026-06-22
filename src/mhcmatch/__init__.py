@@ -10,6 +10,8 @@
 
 Theory: ``appendix/mhcmatch.tex``. Roadmap: ``ROADMAP.md``.
 """
+from importlib.metadata import PackageNotFoundError, version as _version
+
 from . import logo, search
 from .diffusion import AnchorModel
 from .proteome import Proteome, SourceHit
@@ -31,4 +33,10 @@ __all__ = [
     "load_pseudo",
     "normalize_allele",
     "logo",
+    "__version__",
 ]
+
+try:
+    __version__ = _version("mhcmatch")
+except PackageNotFoundError:  # running from a source tree without an install
+    __version__ = "0.1.0"
