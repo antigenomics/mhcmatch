@@ -320,6 +320,14 @@ recovery@5 of $1.0$ is a tiny-sample artifact). We therefore keep the cross-vali
 $h{=}2,\tau{=}10$ as the production default and treat validated per-locus tuning (a CV grid per locus,
 needing more data) as a calibration refinement rather than promoting single-split optima.
 
+\paragraph{Zero-shot transfer (leave-one-allele-out).} The sharpest test of the rescue removes
+\emph{every} peptide of a target allele from training and scores its held-out peptides from groove
+neighbours alone (\texttt{bench/transfer.py}). On $30$ human MHC-I alleles the diffused model reaches
+real-vs-random AUROC $0.95$ with \emph{no} data for the target allele (the data-free raw model is
+uninformative, $0.22$), and transfer stays strong even when the nearest trained groove neighbour is
+only moderately similar ($0.94$ at kernel $<0.5$ vs $0.96$ at $\ge0.5$): a genuinely novel allele is
+predicted purely from its pseudosequence---the limiting case of the rare-allele rescue.
+
 \begin{figure}[ht]\centering
   \includegraphics[width=0.8\linewidth]{diffusion_auc.pdf}
   \caption{Held-out rank AUC for rare ($\le30$ peptides), medium ($31$--$199$) and frequent
@@ -403,7 +411,11 @@ Fig.~\ref{fig:promiscuity} renders this as an allele network---edges are the MI-
 BLOSUM-scored kernel~\eqref{eq:kernel} above a soft/hard threshold, communities are greedy-modularity
 clusters~\cite{Clauset2004}---which recover the classical HLA supertypes (A2, A3, B7, B27, B44, \dots), the
 structural basis of cross-allele promiscuity. Mouse panels are few and groove-divergent, so they
-form no such communities.
+form no such communities. The kernel communities are well separated (partition modularity $Q=0.94$
+human MHC-I, $0.90$ class~II) and respect allele structure---about half of same-two-field-family
+allele pairs co-cluster, the remainder splitting only because distant family members fall below the
+edge threshold (\texttt{bench/promiscuity\_graph.py}); a quantitative map to a curated supertype set
+is the natural external-data validation.
 
 \begin{figure}[ht]\centering
   \includegraphics[width=0.92\linewidth]{promiscuity_mhc1_human.pdf}

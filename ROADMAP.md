@@ -104,6 +104,12 @@ diffusion model, and the downstream predictors.
   confusion with the binder gate calibrated to a 5% non-binder FPR. Locus precision 0.62–0.65 when the
   model commits; a single panel-max gate can't both reject non-binders and keep rare positives (top-1
   recall 0.17–0.32 at 5% FPR) → motivates the global `E_glob` gate. Appendix §8, Fig. confusion.
+- **Zero-shot transfer — done** (`bench/transfer.py`): leave-one-allele-out (remove ALL of a target
+  allele's peptides) → diffused real-vs-random AUROC **0.95** with no own data (raw 0.22); strong even
+  for distant neighbours (0.94 at kernel <0.5). The limiting case of the rare-allele rescue; appendix §4.
+- **Community coherence — done** (`bench/promiscuity_graph.py`): kernel communities have modularity
+  Q=0.94 (MHC-I) / 0.90 (MHC-II) and respect allele families; curated supertype-table comparison is
+  the external-data extension. Appendix §4.
 - **Class-II promiscuity**: multi-label restriction + global `E_glob` non-binder filter; pseudoseq
   pooling for thin class-II/mouse panels.
 - **Allele-name normalization** across pmhc ↔ pseudosequence ↔ user input — class-II locus-aware

@@ -87,6 +87,30 @@ def detect_communities(G):
     return list(nx.community.greedy_modularity_communities(G, weight="weight"))
 
 
+def _family(a):
+    """Two-field allele family, e.g. 'HLA-A*02:01' -> 'HLA-A*02' (the level supertypes group above)."""
+    return a.split(":")[0]
+
+
+def community_coherence(G, comms):
+    """(modularity Q, family cohesion). ``Q``: standard partition modularity. ``family cohesion``:
+    fraction of same-two-field-family allele PAIRS that land in the same community -- same-family
+    alleles are groove-near, so a structurally sound clustering keeps them together (a citation-free
+    proxy; mapping the communities to the curated Sidney supertype set needs that external table)."""
+    q = nx.community.modularity(G, comms, weight="weight") if G.number_of_edges() else float("nan")
+    comm_of = {n: i for i, c in enumerate(comms) for n in c}
+    fam = defaultdict(list)
+    for n in G.nodes():
+        fam[_family(n)].append(n)
+    same = tot = 0
+    for members in fam.values():
+        for i in range(len(members)):
+            for j in range(i + 1, len(members)):
+                tot += 1
+                same += comm_of[members[i]] == comm_of[members[j]]
+    return q, (same / tot if tot else float("nan"))
+
+
 def to_dot(G, comms, title):
     comm_of = {n: i for i, c in enumerate(comms) for n in c}
     out = ["graph G {",
@@ -153,6 +177,10 @@ def main():
                                 os.path.join(out, stem + ".dot")], check=True)
                 print(f"# {clabel} {species} ({metric}): {G.number_of_nodes()} alleles, "
                       f"{G.number_of_edges()} edges, {ncc} communities -> {stem}.pdf")
+                if metric == "kernel":
+                    q, coh = community_coherence(G, comms)
+                    print(f"#   community structure: modularity Q={q:.3f}, "
+                          f"family cohesion={coh:.3f} (same-2-field-family pairs co-clustered)")
             # Jaccard agreement of edge sets between predicted (kernel) and observed (shared),
             # restricted to alleles present in both graphs.
             common = set(graphs["kernel"].nodes()) & set(graphs["shared"].nodes())
