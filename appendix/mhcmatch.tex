@@ -227,6 +227,17 @@ costs $\approx 1$), evaluated through \texttt{seqtree}'s substitution matrix
 $\texttt{X}$ are skipped. Replacing $\delta$ with the identity indicator $\one[x\neq y]$ gives the
 plain Hamming variant, and $w_j\equiv 1$ a single un-factored kernel.
 
+\paragraph{Generative alternative (Fisher kernel).} The kernel can instead be read off an explicit
+generative groove model---a per-position multinomial with the MI weights~\eqref{eq:mi} as position
+relevance (the Bayes-net skeleton left by DPI pruning, \S\ref{sec:pockets})---whose Fisher score
+$U_a[p,r]=w_p\,(\one[s_a[p]{=}r]-\bar p_p(r))$ yields a Fisher kernel $\langle U_a,U_b\rangle$.
+Empirically this generative kernel tracks the BLOSUM one closely (top-5 neighbour-set Jaccard
+$0.76$) yet predicts held-out modal anchors no better (leave-one-allele-out accuracy $0.43$ vs $0.46$
+for BLOSUM; \texttt{bench/fisher\_kernel.py}). Because the BLOSUM Gram distance is itself a
+substitution log-odds, $\exp(-\delta)$ already \emph{is} a likelihood kernel---one with biochemical
+substitution structure and no panel fit---so we keep it as the default and treat the Fisher kernel as
+a validated equivalent rather than an improvement.
+
 \begin{definition}[Learned per-anchor relevance]\label{def:weights}
 Let $A_j$ be the allele's modal residue at peptide anchor $j$ (from its presented set) and $S_p$ the
 groove residue at pseudosequence position $p$, both viewed as categorical variables over the allele

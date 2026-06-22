@@ -169,8 +169,12 @@ groove positions). Worth evaluating against:
   β2m's size, class-II crystals are domain-split) → 279 MHC-I + 93 MHC-II. MHC-I structural recovers
   learned MI (P2↔7-8, PΩ↔15-17) and matches rare recovery@5 (0.72 vs 0.75 learned, CV); MHC-II
   structural ≈ learned and both near-neutral (0.464 vs 0.465) — the small class-II gain is intrinsic,
-  not weight-limited. Bench env: `environment.yml` (`mhcmatch-bench`). **Remaining:** a learned
-  embedding / Bayes-net Fisher kernel.
+  not weight-limited. Bench env: `environment.yml` (`mhcmatch-bench`).
+- **Generative Fisher kernel — explored** (`bench/fisher_kernel.py`): a per-position multinomial
+  groove model (MI weights = the DPI Bayes-net relevance) gives a Fisher kernel that tracks BLOSUM
+  closely (top-5 neighbour Jaccard 0.76) but predicts modal anchors no better (LOO 0.43 vs 0.46
+  BLOSUM). Since the BLOSUM Gram distance is already a substitution log-odds, `exp(-δ)` *is* a
+  likelihood kernel — BLOSUM stays the default; Fisher is a validated equivalent, not a win. Appendix §4.
 
 **Tooling to evaluate when figures/logos matter:**
 - **[kuva](https://github.com/Psy-Fer/kuva)** — Rust scientific plotting library (SVG/PNG/PDF, ~60
