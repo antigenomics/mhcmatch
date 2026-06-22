@@ -272,7 +272,12 @@ from the shrunk anchor marginals: assuming approximate position independence in 
 $\widehat{\Pzero}(\sigma_A\mid a)\approx\prod_{j}\hat\theta_{a,j}(\sigma_{A_j})$, which feeds a usable
 $\widehat E$ in~\eqref{eq:forward}--\eqref{eq:conf} where the raw per-allele control was too small.
 The estimator is a smoothed null: its bias is controlled by the borrowed mass on dissimilar alleles
-(Prop.~\ref{prop:bv}), vanishing as the panel around $a$ becomes dense and groove-tight.
+(Prop.~\ref{prop:bv}), vanishing as the panel around $a$ becomes dense and groove-tight. In the
+production reverse problem (\texttt{Store.restriction}, \texttt{diffuse=True}) the shrunk anchor
+log-odds is used as the binder \emph{gate}---it scores every requested allele, surfacing rare alleles
+with no signature neighbours---while the vote fraction~(Def.~\ref{def:reverse}) still \emph{ranks},
+since per-peptide anchor likelihood is diluted for broad, well-sampled alleles and is not itself a
+calibrated cross-allele ranking statistic.
 
 \subsection{Clustering and promiscuity}
 Thresholding $K_j$ (or the un-factored $K$) yields single-linkage allele \emph{clusters} of

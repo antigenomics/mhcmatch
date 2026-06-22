@@ -40,6 +40,7 @@ class Restriction:
     enrichment: float  # -log10 binomial-tail p vs panel background -- confidence
     n_votes: int
     binder: bool
+    anchor_score: float | None = None  # diffused anchor log-odds (set only when diffuse=True)
 
     def __iter__(self):
         return iter((self.allele, self.vote, self.enrichment, self.binder))
@@ -147,6 +148,7 @@ class Store:
 
     def __init__(self):
         self._panel = {"mhc1": _Panel("mhc1"), "mhc2": _Panel("mhc2")}
+        self._am = {}  # cls -> AnchorModel (lazy, for diffuse=True)
 
     # -- construction ---------------------------------------------------------
     @classmethod
@@ -206,27 +208,47 @@ class Store:
             alleles = [alleles]
         return [a for a in alleles if a in panel.freq]
 
-    def restriction(self, peptide, cls=None, alleles="all", top=10, alpha=0.05):
+    def _anchor_model(self, cls):
+        if cls not in self._am:
+            self._am[cls] = self.anchor_model(cls)
+        return self._am[cls]
+
+    def restriction(self, peptide, cls=None, alleles="all", top=10, alpha=0.05, diffuse=False):
         """Rank presenting alleles for ``peptide`` (vote fraction), flag binders (enrichment).
 
         ``alleles``: ``"all"``, a single allele, or a list. ``alpha``: per-allele significance for
         the non-binder flag (binder iff binomial-tail p <= alpha and the allele got votes).
-        Returns ``[]`` when the peptide has no presentation-signature neighbours (treat as unknown).
+
+        With ``diffuse=True`` the vote fraction still **ranks** (it is robust across allele sample
+        sizes), but the diffusion-shrunk anchor log-odds (:class:`mhcmatch.diffusion.AnchorModel`)
+        is reported as ``anchor_score`` and used to **gate/rescue**: an allele is a binder if it is
+        vote-significant *or* its anchors are plausible (``anchor_score > 0``). This surfaces rare
+        alleles that have no signature neighbours (where the pure vote method returns nothing), while
+        keeping the well-calibrated vote ranking for well-sampled alleles. ``anchor_score`` breaks
+        ties among zero-vote alleles. Without diffusion, returns ``[]`` when there are no neighbours.
         """
         peptide = peptide.strip().upper()
         cls = cls or infer_class(peptide)
         panel = self._panel[cls]
         tally = panel.tally(peptide)
-        if tally is None:
+        if tally is None and not diffuse:
             return []
-        n = sum(tally.values())
+        n = sum(tally.values()) if tally else 0
         thr = -math.log10(alpha)
+        am = self._anchor_model(cls) if diffuse else None
         out = []
         for a in self._allele_set(panel, alleles):
-            k = tally.get(a, 0)
-            enr = -math.log10(max(_binom_sf(k, n, panel.freq[a]), 1e-300)) if k else 0.0
-            out.append(Restriction(a, k / n, enr, k, enr >= thr and k > 0))
-        out.sort(key=lambda r: (r.vote, r.enrichment), reverse=True)
+            k = tally.get(a, 0) if tally else 0
+            vote = k / n if n else 0.0
+            enr = -math.log10(max(_binom_sf(k, n, panel.freq[a]), 1e-300)) if (k and n) else 0.0
+            if diffuse:
+                s = am.score(peptide, a)
+                binder = (enr >= thr and k > 0) or s > 0.0
+                out.append(Restriction(a, vote, enr, k, binder, round(s, 3)))
+            else:
+                out.append(Restriction(a, vote, enr, k, enr >= thr and k > 0))
+        out.sort(key=(lambda r: (r.vote, r.anchor_score)) if diffuse
+                 else (lambda r: (r.vote, r.enrichment)), reverse=True)
         return out[:top]
 
     def is_binder(self, peptide, allele, cls=None, alpha=0.05):

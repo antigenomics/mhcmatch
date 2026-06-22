@@ -26,6 +26,9 @@ logo = ["logomaker", "matplotlib"]   # only needed to render logos; PWM/bits com
 pmhc = ["pandas"]                    # convenience IO for large tables
 docs = ["sphinx", "pydata-sphinx-theme"]
 
+[project.scripts]
+mhcmatch = "mhcmatch.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/antigenomics/mhcmatch"
 Repository = "https://github.com/antigenomics/mhcmatch"

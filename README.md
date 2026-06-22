@@ -67,6 +67,17 @@ am.score("NLVPMVATV", "HLA-A*02:01")     # anchor log-odds; am.score(..., raw=Tr
 mhcmatch.logo.motif(store, "HLA-A*02:01", "mhc1")
 ```
 
+## Command line
+
+```fish
+mhcmatch decompose NLVPMVATV                                  # anchor / TCR-facing split (no data)
+set -x MHCMATCH_PMHC /path/to/pmhc_data                       # or pass --pmhc to each command
+mhcmatch restriction NLVPMVATV --tier shortlist --diffuse     # ranked alleles (rare-allele-aware)
+mhcmatch scan my_protein.fasta --allele 'HLA-A*02:01'         # presented windows
+mhcmatch source MKTAYIAKW --proteome UP000005640_9606.fasta.gz
+mhcmatch logo 'HLA-A*02:01'
+```
+
 ## Data
 
 - **Reference ligands:** `isalgo/pmhc_data` (full / shortlist tiers) — pass the path to
