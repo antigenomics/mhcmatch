@@ -191,11 +191,15 @@ B-pocket sets P2, the F-pocket sets P$\Omega$). We therefore use a \emph{per-anc
 than one global allele distance. For anchor $j$ let $w_j\in\R_{\ge0}^{34}$ weight the groove
 positions, and define
 \begin{equation}\label{eq:kernel}
-  d_j(a,b)=\sum_{p=1}^{34} w_{j,p}\,\one[s_{a,p}\neq s_{b,p}],\qquad
+  d_j(a,b)=\sum_{p=1}^{34} w_{j,p}\,\delta(s_{a,p}, s_{b,p}),\qquad
   K_j(a,b)=\exp\!\big(-d_j(a,b)/h_j\big),
 \end{equation}
-a weighted-Hamming kernel with bandwidth $h_j>0$ (ambiguous positions $\texttt{X}$ are skipped).
-Setting $w_j\equiv 1$ recovers a single un-factored kernel.
+where $\delta(x,y)=s(x,x)+s(y,y)-2 s(x,y)$ is the BLOSUM62 Gram distance (zero on identity, small for
+conservative substitutions, large for dissimilar residues; normalized so an average substitution
+costs $\approx 1$), evaluated through \texttt{seqtree}'s substitution matrix
+(\texttt{SubstitutionMatrix.penalty}, exposed for this use). Bandwidth $h_j>0$; ambiguous positions
+$\texttt{X}$ are skipped. Replacing $\delta$ with the identity indicator $\one[x\neq y]$ gives the
+plain Hamming variant, and $w_j\equiv 1$ a single un-factored kernel.
 
 \begin{definition}[Learned per-anchor relevance]\label{def:weights}
 Let $A_j$ be the allele's modal residue at peptide anchor $j$ (from its presented set) and $S_p$ the
@@ -249,15 +253,18 @@ neighbour mean $m_{a,j}=\big(\sum_{b}K_j(a,b)n_b\theta_{b,j}\big)/\sum_b K_j(a,b
 \end{equation}
 so borrowing adds at most $\tau$ pseudocounts and vanishes automatically as $n_a$ grows
 (Prop.~\ref{prop:bv}). Empirically (\texttt{bench/bench\_diffusion.py}; human, allele-split
-held-out rank AUC, $\tau=10$, $h=2$, the per-allele score being the anchor log-odds over the N/C
-pocket footprint $\{$P1,P2,P3,P$(\Omega{-}1)$,P$\Omega\}$) the diffusion lifts the AUC of \emph{rare}
-MHC-I alleles ($\le 30$ peptides) from $0.85$ to $0.94$ on the high-confidence ($\ge2$-publication)
-set while leaving \emph{frequent} alleles unchanged ($0.975\!\to\!0.975$); on the noisier full set
-the rare-allele gain persists ($+0.06$) and frequent alleles are never harmed
-(Fig.~\ref{fig:diffauc}). The richer pocket footprint matters: with the two primary anchors alone
-($\{$P2,P$\Omega\}$) the full-set rare gain is only $+0.003$, whereas the auxiliary pocket-proximal
-positions make per-allele estimation sparser---so diffusion has more to rescue and the gain grows to
-$+0.06$. The data-rescue is safe: it never lowers a well-sampled allele's AUC.
+held-out rank AUC with the BLOSUM-scored, MI-weighted kernel~\eqref{eq:kernel}, $\tau=10$, $h=2$, the
+per-allele score being the anchor log-odds over the N/C pocket footprint
+$\{$P1,P2,P3,P$(\Omega{-}1)$,P$\Omega\}$) the diffusion lifts the AUC of \emph{rare} MHC-I alleles
+($\le 30$ peptides) from $0.82$ to $0.94$ on the high-confidence ($\ge2$-publication) set while
+leaving \emph{frequent} alleles unchanged ($0.975\!\to\!0.975$); on the noisier full set the
+rare-allele gain is $+0.06$ and frequent alleles are never harmed (Fig.~\ref{fig:diffauc}). Stats are
+computed fairly: held-out peptides are excluded from \emph{every} allele's training set, so an
+identical co-presented copy cannot leak into a rare allele's score through diffusion (this lowers the
+raw baseline and \emph{widens} the honest gain). The richer pocket footprint matters: with the two
+primary anchors alone ($\{$P2,P$\Omega\}$) the full-set rare gain nearly vanishes, whereas the
+auxiliary pocket-proximal positions make per-allele estimation sparser---so diffusion has more to
+rescue. The data-rescue is safe: it never lowers a well-sampled allele's AUC.
 
 \begin{figure}[ht]\centering
   \includegraphics[width=0.8\linewidth]{diffusion_auc.pdf}
@@ -329,6 +336,38 @@ functionally similar alleles (\texttt{Pseudoseq.cluster}). A peptide presented a
 \emph{promiscuous}; its promiscuity is the spread of its positive alleles over the clustering, and
 the cluster is the natural unit over which to pool nulls when per-allele data are thin (especially
 class~II). This is the principled cross-allele similarity that the substrate omits.
+Fig.~\ref{fig:promiscuity} renders this as an allele network---edges are the MI-weighted,
+BLOSUM-scored kernel~\eqref{eq:kernel} above a soft/hard threshold, communities are greedy-modularity
+clusters~\cite{Clauset2004}---which recover the classical HLA supertypes (A2, A3, B7, B27, B44, \dots), the
+structural basis of cross-allele promiscuity. Mouse panels are few and groove-divergent, so they
+form no such communities.
+
+\begin{figure}[ht]\centering
+  \includegraphics[width=0.92\linewidth]{promiscuity_mhc1_human.pdf}
+  \caption{Human MHC-I allele network: nodes are alleles (size $\propto$ presented-set), edges the
+  MI-weighted BLOSUM groove kernel~\eqref{eq:kernel} (thin $\ge0.25$, bold $\ge0.5$), dashed boxes
+  the greedy-modularity communities. The communities recover known HLA-I supertypes. Mouse and
+  class-II panels are generated likewise (\texttt{bench/promiscuity\_graph.py}).}
+  \label{fig:promiscuity}
+\end{figure}
+
+The kernel induces an \emph{allele similarity network} (Fig.~\ref{fig:promiscuity}): nodes are
+alleles, edges join pairs with $K\ge$ a soft threshold (bold above a hard threshold), and greedy
+modularity~\cite{Clauset2004} recovers communities. On human MHC-I these communities reproduce the
+classical HLA supertypes (the A2, A3, A24, B7, B27, B44 groups), giving a data-driven, sequence-only
+account of the cross-allele promiscuity that lets one peptide be presented across a supertype. Mouse
+panels are small and the laboratory H-2 alleles are mutually divergent, so they form few or no
+communities --- consistent with the thin, scattered mouse panels noted above. Rendered with
+Graphviz; \texttt{bench/promiscuity\_graph.py}.
+
+\begin{figure}[ht]\centering
+  \includegraphics[width=0.92\linewidth]{promiscuity_mhc1_human.pdf}
+  \caption{Human MHC-I allele similarity / promiscuity network: nodes are alleles (size $\propto$
+  $\log$ presented-set size), edges are pseudosequence-kernel similarity (thin above the soft
+  threshold, bold above the hard threshold), dashed boxes are greedy-modularity communities. The
+  communities recover the classical HLA-I supertypes. \texttt{bench/promiscuity\_graph.py}.}
+  \label{fig:promiscuity}
+\end{figure}
 
 \subsection{Per-pocket decomposition (class II)}\label{sec:pockets}
 The anchor-factored weights~\eqref{eq:mi} make the pocket structure explicit. For each MHC-II core
@@ -435,8 +474,13 @@ a roadmap Phase-2 milestone specified by this subsection.
 \section{Benchmark and evaluation methodology}\label{sec:bench}
 We evaluate as a per-(peptide, allele) binary task. \emph{Splits} are by allele \emph{and} by
 peptide: held-out alleles test cross-allele generalization (and the diffusion model of
-\S\ref{sec:diffusion}), held-out peptides within an allele test within-allele recall; clonotype/
-peptide duplicates are collapsed before splitting to prevent leakage. \emph{Metrics} are ROC-AUC,
+\S\ref{sec:diffusion}), held-out peptides within an allele test within-allele recall; peptide
+duplicates are collapsed before splitting, and crucially a held-out peptide is excluded from
+\emph{every} allele's training set (not just its own), so an identical co-presented copy cannot leak
+into a score---in particular through cross-allele diffusion. Equivalently, all matching counts are
+\emph{punctured}: exact-identity hits are dropped, never rewarded (mirroring the $n^{>}$ counts of
+the \texttt{seqtree} appendix). This lowers raw baselines but is the only fair measure of
+generalization. \emph{Metrics} are ROC-AUC,
 PR-AUC against the prevalence baseline, top-1 accuracy, and a real-vs-random noise-rejection AUROC
 (the non-binder filter). \emph{Comparison}: against NetMHCpan-4.1 and NetMHCIIpan-4.0
 \cite{Reynisson2020}, MixMHCpred~\cite{BassaniSternberg2017}, and MixMHC2pred~\cite{Racle2019} on

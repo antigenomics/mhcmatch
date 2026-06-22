@@ -80,14 +80,21 @@ def run(pmhc, cls="mhc1", species="HomoSapiens", rare_min=4, rare_max=30, freq_m
               f"{sum(len(p) for p in by_allele.values())} peptides; {len(rare)} rare "
               f"[{rare_min}-{rare_max}] / {len(freq)} frequent (pseudo-matched); anchors={anchors}")
 
-    test, train_recs = {}, []
-    for a, p in by_allele.items():
-        peps = list(p)
+    # Hold out a fraction of each evaluated allele's peptides as positives, then exclude those
+    # exact peptides from EVERY allele's training set -- so an identical co-presented copy cannot
+    # leak into a rare allele's score via cross-allele diffusion (fair stats, no identity overfit).
+    test = {}
+    for a in by_allele:
         if a in eval_alleles:
+            peps = list(by_allele[a])
             rng.shuffle(peps)
-            k = max(1, int(heldout * len(peps)))
-            test[a], peps = peps[:k], peps[k:]
-        for e in peps:
+            test[a] = peps[: max(1, int(heldout * len(peps)))]
+    held_out = {e for ps in test.values() for e in ps}
+    train_recs = []
+    for a, p in by_allele.items():
+        for e in p:
+            if e in held_out:
+                continue
             w = min(refcount[a][e], weight_cap) if weighted else 1.0
             train_recs.append({"epitope": e, "mhc_a": a, "mhc_class": label, "weight": w})
     store = Store.from_records(train_recs)

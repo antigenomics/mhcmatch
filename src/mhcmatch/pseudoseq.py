@@ -23,8 +23,15 @@ _LEN = 34
 
 
 def normalize_allele(a: str) -> str:
-    """pmhc ``'HLA-A*02:01'`` -> pseudosequence-FASTA ``'HLA-A02:01'`` (drop the ``*``)."""
-    return a.replace("*", "")
+    """pmhc allele name -> pseudosequence-FASTA key.
+
+    Drops the ``*`` (``'HLA-A*02:01'`` -> ``'HLA-A02:01'``) and repairs the mouse H-2 dash
+    (pmhc ``'H-2Kb'`` -> FASTA ``'H-2-Kb'``).
+    """
+    a = a.replace("*", "")
+    if a.startswith("H-2") and len(a) > 3 and a[3] != "-":  # mouse: 'H-2Kb' -> 'H-2-Kb'
+        a = "H-2-" + a[3:]
+    return a
 
 
 def class2_key(mhc_a: str, mhc_b: str = "") -> str:
@@ -36,6 +43,8 @@ def class2_key(mhc_a: str, mhc_b: str = "") -> str:
     input is returned unchanged (mouse H-2 and fallbacks).
     """
     b = (mhc_b or "").strip()
+    if mhc_a.startswith("I-"):                        # mouse: 'I-Ab' / 'I-Ek' -> FASTA 'H-2-IAb'
+        return "H-2-" + mhc_a.replace("-", "")
     if "DRB" in b:                                   # DR: beta-only, underscore form
         beta = b[4:] if b.startswith("HLA-") else b  # drop the HLA- prefix
         return beta.replace("*", "_").replace(":", "")
@@ -61,9 +70,43 @@ def load_pseudo(cls: str) -> dict:
 
 
 def _weighted_hamming(s: str, t: str, w) -> float:
-    """Sum of weights at mismatching, non-ambiguous positions."""
+    """Sum of weights at mismatching, non-ambiguous positions (identity metric)."""
     return sum(w[i] for i in range(_LEN)
                if s[i] != t[i] and s[i] != "X" and t[i] != "X")
+
+
+_AAU = "ACDEFGHIKLMNPQRSTVWY"
+
+
+@lru_cache(maxsize=1)
+def _blosum():
+    """seqtree's BLOSUM62 matrix and the mean Gram penalty over distinct AA pairs.
+
+    Lazy (not at import) so docs autodoc can mock ``seqtree``. The mean normalizes the penalty
+    so an *average* substitution costs ~1 -- comparable to the identity (Hamming) metric, keeping
+    the bandwidth ``h`` and edge thresholds on the same scale across metrics.
+    """
+    import seqtree
+
+    m = seqtree.SubstitutionMatrix.blosum62()
+    n = len(_AAU)
+    mean = sum(m.penalty(a, b) for a in _AAU for b in _AAU if a != b) / (n * (n - 1))
+    return m, mean
+
+
+@lru_cache(maxsize=None)
+def _pen(a: str, b: str) -> float:
+    """Normalized BLOSUM62 Gram-distance penalty between two residues (0 on identity, X skipped)."""
+    if a == b or a == "X" or b == "X":
+        return 0.0
+    m, mean = _blosum()
+    return m.penalty(a, b) / mean
+
+
+def _weighted_blosum(s: str, t: str, w) -> float:
+    """Weighted sum of per-position BLOSUM Gram penalties (conservative subs cost less)."""
+    return sum(w[i] * _pen(s[i], t[i]) for i in range(_LEN)
+               if s[i] != "X" and t[i] != "X")
 
 
 def mutual_information(xs, ys) -> float:
@@ -96,13 +139,16 @@ def learn_anchor_weights(pseudo_seqs: dict, anchor_residue: dict) -> list:
 class Pseudoseq:
     """Allele-similarity kernel and diffusion over groove pseudosequences for one MHC class."""
 
-    def __init__(self, cls, h=2.0, weights=None):
+    def __init__(self, cls, h=2.0, weights=None, metric="blosum"):
         """``h``: kernel bandwidth. ``weights``: per-position list (one kernel) or
-        ``{anchor: [34 weights]}`` (anchor-factored, from :func:`learn_anchor_weights`)."""
+        ``{anchor: [34 weights]}`` (anchor-factored, from :func:`learn_anchor_weights`).
+        ``metric``: ``"blosum"`` (default) scores each position by the BLOSUM62 Gram distance
+        (conservative substitutions cost less); ``"identity"`` counts plain mismatches."""
         self.cls = cls
         self.seqs = load_pseudo(cls)
         self.h = h
         self.weights = weights
+        self.metric = metric
 
     def _w(self, anchor=None):
         if isinstance(self.weights, dict):
@@ -117,7 +163,8 @@ class Pseudoseq:
         sa, sb = self._lookup(a), self._lookup(b)
         if sa is None or sb is None:
             return 0.0
-        return math.exp(-_weighted_hamming(sa, sb, self._w(anchor)) / self.h)
+        dist = _weighted_blosum if self.metric == "blosum" else _weighted_hamming
+        return math.exp(-dist(sa, sb, self._w(anchor)) / self.h)
 
     def neighbors(self, allele, candidates=None, anchor=None, top=10, min_k=0.0):
         """``[(allele, kernel), ...]`` most groove-similar to ``allele`` (self excluded)."""

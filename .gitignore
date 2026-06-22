@@ -14,9 +14,10 @@ data/proteomes/
 *.fasta
 *.fasta.gz
 
-# gnuplot figure intermediates (keep the generated .pdf; regenerate via bench/make_figures.py)
+# figure intermediates (keep the generated .pdf; regenerate via bench/*.py)
 appendix/*.dat
 appendix/*.gp
+appendix/*.dot
 
 # LaTeX build artifacts (keep .tex, .bib, .pdf)
 appendix/*.aux

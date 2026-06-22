@@ -18,13 +18,14 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
-dependencies = ["seqtree>=0.0.4a0", "numpy"]
+dependencies = ["seqtree>=0.1.0", "numpy"]
 
 [project.optional-dependencies]
 test = ["pytest>=7.4"]
 logo = ["logomaker", "matplotlib"]   # only needed to render logos; PWM/bits compute is numpy-only
 pmhc = ["pandas"]                    # convenience IO for large tables
 docs = ["sphinx", "pydata-sphinx-theme"]
+viz = ["networkx"]                   # allele similarity / promiscuity graph (needs Graphviz `dot`)
 
 [project.scripts]
 mhcmatch = "mhcmatch.cli:main"
