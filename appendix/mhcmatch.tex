@@ -267,6 +267,18 @@ primary anchors alone ($\{$P2,P$\Omega\}$) the full-set rare gain nearly vanishe
 auxiliary pocket-proximal positions make per-allele estimation sparser---so diffusion has more to
 rescue. The data-rescue is safe: it never lowers a well-sampled allele's AUC.
 
+\paragraph{Allele prediction (top-$k$, promiscuity-aware).} Cast as the reverse problem---rank all
+panel alleles for a held-out peptide and ask whether a true restricting allele lands in the
+top-$k$---the gain is large where it matters (\texttt{bench/tune\_diffusion.py}, human, per-allele
+hold-out, fair as above). Because peptides are promiscuous we score \emph{recovery@5} (the fraction
+of a peptide's true alleles ranked in the top~5) split by allele rarity. For MHC-I the diffusion
+lifts \emph{rare}-allele recovery@5 from $0.50$ to $0.88$ (shortlist) and $0.29$ to $0.47$ (full
+tier), at a small frequent-allele cost ($\approx-0.03$) and with overall top-5 $\approx0.95$; a grid
+sweep selects $h=2,\tau=10$ with the BLOSUM metric (marginally over identity) as optimal. Class~II
+remains hard (recovery@5 $\approx0.14$, near-neutral diffusion): its open groove, promiscuity, and
+one-pass register cap the anchor model---a target for the structure-based extension. Top-1 is
+\emph{not} the right yardstick here (promiscuity makes several alleles correct); top-5/recovery@5 is.
+
 \begin{figure}[ht]\centering
   \includegraphics[width=0.8\linewidth]{diffusion_auc.pdf}
   \caption{Held-out rank AUC for rare ($\le30$ peptides) and frequent ($\ge200$) alleles, without
