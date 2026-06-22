@@ -1,5 +1,7 @@
 # mhcmatch
 
+[![CI](https://github.com/antigenomics/mhcmatch/actions/workflows/ci.yml/badge.svg)](https://github.com/antigenomics/mhcmatch/actions/workflows/ci.yml)
+[![Docs](https://github.com/antigenomics/mhcmatch/actions/workflows/docs.yml/badge.svg)](https://antigenomics.github.io/mhcmatch/)
 [![License](https://img.shields.io/badge/license-GPLv3-green)](LICENSE)
 
 Peptide–MHC presentation, cross-reactivity, and motif tools — the applied peptide–MHC layer on top
@@ -63,6 +65,17 @@ am = store.anchor_model("mhc1")          # learned anchor weights + bounded-prio
 am.score("NLVPMVATV", "HLA-A*02:01")     # anchor log-odds; am.score(..., raw=True) disables borrowing
 
 mhcmatch.logo.motif(store, "HLA-A*02:01", "mhc1")
+```
+
+## Command line
+
+```fish
+mhcmatch decompose NLVPMVATV                                  # anchor / TCR-facing split (no data)
+set -x MHCMATCH_PMHC /path/to/pmhc_data                       # or pass --pmhc to each command
+mhcmatch restriction NLVPMVATV --tier shortlist --diffuse     # ranked alleles (rare-allele-aware)
+mhcmatch scan my_protein.fasta --allele 'HLA-A*02:01'         # presented windows
+mhcmatch source MKTAYIAKW --proteome UP000005640_9606.fasta.gz
+mhcmatch logo 'HLA-A*02:01'
 ```
 
 ## Data

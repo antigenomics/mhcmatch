@@ -11,6 +11,8 @@
 \usepackage{unicode-math}
 \setmathfont{OldStandard-Math.otf}
 \usepackage{titlesec}
+\usepackage{tikz}
+\usetikzlibrary{positioning, fit}
 \usepackage[hidelinks]{hyperref}
 
 \linespread{1.15}
@@ -246,11 +248,67 @@ neighbour mean $m_{a,j}=\big(\sum_{b}K_j(a,b)n_b\theta_{b,j}\big)/\sum_b K_j(a,b
   \hat\theta_{a,j}=\frac{n_a\,\theta_{a,j}+\tau\,m_{a,j}}{n_a+\tau},
 \end{equation}
 so borrowing adds at most $\tau$ pseudocounts and vanishes automatically as $n_a$ grows
-(Prop.~\ref{prop:bv}). Empirically (\texttt{bench/bench\_diffusion.py}; MHC-I human, allele-split
-held-out rank AUC, $\tau=10$) this lifts the AUC of \emph{rare} alleles ($\le 30$ peptides) from
-$0.87$ to $0.92$ on the high-confidence ($\ge2$-publication) set while leaving \emph{frequent}
-alleles unchanged ($\pm0.00$); on the noisier full set the rare-allele gain is smaller but stays
-non-negative and frequent alleles are never harmed---the data-rescue is safe.
+(Prop.~\ref{prop:bv}). Empirically (\texttt{bench/bench\_diffusion.py}; human, allele-split
+held-out rank AUC, $\tau=10$, $h=2$, the per-allele score being the anchor log-odds over the N/C
+pocket footprint $\{$P1,P2,P3,P$(\Omega{-}1)$,P$\Omega\}$) the diffusion lifts the AUC of \emph{rare}
+MHC-I alleles ($\le 30$ peptides) from $0.85$ to $0.94$ on the high-confidence ($\ge2$-publication)
+set while leaving \emph{frequent} alleles unchanged ($0.975\!\to\!0.975$); on the noisier full set
+the rare-allele gain persists ($+0.06$) and frequent alleles are never harmed
+(Fig.~\ref{fig:diffauc}). The richer pocket footprint matters: with the two primary anchors alone
+($\{$P2,P$\Omega\}$) the full-set rare gain is only $+0.003$, whereas the auxiliary pocket-proximal
+positions make per-allele estimation sparser---so diffusion has more to rescue and the gain grows to
+$+0.06$. The data-rescue is safe: it never lowers a well-sampled allele's AUC.
+
+\begin{figure}[ht]\centering
+  \includegraphics[width=0.8\linewidth]{diffusion_auc.pdf}
+  \caption{Held-out rank AUC for rare ($\le30$ peptides) and frequent ($\ge200$) alleles, without
+  (raw, grey) and with (blue) pseudosequence diffusion, allele-split. MHC-I on the
+  $\ge2$-publication set, MHC-II on the full set. Diffusion lifts rare alleles and leaves frequent
+  alleles unchanged in both classes. \texttt{bench/bench\_diffusion.py}.}
+  \label{fig:diffauc}
+\end{figure}
+
+\paragraph{Bayesian reading (in plain terms).} The shrinkage~\eqref{eq:shrink-tau} is exactly a
+Bayesian posterior mean. Treat each allele's anchor-$j$ preference $\theta_{a,j}$---the probabilities
+of each amino acid in pocket $j$---as \emph{unknown}. Before seeing allele $a$'s own peptides we
+expect it to resemble its groove neighbours, so we put a prior centred on the kernel-weighted
+neighbour mean $m_{a,j}$ with strength $\tau$ (measured in pseudo-peptides); the allele's $n_a$
+observed peptides then update that belief. With the conjugate Dirichlet--multinomial model
+\begin{equation}\label{eq:bayes}
+  \theta_{a,j}\sim\mathrm{Dirichlet}(\tau\,m_{a,j}),\quad
+  \sigma_{i,j}\mid\theta_{a,j}\sim\mathrm{Categorical}(\theta_{a,j}),\quad
+  \theta_{a,j}\mid\{\sigma_{i,j}\}\sim\mathrm{Dirichlet}(\tau\,m_{a,j}+c_{a,j}),
+\end{equation}
+where $c_{a,j}(r)$ counts peptides of $a$ with residue $r$ at pocket $j$ ($\sum_r c_{a,j}(r)=n_a$),
+the posterior mean is \emph{precisely}~\eqref{eq:shrink-tau}. A data-rich allele ($n_a\gg\tau$)
+ignores the prior and keeps its own motif; a data-poor one ($n_a\ll\tau$) leans on its neighbours.
+The bandwidth $h$ (how far similarity reaches) and the strength $\tau$ (how much to borrow) are the
+only knobs (Fig.~\ref{fig:bayes}).
+
+\begin{figure}[ht]\centering
+\begin{tikzpicture}[>=stealth,
+    latent/.style={draw, circle, minimum size=10mm, inner sep=1pt},
+    obs/.style={latent, fill=black!8},
+    hyp/.style={draw, rounded corners, align=center, font=\small, inner sep=3pt}]
+  \node[hyp] (nb) {groove neighbours\\$\theta_{b,j},\,K_j(a,b),\,n_b$};
+  \node[latent, right=20mm of nb] (m) {$m_{a,j}$};
+  \node[hyp, above=8mm of m] (tau) {$\tau$};
+  \node[latent, right=20mm of m] (th) {$\theta_{a,j}$};
+  \node[obs, right=22mm of th] (s) {$\sigma_{i,j}$};
+  \node[draw, dashed, rounded corners, fit=(s), inner sep=5mm,
+        label={[font=\small]below:$i=1,\dots,n_a$ peptides}] (pl) {};
+  \draw[->] (nb) -- (m);
+  \draw[->] (m) -- node[above, font=\small] {prior} (th);
+  \draw[->] (tau) -- (th);
+  \draw[->] (th) -- node[above, font=\small] {likelihood} (s);
+\end{tikzpicture}
+\caption{Graphical model behind the diffusion shrinkage. The kernel-weighted neighbour mean
+$m_{a,j}$ and the strength $\tau$ form a Dirichlet \emph{prior} on the allele's pocket-$j$ residue
+distribution $\theta_{a,j}$; the $n_a$ observed anchor residues $\sigma_{i,j}$ (shaded) are the
+\emph{likelihood}. The posterior mean is the shrinkage estimator~\eqref{eq:shrink-tau}: rare alleles
+borrow from groove-similar neighbours, well-sampled alleles do not.}
+\label{fig:bayes}
+\end{figure}
 
 \paragraph{Pooled null and restored E-value.} For a rare allele the analytic presented null is built
 from the shrunk anchor marginals: assuming approximate position independence in the anchor block
@@ -258,7 +316,12 @@ from the shrunk anchor marginals: assuming approximate position independence in 
 $\widehat{\Pzero}(\sigma_A\mid a)\approx\prod_{j}\hat\theta_{a,j}(\sigma_{A_j})$, which feeds a usable
 $\widehat E$ in~\eqref{eq:forward}--\eqref{eq:conf} where the raw per-allele control was too small.
 The estimator is a smoothed null: its bias is controlled by the borrowed mass on dissimilar alleles
-(Prop.~\ref{prop:bv}), vanishing as the panel around $a$ becomes dense and groove-tight.
+(Prop.~\ref{prop:bv}), vanishing as the panel around $a$ becomes dense and groove-tight. In the
+production reverse problem (\texttt{Store.restriction}, \texttt{diffuse=True}) the shrunk anchor
+log-odds is used as the binder \emph{gate}---it scores every requested allele, surfacing rare alleles
+with no signature neighbours---while the vote fraction~(Def.~\ref{def:reverse}) still \emph{ranks},
+since per-peptide anchor likelihood is diluted for broad, well-sampled alleles and is not itself a
+calibrated cross-allele ranking statistic.
 
 \subsection{Clustering and promiscuity}
 Thresholding $K_j$ (or the un-factored $K$) yields single-linkage allele \emph{clusters} of
@@ -266,6 +329,28 @@ functionally similar alleles (\texttt{Pseudoseq.cluster}). A peptide presented a
 \emph{promiscuous}; its promiscuity is the spread of its positive alleles over the clustering, and
 the cluster is the natural unit over which to pool nulls when per-allele data are thin (especially
 class~II). This is the principled cross-allele similarity that the substrate omits.
+
+\subsection{Per-pocket decomposition (class II)}\label{sec:pockets}
+The anchor-factored weights~\eqref{eq:mi} make the pocket structure explicit. For each MHC-II core
+pocket P1/P4/P6/P9 we learn an independent weight vector $w_j$ over the 34-residue class-II
+pseudosequence; Fig.~\ref{fig:pockets} shows that the relevance concentrates on the polymorphic
+$\beta_1$ segment (positions $16$--$34$) and is near-zero on the largely monomorphic $\alpha_1$
+segment---most sharply for DR, whose $\alpha$ chain (DRA) is invariant---while each pocket reads a
+\emph{partly distinct} subset of those positions. The kernel is thus not one global allele distance
+but a sum of pocket-specific distances, each restricted to the groove residues that line its pocket.
+With this class-II model (alleles keyed by the $\alpha$--$\beta$ pair; cores from the register
+trick), diffusion gives a small but safe rare-allele gain ($0.75\!\to\!0.76$ AUC, frequent unchanged,
+Fig.~\ref{fig:diffauc}); class~II stays harder than class~I (open groove, promiscuity, one-pass
+register).
+
+\begin{figure}[ht]\centering
+  \includegraphics[width=0.9\linewidth]{mhc2_pockets.pdf}
+  \caption{Learned mutual-information relevance $w_{j,p}$ of each groove pseudosequence position $p$
+  (x) for each MHC-II core pocket $j$ (rows), over human class-II alleles. Relevance concentrates on
+  the polymorphic $\beta_1$ region; different pockets emphasize different positions.
+  \texttt{bench/make\_figures.py}.}
+  \label{fig:pockets}
+\end{figure}
 
 \section{Proteome-scale matching}\label{sec:proteome}
 \paragraph{Presentation scan.} To find all presented peptides in a protein we slide every
@@ -342,10 +427,10 @@ complements of the binary presentation E-value, regressable on the same anchor f
 pseudosequence; \emph{cleavage} $c_{\mathrm{Cterm}}$ is a position-specific C-terminal generation
 probability (with optional N-terminal trimming); \emph{expression} $e_{\mathrm{gene}}$ and variant
 frequency enter as Bayesian priors multiplying the presentation odds; \emph{immunogenicity}
-$\rho_{\mathrm{TCR}}$ combines physicochemical TCR-facing features with a TCR precursor-frequency /
-generation-probability estimate~\cite{Murugan2012,Elhanati2014} in the $Q=R\times D$ spirit
-of~\cite{Luksza2022}. The precursor-frequency estimator may live in a separate package and be
-consumed here. Each term is a roadmap Phase-2 milestone specified by this subsection.
+$\rho_{\mathrm{TCR}}$ combines physicochemical TCR-facing features with a TCR precursor-frequency
+estimate in the $Q=R\times D$ spirit of~\cite{Luksza2022}. The precursor-frequency estimator is a
+TCR-side quantity and is deferred to a separate package, consumed here only as a score. Each term is
+a roadmap Phase-2 milestone specified by this subsection.
 
 \section{Benchmark and evaluation methodology}\label{sec:bench}
 We evaluate as a per-(peptide, allele) binary task. \emph{Splits} are by allele \emph{and} by

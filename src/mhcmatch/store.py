@@ -40,6 +40,7 @@ class Restriction:
     enrichment: float  # -log10 binomial-tail p vs panel background -- confidence
     n_votes: int
     binder: bool
+    anchor_score: float | None = None  # diffused anchor log-odds (set only when diffuse=True)
 
     def __iter__(self):
         return iter((self.allele, self.vote, self.enrichment, self.binder))
@@ -80,6 +81,23 @@ def anchor_indices(peptide: str, cls: str) -> tuple:
     return tuple(sorted(layout.spec_for(cls).resolve(len(peptide))))
 
 
+def resolve_anchor_index(peptide: str, cls: str, anchor: int):
+    """0-based index of a scoring ``anchor`` in ``peptide`` (or None if out of range).
+
+    MHC-I: ``anchor`` is a 1-based peptide position (negatives count from the C-terminus).
+    MHC-II: ``anchor`` is a 1-based position *within the register-anchored 9-mer core* (P1..P9).
+    """
+    if cls == "mhc2":
+        if len(peptide) < 9:
+            return None
+        s = max(range(len(peptide) - 8),
+                key=lambda i: layout._core_anchor_score(peptide[i:i + 9]))
+        idx = s + (anchor - 1)
+        return idx if s <= idx < s + 9 else None
+    idx = (anchor - 1) if anchor > 0 else (len(peptide) + anchor)
+    return idx if 0 <= idx < len(peptide) else None
+
+
 class _Panel:
     """One MHC class: presentation-signature KmerIndex + allele bookkeeping."""
 
@@ -87,10 +105,12 @@ class _Panel:
         self.cls = cls
         self.epitopes = []
         self.alleles = []
+        self.weights = []
 
-    def add(self, epitope, allele):
+    def add(self, epitope, allele, weight=1.0):
         self.epitopes.append(epitope)
         self.alleles.append(allele)
+        self.weights.append(weight)
 
     def build(self):
         feats = [layout.presentation_features(e, self.cls, register="anchored")
@@ -128,11 +148,14 @@ class Store:
 
     def __init__(self):
         self._panel = {"mhc1": _Panel("mhc1"), "mhc2": _Panel("mhc2")}
+        self._am = {}  # cls -> AnchorModel (lazy, for diffuse=True)
 
     # -- construction ---------------------------------------------------------
     @classmethod
     def from_records(cls, records):
-        """records: dicts with ``epitope``, ``mhc_a`` (or ``mhc``), ``mhc_class``."""
+        """records: dicts with ``epitope``, ``mhc_a`` (or ``mhc``), ``mhc_class``; optional
+        ``weight`` (default 1.0) confidence-weights the peptide in anchor-preference estimation."""
+        from .pseudoseq import class2_key
         store = cls()
         for r in records:
             c = _CLASS.get(str(r.get("mhc_class", "")).strip())
@@ -140,7 +163,9 @@ class Store:
             allele = str(r.get("mhc_a") or r.get("mhc") or "").strip()
             if c is None or not ep or not allele or not all(x in _AA for x in ep):
                 continue
-            store._panel[c].add(ep, allele)
+            if c == "mhc2":  # key class II by the alpha-beta pair (locus-aware)
+                allele = class2_key(allele, str(r.get("mhc_b") or "").strip())
+            store._panel[c].add(ep, allele, float(r.get("weight", 1.0) or 1.0))
         for p in store._panel.values():
             p.build()
         return store
@@ -183,27 +208,47 @@ class Store:
             alleles = [alleles]
         return [a for a in alleles if a in panel.freq]
 
-    def restriction(self, peptide, cls=None, alleles="all", top=10, alpha=0.05):
+    def _anchor_model(self, cls):
+        if cls not in self._am:
+            self._am[cls] = self.anchor_model(cls)
+        return self._am[cls]
+
+    def restriction(self, peptide, cls=None, alleles="all", top=10, alpha=0.05, diffuse=False):
         """Rank presenting alleles for ``peptide`` (vote fraction), flag binders (enrichment).
 
         ``alleles``: ``"all"``, a single allele, or a list. ``alpha``: per-allele significance for
         the non-binder flag (binder iff binomial-tail p <= alpha and the allele got votes).
-        Returns ``[]`` when the peptide has no presentation-signature neighbours (treat as unknown).
+
+        With ``diffuse=True`` the vote fraction still **ranks** (it is robust across allele sample
+        sizes), but the diffusion-shrunk anchor log-odds (:class:`mhcmatch.diffusion.AnchorModel`)
+        is reported as ``anchor_score`` and used to **gate/rescue**: an allele is a binder if it is
+        vote-significant *or* its anchors are plausible (``anchor_score > 0``). This surfaces rare
+        alleles that have no signature neighbours (where the pure vote method returns nothing), while
+        keeping the well-calibrated vote ranking for well-sampled alleles. ``anchor_score`` breaks
+        ties among zero-vote alleles. Without diffusion, returns ``[]`` when there are no neighbours.
         """
         peptide = peptide.strip().upper()
         cls = cls or infer_class(peptide)
         panel = self._panel[cls]
         tally = panel.tally(peptide)
-        if tally is None:
+        if tally is None and not diffuse:
             return []
-        n = sum(tally.values())
+        n = sum(tally.values()) if tally else 0
         thr = -math.log10(alpha)
+        am = self._anchor_model(cls) if diffuse else None
         out = []
         for a in self._allele_set(panel, alleles):
-            k = tally.get(a, 0)
-            enr = -math.log10(max(_binom_sf(k, n, panel.freq[a]), 1e-300)) if k else 0.0
-            out.append(Restriction(a, k / n, enr, k, enr >= thr and k > 0))
-        out.sort(key=lambda r: (r.vote, r.enrichment), reverse=True)
+            k = tally.get(a, 0) if tally else 0
+            vote = k / n if n else 0.0
+            enr = -math.log10(max(_binom_sf(k, n, panel.freq[a]), 1e-300)) if (k and n) else 0.0
+            if diffuse:
+                s = am.score(peptide, a)
+                binder = (enr >= thr and k > 0) or s > 0.0
+                out.append(Restriction(a, vote, enr, k, binder, round(s, 3)))
+            else:
+                out.append(Restriction(a, vote, enr, k, enr >= thr and k > 0))
+        out.sort(key=(lambda r: (r.vote, r.anchor_score)) if diffuse
+                 else (lambda r: (r.vote, r.enrichment)), reverse=True)
         return out[:top]
 
     def is_binder(self, peptide, allele, cls=None, alpha=0.05):
@@ -257,8 +302,8 @@ class Store:
         anchor preferences from groove-similar frequent ones, with a bounded prior strength so a
         large neighbour cannot swamp a rare allele's own peptides.
         """
-        from .diffusion import MHC1_ANCHORS, AnchorModel
-        return AnchorModel(self, cls=cls, anchors=anchors or MHC1_ANCHORS, h=h,
+        from .diffusion import AnchorModel
+        return AnchorModel(self, cls=cls, anchors=anchors, h=h,
                            prior_strength=prior_strength, learn_weights=learn_weights)
 
     # -- per-allele anchor preferences (feeds pseudoseq diffusion) ------------
@@ -266,8 +311,8 @@ class Store:
         """{allele: Counter(residue)} at a 1-based ``anchor`` position (negative from C-term)."""
         panel = self._panel[cls]
         prefs = defaultdict(Counter)
-        for ep, a in zip(panel.epitopes, panel.alleles):
-            idx = (anchor - 1) if anchor > 0 else (len(ep) + anchor)
-            if 0 <= idx < len(ep):
-                prefs[a][ep[idx]] += 1
+        for ep, a, w in zip(panel.epitopes, panel.alleles, panel.weights):
+            idx = resolve_anchor_index(ep, cls, anchor)
+            if idx is not None:
+                prefs[a][ep[idx]] += w
         return prefs

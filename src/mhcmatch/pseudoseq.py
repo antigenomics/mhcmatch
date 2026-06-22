@@ -27,6 +27,26 @@ def normalize_allele(a: str) -> str:
     return a.replace("*", "")
 
 
+def class2_key(mhc_a: str, mhc_b: str = "") -> str:
+    """pmhc class-II allele -> pseudosequence-FASTA key (locus-aware).
+
+    DR (the DRA chain is monomorphic) is keyed by the beta chain alone, e.g.
+    ``'HLA-DRB1*01:01' -> 'DRB1_0101'``. DP/DQ are keyed by the alpha-beta pair, e.g.
+    ``('HLA-DPA1*01:03', 'HLA-DPB1*04:01') -> 'HLA-DPA10103-DPB10401'``. With no beta chain the
+    input is returned unchanged (mouse H-2 and fallbacks).
+    """
+    b = (mhc_b or "").strip()
+    if "DRB" in b:                                   # DR: beta-only, underscore form
+        beta = b[4:] if b.startswith("HLA-") else b  # drop the HLA- prefix
+        return beta.replace("*", "_").replace(":", "")
+    if not b:
+        return mhc_a
+    beta = b.replace("*", "").replace(":", "")
+    if beta.startswith("HLA-"):
+        beta = beta[4:]
+    return f"{mhc_a.replace('*', '').replace(':', '')}-{beta}"
+
+
 @lru_cache(maxsize=2)
 def load_pseudo(cls: str) -> dict:
     """``allele-id -> 34-mer`` for the bundled pseudosequence FASTA of a class."""

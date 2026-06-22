@@ -141,12 +141,32 @@ def test_diffusion_rescues_rare_allele():
     _build(rng, "HLA-B*07:02", "P", "L", 40, recs)   # frequent, distant groove
     _build(rng, "HLA-A*02:06", "L", "L", 1, recs)    # RARE: never shows PΩ=V on its own
     store = Store.from_records(recs)
-    am = store.anchor_model("mhc1", h=2.0)
+    am = store.anchor_model("mhc1", h=2.0, anchors=(2, -1))  # isolate the rescue on the primary anchors
     q = "AL" + "EEEEEE" + "V"                          # P2=L, PΩ=V -- a classic A*02 peptide
     raw = am.score(q, "HLA-A*02:06", raw=True)         # off its 1 peptide: PΩ=V unseen
     diffused = am.score(q, "HLA-A*02:06")              # borrows PΩ=V from groove-neighbour A*02:01
     assert diffused > raw
     assert diffused > am.score(q, "HLA-B*07:02")       # A*02-like query prefers the A*02 groove
+
+
+def _sig_build(rng, allele, sig, n, recs):
+    for _ in range(n):
+        mid = "".join(rng.choice(_AA) for _ in range(4))
+        recs.append({"epitope": sig[0] + sig[1] + sig[2] + mid + sig[3] + sig[4],
+                     "mhc_a": allele, "mhc_class": "MHCI"})
+
+
+def test_restriction_diffuse_rescues_rare():
+    rng = random.Random(2)
+    recs = []
+    _sig_build(rng, "HLA-A*02:01", "ALACV", 40, recs)   # frequent, PΩ=V
+    _sig_build(rng, "HLA-A*02:06", "ALACL", 1, recs)    # RARE, only ever shows PΩ=L
+    _sig_build(rng, "HLA-B*07:02", "GPRWL", 40, recs)   # frequent, distant groove
+    store = Store.from_records(recs)
+    q = "ALA" + "MMMM" + "CV"                            # signature ALACV (PΩ=V)
+    # vote mode: the rare allele has ~no signature neighbours -> not flagged
+    r = store.restriction(q, cls="mhc1", diffuse=True, alleles=["HLA-A*02:06"])[0]
+    assert r.binder and r.anchor_score > 0              # borrowed PΩ=V from groove-neighbour A*02:01
 
 
 # -- near-exact source lookup -------------------------------------------------
@@ -160,3 +180,16 @@ def test_proteome_source_lookup():
     top = next(h for h in hits if h.protein == "P1" and h.position == 5)
     assert top.n_subs == 1
     assert top.mutations[0][0] == 4   # the mutated position within the peptide
+
+
+# -- CLI ----------------------------------------------------------------------
+def test_cli_decompose_and_source(tmp_path, capsys):
+    from mhcmatch import cli
+    cli.main(["decompose", "NLVPMVATV", "--cls", "mhc1"])
+    out = capsys.readouterr().out
+    assert "tcr_facing" in out and "NXVPMVATX" in out
+
+    fasta = tmp_path / "prot.fasta"
+    fasta.write_text(">P1\nMKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQ\n")
+    cli.main(["source", "MKTAYIAKW", "--proteome", str(fasta), "--max-subs", "1"])
+    assert "P1" in capsys.readouterr().out

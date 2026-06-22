@@ -14,7 +14,15 @@ from collections import Counter
 
 from .pseudoseq import Pseudoseq, learn_anchor_weights, load_pseudo, normalize_allele
 
-MHC1_ANCHORS = (2, -1)   # P2 (B-pocket), PΩ (F-pocket); 1-based, negatives from the C-terminus
+# Presentation-scoring footprint: the N-pocket (P1,P2,P3) + C-pocket (PΩ-1,PΩ). P2/PΩ are the
+# primary buried anchors; P1/P3/PΩ-1 are pocket-proximal auxiliary positions that empirically lift
+# discrimination (and make diffusion more valuable for rare alleles). Mirrors
+# seqtree.layout.presentation_features. 1-based; negatives count from the C-terminus.
+MHC1_ANCHORS = (1, 2, 3, -2, -1)
+
+# MHC-II scoring footprint: the four core pockets P1/P4/P6/P9 (1-based within the register-anchored
+# 9-mer core). P1 (large hydrophobic) and P9 are the dominant pockets; P4/P6 are secondary.
+MHC2_ANCHORS = (1, 4, 6, 9)
 
 
 class AnchorModel:
@@ -25,9 +33,11 @@ class AnchorModel:
     False; the kernel bandwidth ``h`` controls how much rare alleles borrow.
     """
 
-    def __init__(self, store, cls="mhc1", anchors=MHC1_ANCHORS, h=2.0, prior_strength=10.0,
+    def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0,
                  learn_weights=True):
         self.cls = cls
+        if anchors is None:
+            anchors = MHC1_ANCHORS if cls == "mhc1" else MHC2_ANCHORS
         self.anchors = tuple(anchors)
         self.prior_strength = prior_strength
         # per-anchor preference {anchor: {allele: Counter(residue)}} and background marginals
@@ -70,11 +80,12 @@ class AnchorModel:
         ``raw=True`` uses the allele's own anchor frequencies (no borrowing); the default diffuses
         over groove-similar alleles. Returns ``-inf`` if the peptide is too short for the anchors.
         """
+        from .store import resolve_anchor_index
         peptide = peptide.strip().upper()
         s = 0.0
         for j in self.anchors:
-            idx = (j - 1) if j > 0 else (len(peptide) + j)
-            if not (0 <= idx < len(peptide)):
+            idx = resolve_anchor_index(peptide, self.cls, j)
+            if idx is None:
                 return float("-inf")
             r = peptide[idx]
             th = self._dist(j, allele, raw)
