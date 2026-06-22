@@ -16,3 +16,19 @@ allele-similarity alphabet for the cross-allele diffusion model (see `appendix/m
 
 These files are static reference data and small (~340 KB total), so they are vendored rather than
 fetched. Re-sync from `tcren` if the pseudosequence definition is updated upstream.
+
+## `structural_pockets_mhc1.tsv` / `structural_pockets_mhc2.tsv`
+
+Per-anchor **structural pocket weights**: for each peptide anchor (MHC-I P1/P2/P3/PΩ-1/PΩ; MHC-II
+P1/P4/P6/P9), the frequency with which each of the 34 groove pseudosequence positions makes a
+heavy-atom contact (<5 Å) with that anchor residue, measured over pMHC crystal structures. Used as a
+data-independent alternative to the learned-MI groove weights via `AnchorModel(weights="structural")`.
+
+Measured by `bench/structural_pockets.py` from the **Canonical2026** TCR:pMHC structure set
+(`antigenomics/tcren`, 372 usable structures): the 34-mer pseudosequence is threaded onto each groove
+with tcren's C++ fitting aligner (`tcren._align`; no mmseqs/arda). Class per structure is assigned by
+best pseudosequence fit (MHC-I single chain vs MHC-II α1+β1 chain-pair), giving **279 MHC-I** and
+**93 MHC-II** structures. Regenerate with:
+
+    conda run -n tcren-nb python bench/structural_pockets.py \
+        --structures ../tcren-ms/data/Canonical2026 --out src/mhcmatch/data

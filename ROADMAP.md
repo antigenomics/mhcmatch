@@ -143,13 +143,17 @@ groove positions). Worth evaluating against:
   similarity graph — one global smoothing parameter; the appendix's named alternative.
 - **Learned pseudosequence embedding** (NetMHCpan-style): map groove residues → presentation; rare
   alleles interpolate in embedding space. Most powerful, heaviest to fit/validate.
-- **Structural pocket assignment — done (MHC-I)**: `bench/structural_pockets.py` threads the
-  pseudosequence onto 318 MHC-I crystals with tcren's fast C++ aligner (no mmseqs; ~0.1s/structure)
-  and measures peptide-anchor↔groove-position contacts → vendored `data/structural_pockets_mhc1.tsv`,
-  loaded by `Pseudoseq` / `AnchorModel(weights="structural")`. Recovers the same pockets as learned
-  MI (P2↔7-8, PΩ↔15-17) and matches it on rare recovery@5 (0.73 vs 0.75, CV). Bench env:
-  `environment.yml` (`mhcmatch-bench`). **Remaining:** class-II structural weights (need a class-II
-  structure set); a learned embedding / Bayes-net Fisher kernel.
+- **Structural pocket assignment — done (MHC-I + MHC-II)**: `bench/structural_pockets.py` threads
+  the pseudosequence onto 372 pMHC crystals (Canonical2026) with tcren's fast C++ aligner (no mmseqs;
+  ~0.1s/structure) and measures peptide-anchor↔groove-position contacts → vendored
+  `data/structural_pockets_{mhc1,mhc2}.tsv`, loaded by `Pseudoseq` / `AnchorModel(weights="structural")`.
+  Class is assigned by best pseudosequence fit (MHC-I single chain vs MHC-II α1+β1 chain-pair), not a
+  β2m/length heuristic (which fails: TCR V-domains ~110aa and class-II groove domains ~85aa overlap
+  β2m's size, class-II crystals are domain-split) → 279 MHC-I + 93 MHC-II. MHC-I structural recovers
+  learned MI (P2↔7-8, PΩ↔15-17) and matches rare recovery@5 (0.72 vs 0.75 learned, CV); MHC-II
+  structural ≈ learned and both near-neutral (0.464 vs 0.465) — the small class-II gain is intrinsic,
+  not weight-limited. Bench env: `environment.yml` (`mhcmatch-bench`). **Remaining:** a learned
+  embedding / Bayes-net Fisher kernel.
 
 **Tooling to evaluate when figures/logos matter:**
 - **[kuva](https://github.com/Psy-Fer/kuva)** — Rust scientific plotting library (SVG/PNG/PDF, ~60

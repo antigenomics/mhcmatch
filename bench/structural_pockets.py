@@ -66,36 +66,55 @@ def _min_dist(a, b):
     return float(np.sqrt(((pa[:, None, :] - pb[None, :, :]) ** 2).sum(-1)).min())
 
 
+def _pseudo(key):
+    if key not in _PSEUDO_CACHE:
+        _PSEUDO_CACHE[key] = _pseudo_lists(key)[1]
+    return _PSEUDO_CACHE[key]
+
+
+_PSEUDO_CACHE = {}
+
+
 def identify(structure):
     """(cls, groove residues in N->C order, pseudo 34-mer, peptide residues) via the C++ aligner.
 
-    Peptide = shortest chain of length 7-25; class I groove = the long chain whose best-fitting MHC-I
-    pseudosequence scores highest; class II = the ordered long-chain pair best fitting an MHC-II
-    pseudosequence. Class is whichever scores higher. Returns None if no peptide / weak fit."""
-    peps = [c for c in structure.chains if 7 <= len(c.residues) <= 25]
-    longs = [c for c in structure.chains if len(c.residues) >= 140]  # heavy / DRA / DRB; drops b2m
-    if not peps or not longs:
+    Peptide = shortest chain of length 7-25. Class is assigned by which pseudosequence fits best:
+    the MHC-I groove sits on a single chain, the MHC-II groove spans the alpha1+beta1 domains (often
+    two separate chains), so we score each candidate chain against the MHC-I pseudosequences and each
+    ordered chain pair against the MHC-II pseudosequences and take whichever wins. No beta-2-m / chain
+    length heuristic -- those fail because TCR variable domains (~110 aa) and class-II groove domains
+    (~85 aa) overlap b2m's size, and class-II crystals are often domain-split (no chain >= 140 aa).
+    Returns None if there is no peptide chain or no candidate groove chain."""
+    chains = [c for c in structure.chains if len(c.residues) >= 7]
+    peps = [c for c in chains if 7 <= len(c.residues) <= 25]
+    if not peps:
         return None
-    pep = min(peps, key=lambda c: len(c.residues)).residues
-    # Class is set structurally by beta-2-microglobulin presence (~99 aa): class I has it, class II
-    # does not. This avoids any sequence-classifier and is exact for crystallographic pMHC.
-    has_b2m = any(90 <= len(c.residues) <= 115 for c in structure.chains)
-
-    if has_b2m:
-        _ids, seqs = _pseudo_lists("MHCI")
-        (idx, _sc), chain = max(((_align.best_hit(c.sequence(), seqs), c) for c in longs),
-                                key=lambda x: x[0][1])
-        return "mhc1", list(chain.residues), seqs[idx], pep
-    if len(longs) < 2:
+    pep = min(peps, key=lambda c: len(c.residues))
+    cands = [c for c in chains if c is not pep and len(c.residues) >= 60]  # groove domains ~85+ aa
+    if not cands:
         return None
-    _ids, seqs = _pseudo_lists("MHCII")  # class II: best-fitting ordered long-chain pair
-    best = None
-    for i, ci in enumerate(longs):
-        for cj in longs[:i] + longs[i + 1:]:
-            idx, sc = _align.best_hit(ci.sequence() + cj.sequence(), seqs)
-            if best is None or sc > best[0]:
-                best = (sc, [ci, cj], seqs[idx])
-    return "mhc2", [r for c in best[1] for r in c.residues], best[2], pep
+    seqs1 = _pseudo("MHCI")
+    best1 = None
+    for c in cands:
+        idx, sc = _align.best_hit(c.sequence(), seqs1)
+        if best1 is None or sc > best1[0]:
+            best1 = (sc, [c], seqs1[idx])
+    seqs2 = _pseudo("MHCII")
+    best2 = None
+    # ponytail: full ordered-pair scan over groove candidates (~4-5 chains => ~20 fits/structure);
+    # prescreen pairs by per-chain partial fit if structure count grows past a few thousand.
+    for ci in cands:
+        for cj in cands:
+            if ci is cj:
+                continue
+            idx, sc = _align.best_hit(ci.sequence() + cj.sequence(), seqs2)
+            if best2 is None or sc > best2[0]:
+                best2 = (sc, [ci, cj], seqs2[idx])
+    if best2 is None or best1[0] >= best2[0]:
+        cls, chosen, pseudo = "mhc1", best1[1], best1[2]
+    else:
+        cls, chosen, pseudo = "mhc2", best2[1], best2[2]
+    return cls, [r for c in chosen for r in c.residues], pseudo, pep.residues
 
 
 def main():
