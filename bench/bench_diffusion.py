@@ -55,7 +55,7 @@ def load(path, cls, species="HomoSapiens"):
 
 def run(pmhc, cls="mhc1", species="HomoSapiens", rare_min=4, rare_max=30, freq_min=200,
         heldout=0.4, neg=100, freq_sample=20, h=2.0, prior_strength=10.0, anchors=None,
-        weighted=False, weight_cap=10.0, seed=0, verbose=True):
+        weighted=False, weight_cap=10.0, seed=0, verbose=True):  # medium = (rare_max, freq_min)
     """Evaluate raw vs diffused AUC for rare and frequent alleles. Returns
     ``{"rare": (n, auc_raw, auc_diff), "frequent": (...)}``."""
     rng = random.Random(seed)
@@ -71,14 +71,18 @@ def run(pmhc, cls="mhc1", species="HomoSapiens", rare_min=4, rare_max=30, freq_m
         return normalize_allele(a) in pseudo
 
     rare = [a for a, p in by_allele.items() if rare_min <= len(p) <= rare_max and matched(a)]
+    medium = [a for a, p in by_allele.items() if rare_max < len(p) < freq_min and matched(a)]
     freq = [a for a, p in by_allele.items() if len(p) >= freq_min and matched(a)]
     rng.shuffle(freq)
+    rng.shuffle(medium)
     freq_eval = freq[:freq_sample]
-    eval_alleles = set(rare) | set(freq_eval)
+    med_eval = medium[:freq_sample]
+    eval_alleles = set(rare) | set(med_eval) | set(freq_eval)
     if verbose:
         print(f"# {species} {label}: {len(by_allele)} alleles, "
               f"{sum(len(p) for p in by_allele.values())} peptides; {len(rare)} rare "
-              f"[{rare_min}-{rare_max}] / {len(freq)} frequent (pseudo-matched); anchors={anchors}")
+              f"[{rare_min}-{rare_max}] / {len(medium)} medium ({rare_max}-{freq_min}) / "
+              f"{len(freq)} frequent (pseudo-matched); anchors={anchors}")
 
     # Hold out a fraction of each evaluated allele's peptides as positives. Exclusion is per-pMHC
     # (benchmark only): we drop the held-out (epitope, allele) PAIR from training, but the same
@@ -124,7 +128,7 @@ def run(pmhc, cls="mhc1", species="HomoSapiens", rare_min=4, rare_max=30, freq_m
     rows = {}
     if verbose:
         print(f"\n{'group':<10}{'n_alleles':>10}{'AUC_raw':>10}{'AUC_diff':>10}{'Δ':>8}")
-    for name, alleles in (("rare", rare), ("frequent", freq_eval)):
+    for name, alleles in (("rare", rare), ("medium", med_eval), ("frequent", freq_eval)):
         raw_a, diff_a = group(alleles)
         if not raw_a:
             continue

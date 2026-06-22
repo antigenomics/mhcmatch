@@ -90,9 +90,9 @@ def detect_communities(G):
 def to_dot(G, comms, title):
     comm_of = {n: i for i, c in enumerate(comms) for n in c}
     out = ["graph G {",
-           '  graph [layout=fdp, overlap=false, splines=true, fontname="Helvetica", fontsize=16];',
+           '  graph [layout=fdp, overlap=false, splines=true, fontname="Helvetica", fontsize=18];',
            f'  labelloc="t"; label="{title}";',
-           '  node [shape=circle, style=filled, fontname="Helvetica", fontsize=9, penwidth=1.4];',
+           '  node [shape=circle, style=filled, fontname="Helvetica", fontsize=11, penwidth=1.4];',
            '  edge [color="#d1d5db"];']
     # one Graphviz cluster per (multi-node) community -> dashed outline around the supertype
     for i, c in enumerate(comms):

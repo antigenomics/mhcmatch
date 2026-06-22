@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Generate the appendix gnuplot figures (PDF) for the diffusion model.
 
-  1. ``diffusion_auc.pdf``        -- rare vs frequent held-out AUC, raw vs diffused (MHC-I & MHC-II).
+  1. ``diffusion_auc.pdf``        -- rare/medium/frequent held-out AUC, raw vs diffused (MHC-I & II).
   2. ``pockets_<cls>_<species>.pdf`` (4: MHC-I/II x human/mouse) -- learned per-anchor groove-position
-     relevance, showing each pocket reads a different part of the 34-mer pseudosequence.
+     relevance, unpruned (top, blues) over DPI-pruned (bottom, reds) on a shared winsorized scale.
 
     python bench/make_figures.py --pmhc-dir /path/to/pmhc_data --out appendix
 
@@ -37,8 +37,8 @@ def fig_diffusion_auc(pmhc_dir, out):
     """Grouped-bar: held-out AUC (raw vs diffused) for rare & frequent alleles, both classes."""
     mhc1 = run(os.path.join(pmhc_dir, "pmhc_shortlist.tsv.gz"), cls="mhc1", verbose=False)
     mhc2 = run(os.path.join(pmhc_dir, "pmhc_full.tsv.gz"), cls="mhc2", verbose=False)
-    cats = [("MHC-I rare", mhc1["rare"]), ("MHC-I freq", mhc1["frequent"]),
-            ("MHC-II rare", mhc2["rare"]), ("MHC-II freq", mhc2["frequent"])]
+    cats = [("MHC-I rare", mhc1["rare"]), ("MHC-I med", mhc1["medium"]), ("MHC-I freq", mhc1["frequent"]),
+            ("MHC-II rare", mhc2["rare"]), ("MHC-II med", mhc2["medium"]), ("MHC-II freq", mhc2["frequent"])]
     dat = os.path.join(out, "diffusion_auc.dat")
     with open(dat, "w") as fh:
         fh.write("cat\traw\tdiff\n")
@@ -46,7 +46,7 @@ def fig_diffusion_auc(pmhc_dir, out):
             fh.write(f'"{name}"\t{raw:.4f}\t{diff:.4f}\n')
     gp = os.path.join(out, "diffusion_auc.gp")
     with open(gp, "w") as fh:
-        fh.write(f"""set terminal pdfcairo size 5.2in,2.8in font 'Helvetica,11'
+        fh.write(f"""set terminal pdfcairo size 6.8in,2.8in font 'Helvetica,11'
 set output 'diffusion_auc.pdf'
 set datafile separator "\\t"
 set style data histograms
@@ -65,40 +65,58 @@ plot '{os.path.basename(dat)}' u 2:xtic(1) t 'no diffusion (raw)' lc rgb '#9ca3a
     print(f"# wrote {out}/diffusion_auc.pdf  {cats}")
 
 
-def fig_pockets(pmhc_dir, cls, species, out):
-    """Heatmap: learned MI relevance of each of the 34 groove positions for each anchor pocket."""
-    store = Store.from_pmhc(os.path.join(pmhc_dir, "pmhc_full.tsv.gz"), tier="full",
-                            species=species, classes=(cls,))
-    seqs = load_pseudo(cls)
-    anchors = _ANCHORS[cls]
+def _pocket_rows(store, seqs, cls, prune):
+    """Per-anchor groove-position weight vectors (one per pocket), DPI-pruned or not."""
     rows = []
-    for j in anchors:
+    for j in _ANCHORS[cls]:
         prefs = store.anchor_preferences(cls, j)
         modal = {normalize_allele(a): c.most_common(1)[0][0] for a, c in prefs.items() if c}
-        rows.append(learn_anchor_weights(seqs, modal, prune_dpi=True))  # direct pocket positions only
+        rows.append(learn_anchor_weights(seqs, modal, prune_dpi=prune))
+    return rows
+
+
+def _winsor_cap(matrices, q=0.90):
+    """Shared color-scale ceiling: the q-quantile of the positive weights pooled over panels, so the
+    top (1-q) saturate and the rest of the scale stays legible. Falls back to 1.0 if all-zero."""
+    vals = sorted(x for m in matrices for row in m for x in row if x > 0)
+    return vals[min(len(vals) - 1, int(q * len(vals)))] if vals else 1.0
+
+
+def fig_pockets(cls, species, rows_unpruned, rows_pruned, cap_u, cap_p, out):
+    """Stacked heatmap: unpruned MI (top, blues) above DPI-pruned MI (bottom, reds), each on a shared
+    winsorized color scale so panels are comparable across class/species."""
+    anchors = _ANCHORS[cls]
     stem = f"pockets_{cls}_{species}"
-    with open(os.path.join(out, stem + ".dat"), "w") as fh:   # matrix: anchors x 34 positions
-        for w in rows:
-            fh.write(" ".join(f"{x:.4f}" for x in w) + "\n")
+    for tag, rows in (("unpruned", rows_unpruned), ("pruned", rows_pruned)):   # matrix: anchors x 34
+        with open(os.path.join(out, f"{stem}_{tag}.dat"), "w") as fh:
+            for w in rows:
+                fh.write(" ".join(f"{x:.4f}" for x in w) + "\n")
     ytics = ", ".join(f"'{_anchor_label(cls, j)}' {i}" for i, j in enumerate(anchors))
     seg = ("{/Symbol a}1 + {/Symbol b}1 groove" if cls == "mhc2"
            else "{/Symbol a}1 + {/Symbol a}2 groove")
     gp = os.path.join(out, stem + ".gp")
     with open(gp, "w") as fh:
-        fh.write(f"""set terminal pdfcairo size 5.6in,2.0in font 'Helvetica,11'
+        fh.write(f"""set terminal pdfcairo size 5.6in,3.6in font 'Helvetica,11'
 set output '{stem}.pdf'
-set title '{_CLABEL[cls]} {species}: groove-position relevance per pocket'
-set xlabel 'pseudosequence position ({seg})'
-set ytics ({ytics})
+set multiplot layout 2,1 title '{_CLABEL[cls]} {species}: groove-position relevance per pocket'
 set xrange [-0.5:33.5]
 set yrange [-0.5:{len(anchors) - 0.5}]
+set ytics ({ytics})
 set cblabel 'MI weight'
-set palette defined (0 '#f8fafc', 1 '#2563eb')
 unset key
-plot '{stem}.dat' matrix with image
+set title 'unpruned MI'
+set palette defined (0 '#f8fafc', 1 '#1d4ed8')
+set cbrange [0:{cap_u:.4f}]
+plot '{stem}_unpruned.dat' matrix with image
+set title 'DPI-pruned MI (direct positions)'
+set xlabel 'pseudosequence position ({seg})'
+set palette defined (0 '#fef2f2', 1 '#b91c1c')
+set cbrange [0:{cap_p:.4f}]
+plot '{stem}_pruned.dat' matrix with image
+unset multiplot
 """)
     subprocess.run(["gnuplot", os.path.basename(gp)], cwd=out, check=True)
-    print(f"# wrote {out}/{stem}.pdf ({len(store.alleles(cls))} {species} {cls} alleles)")
+    print(f"# wrote {out}/{stem}.pdf (cap_u={cap_u:.3f} cap_p={cap_p:.3f})")
 
 
 def main():
@@ -110,9 +128,22 @@ def main():
         raise SystemExit("pass --pmhc-dir or set MHCMATCH_PMHC")
     out = os.path.abspath(args.out)
     fig_diffusion_auc(args.pmhc_dir, out)
+    # pockets: compute unpruned + pruned matrices for all class x species, then render on a shared
+    # winsorized color scale (one for all unpruned/blues panels, one for all pruned/reds panels).
+    path = os.path.join(args.pmhc_dir, "pmhc_full.tsv.gz")
+    mats = {}
+    for cls in ("mhc1", "mhc2"):
+        seqs = load_pseudo(cls)
+        for species in ("human", "mouse"):
+            store = Store.from_pmhc(path, tier="full", species=species, classes=(cls,))
+            for prune in (False, True):
+                mats[(cls, species, prune)] = _pocket_rows(store, seqs, cls, prune)
+    cap_u = _winsor_cap([m for k, m in mats.items() if not k[2]])
+    cap_p = _winsor_cap([m for k, m in mats.items() if k[2]])
     for cls in ("mhc1", "mhc2"):
         for species in ("human", "mouse"):
-            fig_pockets(args.pmhc_dir, cls, species, out)
+            fig_pockets(cls, species, mats[(cls, species, False)],
+                        mats[(cls, species, True)], cap_u, cap_p, out)
 
 
 if __name__ == "__main__":
