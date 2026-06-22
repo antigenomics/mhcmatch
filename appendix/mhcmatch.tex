@@ -562,6 +562,13 @@ pseudosequence diffusion is expected to help most. The benchmark datasets and th
 dedicated repository; this section fixes the protocol so it stays consistent with the predictors
 defined here.
 
+\paragraph{Performance.} Built on the C++ \texttt{KmerIndex}, the toolbox is fast enough for
+proteome-scale use (\texttt{bench/bench\_speed.py}, one core, human MHC-I shortlist panel of $107$
+alleles): a one-off store build of $1.4$\,s; allele restriction at $\sim$1900 peptides/s with
+diffusion (rank all alleles) and $\sim$4000/s by vote; a $596$-aa protein scan in $0.3$\,s;
+TCR-facing similarity search of $2\times10^4$ peptides in $40$\,ms; and proteome source lookup in
+$\sim$60\,ms, at $\sim$0.6\,GB peak.
+
 \section{Assumptions and limitations}\label{sec:limits}
 (i) The analytic pooled null assumes approximate position independence in the anchor block; real
 co-occupancy adds a two-point ($b_2$) correction (the negative-binomial tail of the \texttt{seqtree}
