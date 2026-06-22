@@ -90,8 +90,10 @@ diffusion model, and the downstream predictors.
   proteome scans** (windows × panel). Appendix §3, §5.
 - **Class-II promiscuity**: multi-label restriction + global `E_glob` non-binder filter; pseudoseq
   pooling for thin class-II/mouse panels.
-- **Allele-name normalization** across pmhc ↔ pseudosequence ↔ user input (locus-aware, class II).
-- CLI (`mhcmatch ...`), Sphinx docs (`docs/`), benchmark scripts (`bench/`) mirroring seqtree.
+- **Allele-name normalization** across pmhc ↔ pseudosequence ↔ user input — class-II locus-aware
+  α+β pair keying **done** (`pseudoseq.class2_key`); user-input normalization remains.
+- **Done:** Sphinx docs (`docs/`) + CI/docs GitHub workflows; benchmark scripts (`bench/`,
+  `bench_diffusion.py`, `make_figures.py`). **Remaining:** CLI (`mhcmatch ...`).
 - _(TBD)_ pseudosequence position set per locus; distance metric (Hamming vs BLOSUM-weighted);
   cluster cut selection.
 

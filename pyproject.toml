@@ -24,6 +24,7 @@ dependencies = ["seqtree>=0.0.4a0", "numpy"]
 test = ["pytest>=7.4"]
 logo = ["logomaker", "matplotlib"]   # only needed to render logos; PWM/bits compute is numpy-only
 pmhc = ["pandas"]                    # convenience IO for large tables
+docs = ["sphinx", "pydata-sphinx-theme"]
 
 [project.urls]
 Homepage = "https://github.com/antigenomics/mhcmatch"
