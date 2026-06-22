@@ -11,6 +11,8 @@
 \usepackage{unicode-math}
 \setmathfont{OldStandard-Math.otf}
 \usepackage{titlesec}
+\usepackage{tikz}
+\usetikzlibrary{positioning, fit}
 \usepackage[hidelinks]{hyperref}
 
 \linespread{1.15}
@@ -266,6 +268,48 @@ $+0.06$. The data-rescue is safe: it never lowers a well-sampled allele's AUC.
   \label{fig:diffauc}
 \end{figure}
 
+\paragraph{Bayesian reading (in plain terms).} The shrinkage~\eqref{eq:shrink-tau} is exactly a
+Bayesian posterior mean. Treat each allele's anchor-$j$ preference $\theta_{a,j}$---the probabilities
+of each amino acid in pocket $j$---as \emph{unknown}. Before seeing allele $a$'s own peptides we
+expect it to resemble its groove neighbours, so we put a prior centred on the kernel-weighted
+neighbour mean $m_{a,j}$ with strength $\tau$ (measured in pseudo-peptides); the allele's $n_a$
+observed peptides then update that belief. With the conjugate Dirichlet--multinomial model
+\begin{equation}\label{eq:bayes}
+  \theta_{a,j}\sim\mathrm{Dirichlet}(\tau\,m_{a,j}),\quad
+  \sigma_{i,j}\mid\theta_{a,j}\sim\mathrm{Categorical}(\theta_{a,j}),\quad
+  \theta_{a,j}\mid\{\sigma_{i,j}\}\sim\mathrm{Dirichlet}(\tau\,m_{a,j}+c_{a,j}),
+\end{equation}
+where $c_{a,j}(r)$ counts peptides of $a$ with residue $r$ at pocket $j$ ($\sum_r c_{a,j}(r)=n_a$),
+the posterior mean is \emph{precisely}~\eqref{eq:shrink-tau}. A data-rich allele ($n_a\gg\tau$)
+ignores the prior and keeps its own motif; a data-poor one ($n_a\ll\tau$) leans on its neighbours.
+The bandwidth $h$ (how far similarity reaches) and the strength $\tau$ (how much to borrow) are the
+only knobs (Fig.~\ref{fig:bayes}).
+
+\begin{figure}[ht]\centering
+\begin{tikzpicture}[>=stealth,
+    latent/.style={draw, circle, minimum size=10mm, inner sep=1pt},
+    obs/.style={latent, fill=black!8},
+    hyp/.style={draw, rounded corners, align=center, font=\small, inner sep=3pt}]
+  \node[hyp] (nb) {groove neighbours\\$\theta_{b,j},\,K_j(a,b),\,n_b$};
+  \node[latent, right=20mm of nb] (m) {$m_{a,j}$};
+  \node[hyp, above=8mm of m] (tau) {$\tau$};
+  \node[latent, right=20mm of m] (th) {$\theta_{a,j}$};
+  \node[obs, right=22mm of th] (s) {$\sigma_{i,j}$};
+  \node[draw, dashed, rounded corners, fit=(s), inner sep=5mm,
+        label={[font=\small]below:$i=1,\dots,n_a$ peptides}] (pl) {};
+  \draw[->] (nb) -- (m);
+  \draw[->] (m) -- node[above, font=\small] {prior} (th);
+  \draw[->] (tau) -- (th);
+  \draw[->] (th) -- node[above, font=\small] {likelihood} (s);
+\end{tikzpicture}
+\caption{Graphical model behind the diffusion shrinkage. The kernel-weighted neighbour mean
+$m_{a,j}$ and the strength $\tau$ form a Dirichlet \emph{prior} on the allele's pocket-$j$ residue
+distribution $\theta_{a,j}$; the $n_a$ observed anchor residues $\sigma_{i,j}$ (shaded) are the
+\emph{likelihood}. The posterior mean is the shrinkage estimator~\eqref{eq:shrink-tau}: rare alleles
+borrow from groove-similar neighbours, well-sampled alleles do not.}
+\label{fig:bayes}
+\end{figure}
+
 \paragraph{Pooled null and restored E-value.} For a rare allele the analytic presented null is built
 from the shrunk anchor marginals: assuming approximate position independence in the anchor block
 (the maximum-entropy presented distribution of~\cite{TiffeauMayer2026} conditioned on the motif),
@@ -383,10 +427,10 @@ complements of the binary presentation E-value, regressable on the same anchor f
 pseudosequence; \emph{cleavage} $c_{\mathrm{Cterm}}$ is a position-specific C-terminal generation
 probability (with optional N-terminal trimming); \emph{expression} $e_{\mathrm{gene}}$ and variant
 frequency enter as Bayesian priors multiplying the presentation odds; \emph{immunogenicity}
-$\rho_{\mathrm{TCR}}$ combines physicochemical TCR-facing features with a TCR precursor-frequency /
-generation-probability estimate~\cite{Murugan2012,Elhanati2014} in the $Q=R\times D$ spirit
-of~\cite{Luksza2022}. The precursor-frequency estimator may live in a separate package and be
-consumed here. Each term is a roadmap Phase-2 milestone specified by this subsection.
+$\rho_{\mathrm{TCR}}$ combines physicochemical TCR-facing features with a TCR precursor-frequency
+estimate in the $Q=R\times D$ spirit of~\cite{Luksza2022}. The precursor-frequency estimator is a
+TCR-side quantity and is deferred to a separate package, consumed here only as a score. Each term is
+a roadmap Phase-2 milestone specified by this subsection.
 
 \section{Benchmark and evaluation methodology}\label{sec:bench}
 We evaluate as a per-(peptide, allele) binary task. \emph{Splits} are by allele \emph{and} by
