@@ -27,6 +27,26 @@ def normalize_allele(a: str) -> str:
     return a.replace("*", "")
 
 
+def class2_key(mhc_a: str, mhc_b: str = "") -> str:
+    """pmhc class-II allele -> pseudosequence-FASTA key (locus-aware).
+
+    DR (the DRA chain is monomorphic) is keyed by the beta chain alone, e.g.
+    ``'HLA-DRB1*01:01' -> 'DRB1_0101'``. DP/DQ are keyed by the alpha-beta pair, e.g.
+    ``('HLA-DPA1*01:03', 'HLA-DPB1*04:01') -> 'HLA-DPA10103-DPB10401'``. With no beta chain the
+    input is returned unchanged (mouse H-2 and fallbacks).
+    """
+    b = (mhc_b or "").strip()
+    if "DRB" in b:                                   # DR: beta-only, underscore form
+        beta = b[4:] if b.startswith("HLA-") else b  # drop the HLA- prefix
+        return beta.replace("*", "_").replace(":", "")
+    if not b:
+        return mhc_a
+    beta = b.replace("*", "").replace(":", "")
+    if beta.startswith("HLA-"):
+        beta = beta[4:]
+    return f"{mhc_a.replace('*', '').replace(':', '')}-{beta}"
+
+
 @lru_cache(maxsize=2)
 def load_pseudo(cls: str) -> dict:
     """``allele-id -> 34-mer`` for the bundled pseudosequence FASTA of a class."""
@@ -130,15 +150,23 @@ class Pseudoseq:
             groups[find(a)].append(a)
         return list(groups.values())
 
-    def shrink(self, prefs, allele, anchor=None, candidates=None) -> dict:
+    def shrink(self, prefs, allele, anchor=None, candidates=None, prior_strength=None) -> dict:
         """Kernel-weighted empirical-Bayes pooling of a per-anchor residue distribution.
 
         ``prefs``: ``{allele: Counter(residue -> count)}`` for one anchor. Returns the shrunk
-        probability dict for ``allele``: ``(n_a π_a + Σ_b K_ab n_b π_b) / (n_a + Σ_b K_ab n_b)``.
-        Limits: ``h -> 0`` recovers the raw per-allele distribution; ``h -> ∞`` the global pool.
+        probability dict for ``allele``.
+
+        With ``prior_strength=None`` (default) this is the counts-weighted form
+        ``(n_a π_a + Σ_b K_ab n_b π_b) / (n_a + Σ_b K_ab n_b)`` with limits ``h -> 0`` (raw
+        per-allele) and ``h -> ∞`` (global pool). With ``prior_strength=τ`` it uses the
+        fixed-concentration form ``(n_a π_a + τ m_a) / (n_a + τ)`` where ``m_a`` is the
+        kernel-weighted neighbour mean -- a bounded prior that prevents one large neighbour from
+        swamping a rare allele's own peptides and self-adapts to ``n_a`` (appendix §4, Prop. on
+        bias--variance). The latter is the recommended default for the forward scorer.
         """
         na = normalize_allele(allele)
-        pooled = Counter(prefs.get(allele, Counter()))
+        own = Counter(prefs.get(allele, Counter()))
+        nbr = Counter()
         cands = candidates if candidates is not None else prefs.keys()
         for b in cands:
             if normalize_allele(b) == na:
@@ -147,6 +175,19 @@ class Pseudoseq:
             if k <= 0:
                 continue
             for res, c in prefs.get(b, Counter()).items():
-                pooled[res] += k * c
-        total = sum(pooled.values())
-        return {res: c / total for res, c in pooled.items()} if total > 0 else {}
+                nbr[res] += k * c
+
+        if prior_strength is None:
+            pooled = own + nbr
+            total = sum(pooled.values())
+            return {res: c / total for res, c in pooled.items()} if total > 0 else {}
+
+        n_own, m = sum(own.values()), sum(nbr.values())
+        total = n_own + (prior_strength if m > 0 else 0.0)
+        if total <= 0:
+            return {}
+        pooled = {res: c for res, c in own.items()}
+        if m > 0:
+            for res, c in nbr.items():
+                pooled[res] = pooled.get(res, 0.0) + prior_strength * (c / m)
+        return {res: c / total for res, c in pooled.items()}

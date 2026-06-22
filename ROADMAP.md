@@ -39,7 +39,9 @@ diffusion model, and the downstream predictors.
 | Near-exact source lookup (neoantigen → parent protein) | `mhcmatch.Proteome` | **v0** |
 | Motif logos + length distributions | `mhcmatch.logo` | **v0** |
 | Pseudosequence kernel, clustering, kernel-shrinkage pooling | `mhcmatch.Pseudoseq` | **v0** |
-| Learned per-anchor pocket weights (calibrated) | `Pseudoseq` + fit | Phase 1 |
+| Diffusion forward scorer + learned anchor weights + bounded-prior shrinkage | `mhcmatch.AnchorModel` | **v0.1** (validated, `bench/bench_diffusion.py`) |
+| Per-locus bandwidth `h` / prior-strength `τ` calibration | `Pseudoseq` + fit | Phase 1 |
+| Class-II allele keying (α+β pair) + pseudoseq pair-normalization | — | Phase 1 |
 | Tuned ROC/PR thresholds; FDR over proteome scans | — | Phase 1 |
 | Stability / affinity / cleavage / expression / immunogenicity | — | Phase 2 |
 | NetMHCpan / MixMHCpred head-to-head benchmark + paper | separate repo | Phase 3 |
@@ -77,17 +79,23 @@ diffusion model, and the downstream predictors.
 
 ## 4. Phase 1 — calibration & hardening
 
-- **Learned per-anchor pocket weights** `w_j` (the "feature importance"): fit which groove
-  pseudosequence positions govern each peptide anchor (MHC-I P2/B-pocket vs PΩ/F-pocket; MHC-II
-  P1/P4/P6/P9), then use anchor-factored kernels in `shrink`/`neighbors`. `learn_anchor_weights`
-  ships the MI estimator; Phase 1 calibrates bandwidths `h_j` by held-out predictive likelihood and
-  validates the pooled-null E-value on rare alleles. Appendix §4.
+- **Diffusion forward scorer — done in v0.1** (`mhcmatch.AnchorModel`): learned per-anchor pocket
+  weights `w_j` (MI feature-importance: which groove positions govern MHC-I P2/B-pocket vs
+  PΩ/F-pocket) feed anchor-factored kernels; per-allele anchor distributions are shrunk via a
+  **bounded-concentration** prior (τ) so a deep neighbour can't swamp a rare allele. Validated
+  (`bench/bench_diffusion.py`): rare-allele held-out AUC 0.87→0.92 on the shortlist tier, frequent
+  alleles neutral. Appendix §4. The shrunk null is now wired into `Store.restriction(diffuse=True)`
+  as a binder gate/rescue (vote fraction still ranks; rare alleles with no neighbours get surfaced).
+  **Remaining (Phase 1):** per-locus `h`/`τ` calibration by cross-validated likelihood.
 - **Tuned thresholds**: per-class/species `alpha` and scope (`lo/hi`) from ROC/PR; **FWER/FDR over
   proteome scans** (windows × panel). Appendix §3, §5.
 - **Class-II promiscuity**: multi-label restriction + global `E_glob` non-binder filter; pseudoseq
   pooling for thin class-II/mouse panels.
-- **Allele-name normalization** across pmhc ↔ pseudosequence ↔ user input (locus-aware, class II).
-- CLI (`mhcmatch ...`), Sphinx docs (`docs/`), benchmark scripts (`bench/`) mirroring seqtree.
+- **Allele-name normalization** across pmhc ↔ pseudosequence ↔ user input — class-II locus-aware
+  α+β pair keying **done** (`pseudoseq.class2_key`); user-input normalization remains.
+- **Done:** Sphinx docs (`docs/`) + CI/docs GitHub workflows; benchmark scripts (`bench/`,
+  `bench_diffusion.py`, `make_figures.py`); CLI (`mhcmatch.cli`: decompose / restriction / scan /
+  source / logo).
 - _(TBD)_ pseudosequence position set per locus; distance metric (Hamming vs BLOSUM-weighted);
   cluster cut selection.
 
@@ -109,6 +117,42 @@ Head-to-head comparison vs **NetMHCpan**, **NetMHCIIpan**, **MixMHCpred**, **Mix
 held-out, allele-split sets; ROC/PR per (peptide, allele); a LaTeX paper template. The benchmark
 data and paper live in a dedicated repo; the **evaluation methodology** (splits, metrics, protocol)
 is specified in appendix §8 so it stays consistent with the predictors here.
+
+## 6.5 Menu — candidate refinements & tooling
+
+Recorded ideas to pick from. Most need **no new data** (work on the existing `pmhc_data`); those
+needing fetched neoantigen/self/pathogen sets are flagged.
+
+**Refinable now (no new data):**
+- **Per-locus `h` / `τ` calibration** by cross-validated held-out likelihood (replace the fixed
+  defaults), per class × species. Uses `bench/bench_diffusion.py` machinery. *(highest value)*
+- **Tuned `alpha` thresholds + FDR** over `scan_protein` windows × panel (appendix §5).
+- **Class-II / mouse calibration**: the register trick is a one-pass proxy; try GibbsCluster-style
+  multi-pass register, and pool nulls over kernel clusters for thin mouse panels.
+- ~~Feed the shrunk null into `restriction`~~ **done** (diffuse gate/rescue, vote still ranks).
+- ~~CLI~~ **done** (`mhcmatch.cli`). User-input allele-name normalization still open.
+
+**Alternative cross-allele methods (vs the current anchor-factored kernel shrinkage).** The current
+model already does *partial, pocket-based* similarity (a per-pocket kernel over a learned subset of
+groove positions). Worth evaluating against:
+- **Graph-Laplacian / heat-kernel diffusion** of per-allele (per-pocket) PSSMs over the allele
+  similarity graph — one global smoothing parameter; the appendix's named alternative.
+- **Learned pseudosequence embedding** (NetMHCpan-style): map groove residues → presentation; rare
+  alleles interpolate in embedding space. Most powerful, heaviest to fit/validate.
+- **Structural pocket assignment**: replace (or prior-constrain) the learned MI pocket→position
+  weights with explicit pocket-lining residues from MHC structure — a hybrid that handles partial
+  pocket similarity even where data are too thin to learn the weights. *(directly addresses the
+  "partial pocket-based similarity" question)*
+
+**Tooling to evaluate when figures/logos matter:**
+- **[kuva](https://github.com/Psy-Fer/kuva)** — Rust scientific plotting library (SVG/PNG/PDF, ~60
+  plot types, CLI + API); candidate to replace the gnuplot figure backend in `bench/make_figures.py`.
+- **[TeXshade](https://ctan.org/pkg/texshade)** — LaTeX package for sequence-alignment shading and
+  sequence fingerprints/logos; candidate for publication-grade MHC binding-motif logos in the
+  appendix/paper (the ecosystem already uses its sidechain-volume/hydropathy matrix in seqtree).
+
+**Needs fetched data:** neoantigen molecular-mimicry validation (self + pathogen proteomes), the
+NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2).
 
 ## 7. Conventions
 

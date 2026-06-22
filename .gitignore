@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+docs/_build/
 .pytest_cache/
 .ruff_cache/
 .DS_Store
@@ -12,6 +13,10 @@ build/
 data/proteomes/
 *.fasta
 *.fasta.gz
+
+# gnuplot figure intermediates (keep the generated .pdf; regenerate via bench/make_figures.py)
+appendix/*.dat
+appendix/*.gp
 
 # LaTeX build artifacts (keep .tex, .bib, .pdf)
 appendix/*.aux

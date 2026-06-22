@@ -1,0 +1,27 @@
+/* mhcmatch docs — minimal landing-page card grid (pydata-sphinx-theme variables). */
+.proj-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+.proj-card {
+  display: block;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--pst-color-border);
+  border-radius: 12px;
+  text-decoration: none;
+  color: var(--pst-color-text-base);
+}
+.proj-card:hover {
+  border-color: var(--pst-color-primary);
+}
+.proj-card h3 {
+  margin-top: 0;
+}
+
+@media (max-width: 900px) {
+  .proj-card-grid {
+    grid-template-columns: 1fr;
+  }
+}
