@@ -36,6 +36,5 @@ Repository = "https://github.com/antigenomics/mhcmatch"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mhcmatch"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/mhcmatch/data" = "mhcmatch/data"
+# data/ (pseudosequence FASTAs, structural pocket TSVs) ships automatically under the package above;
+# a force-include here would double-add those files and break the wheel build.
