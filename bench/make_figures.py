@@ -75,7 +75,7 @@ def fig_pockets(pmhc_dir, cls, species, out):
     for j in anchors:
         prefs = store.anchor_preferences(cls, j)
         modal = {normalize_allele(a): c.most_common(1)[0][0] for a, c in prefs.items() if c}
-        rows.append(learn_anchor_weights(seqs, modal))
+        rows.append(learn_anchor_weights(seqs, modal, prune_dpi=True))  # direct pocket positions only
     stem = f"pockets_{cls}_{species}"
     with open(os.path.join(out, stem + ".dat"), "w") as fh:   # matrix: anchors x 34 positions
         for w in rows:

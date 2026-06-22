@@ -395,15 +395,21 @@ broader and noisier. The two views are complementary rather than redundant.
 \subsection{Per-pocket decomposition}\label{sec:pockets}
 The anchor-factored weights~\eqref{eq:mi} make the pocket structure explicit: for each peptide anchor
 we learn an independent weight vector $w_j$ over the 34 groove positions, per class and species
-(Fig.~\ref{fig:pockets}, all four panels). For MHC-I (human) the two primary pockets read
-\emph{disjoint} groove positions---P2/B-pocket concentrates near positions $7$--$8$, P$\Omega$/F-pocket
-near $18$--$21$---directly recovering the structural pocket layout from presented-peptide statistics
-alone. For MHC-II the relevance sits on the polymorphic $\beta_1$ segment and is near-zero on the
-largely monomorphic $\alpha_1$ (sharpest for DR, whose DRA $\alpha$ chain is invariant). The kernel
-is thus not one global allele distance but a sum of pocket-specific distances, each restricted to the
-residues lining its pocket. Mouse panels are data-limited ($8$--$13$ alleles), so their weights are
-noisier but show the same gross localization. (Class-II alleles are keyed by the $\alpha$--$\beta$
-pair, cores from the register trick; its diffusion gain is small but safe, $0.72\!\to\!0.74$ AUC.)
+(Fig.~\ref{fig:pockets}, all four panels). Raw MI is inflated by \emph{linkage} between groove positions---they co-vary across alleles by
+descent and structural co-evolution, so a position correlated with the true pocket residue also
+scores high and the profile smears. We therefore prune indirect links by the data-processing
+inequality (ARACNE~\cite{Margolin2006}): position $p$'s edge to pocket $j$ is dropped when another
+position $q$ is more informative about both the pocket and $p$
+($\MI(p;A_j)\le\min(\MI(q;A_j),\MI(p;q))$), leaving the \emph{direct} pocket positions. After
+pruning, MHC-I (human) P$\Omega$/F-pocket collapses to a single dominant groove position ($\sim$19)
+and P2/B-pocket to a small N-terminal cluster ($\sim$7--8), recovering the structural pocket layout
+from presented-peptide statistics alone (Fig.~\ref{fig:pockets}). For MHC-II the relevance sits on
+the polymorphic $\beta_1$ segment and is near-zero on the largely monomorphic $\alpha_1$ (sharpest for
+DR, whose DRA $\alpha$ chain is invariant). The kernel itself keeps the \emph{un-pruned} MI weights
+(the fuller signal gives marginally better neighbour matching---rare-allele recovery@5 $0.88$ vs
+$0.85$ pruned); the prune is for interpretation. Mouse panels are data-limited ($8$--$13$ alleles),
+noisier but with the same gross localization. (Class-II alleles are keyed by the $\alpha$--$\beta$
+pair, cores from the register trick; its diffusion gain is small, $0.72\!\to\!0.74$ AUC.)
 
 \begin{figure}[ht]\centering
   \begin{subfigure}{0.49\linewidth}\includegraphics[width=\linewidth]{pockets_mhc1_human.pdf}
@@ -415,10 +421,10 @@ pair, cores from the register trick; its diffusion gain is small but safe, $0.72
     \caption{MHC-II, human}\end{subfigure}\hfill
   \begin{subfigure}{0.49\linewidth}\includegraphics[width=\linewidth]{pockets_mhc2_mouse.pdf}
     \caption{MHC-II, mouse}\end{subfigure}
-  \caption{Learned mutual-information relevance $w_{j,p}$ of each groove pseudosequence position $p$
-  (x) for each anchor pocket $j$ (rows), per class and species. Different pockets read different
-  groove positions (MHC-I P2 vs P$\Omega$ are disjoint); MHC-II concentrates on $\beta_1$.
-  \texttt{bench/make\_figures.py}.}
+  \caption{DPI-pruned mutual-information relevance $w_{j,p}$ of each groove pseudosequence position
+  $p$ (x) for each anchor pocket $j$ (rows), per class and species. After data-processing-inequality
+  pruning~\cite{Margolin2006} each pocket keeps only its \emph{direct} positions (MHC-I P$\Omega$
+  $\to\sim$19, P2 $\to\sim$7--8, disjoint); MHC-II concentrates on $\beta_1$. \texttt{bench/make\_figures.py}.}
   \label{fig:pockets}
 \end{figure}
 
@@ -511,9 +517,14 @@ duplicates are collapsed before splitting, and crucially a held-out peptide is e
 into a score---in particular through cross-allele diffusion. Equivalently, all matching counts are
 \emph{punctured}: exact-identity hits are dropped, never rewarded (mirroring the $n^{>}$ counts of
 the \texttt{seqtree} appendix). This lowers raw baselines but is the only fair measure of
-generalization. \emph{Metrics} are ROC-AUC,
-PR-AUC against the prevalence baseline, top-1 accuracy, and a real-vs-random noise-rejection AUROC
-(the non-binder filter). \emph{Comparison}: against NetMHCpan-4.1 and NetMHCIIpan-4.0
+generalization. \emph{Metrics} are top-1 and top-5 accuracy and per-rarity \emph{recovery@5} (the
+multi-label, promiscuity-aware score---top-1 is misleading when a peptide binds several alleles), the
+per-(peptide,allele) ROC/PR-AUC, and a \emph{non-binder} baseline AUROC: the presentation score
+(max over the panel) of real held-out peptides versus a matched set of $10{,}000$ random peptides
+drawn at the corpus amino-acid frequency and length distribution. The latter establishes the floor
+for non-binder rejection (real-vs-random AUROC $\approx0.80$ for human MHC-I, diffusion-neutral) and
+is the negative class for the eventual multi-class (allele $+$ non-binder) confusion-matrix
+evaluation. \emph{Comparison}: against NetMHCpan-4.1 and NetMHCIIpan-4.0
 \cite{Reynisson2020}, MixMHCpred~\cite{BassaniSternberg2017}, and MixMHC2pred~\cite{Racle2019} on
 matched alleles and shared eluted-ligand / assay test sets, with rank-threshold calibration and an
 explicit \emph{rare-allele subgroup} analysis (the equity axis of~\cite{Glynn2025}) where the

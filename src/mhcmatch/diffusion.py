@@ -34,7 +34,7 @@ class AnchorModel:
     """
 
     def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0,
-                 learn_weights=True):
+                 learn_weights=True, prune_dpi=False):
         self.cls = cls
         if anchors is None:
             anchors = MHC1_ANCHORS if cls == "mhc1" else MHC2_ANCHORS
@@ -55,7 +55,7 @@ class AnchorModel:
             for j in self.anchors:
                 modal = {normalize_allele(a): cc.most_common(1)[0][0]
                          for a, cc in self.prefs[j].items() if cc}
-                weights[j] = learn_anchor_weights(seqs, modal)
+                weights[j] = learn_anchor_weights(seqs, modal, prune_dpi=prune_dpi)
         self.ps = Pseudoseq(cls, h=h, weights=weights)
         self._cache = {}
 

@@ -122,16 +122,35 @@ def mutual_information(xs, ys) -> float:
     return max(mi, 0.0)
 
 
-def learn_anchor_weights(pseudo_seqs: dict, anchor_residue: dict) -> list:
+def learn_anchor_weights(pseudo_seqs: dict, anchor_residue: dict, prune_dpi: bool = False,
+                         tol: float = 0.0) -> list:
     """Per-position relevance ``w[p]`` = MI(groove position ``p`` residue ; anchor residue) across
     alleles, normalized to mean 1. ``anchor_residue``: ``{allele: residue}`` (e.g. the modal residue
     at one peptide anchor for that allele). Positions that discriminate the anchor get more weight.
+
+    Raw MI is inflated by linkage between groove positions (they co-vary across alleles), so many
+    positions look relevant and the per-pocket profile is smeared. With ``prune_dpi=True`` an ARACNE
+    data-processing-inequality prune removes indirect links: position p's edge to the pocket is
+    dropped if some other position q is more informative about the pocket and about p
+    (I(p;pocket) <= min(I(q;pocket), I(p;q))), leaving the direct pocket positions sparse and distinct.
     """
     alleles = [a for a in anchor_residue if a in pseudo_seqs and len(pseudo_seqs[a]) == _LEN]
     if not alleles:
         return [1.0] * _LEN
     ys = [anchor_residue[a] for a in alleles]
-    w = [mutual_information([pseudo_seqs[a][p] for a in alleles], ys) for p in range(_LEN)]
+    cols = [[pseudo_seqs[a][p] for a in alleles] for p in range(_LEN)]
+    mi = [mutual_information(cols[p], ys) for p in range(_LEN)]
+    w = list(mi)
+    if prune_dpi:
+        for p in range(_LEN):
+            if mi[p] <= 0:
+                continue
+            for q in range(_LEN):  # q mediates p's link to the pocket -> p is indirect
+                if q == p or mi[q] <= mi[p]:
+                    continue
+                if mi[p] <= mutual_information(cols[p], cols[q]) - tol:
+                    w[p] = 0.0
+                    break
     mean = sum(w) / _LEN
     return [x / mean for x in w] if mean > 0 else [1.0] * _LEN
 
