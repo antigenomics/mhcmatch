@@ -89,6 +89,10 @@ diffusion model, and the downstream predictors.
   **Remaining (Phase 1):** per-locus `h`/`τ` calibration by cross-validated likelihood.
 - **Tuned thresholds**: per-class/species `alpha` and scope (`lo/hi`) from ROC/PR; **FWER/FDR over
   proteome scans** (windows × panel). Appendix §3, §5.
+- **Cross-validated evaluation — done**: `bench/tune_diffusion.py` runs 5-fold, per-pMHC,
+  promiscuity-aware (top-5 / recovery@5) CV with a 10k corpus-AA random non-binder baseline; results
+  per panel in `bench/results/*.md`. MHC-I rare recovery@5 0.47→0.75 (shortlist) / 0.30→0.44 (full);
+  MHC-II near-neutral (structure-diffusion target). Speed in `bench/bench_speed.py`.
 - **Class-II promiscuity**: multi-label restriction + global `E_glob` non-binder filter; pseudoseq
   pooling for thin class-II/mouse panels.
 - **Allele-name normalization** across pmhc ↔ pseudosequence ↔ user input — class-II locus-aware

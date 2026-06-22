@@ -78,8 +78,24 @@ def _split(refcount, frac, cap, rng):
     return test, pep_alleles
 
 
+def cv_folds(refcount, k, rng):
+    """Round-robin each allele's peptides into k folds, so every fold holds out ~1/k of EACH
+    allele (rare alleles represented in every fold). Returns (list of k test dicts, pep_alleles)."""
+    pep_alleles = defaultdict(set)
+    for a, peps in refcount.items():
+        for p in peps:
+            pep_alleles[p].add(a)
+    folds = [defaultdict(set) for _ in range(k)]
+    for a, peps in refcount.items():
+        ps = list(peps)
+        rng.shuffle(ps)
+        for i, p in enumerate(ps):
+            folds[i % k][a].add(p)
+    return [dict(f) for f in folds], pep_alleles
+
+
 def evaluate(refcount, cls, h, tau, metric, learn_weights, raw, test, pep_alleles, rare_max=30,
-             prune_dpi=False, ranker="anchor"):
+             prune_dpi=False, ranker="anchor", rng=None, pairs_cap=0):
     """Per held-out pMHC ``(peptide, allele)``: rank all panel alleles for the peptide and ask
     whether the held-out allele is recovered in the top 1 / top 5. Returns top1/top5 over the held
     pairs and recovery@5 split by allele rarity. Training drops only the held pair (per-pMHC).
@@ -114,7 +130,12 @@ def evaluate(refcount, cls, h, tau, metric, learn_weights, raw, test, pep_allele
 
     t1 = t5 = 0
     rare_hit = rare_tot = freq_hit = freq_tot = 0
-    pairs = [(p, a) for a in test for p in test[a] if a in pset]
+    pairs = []  # cap PER ALLELE (keep all of a rare allele's held pairs; bound frequent ones)
+    for a in test:
+        if a not in pset:
+            continue
+        ap = [(p, a) for p in test[a]]
+        pairs += (rng or random).sample(ap, pairs_cap) if (pairs_cap and len(ap) > pairs_cap) else ap
     for p, a in pairs:
         ranked = ranking(p)
         t1 += ranked[0] == a
@@ -126,11 +147,13 @@ def evaluate(refcount, cls, h, tau, metric, learn_weights, raw, test, pep_allele
         else:
             freq_tot += 1
             freq_hit += hit
-    if not pairs:
-        return None
-    return (len(pairs), t1 / len(pairs), t5 / len(pairs),
-            rare_hit / rare_tot if rare_tot else float("nan"),
-            freq_hit / freq_tot if freq_tot else float("nan"))
+    return (len(pairs), t1, t5, rare_hit, rare_tot, freq_hit, freq_tot) if pairs else None
+
+
+def _rates(c):
+    """counts (npairs, t1, t5, rare_hit, rare_tot, freq_hit, freq_tot) -> (top1, top5, rareR, freqR)."""
+    n, t1, t5, rh, rt, fh, ft = c
+    return (t1 / n, t5 / n, rh / rt if rt else float("nan"), fh / ft if ft else float("nan"))
 
 
 def main():
@@ -139,15 +162,18 @@ def main():
     ap.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
     ap.add_argument("--species", default="human")
     ap.add_argument("--tier", default="shortlist", choices=("full", "shortlist"))
-    ap.add_argument("--heldout", type=float, default=0.3)
-    ap.add_argument("--cap", type=int, default=20, help="max held-out peptides per allele")
+    ap.add_argument("--folds", type=int, default=5, help="cross-validation folds (default eval)")
+    ap.add_argument("--per-allele", type=int, default=10,
+                    help="max eval pMHCs per allele per fold (keeps rare alleles, bounds frequent)")
+    ap.add_argument("--heldout", type=float, default=0.3, help="single-split holdout (--sweep only)")
+    ap.add_argument("--cap", type=int, default=20, help="single-split max held-out/allele (--sweep)")
     ap.add_argument("--metric", default="blosum", choices=("blosum", "identity"))
     ap.add_argument("--dpi", action="store_true", help="DPI-prune the per-anchor groove weights")
-    ap.add_argument("--ranker", default="anchor", choices=("anchor", "hybrid"),
-                    help="anchor = diffused log-odds; hybrid = production vote+diffused restriction")
+    ap.add_argument("--ranker", default="anchor", choices=("anchor", "hybrid"))
     ap.add_argument("--random", type=int, default=10000,
-                    help="number of corpus-AA random peptides for the non-binder baseline AUROC")
-    ap.add_argument("--sweep", action="store_true")
+                    help="corpus-AA random peptides for the non-binder baseline AUROC (0 = off)")
+    ap.add_argument("--sweep", action="store_true", help="single-split h/tau grid for tuning")
+    ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "results"))
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
     if not args.pmhc_dir:
@@ -155,46 +181,76 @@ def main():
     rng = random.Random(args.seed)
     sp = {"human": "HomoSapiens", "mouse": "MusMusculus"}[args.species]
     refcount = load(os.path.join(args.pmhc_dir, f"pmhc_{args.tier}.tsv.gz"), args.cls, sp)
-    test, pep_alleles = _split(refcount, args.heldout, args.cap, rng)
-    held = {p for ps in test.values() for p in ps}
-    npairs = sum(len(ps) for ps in test.values())
+
+    if args.sweep:  # single-split h/tau tuning grid (no CV)
+        test, pep_alleles = _split(refcount, args.heldout, args.cap, rng)
+        print(f"# {args.species} {_LABEL[args.cls]} {args.tier} single-split tuning; metric={args.metric}")
+        print(f"{'h':>5}{'tau':>6}{'mode':>9}{'top1':>8}{'top5':>8}{'rareR@5':>9}{'freqR@5':>9}")
+        base = evaluate(refcount, args.cls, 2.0, 10, args.metric, True, True, test, pep_alleles)
+        if base:
+            a1, a5, rr, fr = _rates(base)
+            print(f"{'-':>5}{'-':>6}{'raw':>9}{a1:>8.3f}{a5:>8.3f}{rr:>9.3f}{fr:>9.3f}")
+        for h in (0.5, 1.0, 2.0, 4.0):
+            for tau in (5, 10, 20):
+                r = evaluate(refcount, args.cls, h, tau, args.metric, True, False, test,
+                             pep_alleles, prune_dpi=args.dpi, ranker=args.ranker)
+                if r:
+                    a1, a5, rr, fr = _rates(r)
+                    print(f"{h:>5}{tau:>6}{'diffuse':>9}{a1:>8.3f}{a5:>8.3f}{rr:>9.3f}{fr:>9.3f}")
+        return
+
+    # default: k-fold cross-validation at h=2, tau=10; pool out-of-fold per-pair counts.
+    import statistics
+    folds, pep_alleles = cv_folds(refcount, args.folds, rng)
     print(f"# {args.species} {_LABEL[args.cls]} {args.tier}: {len(refcount)} alleles, "
-          f"{npairs} held-out pMHCs (per-pMHC exclusion); metric={args.metric}")
-    print(f"{'h':>5}{'tau':>6}{'mode':>9}{'top1':>8}{'top5':>8}{'rareR@5':>9}{'freqR@5':>9}")
+          f"{args.folds}-fold CV (per-pMHC, <={args.per_allele}/allele/fold); metric={args.metric}, "
+          f"ranker={args.ranker}")
+    print(f"{'mode':>9}{'top1':>9}{'top5':>16}{'rareR@5':>16}{'freqR@5':>9}")
+    summary = {}
+    for name, raw in (("raw", True), ("diffuse", False)):
+        fc = [evaluate(refcount, args.cls, 2.0, 10, args.metric, True, raw, folds[f], pep_alleles,
+                       prune_dpi=args.dpi, ranker=args.ranker, rng=rng, pairs_cap=args.per_allele)
+              for f in range(args.folds)]
+        fc = [c for c in fc if c]
+        pooled = tuple(sum(c[i] for c in fc) for i in range(7))
+        a1, a5, rr, fr = _rates(pooled)
+        s5 = statistics.pstdev([c[2] / c[0] for c in fc]) if len(fc) > 1 else 0.0
+        sr = statistics.pstdev([c[3] / c[4] for c in fc if c[4]]) if len(fc) > 1 else 0.0
+        summary[name] = (a1, a5, s5, rr, sr, fr)
+        print(f"{name:>9}{a1:>9.3f}{a5:>9.3f}±{s5:.3f}{rr:>9.3f}±{sr:.3f}{fr:>9.3f}")
 
-    hs = [0.5, 1.0, 2.0, 4.0] if args.sweep else [2.0]
-    taus = [5, 10, 20] if args.sweep else [10]
-    base = evaluate(refcount, args.cls, 2.0, 10, args.metric, True, True, test, pep_alleles,
-                    prune_dpi=args.dpi)
-    if base:
-        n, a1, a5, rr, fr = base
-        print(f"{'-':>5}{'-':>6}{'raw':>9}{a1:>8.3f}{a5:>8.3f}{rr:>9.3f}{fr:>9.3f}")
-    for h in hs:
-        for tau in taus:
-            r = evaluate(refcount, args.cls, h, tau, args.metric, True, False, test, pep_alleles,
-                         prune_dpi=args.dpi, ranker=args.ranker)
-            if r:
-                n, a1, a5, rr, fr = r
-                print(f"{h:>5}{tau:>6}{'diffuse':>9}{a1:>8.3f}{a5:>8.3f}{rr:>9.3f}{fr:>9.3f}")
-
-    if args.random:
+    au = {}
+    if args.random:  # non-binder baseline on fold 0
         label = _LABEL[args.cls]
+        held0 = folds[0]
         train = [{"epitope": p, "mhc_a": a, "mhc_class": label}
-                 for a, peps in refcount.items() for p in peps if p not in test.get(a, ())]
+                 for a, peps in refcount.items() for p in peps if p not in held0.get(a, ())]
         store = Store.from_records(train)
         panel = store.alleles(args.cls)
         model = store.anchor_model(args.cls, h=2.0, prior_strength=10)
         model.ps.metric = args.metric
         rand = random_peptides(*_corpus(refcount), args.random, rng)
-        real = list(held)
+        real = list({p for ps in held0.values() for p in ps})
 
         def pres(peps, raw):
             return [max(model.score(p, a, raw=raw) for a in panel) for p in peps]
 
         for raw, name in ((True, "raw"), (False, "diffuse")):
-            au = auroc(pres(real, raw), pres(rand, raw))
-            print(f"# non-binder baseline ({name}): real-vs-random presentation AUROC = {au:.3f} "
-                  f"({len(real)} real / {args.random} corpus-AA random)")
+            au[name] = auroc(pres(real, raw), pres(rand, raw))
+            print(f"# non-binder AUROC ({name}): {au[name]:.3f}")
+
+    os.makedirs(args.out, exist_ok=True)
+    rpath = os.path.join(args.out, f"cv_{args.cls}_{args.species}_{args.tier}.md")
+    with open(rpath, "w") as fh:
+        fh.write(f"# {args.species} {_LABEL[args.cls]} ({args.tier}), {args.folds}-fold CV, "
+                 f"per-pMHC, ranker={args.ranker}, metric={args.metric}\n\n")
+        fh.write("| mode | top1 | top5 | rare recovery@5 | freq recovery@5 | non-binder AUROC |\n")
+        fh.write("|---|---|---|---|---|---|\n")
+        for name in ("raw", "diffuse"):
+            a1, a5, s5, rr, sr, fr = summary[name]
+            fh.write(f"| {name} | {a1:.3f} | {a5:.3f}±{s5:.3f} | {rr:.3f}±{sr:.3f} | {fr:.3f} | "
+                     f"{au.get(name, float('nan')):.3f} |\n")
+    print(f"# wrote {rpath}")
 
 
 if __name__ == "__main__":

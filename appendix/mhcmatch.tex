@@ -293,19 +293,22 @@ primary anchors alone ($\{$P2,P$\Omega\}$) the full-set rare gain nearly vanishe
 auxiliary pocket-proximal positions make per-allele estimation sparser---so diffusion has more to
 rescue. The data-rescue is safe: it never lowers a well-sampled allele's AUC.
 
-\paragraph{Allele prediction (top-$k$, promiscuity-aware).} Cast as the reverse problem---for each
-held-out pMHC $(p,a)$ rank all panel alleles for $p$ and ask whether the held-out allele $a$ is
-recovered in the top-$k$ (\texttt{bench/tune\_diffusion.py}, human, per-pMHC hold-out). Because
-peptides are promiscuous we score \emph{recovery@5} split by allele rarity. For MHC-I the diffusion
-lifts \emph{rare}-allele recovery@5 from $0.53$ to $0.88$ (shortlist) and $0.29$ to $0.47$ (full
-tier), at a small frequent cost ($\approx-0.02$). Here the \emph{ranker} is the diffused anchor
-log-odds itself, not the neighbour vote: on a novel peptide the vote tally has few same-allele
-signature neighbours, so vote-first ranking buries the true allele (top-5 $0.87$, rare recovery@5
-$0.25$), whereas the diffused log-odds scores every allele directly (top-5 $0.95$, rare recovery@5
-$0.88$). A grid sweep selects $h=2,\tau=10$, BLOSUM (marginally over identity), as optimal. Class~II
-remains hard (recovery@5 $\approx0.14$, near-neutral diffusion): its open groove, promiscuity, and
-one-pass register cap the anchor model---a target for the structure-based extension. Top-1 is
-\emph{not} the right yardstick here (promiscuity makes several alleles correct); top-5/recovery@5 is.
+\paragraph{Allele prediction (top-$k$, promiscuity-aware, cross-validated).} Cast as the reverse
+problem---for each held-out pMHC $(p,a)$ rank all panel alleles for $p$ and ask whether the held-out
+allele $a$ is recovered in the top-$k$. We use \emph{5-fold} cross-validation, pooling each pMHC's
+single out-of-fold prediction, capped per allele so rare alleles are represented and frequent ones
+do not dominate (\texttt{bench/tune\_diffusion.py}; per-panel tables in \texttt{bench/results/}).
+Because peptides are promiscuous we score \emph{recovery@5} split by allele rarity. For MHC-I the
+diffusion lifts \emph{rare}-allele recovery@5 from $0.47$ to $0.75$ (shortlist) and $0.30$ to $0.44$
+(full tier), at a small frequent cost ($\approx-0.02$) and roughly flat overall top-5
+($\approx0.85$/$0.64$). The \emph{ranker} is the diffused anchor log-odds itself, not the neighbour
+vote: on a novel peptide the vote tally has few same-allele signature neighbours, so vote-first
+ranking buries the true allele (top-5 $0.87$, rare recovery@5 $0.25$ on a single split) whereas the
+diffused log-odds scores every allele directly. A grid sweep selects $h=2,\tau=10$, BLOSUM
+(marginally over identity), as optimal. Class~II remains hard (recovery@5 $\approx0.47$, diffusion
+near-neutral, top-5 $\approx0.25$) and mouse is too few-allele to be conclusive (high CV variance):
+both are targets for the structure-based extension. Top-1 is \emph{not} the right yardstick here
+(promiscuity makes several alleles correct); top-5/recovery@5 is.
 
 \begin{figure}[ht]\centering
   \includegraphics[width=0.8\linewidth]{diffusion_auc.pdf}
