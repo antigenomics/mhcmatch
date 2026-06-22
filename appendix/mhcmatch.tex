@@ -500,9 +500,9 @@ best---an MHC-I 34-mer onto a single chain, or an MHC-II 34-mer onto the $\alpha
 chain-pair---rather than a $\beta_2$m/chain-length heuristic, which fails because TCR variable domains
 ($\sim$110\,aa) and class-II groove domains ($\sim$85\,aa) overlap $\beta_2$m's size and class-II
 crystals are often domain-split; this yields $279$ MHC-I and $93$ MHC-II structures. For MHC-I the
-contacts recover the learned layout from physics alone (Fig.~\ref{fig:structural})---P2 contacts
-pseudosequence positions $\sim$7--8 (B-pocket), P$\Omega$ positions $\sim$15--17 (F-pocket),
-overlapping the learned maxima---and
+contacts recover the learned layout from physics alone---P2 contacts pseudosequence positions
+$\sim$7--8 (B-pocket), P$\Omega$ positions $\sim$15--17 (F-pocket), overlapping the learned maxima,
+as seen on a representative complex in Fig.~\ref{fig:structural}---and
 substituting these \emph{structural} contact-frequency weights into the kernel
 (\texttt{weights="structural"}) gives near-identical rare-allele recovery@5 ($0.72$ vs $0.75$ learned,
 5-fold CV): a data-independent prior agreeing with the data-learned one. For MHC-II the four core
@@ -537,14 +537,15 @@ needs.
 \end{figure}
 
 \begin{figure}[ht]\centering
-  \includegraphics[width=0.96\linewidth]{structural_pockets.pdf}
-  \caption{Structural pocket map: each of the $34$ groove pseudosequence positions coloured by the
-  peptide anchor it contacts most across the pMHC crystals (\S\ref{sec:pockets}, $279$ MHC-I / $93$
-  MHC-II structures), with opacity proportional to that heavy-atom contact frequency; pale grey marks
-  positions with no appreciable peptide contact. The B-pocket (P2, $\sim$7--9) and F-pocket
-  (P$\Omega$, $\sim$15--17) footprints emerge directly from structure and coincide with the pruned
-  MI maxima of Fig.~\ref{fig:pockets}. Rendered in the residue-square style of \texttt{tcren}'s
-  complementarity maps. \texttt{bench/structural\_figure.py}.}
+  \includegraphics[width=0.72\linewidth]{structure3d.png}
+  \caption{The learned pockets on a real structure: a top-down view into the HLA-A*02:01 groove with
+  the influenza M1 peptide GILGFVFTL bound (PDB 1oga, oriented by \texttt{tcren orient}; histo.fyi
+  style---pale translucent surface + cartoon, peptide as sticks). Each groove residue is coloured by
+  the peptide anchor it lies closest to, using the same pocket palette as the per-pocket weights:
+  P1 (orange), P2/B-pocket (blue), P3 (light blue), P$\Omega{-}1$ (green), P$\Omega$/F-pocket
+  (vermillion). The buried primary anchors P2 and P$\Omega$ are labelled; their side chains plug into
+  the blue B-pocket and vermillion F-pocket that the structural contacts (\S\ref{sec:pockets}) and the
+  pruned MI weights (Fig.~\ref{fig:pockets}) both single out. \texttt{bench/structure3d.py} (PyMOL).}
   \label{fig:structural}
 \end{figure}
 
