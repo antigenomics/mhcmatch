@@ -65,6 +65,19 @@ def _binom_sf(k, n, p):
     return min(1.0, sum(math.comb(n, i) * p**i * (1 - p) ** (n - i) for i in range(k, n + 1)))
 
 
+def _bh_cutoff(pvals, alpha):
+    """Benjamini-Hochberg p-value cutoff controlling FDR <= ``alpha``: the largest ``p_(r)`` with
+    ``p_(r) <= r/m * alpha`` (``0`` if none qualify, so nothing is called)."""
+    m = len(pvals)
+    if m == 0:
+        return 0.0
+    cutoff = 0.0
+    for r, p in enumerate(sorted(pvals), 1):
+        if p <= r / m * alpha:
+            cutoff = p
+    return cutoff
+
+
 def _mhc2_core_anchors(peptide: str) -> tuple:
     """0-based P1/P4/P6/P9 indices of the register-anchored 9-mer core (one-pass register trick)."""
     if len(peptide) < 9:
@@ -260,24 +273,47 @@ class Store:
         """Overall presentation: does any panel allele present this peptide?"""
         return any(r.binder for r in self.restriction(peptide, cls=cls, alpha=alpha))
 
-    def scan_protein(self, protein, cls="mhc1", alleles="all", lengths=None, alpha=0.05, top=3):
+    def scan_protein(self, protein, cls="mhc1", alleles="all", lengths=None, alpha=0.05, top=3,
+                     correction=None):
         """Slide all binding-length windows over ``protein`` and return presented peptides.
 
         Returns ``[(position, peptide, [Restriction, ...]), ...]`` for windows with >=1 binder.
-        Per-window thresholding only (FWER/FDR over windows x panel is appendix §5, Phase 1).
+
+        ``correction`` controls multiple testing over the (window, allele) presentation tests in the
+        scan (appendix §5): ``None`` (default) keeps the per-window per-allele ``alpha``;
+        ``"bonferroni"`` controls the family-wise error rate (threshold ``alpha/m``); ``"bh"`` controls
+        the Benjamini-Hochberg false-discovery rate. ``m`` is the number of voted (window, allele)
+        tests. The vote tail p-value is ``10**(-enrichment)``; corrected calls replace the per-window
+        binder flag.
         """
         protein = "".join(protein.split()).upper()
         lengths = lengths or _DEFAULT_LENGTHS[cls]
-        out = []
+        nA = len(self._allele_set(self._panel[cls], alleles))
+        hits = []  # windows that returned candidate alleles, before multiple-testing control
         for L in lengths:
             for i in range(len(protein) - L + 1):
                 pep = protein[i:i + L]
                 if not all(c in _AA for c in pep):
                     continue
-                binders = [r for r in self.restriction(pep, cls, alleles, top=top, alpha=alpha)
-                           if r.binder]
-                if binders:
-                    out.append((i, pep, binders))
+                rs = self.restriction(pep, cls, alleles, top=nA, alpha=alpha)
+                if rs:
+                    hits.append((i, pep, rs))
+        if correction is None:
+            return [(i, pep, [r for r in rs if r.binder][:top]) for i, pep, rs in hits
+                    if any(r.binder for r in rs)]
+        pvals = [10 ** (-r.enrichment) for _, _, rs in hits for r in rs if r.n_votes > 0]
+        if correction == "bonferroni":
+            cutoff = alpha / len(pvals) if pvals else 0.0
+        elif correction == "bh":
+            cutoff = _bh_cutoff(pvals, alpha)
+        else:
+            raise ValueError(f"unknown correction {correction!r} (None|'bonferroni'|'bh')")
+        out = []
+        for i, pep, rs in hits:
+            keep = sorted((r for r in rs if r.n_votes > 0 and 10 ** (-r.enrichment) <= cutoff),
+                          key=lambda r: r.enrichment, reverse=True)
+            if keep:
+                out.append((i, pep, keep[:top]))
         return out
 
     # -- anchor / TCR-facing split -------------------------------------------

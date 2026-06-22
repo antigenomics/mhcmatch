@@ -183,6 +183,33 @@ def test_proteome_source_lookup():
 
 
 # -- CLI ----------------------------------------------------------------------
+# -- allele-name resolution (item 7) -----------------------------------------
+def test_resolve_allele():
+    from mhcmatch import resolve_allele
+    from mhcmatch.pseudoseq import load_pseudo
+
+    key = next(k for k in load_pseudo("mhc1") if k.startswith("HLA-A"))  # e.g. 'HLA-A02:01'
+    assert resolve_allele(key, "mhc1") == (key, True)
+    assert resolve_allele(key[4:], "mhc1") == (key, True)          # missing 'HLA-' prefix
+    assert resolve_allele("A*" + key[5:], "mhc1") == (key, True)   # '*' punctuation + no prefix
+    assert resolve_allele("ZZ:99:99", "mhc1") == (None, False)     # unknown -> flagged, not guessed
+
+
+# -- multiple-testing control on a protein scan (item 6) ----------------------
+def test_scan_protein_fwer_fdr():
+    store = _make_store()
+    pep = "ALA" + "EEEE" + "CV"            # A*02:01 signature, novel TCR-facing middle
+    protein = "GGGG" + pep + "GGGG"
+    raw = store.scan_protein(protein, cls="mhc1")
+    bh = store.scan_protein(protein, cls="mhc1", correction="bh")
+    bonf = store.scan_protein(protein, cls="mhc1", correction="bonferroni")
+    assert raw                                                     # the signature window is found
+    raw_pos = {(i, p) for i, p, _ in raw}
+    assert {(i, p) for i, p, _ in bh} <= raw_pos                   # correction never adds windows
+    assert {(i, p) for i, p, _ in bonf} <= {(i, p) for i, p, _ in bh}  # Bonferroni <= BH
+    assert any(p == pep for _, p, _ in bonf)                       # strong signal survives FWER
+
+
 def test_cli_decompose_and_source(tmp_path, capsys):
     from mhcmatch import cli
     cli.main(["decompose", "NLVPMVATV", "--cls", "mhc1"])

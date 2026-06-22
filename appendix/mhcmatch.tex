@@ -519,8 +519,9 @@ evaluate~\eqref{eq:conf} per window and allele. With $W$ windows and $|\mathcal 
 test is multiple: under the null the expected number of windows called for allele $a$ is
 $\approx W\alpha$, so we control the family either by Bonferroni / max-statistic thresholds (FWER) or
 by Benjamini--Hochberg on the $p_{\mathrm{enrich}}$ across the $W\times|\mathcal A|$ grid
-(FDR)~\cite{Benjamini1995}. \texttt{scan\_protein} reports per-window binders; the grid-level
-correction is a calibration step.
+(FDR)~\cite{Benjamini1995}. \texttt{scan\_protein(correction="bonferroni"|"bh")} applies exactly this
+control over the voted $(window, allele)$ tests---Bonferroni for FWER, Benjamini--Hochberg for FDR---and
+re-flags binders at the corrected threshold; ``correction=None`` keeps the per-window $\alpha$.
 
 \paragraph{Same-MHC versus TCR-facing search.} At proteome scale two notions of ``similar peptide''
 are distinguished by which mask of~\eqref{eq:masks} is indexed: \emph{same-MHC} similarity indexes

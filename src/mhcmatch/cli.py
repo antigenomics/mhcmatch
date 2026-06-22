@@ -39,9 +39,26 @@ def cmd_decompose(a):
     print(f"presentation  {d.presentation}")
 
 
+def _resolve_panel_allele(store, name, cls):
+    """Map a user-typed allele to a panel allele (exact, else prefix on punctuation-stripped name)."""
+    pool = (cls,) if cls else ("mhc1", "mhc2")
+    panel = {al for c in pool for al in store.alleles(c)}
+    if name in panel:
+        return name
+    key = name.replace("*", "").replace(":", "")
+    hits = sorted(a for a in panel if a.replace("*", "").replace(":", "").startswith(key))
+    if hits:
+        print(f"# resolved '{name}' -> '{hits[0]}'")
+        return hits[0]
+    print(f"# allele '{name}' not found in panel")
+    return name
+
+
 def cmd_restriction(a):
-    res = _store(a).restriction(a.peptide, cls=a.cls, alleles=[a.allele] if a.allele else "all",
-                                top=a.top, diffuse=a.diffuse)
+    store = _store(a)
+    allele = _resolve_panel_allele(store, a.allele, a.cls) if a.allele else None
+    res = store.restriction(a.peptide, cls=a.cls, alleles=[allele] if allele else "all",
+                            top=a.top, diffuse=a.diffuse)
     if not res:
         print("no presenting allele (no presentation-signature neighbours)")
         return
@@ -56,8 +73,10 @@ def cmd_restriction(a):
 
 def cmd_scan(a):
     hits = _store(a).scan_protein(_read_seq(a.protein), cls=a.cls or "mhc1",
-                                  alleles=[a.allele] if a.allele else "all", top=a.top)
-    print(f"# {len(hits)} presented window(s)")
+                                  alleles=[a.allele] if a.allele else "all", top=a.top,
+                                  correction=a.correction)
+    label = f" ({a.correction} FWER/FDR)" if a.correction else ""
+    print(f"# {len(hits)} presented window(s){label}")
     for pos, pep, binders in hits:
         print(f"{pos:>5}  {pep:<14}  {','.join(b.allele for b in binders)}")
 
@@ -104,6 +123,8 @@ def main(argv=None):
     s.add_argument("--allele")
     s.add_argument("--cls", choices=("mhc1", "mhc2"))
     s.add_argument("--top", type=int, default=3)
+    s.add_argument("--correction", choices=("bonferroni", "bh"),
+                   help="multiple-testing control over windows x alleles (FWER / BH-FDR)")
     _add_store_opts(s)
     s.set_defaults(fn=cmd_scan)
 

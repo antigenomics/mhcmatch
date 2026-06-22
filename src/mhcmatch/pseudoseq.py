@@ -56,6 +56,29 @@ def class2_key(mhc_a: str, mhc_b: str = "") -> str:
     return f"{mhc_a.replace('*', '').replace(':', '')}-{beta}"
 
 
+def resolve_allele(name: str, cls: str):
+    """Resolve a user-typed allele name to a pseudosequence key for ``cls``.
+
+    Returns ``(key, exact)``. ``exact=True`` when ``name`` (after :func:`normalize_allele`) is a known
+    key; otherwise the closest key by name---a missing ``HLA-`` prefix is repaired and a too-short
+    (e.g. two-field ``'HLA-A02:01'``) name is completed by prefix to its first matching key---with
+    ``exact=False``; ``(None, False)`` if nothing matches. Serotype names (``'HLA-A2'``) are not
+    expanded. Lets callers accept messy input (``'A*02:01'``, ``'HLA-A0201'``) and report when a
+    requested allele is unknown rather than silently dropping it.
+    """
+    seqs = load_pseudo(cls)
+    cand = normalize_allele(name.strip())
+    variants = [cand] + ([] if cand.upper().startswith(("HLA-", "H-2")) else ["HLA-" + cand])
+    for v in variants:
+        if v in seqs:
+            return v, True
+    for v in variants:  # prefix completion (two-field -> first four-field key)
+        hits = sorted(k for k in seqs if k.startswith(v))
+        if hits:
+            return hits[0], False
+    return None, False
+
+
 @lru_cache(maxsize=2)
 def load_pseudo(cls: str) -> dict:
     """``allele-id -> 34-mer`` for the bundled pseudosequence FASTA of a class."""

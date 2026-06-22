@@ -15,7 +15,8 @@ from importlib.metadata import PackageNotFoundError, version as _version
 from . import logo, search
 from .diffusion import AnchorModel
 from .proteome import Proteome, SourceHit
-from .pseudoseq import Pseudoseq, learn_anchor_weights, load_pseudo, normalize_allele
+from .pseudoseq import (Pseudoseq, learn_anchor_weights, load_pseudo, normalize_allele,
+                        resolve_allele)
 from .store import Decomposition, Restriction, Store, anchor_indices, infer_class
 
 __all__ = [
@@ -32,6 +33,7 @@ __all__ = [
     "learn_anchor_weights",
     "load_pseudo",
     "normalize_allele",
+    "resolve_allele",
     "logo",
     "__version__",
 ]

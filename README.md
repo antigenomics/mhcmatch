@@ -74,8 +74,8 @@ mhcmatch.logo.motif(store, "HLA-A*02:01", "mhc1")
 ```fish
 mhcmatch decompose NLVPMVATV                                  # anchor / TCR-facing split (no data)
 set -x MHCMATCH_PMHC /path/to/pmhc_data                       # or pass --pmhc to each command
-mhcmatch restriction NLVPMVATV --tier shortlist --diffuse     # ranked alleles (rare-allele-aware)
-mhcmatch scan my_protein.fasta --allele 'HLA-A*02:01'         # presented windows
+mhcmatch restriction NLVPMVATV --allele 'A*02:01' --diffuse   # allele name auto-resolved; rare-aware
+mhcmatch scan my_protein.fasta --correction bh                # presented windows, BH-FDR controlled
 mhcmatch source MKTAYIAKW --proteome UP000005640_9606.fasta.gz
 mhcmatch logo 'HLA-A*02:01'
 ```
