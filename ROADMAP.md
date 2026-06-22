@@ -100,6 +100,10 @@ diffusion model, and the downstream predictors.
   promiscuity-aware (top-5 / recovery@5) CV with a 10k corpus-AA random non-binder baseline; results
   per panel in `bench/results/*.md`. MHC-I rare recovery@5 0.47→0.75 (shortlist) / 0.30→0.44 (full);
   MHC-II near-neutral (structure-diffusion target). Speed in `bench/bench_speed.py`.
+- **Multi-class confusion matrix — done** (`bench/confusion.py`): locus (HLA-A/B/C) + non-binder
+  confusion with the binder gate calibrated to a 5% non-binder FPR. Locus precision 0.62–0.65 when the
+  model commits; a single panel-max gate can't both reject non-binders and keep rare positives (top-1
+  recall 0.17–0.32 at 5% FPR) → motivates the global `E_glob` gate. Appendix §8, Fig. confusion.
 - **Class-II promiscuity**: multi-label restriction + global `E_glob` non-binder filter; pseudoseq
   pooling for thin class-II/mouse panels.
 - **Allele-name normalization** across pmhc ↔ pseudosequence ↔ user input — class-II locus-aware

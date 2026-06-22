@@ -620,14 +620,34 @@ per-(peptide,allele) ROC/PR-AUC, and a \emph{non-binder} baseline AUROC: the pre
 (max over the panel) of real held-out peptides versus a matched set of $10{,}000$ random peptides
 drawn at the corpus amino-acid frequency and length distribution. The latter establishes the floor
 for non-binder rejection (real-vs-random AUROC $\approx0.80$ for human MHC-I, diffusion-neutral) and
-is the negative class for the eventual multi-class (allele $+$ non-binder) confusion-matrix
-evaluation. \emph{Comparison}: against NetMHCpan-4.1 and NetMHCIIpan-4.0
+is the negative class for the multi-class (allele $+$ non-binder) confusion matrix realized in
+Fig.~\ref{fig:confusion} (\texttt{bench/confusion.py}). There each held-out peptide is assigned its
+top-1 allele's \emph{locus} when the diffused score clears a gate calibrated to a $5\%$ non-binder
+false-positive rate, else \emph{non-binder}. The model assigns the correct locus where it commits
+(precision $0.62$--$0.65$ for HLA-A/B/C) and rejects $95\%$ of random peptides by construction, but a
+single panel-max score gate cannot simultaneously reject non-binders and retain rare positives---top-1
+recall falls to $0.17$--$0.32$ at $5\%$ FPR---because maximizing the per-allele log-odds over
+$\sim$100 alleles inflates the family-wise false-positive rate. This is exactly why binder/non-binder
+calling composes the per-allele score with the global $E_{\mathrm{glob}}$ gate (\S\ref{sec:evalue-role})
+rather than thresholding one score. \emph{Comparison}: against NetMHCpan-4.1 and NetMHCIIpan-4.0
 \cite{Reynisson2020}, MixMHCpred~\cite{BassaniSternberg2017}, and MixMHC2pred~\cite{Racle2019} on
 matched alleles and shared eluted-ligand / assay test sets, with rank-threshold calibration and an
 explicit \emph{rare-allele subgroup} analysis (the equity axis of~\cite{Glynn2025}) where the
 pseudosequence diffusion is expected to help most. The benchmark datasets and the paper live in a
 dedicated repository; this section fixes the protocol so it stays consistent with the predictors
 defined here.
+
+\begin{figure}[ht]\centering
+  \includegraphics[width=0.6\linewidth]{confusion_mhc1_human.pdf}
+  \caption{Human MHC-I locus $+$ non-binder confusion (row-normalized; \texttt{bench/confusion.py},
+  shortlist tier). Each held-out peptide is assigned its top-1 allele's locus when the diffused score
+  clears a gate calibrated to a $5\%$ non-binder false-positive rate, else \emph{non-binder}; the
+  bottom row is $10{,}000$ corpus-AA random peptides (rejected at $95\%$ by construction). Locus
+  assignment is accurate when the model commits (precision $0.62$--$0.65$), but the strict global gate
+  costs top-1 positive recall---motivating the per-allele/global-$E$ composition of
+  \S\ref{sec:evalue-role} over a single score threshold.}
+  \label{fig:confusion}
+\end{figure}
 
 \paragraph{Performance.} Built on the C++ \texttt{KmerIndex}, the toolbox is fast enough for
 proteome-scale use (\texttt{bench/bench\_speed.py}, one core, human MHC-I shortlist panel of $107$
