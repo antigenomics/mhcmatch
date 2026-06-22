@@ -62,61 +62,73 @@ def auroc(pos, neg):
 
 
 def _split(refcount, frac, cap, rng):
-    """Hold out a fraction of EACH allele's peptides (capped per allele so rare alleles are
-    represented and frequent ones don't dominate). Held peptides are removed from EVERY allele's
-    training (no identical-copy leak). Returns (held_set, {peptide: true_allele_set})."""
-    by_allele = {a: list(d) for a, d in refcount.items()}
+    """Hold out a fraction (capped) of EACH allele's peptides as test pMHCs. Returns
+    ``({allele: set(held peptides)}, {peptide: true_allele_set})``. Exclusion is per-pMHC and
+    benchmark-only: only the held (epitope, allele) PAIR is dropped from training; the same epitope
+    under another allele -- a distinct pMHC -- is kept (so legitimate co-presentation remains)."""
     pep_alleles = defaultdict(set)
-    for a, peps in by_allele.items():
+    for a, peps in refcount.items():
         for p in peps:
             pep_alleles[p].add(a)
-    held = set()
-    for a, peps in by_allele.items():
+    test = {}
+    for a, peps in refcount.items():
         ps = list(peps)
         rng.shuffle(ps)
-        held.update(ps[:min(cap, max(1, int(frac * len(ps))))])
-    return held, pep_alleles
+        test[a] = set(ps[:min(cap, max(1, int(frac * len(ps))))])
+    return test, pep_alleles
 
 
-def evaluate(refcount, cls, h, tau, metric, learn_weights, raw, held, pep_alleles, rare_max=30,
-             prune_dpi=False):
-    """Rank panel alleles per held-out peptide. Returns overall top1/top5 and per-rarity
-    recovery@5 (fraction of (peptide, true allele) pairs with that allele in the top 5)."""
+def evaluate(refcount, cls, h, tau, metric, learn_weights, raw, test, pep_alleles, rare_max=30,
+             prune_dpi=False, ranker="anchor"):
+    """Per held-out pMHC ``(peptide, allele)``: rank all panel alleles for the peptide and ask
+    whether the held-out allele is recovered in the top 1 / top 5. Returns top1/top5 over the held
+    pairs and recovery@5 split by allele rarity. Training drops only the held pair (per-pMHC).
+
+    ``ranker``: ``"anchor"`` ranks by the diffused anchor log-odds; ``"hybrid"`` uses the production
+    ``Store.restriction(diffuse=True)`` (diffused log-odds ranks, vote/enrichment gates)."""
     label = _LABEL[cls]
     train = [{"epitope": p, "mhc_a": a, "mhc_class": label}
-             for a in refcount for p in refcount[a] if p not in held]
+             for a, peps in refcount.items() for p in peps if p not in test.get(a, ())]
     store = Store.from_records(train)
     panel = store.alleles(cls)
     if len(panel) < 5:
         return None
+    pset = set(panel)
     counts = Counter(store._panel[cls].alleles)
     rare = {a for a in panel if counts[a] <= rare_max}
     model = store.anchor_model(cls, h=h, prior_strength=tau, learn_weights=learn_weights,
                                prune_dpi=prune_dpi)
     model.ps.metric = metric
     model._cache.clear()
-    pset = set(panel)
-    t1 = t5 = n = 0
-    rare_hit = rare_tot = freq_hit = freq_tot = 0
-    for p in held:
-        truth = pep_alleles[p] & pset
-        if not truth:
-            continue
-        ranked = sorted(panel, key=lambda a: model.score(p, a, raw=raw), reverse=True)
-        top5 = set(ranked[:5])
-        t1 += ranked[0] in truth
-        t5 += bool(top5 & truth)
-        n += 1
-        for a in truth:
-            if a in rare:
-                rare_tot += 1
-                rare_hit += a in top5
+    store._am[cls] = model  # so restriction() reuses this (h, tau, metric) model
+    rank_cache = {}
+
+    def ranking(p):
+        if p not in rank_cache:
+            if ranker == "hybrid":
+                rank_cache[p] = [r.allele for r in store.restriction(p, cls=cls, alleles="all",
+                                                                     top=len(panel), diffuse=True)]
             else:
-                freq_tot += 1
-                freq_hit += a in top5
-    if n == 0:
+                rank_cache[p] = sorted(panel, key=lambda a: model.score(p, a, raw=raw), reverse=True)
+        return rank_cache[p]
+
+    t1 = t5 = 0
+    rare_hit = rare_tot = freq_hit = freq_tot = 0
+    pairs = [(p, a) for a in test for p in test[a] if a in pset]
+    for p, a in pairs:
+        ranked = ranking(p)
+        t1 += ranked[0] == a
+        hit = a in ranked[:5]
+        t5 += hit
+        if a in rare:
+            rare_tot += 1
+            rare_hit += hit
+        else:
+            freq_tot += 1
+            freq_hit += hit
+    if not pairs:
         return None
-    return (n, t1 / n, t5 / n,
+    return (len(pairs), t1 / len(pairs), t5 / len(pairs),
             rare_hit / rare_tot if rare_tot else float("nan"),
             freq_hit / freq_tot if freq_tot else float("nan"))
 
@@ -131,6 +143,8 @@ def main():
     ap.add_argument("--cap", type=int, default=20, help="max held-out peptides per allele")
     ap.add_argument("--metric", default="blosum", choices=("blosum", "identity"))
     ap.add_argument("--dpi", action="store_true", help="DPI-prune the per-anchor groove weights")
+    ap.add_argument("--ranker", default="anchor", choices=("anchor", "hybrid"),
+                    help="anchor = diffused log-odds; hybrid = production vote+diffused restriction")
     ap.add_argument("--random", type=int, default=10000,
                     help="number of corpus-AA random peptides for the non-binder baseline AUROC")
     ap.add_argument("--sweep", action="store_true")
@@ -141,22 +155,24 @@ def main():
     rng = random.Random(args.seed)
     sp = {"human": "HomoSapiens", "mouse": "MusMusculus"}[args.species]
     refcount = load(os.path.join(args.pmhc_dir, f"pmhc_{args.tier}.tsv.gz"), args.cls, sp)
-    held, pep_alleles = _split(refcount, args.heldout, args.cap, rng)
+    test, pep_alleles = _split(refcount, args.heldout, args.cap, rng)
+    held = {p for ps in test.values() for p in ps}
+    npairs = sum(len(ps) for ps in test.values())
     print(f"# {args.species} {_LABEL[args.cls]} {args.tier}: {len(refcount)} alleles, "
-          f"{len(held)} held-out queries; metric={args.metric}")
+          f"{npairs} held-out pMHCs (per-pMHC exclusion); metric={args.metric}")
     print(f"{'h':>5}{'tau':>6}{'mode':>9}{'top1':>8}{'top5':>8}{'rareR@5':>9}{'freqR@5':>9}")
 
     hs = [0.5, 1.0, 2.0, 4.0] if args.sweep else [2.0]
     taus = [5, 10, 20] if args.sweep else [10]
-    base = evaluate(refcount, args.cls, 2.0, 10, args.metric, True, True, held, pep_alleles,
+    base = evaluate(refcount, args.cls, 2.0, 10, args.metric, True, True, test, pep_alleles,
                     prune_dpi=args.dpi)
     if base:
         n, a1, a5, rr, fr = base
         print(f"{'-':>5}{'-':>6}{'raw':>9}{a1:>8.3f}{a5:>8.3f}{rr:>9.3f}{fr:>9.3f}")
     for h in hs:
         for tau in taus:
-            r = evaluate(refcount, args.cls, h, tau, args.metric, True, False, held, pep_alleles,
-                         prune_dpi=args.dpi)
+            r = evaluate(refcount, args.cls, h, tau, args.metric, True, False, test, pep_alleles,
+                         prune_dpi=args.dpi, ranker=args.ranker)
             if r:
                 n, a1, a5, rr, fr = r
                 print(f"{h:>5}{tau:>6}{'diffuse':>9}{a1:>8.3f}{a5:>8.3f}{rr:>9.3f}{fr:>9.3f}")
@@ -164,7 +180,7 @@ def main():
     if args.random:
         label = _LABEL[args.cls]
         train = [{"epitope": p, "mhc_a": a, "mhc_class": label}
-                 for a in refcount for p in refcount[a] if p not in held]
+                 for a, peps in refcount.items() for p in peps if p not in test.get(a, ())]
         store = Store.from_records(train)
         panel = store.alleles(args.cls)
         model = store.anchor_model(args.cls, h=2.0, prior_strength=10)

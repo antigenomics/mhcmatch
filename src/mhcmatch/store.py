@@ -219,13 +219,14 @@ class Store:
         ``alleles``: ``"all"``, a single allele, or a list. ``alpha``: per-allele significance for
         the non-binder flag (binder iff binomial-tail p <= alpha and the allele got votes).
 
-        With ``diffuse=True`` the vote fraction still **ranks** (it is robust across allele sample
-        sizes), but the diffusion-shrunk anchor log-odds (:class:`mhcmatch.diffusion.AnchorModel`)
-        is reported as ``anchor_score`` and used to **gate/rescue**: an allele is a binder if it is
-        vote-significant *or* its anchors are plausible (``anchor_score > 0``). This surfaces rare
-        alleles that have no signature neighbours (where the pure vote method returns nothing), while
-        keeping the well-calibrated vote ranking for well-sampled alleles. ``anchor_score`` breaks
-        ties among zero-vote alleles. Without diffusion, returns ``[]`` when there are no neighbours.
+        With ``diffuse=True`` the diffusion-shrunk anchor log-odds
+        (:class:`mhcmatch.diffusion.AnchorModel`) **ranks** and the neighbour vote/enrichment
+        **gates**: an allele is a binder if it is vote-significant *or* its anchors are plausible
+        (``anchor_score > 0``). On held-out (novel) peptides the anchor log-odds is the far better
+        ranker---the vote method relies on same-allele signature neighbours, which are sparse for a
+        genuinely new peptide, so vote-first ranking buries the true allele; the diffused anchor
+        score scores every allele directly and rescues rare ones. Vote breaks ties. Without
+        diffusion, vote fraction ranks and the call returns ``[]`` when there are no neighbours.
         """
         peptide = peptide.strip().upper()
         cls = cls or infer_class(peptide)
@@ -247,7 +248,7 @@ class Store:
                 out.append(Restriction(a, vote, enr, k, binder, round(s, 3)))
             else:
                 out.append(Restriction(a, vote, enr, k, enr >= thr and k > 0))
-        out.sort(key=(lambda r: (r.vote, r.anchor_score)) if diffuse
+        out.sort(key=(lambda r: (r.anchor_score, r.vote)) if diffuse
                  else (lambda r: (r.vote, r.enrichment)), reverse=True)
         return out[:top]
 

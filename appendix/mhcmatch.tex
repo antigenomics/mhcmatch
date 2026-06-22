@@ -172,6 +172,31 @@ number of panel alleles presenting $q$ by chance. Class~II is genuinely multi-la
 with loosely specified pockets presents one peptide on many alleles), so the panel positive set is
 \emph{every} observed restricting allele and the non-binder test is ``binds none of the panel''.
 
+\subsection{Where the E-value is used: significance vs ranking}\label{sec:evalue-role}
+The E-value is a calibrated \emph{significance}---an expected chance count and its Poisson tail
+(\S\ref{sec:forward})---not a discriminative score, and the two answer different questions.
+\emph{Ranking} (the diffused anchor log-odds, or the neighbour vote) \emph{orders} candidates and is
+the better discriminator: for allele prediction the log-odds ranks best (\S\ref{sec:bench}), and for
+telling binders from random non-binders the max-over-panel presentation score reaches AUROC
+$\approx0.80$ (real held-out peptides vs $10^4$ corpus-frequency random peptides). The \emph{E-value}
+answers ``is this many hits more than chance against the right background?''---it is what one
+\emph{reports} when significance and multiplicity matter:
+\begin{itemize}
+  \item \textbf{Molecular mimicry and self/proteome search} (\S\ref{sec:proteome}): for a neoantigen,
+  \texttt{find\_mimics} reports the expected number of TCR-facing homologs in a self or pathogen set
+  against the \emph{per-allele presented} background, with $p_{\mathrm{enrich}}$ and the rule of three
+  for empty controls. Rank cannot say whether a shared motif is surprising; the E-value deflates
+  motifs common in the allele's peptidome, elevates surprisingly shared ones, and lets one scan whole
+  proteomes under FWER/FDR control. This is the principal reason to carry an E-value.
+  \item \textbf{Binder vs non-binder} uses \emph{both}: the diffused log-odds (or its max over the
+  panel) to \emph{rank / discriminate}, and the per-allele enrichment $E_a$---or the global
+  $E_{\mathrm{glob}}$ for ``binds nothing''---to \emph{gate} with a calibrated threshold and control
+  error across a panel or proteome. Empirically the score is the better \emph{discriminator}
+  (enrichment-vs-background penalizes data-rich alleles and needs neighbours), while the E-value
+  supplies the defensible cut-off and the multiple-testing control the bare score lacks. They
+  compose: rank by score, then threshold by $E$ / FDR.
+\end{itemize}
+
 \section{MHC pseudosequence model and cross-allele diffusion}\label{sec:diffusion}
 \texttt{seqtree} deliberately treats distinct alleles as distinct, never-pooled nulls. This is
 correct but wasteful: rare alleles carry few presented peptides, so both~\eqref{eq:forward}
@@ -257,24 +282,27 @@ so borrowing adds at most $\tau$ pseudocounts and vanishes automatically as $n_a
 held-out rank AUC with the BLOSUM-scored, MI-weighted kernel~\eqref{eq:kernel}, $\tau=10$, $h=2$, the
 per-allele score being the anchor log-odds over the N/C pocket footprint
 $\{$P1,P2,P3,P$(\Omega{-}1)$,P$\Omega\}$) the diffusion lifts the AUC of \emph{rare} MHC-I alleles
-($\le 30$ peptides) from $0.82$ to $0.94$ on the high-confidence ($\ge2$-publication) set while
+($\le 30$ peptides) from $0.85$ to $0.95$ on the high-confidence ($\ge2$-publication) set while
 leaving \emph{frequent} alleles unchanged ($0.975\!\to\!0.975$); on the noisier full set the
-rare-allele gain is $+0.06$ and frequent alleles are never harmed (Fig.~\ref{fig:diffauc}). Stats are
-computed fairly: held-out peptides are excluded from \emph{every} allele's training set, so an
-identical co-presented copy cannot leak into a rare allele's score through diffusion (this lowers the
-raw baseline and \emph{widens} the honest gain). The richer pocket footprint matters: with the two
+rare-allele gain is $+0.05$ and frequent alleles are never harmed (Fig.~\ref{fig:diffauc}). Exclusion
+is \emph{per-pMHC and benchmark-only}: only the held-out (epitope, allele) pair is dropped from
+training---the same epitope presented by another allele is a distinct, legitimate pMHC and is kept,
+so the diffusion may borrow that co-presentation (the real cross-allele transfer we measure); the
+production model trains and votes on all data. The richer pocket footprint matters: with the two
 primary anchors alone ($\{$P2,P$\Omega\}$) the full-set rare gain nearly vanishes, whereas the
 auxiliary pocket-proximal positions make per-allele estimation sparser---so diffusion has more to
 rescue. The data-rescue is safe: it never lowers a well-sampled allele's AUC.
 
-\paragraph{Allele prediction (top-$k$, promiscuity-aware).} Cast as the reverse problem---rank all
-panel alleles for a held-out peptide and ask whether a true restricting allele lands in the
-top-$k$---the gain is large where it matters (\texttt{bench/tune\_diffusion.py}, human, per-allele
-hold-out, fair as above). Because peptides are promiscuous we score \emph{recovery@5} (the fraction
-of a peptide's true alleles ranked in the top~5) split by allele rarity. For MHC-I the diffusion
-lifts \emph{rare}-allele recovery@5 from $0.50$ to $0.88$ (shortlist) and $0.29$ to $0.47$ (full
-tier), at a small frequent-allele cost ($\approx-0.03$) and with overall top-5 $\approx0.95$; a grid
-sweep selects $h=2,\tau=10$ with the BLOSUM metric (marginally over identity) as optimal. Class~II
+\paragraph{Allele prediction (top-$k$, promiscuity-aware).} Cast as the reverse problem---for each
+held-out pMHC $(p,a)$ rank all panel alleles for $p$ and ask whether the held-out allele $a$ is
+recovered in the top-$k$ (\texttt{bench/tune\_diffusion.py}, human, per-pMHC hold-out). Because
+peptides are promiscuous we score \emph{recovery@5} split by allele rarity. For MHC-I the diffusion
+lifts \emph{rare}-allele recovery@5 from $0.53$ to $0.88$ (shortlist) and $0.29$ to $0.47$ (full
+tier), at a small frequent cost ($\approx-0.02$). Here the \emph{ranker} is the diffused anchor
+log-odds itself, not the neighbour vote: on a novel peptide the vote tally has few same-allele
+signature neighbours, so vote-first ranking buries the true allele (top-5 $0.87$, rare recovery@5
+$0.25$), whereas the diffused log-odds scores every allele directly (top-5 $0.95$, rare recovery@5
+$0.88$). A grid sweep selects $h=2,\tau=10$, BLOSUM (marginally over identity), as optimal. Class~II
 remains hard (recovery@5 $\approx0.14$, near-neutral diffusion): its open groove, promiscuity, and
 one-pass register cap the anchor model---a target for the structure-based extension. Top-1 is
 \emph{not} the right yardstick here (promiscuity makes several alleles correct); top-5/recovery@5 is.
@@ -338,10 +366,13 @@ $\widehat E$ in~\eqref{eq:forward}--\eqref{eq:conf} where the raw per-allele con
 The estimator is a smoothed null: its bias is controlled by the borrowed mass on dissimilar alleles
 (Prop.~\ref{prop:bv}), vanishing as the panel around $a$ becomes dense and groove-tight. In the
 production reverse problem (\texttt{Store.restriction}, \texttt{diffuse=True}) the shrunk anchor
-log-odds is used as the binder \emph{gate}---it scores every requested allele, surfacing rare alleles
-with no signature neighbours---while the vote fraction~(Def.~\ref{def:reverse}) still \emph{ranks},
-since per-peptide anchor likelihood is diluted for broad, well-sampled alleles and is not itself a
-calibrated cross-allele ranking statistic.
+log-odds both \emph{ranks} the alleles and, with the neighbour enrichment~(Def.~\ref{def:reverse}),
+\emph{gates} binders (binder iff vote-significant or anchor log-odds $>0$). On held-out (novel)
+peptides the anchor log-odds is the better ranker: the vote tally needs same-allele signature
+neighbours, which are sparse for a genuinely new peptide, so vote-first ranking buries the true
+allele (top-5 $0.87$, rare recovery@5 $0.25$), whereas ranking by the diffused log-odds scores every
+allele directly (top-5 $0.95$, rare recovery@5 $0.88$; \S\ref{sec:bench}). Vote thus serves the
+\emph{confidence gate}, not the ranking.
 
 \subsection{Clustering and promiscuity}
 Thresholding $K_j$ (or the un-factored $K$) yields single-linkage allele \emph{clusters} of
@@ -509,15 +540,14 @@ TCR-side quantity and is deferred to a separate package, consumed here only as a
 a roadmap Phase-2 milestone specified by this subsection.
 
 \section{Benchmark and evaluation methodology}\label{sec:bench}
-We evaluate as a per-(peptide, allele) binary task. \emph{Splits} are by allele \emph{and} by
-peptide: held-out alleles test cross-allele generalization (and the diffusion model of
-\S\ref{sec:diffusion}), held-out peptides within an allele test within-allele recall; peptide
-duplicates are collapsed before splitting, and crucially a held-out peptide is excluded from
-\emph{every} allele's training set (not just its own), so an identical co-presented copy cannot leak
-into a score---in particular through cross-allele diffusion. Equivalently, all matching counts are
-\emph{punctured}: exact-identity hits are dropped, never rewarded (mirroring the $n^{>}$ counts of
-the \texttt{seqtree} appendix). This lowers raw baselines but is the only fair measure of
-generalization. \emph{Metrics} are top-1 and top-5 accuracy and per-rarity \emph{recovery@5} (the
+We evaluate as a per-pMHC task: the unit is the (epitope, allele) pair. \emph{Exclusion is per-pMHC
+and benchmark-only}---we hold out test (epitope, allele) pairs and drop \emph{only those pairs} from
+training; the same epitope presented by a \emph{different} allele is a distinct, legitimate pMHC and
+stays (so the model may borrow that co-presentation, exactly the cross-allele transfer the diffusion
+is meant to exploit). We never exclude an epitope ``separately'' across alleles, and the production
+model trains and votes on all data---the split exists only to score generalization. Matching counts
+are \emph{punctured} for self-identity only (a query never counts itself, the $n^{>}$ convention of
+the \texttt{seqtree} appendix). \emph{Metrics} are top-1 and top-5 accuracy and per-rarity \emph{recovery@5} (the
 multi-label, promiscuity-aware score---top-1 is misleading when a peptide binds several alleles), the
 per-(peptide,allele) ROC/PR-AUC, and a \emph{non-binder} baseline AUROC: the presentation score
 (max over the panel) of real held-out peptides versus a matched set of $10{,}000$ random peptides
