@@ -119,6 +119,13 @@ class _Panel:
         self.epitopes = []
         self.alleles = []
         self.weights = []
+        # Unbuilt-panel defaults: a Store used only for decompose() (never loaded via
+        # from_records/from_pmhc) must still answer restriction()/alleles() gracefully
+        # (empty result) instead of AttributeError-ing on the not-yet-set build() outputs.
+        self.index = None
+        self.panel = []
+        self.freq = {}
+        self.allele_to_id = {}
 
     def add(self, epitope, allele, weight=1.0):
         self.epitopes.append(epitope)

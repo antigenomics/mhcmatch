@@ -66,6 +66,15 @@ def test_decompose_mhc2():
     assert d.presentation.count("X") == len(d.peptide) - 4
 
 
+def test_bare_store_restriction_is_graceful():
+    # A Store never loaded via from_records/from_pmhc has no reference panel; restriction()
+    # and alleles() must return empty rather than AttributeError (decompose() still works on it).
+    s = mhcmatch.Store()
+    assert s.alleles("mhc2") == []
+    assert s.restriction("AAAYAAKAAVAAAAA", cls="mhc2") == []
+    assert s.restriction("AAAYAAKAAVAAAAA", cls="mhc2", diffuse=True) == []
+
+
 # -- large-scale similarity search (TCR-facing) ------------------------------
 def test_dolton_trio_mutual_homologs():
     for q in TRIPLE:
