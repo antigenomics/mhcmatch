@@ -148,8 +148,13 @@ needing fetched neoantigen/self/pathogen sets are flagged.
 - **Per-locus `h` / `τ` calibration** by cross-validated held-out likelihood (replace the fixed
   defaults), per class × species. Uses `bench/bench_diffusion.py` machinery. *(highest value)*
 - **Tuned `alpha` thresholds + FDR** over `scan_protein` windows × panel (appendix §5).
-- **Class-II / mouse calibration**: the register trick is a one-pass proxy; try GibbsCluster-style
-  multi-pass register, and pool nulls over kernel clusters for thin mouse panels.
+- ~~Class-II register: the one-pass heuristic register is a proxy; try GibbsCluster-style multi-pass
+  register~~ **done** — `AnchorModel` scores the best 9-mer frame per allele and runs `register_em`
+  best-frame EM passes (default 2 for MHC-II). Held-out binder-vs-decoy AUC (`bench_diffusion --cls
+  mhc2`, seed 0): rare 0.775→0.806, medium 0.757→0.790, frequent 0.727→0.827; recovers the known
+  DRB1\*15:01 restriction of MBP85-99 (rank 2/149). See `bench/results/register_em_mhc2.md`.
+- **Class-II / mouse calibration**: pool nulls over kernel clusters for thin mouse panels; a
+  per-allele %rank vs a random-peptide background for cross-allele-comparable scores.
 - ~~Feed the shrunk null into `restriction`~~ **done** (diffuse gate/rescue, vote still ranks).
 - ~~CLI~~ **done** (`mhcmatch.cli`). User-input allele-name normalization still open.
 

@@ -165,6 +165,21 @@ def _sig_build(rng, allele, sig, n, recs):
                      "mhc_a": allele, "mhc_class": "MHCI"})
 
 
+def test_mhc2_register_max_and_em():
+    # Per-allele register: a planted 9-mer core scores higher for its own allele than for another,
+    # and register-max is frame-invariant (the same core at different offsets scores identically).
+    coreX, coreY = "WKVKFWKVK", "DKEKDDKEK"        # distinct allele motifs
+    recs = []
+    for pad in range(5):                            # core placed at every offset in a 13-mer
+        recs.append({"epitope": "S" * pad + coreX + "S" * (4 - pad),
+                     "mhc_a": "DRA*01:01", "mhc_b": "DRB1*15:01", "mhc_class": "MHCII"})
+        recs.append({"epitope": "S" * pad + coreY + "S" * (4 - pad),
+                     "mhc_a": "DRA*01:01", "mhc_b": "DRB1*13:01", "mhc_class": "MHCII"})
+    am = Store.from_records(recs * 4).anchor_model("mhc2")   # register_em=2 by default
+    assert am.score("GG" + coreX + "GG", "DRB1_1501") > am.score("GG" + coreX + "GG", "DRB1_1301")
+    assert am.score("G" + coreX + "GGG", "DRB1_1501") == am.score("GGG" + coreX + "G", "DRB1_1501")
+
+
 def test_restriction_diffuse_rescues_rare():
     rng = random.Random(2)
     recs = []
