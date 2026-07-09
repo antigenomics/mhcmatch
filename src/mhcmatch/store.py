@@ -119,6 +119,13 @@ class _Panel:
         self.epitopes = []
         self.alleles = []
         self.weights = []
+        # Unbuilt-panel defaults: a Store used only for decompose() (never loaded via
+        # from_records/from_pmhc) must still answer restriction()/alleles() gracefully
+        # (empty result) instead of AttributeError-ing on the not-yet-set build() outputs.
+        self.index = None
+        self.panel = []
+        self.freq = {}
+        self.allele_to_id = {}
 
     def add(self, epitope, allele, weight=1.0):
         self.epitopes.append(epitope)
@@ -333,16 +340,18 @@ class Store:
 
     # -- diffusion-powered forward scorer -------------------------------------
     def anchor_model(self, cls="mhc1", h=2.0, prior_strength=10.0, anchors=None, learn_weights=True,
-                     prune_dpi=False, weights="learned"):
+                     prune_dpi=False, weights="learned", register_em=2):
         """Anchor-factored presentation model with cross-allele kernel-shrinkage diffusion.
 
         See :class:`mhcmatch.diffusion.AnchorModel`. The diffusion rescues rare alleles by borrowing
         anchor preferences from groove-similar frequent ones, with a bounded prior strength so a
-        large neighbour cannot swamp a rare allele's own peptides.
+        large neighbour cannot swamp a rare allele's own peptides. ``register_em`` (MHC-II) runs
+        that many best-frame register-EM passes so training and scoring share the same register.
         """
         from .diffusion import AnchorModel
         return AnchorModel(self, cls=cls, anchors=anchors, h=h, prior_strength=prior_strength,
-                           learn_weights=learn_weights, prune_dpi=prune_dpi, weights=weights)
+                           learn_weights=learn_weights, prune_dpi=prune_dpi, weights=weights,
+                           register_em=register_em)
 
     # -- per-allele anchor preferences (feeds pseudoseq diffusion) ------------
     def anchor_preferences(self, cls, anchor):
