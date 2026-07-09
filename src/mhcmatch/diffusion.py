@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import math
 from collections import Counter
+from functools import lru_cache
+from importlib import resources
 
 from .pseudoseq import (Pseudoseq, learn_anchor_weights, load_pseudo, load_structural_weights,
                         normalize_allele)
@@ -25,6 +27,41 @@ MHC1_ANCHORS = (1, 2, 3, -2, -1)
 # 9-mer core). P1 (large hydrophobic) and P9 are the dominant pockets; P4/P6 are secondary.
 MHC2_ANCHORS = (1, 4, 6, 9)
 
+# Full-core footprints (``footprint="core"``): score every core position, not just the primary
+# pockets, so allele-conditional signal at non-anchor positions (disfavored residues, secondary
+# sub-motifs) is not discarded -- the thing NetMHCpan/NetMHCIIpan exploit. MHC-I uses signed
+# peptide-end-relative positions (front P1-P5 + C-terminal P-4..P-1); for 10/11-mers the signed
+# indices skip the central bulge, and only 8-mers double-count one middle position. MHC-II is the
+# whole 9-mer core. The per-position kernel weights and the bounded-prior shrinkage extend to the
+# new positions automatically (a position with no allele-specific signal shrinks to the pool).
+MHC1_CORE = (1, 2, 3, 4, 5, -4, -3, -2, -1)
+MHC2_CORE = (1, 2, 3, 4, 5, 6, 7, 8, 9)
+
+# Human proteome amino-acid frequencies (UniProt UP000005640). The log-odds NULL: with
+# ``background="ligand"`` (default) the denominator is the pooled-ligand anchor marginal, so the
+# score measures allele *specificity* (this allele vs the average presented ligand) -- best for the
+# restriction problem and other-allele discrimination. With ``background="proteome"`` the denominator
+# is this proteome marginal, so the score is a *presentation* log-odds ``log(theta_A / p_proteome)``
+# -- it recovers the ligand-vs-random "presentability" factor and is far better at separating real
+# ligands from random/proteome peptides (measured: MHC-I screening AUPRC frequent 0.77 -> 0.86).
+PROTEOME_AA_FREQ = {"A": 0.07129, "C": 0.02080, "D": 0.04936, "E": 0.07306, "F": 0.03559,
+                    "G": 0.06565, "H": 0.02527, "I": 0.04295, "K": 0.05808, "L": 0.09957,
+                    "M": 0.02169, "N": 0.03550, "P": 0.06196, "Q": 0.04877, "R": 0.05672,
+                    "S": 0.08180, "T": 0.05306, "V": 0.06082, "W": 0.01201, "Y": 0.02607}
+
+
+@lru_cache(maxsize=1)
+def load_markov1():
+    """Order-1 human-proteome transition matrix ``{prev_residue: {residue: P(residue|prev)}}`` for
+    ``background="markov"`` -- a context-conditional presentation null. Vendored from UP000005640
+    (``data/proteome_markov1.tsv``). Measured to lift MHC-I *rare*-allele screening AUPRC (~+0.02
+    over the order-0 proteome null); neutral for medium/frequent, so it is opt-in."""
+    text = resources.files("mhcmatch.data").joinpath("proteome_markov1.tsv").read_text()
+    lines = text.strip().splitlines()
+    cols = lines[0].split("\t")[1:]
+    return {f[0]: {c: float(v) for c, v in zip(cols, f[1:])}
+            for f in (ln.split("\t") for ln in lines[1:])}
+
 
 class AnchorModel:
     """Per-allele anchor presentation model with optional cross-allele diffusion.
@@ -36,7 +73,7 @@ class AnchorModel:
 
     def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0,
                  learn_weights=True, prune_dpi=False, weights="learned", blend_alpha=0.5,
-                 register_em=2):
+                 register_em=2, footprint="anchor", rare_max=30, background="ligand"):
         """``weights``: ``"learned"`` (per-anchor MI over the panel, default), ``"structural"``
         (contact-frequency weights from pMHC structures, :func:`load_structural_weights`),
         ``"blend"`` (convex mix ``blend_alpha``*structural + (1-``blend_alpha``)*learned, mean-1
@@ -50,9 +87,25 @@ class AnchorModel:
         lifts held-out binder-vs-decoy AUC across rare/medium/frequent MHC-II alleles (frequent
         +0.10); ``0`` keeps the one-pass heuristic register. Ignored for MHC-I (end-anchored)."""
         self.cls = cls
+        self.background = background
+        self._markov1 = load_markov1() if background == "markov" else None
+        core = MHC1_CORE if cls == "mhc1" else MHC2_CORE
+        prim = MHC1_ANCHORS if cls == "mhc1" else MHC2_ANCHORS
         if anchors is None:
-            anchors = MHC1_ANCHORS if cls == "mhc1" else MHC2_ANCHORS
+            anchors = prim if footprint == "anchor" else core
         self.anchors = tuple(anchors)
+        # Rarity-adaptive footprint (class-aware). MHC-I: score the full core for well-sampled
+        # alleles but restrict rare alleles to the primary anchors -- the noisy middle positions
+        # overfit sparse data (measured: rare screening AUPRC 0.87 anchor vs 0.82 core). MHC-II: the
+        # open groove spreads binding across the whole 9-mer core and register-EM needs it, so even
+        # rare alleles use the full core (measured: rare AUROC 0.76 core vs 0.66 anchor) -> no mask.
+        self._rare_max = rare_max
+        if footprint == "adaptive" and cls == "mhc1":
+            self._rare_mask = tuple(i for i, j in enumerate(self.anchors) if j in prim)
+            self._counts = Counter(store._panel[cls].alleles)
+        else:
+            self._rare_mask = None
+            self._counts = None
         self.prior_strength = prior_strength
         # per-anchor preference {anchor: {allele: Counter(residue)}} and background marginals
         self.prefs = {j: store.anchor_preferences(cls, j) for j in self.anchors}
@@ -145,15 +198,41 @@ class AnchorModel:
         self._nbg = {j: (sum(self.bg[j].values()) or 1) for j in self.anchors}
         self._cache = {}
 
-    def _anchor_logodds(self, residues, allele, raw, eps):
-        """Sum of per-anchor log-odds for ``residues`` (one residue per ``self.anchors`` position)."""
+    def _bg_prob(self, j, r, prev=None):
+        """Null probability of residue ``r`` at anchor ``j``: pooled-ligand marginal (specificity),
+        order-0 proteome marginal (presentation), or the order-1 Markov proteome conditional given the
+        preceding residue ``prev`` (context-aware presentation; backs off to order-0 for an unseen or
+        missing context). Kept out of ``self.bg`` so register-EM cannot clobber it."""
+        if self.background == "markov":
+            if prev and prev in self._markov1:
+                return self._markov1[prev].get(r) or PROTEOME_AA_FREQ.get(r, 1e-4)
+            return PROTEOME_AA_FREQ.get(r, 1e-4)
+        if self.background == "proteome":
+            return PROTEOME_AA_FREQ.get(r, 1e-4)
+        return self.bg[j].get(r, 0) / self._nbg[j]
+
+    def _anchor_logodds(self, residues, allele, raw, eps, mask=None, contexts=None):
+        """Sum of per-anchor log-odds for ``residues`` (one residue per ``self.anchors`` position).
+
+        ``mask`` (indices into ``self.anchors``) restricts the sum to those positions -- used by the
+        adaptive footprint to score rare alleles on the primary anchors only. ``contexts`` (the
+        residue preceding each scored position) supplies the order-1 Markov null when
+        ``background="markov"``."""
         s = 0.0
-        for j, r in zip(self.anchors, residues):
+        idxs = range(len(self.anchors)) if mask is None else mask
+        for i in idxs:
+            j, r = self.anchors[i], residues[i]
             th = self._dist(j, allele, raw)
             p_a = th.get(r, 0.0)
-            p_bg = self.bg[j].get(r, 0) / self._nbg[j]
+            p_bg = self._bg_prob(j, r, contexts[i] if contexts else None)
             s += math.log((p_a + eps) / (p_bg + eps))
         return s
+
+    def _score_mask(self, allele):
+        """Position subset for ``allele`` under the adaptive footprint (None = all positions)."""
+        if self._rare_mask is not None and self._counts.get(allele, 0) <= self._rare_max:
+            return self._rare_mask
+        return None
 
     def score(self, peptide, allele, raw=False, eps=1e-3):
         """Anchor log-odds of ``peptide`` for ``allele`` vs the panel background.
@@ -166,17 +245,22 @@ class AnchorModel:
         allele-agnostic heuristic register. MHC-I anchors are peptide-end-relative (no register search).
         """
         peptide = peptide.strip().upper()
+        mask = self._score_mask(allele)
+        markov = self.background == "markov"
         if self.cls == "mhc2":
             if len(peptide) < 9:
                 return float("-inf")
-            core_pos = [j - 1 for j in self.anchors]      # P1/P4/P6/P9 -> 0,3,5,8 within the core
+            core_pos = [j - 1 for j in self.anchors]      # 1-based core positions -> 0-based
             best = float("-inf")
             for st in range(len(peptide) - 8):
                 w = peptide[st:st + 9]
-                best = max(best, self._anchor_logodds([w[c] for c in core_pos], allele, raw, eps))
+                ctx = [peptide[st + c - 1] if st + c > 0 else "" for c in core_pos] if markov else None
+                best = max(best, self._anchor_logodds([w[c] for c in core_pos], allele, raw, eps,
+                                                      mask, ctx))
             return best
         from .store import resolve_anchor_index
         idxs = [resolve_anchor_index(peptide, self.cls, j) for j in self.anchors]
         if any(i is None for i in idxs):
             return float("-inf")
-        return self._anchor_logodds([peptide[i] for i in idxs], allele, raw, eps)
+        ctx = [peptide[i - 1] if i > 0 else "" for i in idxs] if markov else None
+        return self._anchor_logodds([peptide[i] for i in idxs], allele, raw, eps, mask, ctx)

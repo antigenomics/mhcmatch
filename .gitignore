@@ -27,3 +27,9 @@ appendix/*.bbl
 appendix/*.blg
 appendix/*.fls
 appendix/*.fdb_latexmk
+
+# head-to-head benchmark cache (examples + NetMHC scores)
+bench/compare/_cache/
+
+# Obsidian memory-sync marker (machine-local absolute paths + sync hashes)
+.claude/obsidian-sync.json

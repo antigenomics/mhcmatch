@@ -41,6 +41,14 @@ mhcmatch.diffusion module
    :undoc-members:
    :show-inheritance:
 
+mhcmatch.calibrate module
+-------------------------
+
+.. automodule:: mhcmatch.calibrate
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 mhcmatch.logo module
 --------------------
 

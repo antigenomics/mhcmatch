@@ -41,4 +41,4 @@ __all__ = [
 try:
     __version__ = _version("mhcmatch")
 except PackageNotFoundError:  # running from a source tree without an install
-    __version__ = "0.1.0"
+    __version__ = "0.2.0"

@@ -41,6 +41,9 @@ class Restriction:
     n_votes: int
     binder: bool
     anchor_score: float | None = None  # diffused anchor log-odds (set only when diffuse=True)
+    rank: float | None = None          # per-allele %rank vs random background (set when calibrated=True)
+    p_present: float | None = None     # calibrated presentation probability (set when calibrated=True)
+    band: str | None = None            # strong / weak / non-binder from %rank (set when calibrated=True)
 
     def __iter__(self):
         return iter((self.allele, self.vote, self.enrichment, self.binder))
@@ -169,6 +172,7 @@ class Store:
     def __init__(self):
         self._panel = {"mhc1": _Panel("mhc1"), "mhc2": _Panel("mhc2")}
         self._am = {}  # cls -> AnchorModel (lazy, for diffuse=True)
+        self._rc = {}  # cls -> RankCalibrator (lazy, for calibrated=True)
 
     # -- construction ---------------------------------------------------------
     @classmethod
@@ -233,11 +237,29 @@ class Store:
             self._am[cls] = self.anchor_model(cls)
         return self._am[cls]
 
-    def restriction(self, peptide, cls=None, alleles="all", top=10, alpha=0.05, diffuse=False):
+    def _rank_calibrator(self, cls, n=10000, seed=0):
+        """Lazy per-allele %rank / P(present) calibrator over a random-peptide background."""
+        if cls not in self._rc:
+            from .calibrate import RankCalibrator
+            panel = self._panel[cls]
+            pos = defaultdict(list)
+            for ep, a in zip(panel.epitopes, panel.alleles):
+                pos[a].append(ep)
+            self._rc[cls] = RankCalibrator(self._anchor_model(cls), list(pos), panel.epitopes,
+                                           n=n, seed=seed, positives=pos)
+        return self._rc[cls]
+
+    def restriction(self, peptide, cls=None, alleles="all", top=10, alpha=0.05, diffuse=False,
+                    calibrated=False):
         """Rank presenting alleles for ``peptide`` (vote fraction), flag binders (enrichment).
 
         ``alleles``: ``"all"``, a single allele, or a list. ``alpha``: per-allele significance for
         the non-binder flag (binder iff binomial-tail p <= alpha and the allele got votes).
+
+        ``calibrated=True`` (implies ``diffuse``) additionally fills each result's ``rank`` (per-allele
+        %rank vs a random-peptide background, lower = stronger -- NetMHCpan ``%Rank_EL`` analogue),
+        ``p_present``, and qualitative ``band`` (strong/weak/non-binder). The %rank is the
+        cross-allele-comparable score; it also re-ranks the results (ascending %rank).
 
         With ``diffuse=True`` the diffusion-shrunk anchor log-odds
         (:class:`mhcmatch.diffusion.AnchorModel`) **ranks** and the neighbour vote/enrichment
@@ -256,7 +278,9 @@ class Store:
             return []
         n = sum(tally.values()) if tally else 0
         thr = -math.log10(alpha)
+        diffuse = diffuse or calibrated
         am = self._anchor_model(cls) if diffuse else None
+        cal = self._rank_calibrator(cls) if calibrated else None
         out = []
         for a in self._allele_set(panel, alleles):
             k = tally.get(a, 0) if tally else 0
@@ -265,11 +289,20 @@ class Store:
             if diffuse:
                 s = am.score(peptide, a)
                 binder = (enr >= thr and k > 0) or s > 0.0
-                out.append(Restriction(a, vote, enr, k, binder, round(s, 3)))
+                r = Restriction(a, vote, enr, k, binder, round(s, 3))
+                if cal is not None:
+                    from .calibrate import band
+                    r.rank = round(cal.percent_rank(a, s), 3)
+                    r.p_present = round(cal.p_present(a, s), 4)
+                    r.band = band(r.rank)
+                out.append(r)
             else:
                 out.append(Restriction(a, vote, enr, k, enr >= thr and k > 0))
-        out.sort(key=(lambda r: (r.anchor_score, r.vote)) if diffuse
-                 else (lambda r: (r.vote, r.enrichment)), reverse=True)
+        if calibrated:
+            out.sort(key=lambda r: (r.rank if r.rank is not None else float("inf")))  # ascending %rank
+        else:
+            out.sort(key=(lambda r: (r.anchor_score, r.vote)) if diffuse
+                     else (lambda r: (r.vote, r.enrichment)), reverse=True)
         return out[:top]
 
     def is_binder(self, peptide, allele, cls=None, alpha=0.05):
@@ -340,18 +373,25 @@ class Store:
 
     # -- diffusion-powered forward scorer -------------------------------------
     def anchor_model(self, cls="mhc1", h=2.0, prior_strength=10.0, anchors=None, learn_weights=True,
-                     prune_dpi=False, weights="learned", register_em=2):
+                     prune_dpi=False, weights="learned", register_em=2, footprint="anchor",
+                     rare_max=30, background="ligand"):
         """Anchor-factored presentation model with cross-allele kernel-shrinkage diffusion.
 
         See :class:`mhcmatch.diffusion.AnchorModel`. The diffusion rescues rare alleles by borrowing
         anchor preferences from groove-similar frequent ones, with a bounded prior strength so a
         large neighbour cannot swamp a rare allele's own peptides. ``register_em`` (MHC-II) runs
         that many best-frame register-EM passes so training and scoring share the same register.
+        ``footprint="anchor"`` (default) scores the primary pockets only; ``"core"`` scores the whole
+        binding core (MHC-I P1-P5 + PΩ-3..PΩ, MHC-II 9-mer core) -- more discriminative when
+        non-anchor positions carry allele-specific signal. ``background="ligand"`` (default) is the
+        allele-specificity null; ``"proteome"`` is the presentation null (better for ligand-vs-random
+        screening) -- see :data:`mhcmatch.diffusion.PROTEOME_AA_FREQ`.
         """
         from .diffusion import AnchorModel
         return AnchorModel(self, cls=cls, anchors=anchors, h=h, prior_strength=prior_strength,
                            learn_weights=learn_weights, prune_dpi=prune_dpi, weights=weights,
-                           register_em=register_em)
+                           register_em=register_em, footprint=footprint, rare_max=rare_max,
+                           background=background)
 
     # -- per-allele anchor preferences (feeds pseudoseq diffusion) ------------
     def anchor_preferences(self, cls, anchor):

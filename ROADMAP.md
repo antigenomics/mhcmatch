@@ -132,12 +132,40 @@ data. Each is a milestone whose spec is its appendix subsection:
   (cross-reactivity distance à la Łuksza et al. *Nature* 2022, Q = R×D). The precursor-frequency /
   Pgen estimation may live in its own repo and be consumed here.
 
-## 6. Phase 3 — benchmark & paper (separate repo)
+## 6. Phase 3 — benchmark & paper
 
-Head-to-head comparison vs **NetMHCpan**, **NetMHCIIpan**, **MixMHCpred**, **MixMHC2pred** on
-held-out, allele-split sets; ROC/PR per (peptide, allele); a LaTeX paper template. The benchmark
-data and paper live in a dedicated repo; the **evaluation methodology** (splits, metrics, protocol)
-is specified in appendix §8 so it stays consistent with the predictors here.
+**Head-to-head harness — built** (`bench/compare/`, results in `bench/results/compare_*.md`, provenance
+in `bench/compare/SOURCES.md`). Reproducible comparison vs **NetMHCpan-4.2b** / **NetMHCIIpan-4.3i** on
+two shared per-(peptide,allele) tasks, stratified rare/medium/frequent, with AUROC/AUPRC/PPV@k,
+bootstrap CIs, and paired DeLong / bootstrap significance. Caches (examples, NetMHC scores) so model
+variants re-score in ~2s. Key measured results (seed 0, shortlist, human):
+
+- **Allele-specificity** (hard negatives = other alleles' ligands — the restriction task mhcmatch is
+  built for): **mhcmatch beats NetMHCpan** on MHC-I medium+frequent (AUROC, AUPRC, PPV@k all p<0.001;
+  frequent AUPRC 0.81 vs 0.69); MHC-II wins rare AUROC, trails AUPRC (data-limited class).
+- **Presented-vs-random screening** (NetMHCpan's %rank home turf): NetMHCpan wins on precision;
+  training-free tuning can't close a 0.06–0.16 AUPRC gap → a learned reranker is the lever (Phase 3b).
+- **Speed:** mhcmatch ~68× faster (195k vs 2.9k peptide-allele scores/s), pure Python.
+
+Model upgrades landed here: full-core PWM + **rarity-adaptive footprint** (`AnchorModel(footprint=
+"adaptive")`, class-aware: anchors-for-rare on MHC-I, full core on MHC-II) and **per-allele %rank +
+P(present) + binding band** calibration (`mhcmatch.calibrate`, wired into `Store.restriction(
+calibrated=True)` and the CLI `--calibrated`).
+
+### 6b. Open items
+
+- **Presentation background / null (highest-value, training-free)** — the screening-task gap is a
+  *null-choice* problem, not a negative-set problem: the anchor log-odds denominator is the
+  pooled-**ligand** marginal, so the score measures allele-**specificity** (allele vs average ligand)
+  and is blind to ligand-vs-proteome "presentability". Add a proteome/random (or Markov) background so
+  the score becomes `log(θ_A / p_proteome)` = a presentation log-odds; expose `background=
+  "ligand"|"proteome"|"blend"`. A Markov (order-k) proteome model also injects the adjacent-position
+  covariance the independent-PWM misses. See appendix §4.
+- **Learned reranker for screening (aldan3 GPU)** — *deferred: GPU-limited.* Logistic/GBM head over
+  frozen training-free features (per-position log-odds + %rank + pseudoseq embedding); only if the
+  presentation-background fix leaves a residual gap.
+- Full-tier + temporal-split cluster sweep; affinity band on the measured-nM allowlist (TESLA/Gfeller
+  only); MixMHCpred/MixMHC2pred; the LaTeX paper (methodology = appendix §8).
 
 ## 6.5 Menu — candidate refinements & tooling
 

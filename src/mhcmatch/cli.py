@@ -58,16 +58,21 @@ def cmd_restriction(a):
     store = _store(a)
     allele = _resolve_panel_allele(store, a.allele, a.cls) if a.allele else None
     res = store.restriction(a.peptide, cls=a.cls, alleles=[allele] if allele else "all",
-                            top=a.top, diffuse=a.diffuse)
+                            top=a.top, diffuse=a.diffuse, calibrated=a.calibrated)
     if not res:
         print("no presenting allele (no presentation-signature neighbours)")
         return
-    print(f"{'allele':<18}{'vote':>7}{'enr':>7}" + ("{:>8}".format("score") if a.diffuse else "")
-          + f"{'binder':>8}")
+    diffuse = a.diffuse or a.calibrated
+    hdr = f"{'allele':<18}{'vote':>7}{'enr':>7}" + ("{:>8}".format("score") if diffuse else "")
+    if a.calibrated:
+        hdr += f"{'%rank':>8}{'P':>7}{'band':>12}"
+    print(hdr + f"{'binder':>8}")
     for r in res:
         line = f"{r.allele:<18}{r.vote:>7.2f}{r.enrichment:>7.1f}"
-        if a.diffuse:
+        if diffuse:
             line += f"{(r.anchor_score or 0.0):>8.2f}"
+        if a.calibrated:
+            line += f"{r.rank:>8.2f}{r.p_present:>7.2f}{r.band:>12}"
         print(line + f"{'yes' if r.binder else 'no':>8}")
 
 
@@ -114,6 +119,8 @@ def main(argv=None):
     r.add_argument("--allele", help="restrict to a single allele")
     r.add_argument("--cls", choices=("mhc1", "mhc2"))
     r.add_argument("--diffuse", action="store_true", help="rare-allele-aware (diffusion-shrunk anchors)")
+    r.add_argument("--calibrated", action="store_true",
+                   help="add per-allele %%rank, P(present), and binding band (implies --diffuse)")
     r.add_argument("--top", type=int, default=10)
     _add_store_opts(r)
     r.set_defaults(fn=cmd_restriction)

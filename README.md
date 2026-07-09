@@ -66,6 +66,15 @@ ps.neighbors("HLA-A*02:01", candidates=store.alleles("mhc1"))
 am = store.anchor_model("mhc1")          # learned anchor weights + bounded-prior shrinkage
 am.score("NLVPMVATV", "HLA-A*02:01")     # anchor log-odds; am.score(..., raw=True) disables borrowing
 
+# footprint (which core positions) and background (the log-odds null) tune the model to the question:
+store.anchor_model("mhc1", footprint="adaptive")             # anchors for rare alleles, full core otherwise
+store.anchor_model("mhc1", background="proteome")            # presentation null (is it presented at all?)
+store.anchor_model("mhc1", background="ligand")              # specificity null (which allele? — default)
+
+# calibrated, cross-allele-comparable output (NetMHCpan %Rank_EL analogue + P(present) + band)
+for r in store.restriction("NLVPMVATV", cls="mhc1", calibrated=True):
+    print(r.allele, r.rank, r.p_present, r.band)             # e.g. HLA-A*02:01  1.6  0.98  weak
+
 mhcmatch.logo.motif(store, "HLA-A*02:01", "mhc1")
 ```
 
@@ -75,6 +84,7 @@ mhcmatch.logo.motif(store, "HLA-A*02:01", "mhc1")
 mhcmatch decompose NLVPMVATV                                  # anchor / TCR-facing split (no data)
 set -x MHCMATCH_PMHC /path/to/pmhc_data                       # or pass --pmhc to each command
 mhcmatch restriction NLVPMVATV --allele 'A*02:01' --diffuse   # allele name auto-resolved; rare-aware
+mhcmatch restriction NLVPMVATV --calibrated                   # + %rank, P(present), binding band
 mhcmatch scan my_protein.fasta --correction bh                # presented windows, BH-FDR controlled
 mhcmatch source MKTAYIAKW --proteome UP000005640_9606.fasta.gz
 mhcmatch logo 'HLA-A*02:01'
@@ -89,8 +99,27 @@ mhcmatch logo 'HLA-A*02:01'
 - **Reference proteomes:** not bundled — supply a UniProt reference proteome FASTA
   (UP000005640 human / UP000000589 mouse) to `Proteome.from_fasta`.
 
+## Benchmark vs NetMHCpan
+
+A reproducible head-to-head against **NetMHCpan-4.2b** and **NetMHCIIpan-4.3i** lives in
+[`bench/compare/`](bench/compare/) (results in `bench/results/compare_*.md`, provenance and caveats in
+[`bench/compare/SOURCES.md`](bench/compare/SOURCES.md)). It compares the two tools on the *same*
+per-(peptide, allele) task, stratified by allele rarity, with AUROC / AUPRC / PPV@k, bootstrap CIs and
+paired significance. Headline results (shortlist tier, human, seed 0):
+
+- **Allele-specificity** (which allele presents a peptide — the restriction problem): mhcmatch **beats**
+  NetMHCpan on MHC-I medium and frequent alleles (AUROC, AUPRC and PPV@k, p < 0.001).
+- **Presented-vs-random screening** (`background="proteome"`): mhcmatch **beats** NetMHCpan on MHC-I
+  medium/frequent and NetMHCIIpan on MHC-II rare alleles. Rare MHC-I remains NetMHCpan's.
+- **Speed:** mhcmatch scores ~**68×** faster (pure Python, ~195k peptide-allele scores/s).
+
+```fish
+python bench/compare/run_compare.py --cls mhc1 --decoy-mode hard   --background ligand    # specificity
+python bench/compare/run_compare.py --cls mhc1 --decoy-mode random --background proteome  # screening
+```
+
 ## Status
 
-Alpha (v0). See [`ROADMAP.md`](ROADMAP.md) for phased plans (tuned thresholds, learned anchor
-weights, future stability/affinity/cleavage/immunogenicity predictors, and the NetMHCpan /
-MixMHCpred benchmark).
+Beta (v0.2). See [`ROADMAP.md`](ROADMAP.md) for what's next (order-k Markov / covariance null, a
+learned reranker for rare-allele screening, full-tier + temporal cluster sweeps, and the
+stability/affinity/cleavage/immunogenicity predictors).
