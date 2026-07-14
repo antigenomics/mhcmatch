@@ -230,6 +230,10 @@ groove positions). Worth evaluating against:
 **Needs fetched data:** neoantigen molecular-mimicry validation (self + pathogen proteomes), the
 NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2).
 
+## 6c. Known issues
+
+- **The MHC-II binder gate is a length detector** (`store.py:291`, `anchor_score > 0.0`). `AnchorModel.score` is a max over register frames, so it grows with peptide length even on noise: a **random** 15-mer passes the gate 85% of the time, a random 21-mer 98%. Ranking benchmarks are unaffected (a monotone length offset cancels when candidates are length-matched), which is why it went unnoticed. Measurement and fix options: `bench/results/binder_gate_length_bias.md`. `mhcmatch.ligand` is unaffected — it never uses `AnchorModel.score` to rank spans.
+
 ## 7. Conventions
 
 - **Upstream stays generic.** New general-purpose primitives belong in `seqtree`/`tcren`; tuned
