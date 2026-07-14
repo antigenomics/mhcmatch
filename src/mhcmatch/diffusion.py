@@ -173,19 +173,19 @@ class AnchorModel:
         """One register-EM pass (MHC-II): re-assign each training peptide to the frame its current
         model scores best, then re-estimate the per-anchor preferences and background from that frame.
         Uses the current (pre-pass) distributions for assignment; ``self.prefs`` is replaced only after
-        all peptides are assigned, so this is a proper EM step. The learned groove weights are kept."""
+        all peptides are assigned, so this is a proper EM step. The learned groove weights are kept.
+
+        Frames are assigned by :meth:`best_register`, so the register the EM fits is the same one
+        :meth:`score` reads off. (For MHC-II the adaptive-footprint mask is always ``None``, so this
+        is identical to the previous hand-rolled loop; under ``background="markov"`` the assignment
+        now uses the same Markov null it is scored with, which it previously did not.)"""
         panel = store._panel[self.cls]
         core_pos = [j - 1 for j in self.anchors]
         prefs = {j: {} for j in self.anchors}
         for ep, a, wt in zip(panel.epitopes, panel.alleles, panel.weights):
             if len(ep) < 9:
                 continue
-            best_st, best_sc = 0, float("-inf")
-            for st in range(len(ep) - 8):
-                w9 = ep[st:st + 9]
-                sc = self._anchor_logodds([w9[c] for c in core_pos], a, False, 1e-3)
-                if sc > best_sc:
-                    best_sc, best_st = sc, st
+            best_st, _ = self.best_register(ep, a)
             w9 = ep[best_st:best_st + 9]
             for j, c in zip(self.anchors, core_pos):
                 prefs[j].setdefault(a, Counter())[w9[c]] += wt
@@ -234,6 +234,50 @@ class AnchorModel:
             return self._rare_mask
         return None
 
+    def best_register(self, peptide, allele, raw=False, eps=1e-3):
+        """Best-scoring binding register of ``peptide`` for ``allele``, as ``(start, score)``.
+
+        For MHC-II every 9-mer core frame is scored and the winning one is returned
+        (NNAlign/GibbsCluster-style, per allele) -- ``start`` is its 0-based offset in ``peptide``.
+        MHC-I anchors are peptide-end-relative, so there is no register search and ``start`` is 0.
+        Returns ``(-1, -inf)`` when the peptide is too short for the anchors. Ties are broken
+        leftmost.
+
+        This is the register the *model* infers. It is not the allele-agnostic heuristic register
+        (``mhcmatch.store._mhc2_register``) used for signatures, ``decompose`` and logos; on real
+        ligands the two disagree often. Both are kept on purpose -- see ROADMAP.
+
+        Args:
+            peptide: the ligand (MHC-II) or peptide (MHC-I).
+            allele: panel allele key.
+            raw: score off the allele's own anchor frequencies, without cross-allele borrowing.
+            eps: log-odds regularizer.
+
+        Returns:
+            ``(start, score)``.
+        """
+        peptide = peptide.strip().upper()
+        mask = self._score_mask(allele)
+        markov = self.background == "markov"
+        if self.cls == "mhc2":
+            if len(peptide) < 9:
+                return -1, float("-inf")
+            core_pos = [j - 1 for j in self.anchors]      # 1-based core positions -> 0-based
+            best_st, best = -1, float("-inf")
+            for st in range(len(peptide) - 8):
+                w = peptide[st:st + 9]
+                ctx = [peptide[st + c - 1] if st + c > 0 else "" for c in core_pos] if markov else None
+                s = self._anchor_logodds([w[c] for c in core_pos], allele, raw, eps, mask, ctx)
+                if s > best:                              # leftmost wins ties, as max() did
+                    best, best_st = s, st
+            return best_st, best
+        from .store import resolve_anchor_index
+        idxs = [resolve_anchor_index(peptide, self.cls, j) for j in self.anchors]
+        if any(i is None for i in idxs):
+            return -1, float("-inf")
+        ctx = [peptide[i - 1] if i > 0 else "" for i in idxs] if markov else None
+        return 0, self._anchor_logodds([peptide[i] for i in idxs], allele, raw, eps, mask, ctx)
+
     def score(self, peptide, allele, raw=False, eps=1e-3):
         """Anchor log-odds of ``peptide`` for ``allele`` vs the panel background.
 
@@ -243,24 +287,8 @@ class AnchorModel:
         For MHC-II the binding **register is chosen per allele**: every 9-mer core frame is scored and
         the best-scoring frame is returned (NNAlign/GibbsCluster-style), instead of a fixed
         allele-agnostic heuristic register. MHC-I anchors are peptide-end-relative (no register search).
+
+        Note this grows with peptide length (a max over more frames), so it is **not** comparable
+        across peptides of different length -- do not use it to rank candidate ligand spans.
         """
-        peptide = peptide.strip().upper()
-        mask = self._score_mask(allele)
-        markov = self.background == "markov"
-        if self.cls == "mhc2":
-            if len(peptide) < 9:
-                return float("-inf")
-            core_pos = [j - 1 for j in self.anchors]      # 1-based core positions -> 0-based
-            best = float("-inf")
-            for st in range(len(peptide) - 8):
-                w = peptide[st:st + 9]
-                ctx = [peptide[st + c - 1] if st + c > 0 else "" for c in core_pos] if markov else None
-                best = max(best, self._anchor_logodds([w[c] for c in core_pos], allele, raw, eps,
-                                                      mask, ctx))
-            return best
-        from .store import resolve_anchor_index
-        idxs = [resolve_anchor_index(peptide, self.cls, j) for j in self.anchors]
-        if any(i is None for i in idxs):
-            return float("-inf")
-        ctx = [peptide[i - 1] if i > 0 else "" for i in idxs] if markov else None
-        return self._anchor_logodds([peptide[i] for i in idxs], allele, raw, eps, mask, ctx)
+        return self.best_register(peptide, allele, raw, eps)[1]

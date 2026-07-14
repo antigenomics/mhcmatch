@@ -1,7 +1,8 @@
 """Command-line interface for mhcmatch: ``mhcmatch <command> ...``.
 
 Commands: ``decompose`` (no data needed), ``restriction``, ``scan``, ``logo`` (need a pmhc_data
-table via ``--pmhc`` or ``$MHCMATCH_PMHC``), and ``source`` (needs a proteome FASTA).
+table via ``--pmhc`` or ``$MHCMATCH_PMHC``), ``source`` (needs a proteome FASTA), and ``span``
+(core -> full presented ligand; the panel is optional, and only supplies the observed-ligand tier).
 """
 from __future__ import annotations
 
@@ -96,6 +97,26 @@ def cmd_source(a):
         print(f"{h.protein}\tpos {h.position}\tsubs {h.n_subs}\t{h.ref_peptide}\t{muts}")
 
 
+def cmd_span(a):
+    from . import ligand
+    prot = _read_seq(a.protein)
+    corpus = None
+    if a.pmhc or os.environ.get("MHCMATCH_PMHC"):
+        corpus = _store(a)._panel["mhc2"].epitopes
+    sp = ligand.presented_span(a.core.strip().upper(), prot, corpus=corpus, mode=a.mode,
+                               flanks=tuple(int(x) for x in a.flanks.split(",")))
+    if sp is None:
+        print("# no reference ligand contains this core (mode=observed)")
+        return
+    nl, nr = sp.flanks
+    print(f"tier      {sp.source}")
+    print(f"core      {sp.core} @ {sp.core_start}")
+    print(f"peptide   {sp.peptide}  [{sp.start}:{sp.end}]  len {len(sp.peptide)}")
+    print(f"flanks    {nl} / {nr}" + (f"   clipped {sp.clipped}" if any(sp.clipped) else ""))
+    print(f"score     {sp.score:+.2f}")
+    print(f"alts      {sp.n_alternatives}" + (f"   support {sp.support}" if sp.support else ""))
+
+
 def cmd_logo(a):
     from . import logo
     m = logo.motif(_store(a), a.allele, a.cls or "mhc1")
@@ -146,6 +167,14 @@ def main(argv=None):
     lg.add_argument("--cls", choices=("mhc1", "mhc2"))
     _add_store_opts(lg)
     lg.set_defaults(fn=cmd_logo)
+
+    sp = sub.add_parser("span", help="extend an MHC-II binding core to the full presented ligand")
+    sp.add_argument("core", help="the 9-mer binding core")
+    sp.add_argument("--protein", required=True, help="source protein sequence, or a FASTA path")
+    sp.add_argument("--mode", default="auto", choices=("auto", "observed", "modeled", "fixed"))
+    sp.add_argument("--flanks", default="3,3", help="left,right sizes for --mode fixed")
+    _add_store_opts(sp)                 # only used to supply the observed-ligand corpus
+    sp.set_defaults(fn=cmd_span)
 
     a = ap.parse_args(argv)
     a.fn(a)

@@ -257,3 +257,169 @@ def test_cli_decompose_and_source(tmp_path, capsys):
     fasta.write_text(">P1\nMKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQ\n")
     cli.main(["source", "MKTAYIAKW", "--proteome", str(fasta), "--max-subs", "1"])
     assert "P1" in capsys.readouterr().out
+
+
+# -- ligand spans: core -> full presented peptide ------------------------------
+# All synthetic. The span model predicts an OBSERVED LIGAND SPAN, not a cleavage event and not
+# immunogenicity -- see mhcmatch.ligand for why that distinction is load-bearing.
+from mhcmatch import ligand                                            # noqa: E402
+from mhcmatch.diffusion import PROTEOME_AA_FREQ                        # noqa: E402
+from mhcmatch.ligand import CTX_KEYS, PAD, SpanModel, presented_span   # noqa: E402
+
+
+def _flat_model(lens=None, spikes=None):
+    """A SpanModel that is flat at the proteome background, except where we plant a spike."""
+    ctx = {k: dict(PROTEOME_AA_FREQ) for k in CTX_KEYS}
+    for k in ctx:
+        ctx[k][PAD] = 0.01
+    for key, res in (spikes or {}).items():
+        ctx[key] = {a: 1e-4 for a in PROTEOME_AA_FREQ}
+        ctx[key][res] = 0.9
+        ctx[key][PAD] = 1e-4
+    lens = lens or {14: 1.0}
+    return SpanModel(ctx=ctx, lens=lens, padbg=0.01, background="proteome")
+
+
+def _mhc2_store():
+    coreX, coreY = "WKVKFWKVK", "DKEKDDKEK"        # two distinct allele motifs -> prefs != bg
+    recs = []
+    for pad in range(5):
+        recs.append({"epitope": "S" * pad + coreX + "S" * (4 - pad), "mhc_a": "DRA*01:01",
+                     "mhc_b": "DRB1*15:01", "mhc_class": "MHCII"})
+        recs.append({"epitope": "S" * pad + coreY + "S" * (4 - pad), "mhc_a": "DRA*01:01",
+                     "mhc_b": "DRB1*13:01", "mhc_class": "MHCII"})
+    return Store.from_records(recs * 4), coreX
+
+
+def test_best_register_is_bit_identical_to_score():
+    store, core = _mhc2_store()
+    am = store.anchor_model("mhc2")
+    pep = "GG" + core + "GG"
+    st, sc = am.best_register(pep, "DRB1_1501")
+    assert sc == am.score(pep, "DRB1_1501")        # score() is best_register()[1], exactly
+    assert 0 <= st <= len(pep) - 9
+    # the winning core is a property of the sequence, not of where it sits: the same 9-mer must win
+    # at any padding offset, and the score must match (the pre-existing frame-invariance contract).
+    p1, p2 = "G" + core + "GGG", "GGG" + core + "G"
+    s1, c1 = am.best_register(p1, "DRB1_1501")
+    s2, c2 = am.best_register(p2, "DRB1_1501")
+    assert c1 == c2
+    assert p1[s1:s1 + 9] == p2[s2:s2 + 9]
+
+
+def test_span_model_recovers_planted_span():
+    # Plant K immediately upstream and R immediately downstream of a 14-mer span.
+    core = "WKVKFWKVK"
+    prot = "G" * 20 + "K" + "AA" + core + "SSS" + "R" + "G" * 20
+    s = prot.index(core) - 2                        # planted span start (2 residues of N-flank)
+    m = _flat_model(lens={14: 1.0}, spikes={"flankN-1": "K", "flankC+1": "R"})
+    sp = presented_span(core, prot, model=m, mode="modeled")
+    assert (sp.start, sp.end) == (s, s + 14)
+    assert sp.peptide == prot[s:s + 14] and sp.source == "modeled"
+    assert sp.flanks == (2, 3)
+
+
+def test_span_score_is_length_unbiased():
+    # AnchorModel.score is a max over register frames, so it GROWS with length -- ranking candidate
+    # spans with it would just pick the longest. The span score must not have that bias.
+    rng = random.Random(7)
+    prot = "".join(rng.choice(_AA) for _ in range(400))
+    m = _flat_model(lens={L: 1 / 9 for L in range(12, 21)})
+    means = []
+    for L in range(12, 21):
+        sc = [m.context_score(prot, s, s + L) for s in range(0, 300, 7)]
+        means.append(sum(sc) / len(sc))
+    xs = list(range(12, 21))
+    mx, my = sum(xs) / len(xs), sum(means) / len(means)
+    slope = (sum((x - mx) * (y - my) for x, y in zip(xs, means))
+             / sum((x - mx) ** 2 for x in xs))
+    assert abs(slope) < 0.05, f"span score drifts {slope:+.3f} log-odds/residue with length"
+
+
+def test_anchor_score_is_length_biased_negative_control():
+    # Documented negative control for the trap above: AnchorModel.score is a max over register
+    # frames, so on RANDOM peptides -- carrying no motif at all -- it still rises with length,
+    # purely because a longer peptide offers more frames to maximise over. That is why span ranking
+    # uses the flank model and not this. If this ever stops holding, revisit SpanModel.best_span.
+    rng = random.Random(3)
+    am, _ = _mhc2_store()
+    am = am.anchor_model("mhc2")
+    mean = lambda L: sum(                                             # noqa: E731
+        am.score("".join(rng.choice(_AA) for _ in range(L)), "DRB1_1501") for _ in range(80)) / 80
+    assert mean(19) > mean(9)
+
+
+def test_bounds_pad_and_clipping():
+    core = "WKVKFWKVK"
+    prot = core + "AAAA"                          # core flush against the N-terminus
+    m = _flat_model(lens={11: 1.0})
+    sp = presented_span(core, prot, model=m, mode="modeled")
+    assert sp.start >= 0 and sp.end <= len(prot) and prot[sp.start:sp.end] == sp.peptide
+
+    fx = ligand.fixed_span(core, prot, 5, 5)      # neither flank fits
+    assert (fx.start, fx.end) == (0, len(prot))
+    assert fx.clipped == (5, 1)                  # reported, never silently shortened
+    with pytest.raises(ValueError):
+        ligand.fixed_span(core, prot, 5, 5, strict=True)
+
+
+def test_span_is_self_consistent_with_its_own_register():
+    # The emitted span must still read back the core we asked for -- otherwise the answer contradicts
+    # itself (we would report core X while having extended around core Y).
+    core = "WKVKFWKVK"
+    recs = [{"epitope": "S" * p + core + "S" * (4 - p), "mhc_a": "DRA*01:01",
+             "mhc_b": "DRB1*15:01", "mhc_class": "MHCII"} for p in range(5)]
+    am = Store.from_records(recs * 4).anchor_model("mhc2")
+    prot = "GGGGG" + "AA" + core + "SSS" + "GGGGG"
+    sp = presented_span(core, prot, model=_flat_model(lens={14: 1.0}), mode="modeled")
+    st, _ = am.best_register(sp.peptide, "DRB1_1501")
+    assert sp.peptide[st:st + 9] == core
+
+
+def test_observed_tier_and_leak_guard():
+    core = "WKVKFWKVK"
+    prot = "GGGG" + "MK" + core + "TPR" + "GGGG"
+    lig = "MK" + core + "TPR"                     # a real "eluted" ligand bracketing the core
+    sp = presented_span(core, prot, corpus=[lig], mode="auto")
+    assert sp.source == "observed" and sp.peptide == lig and sp.support == 1
+    # mode="observed" with no corpus hit is an informative None, not a silent fallback
+    assert presented_span(core, prot, corpus=["QQQQQQQQ"], mode="observed") is None
+    # the benchmark leak guard: mode="modeled" must never echo a corpus ligand as a prediction
+    assert presented_span(core, prot, corpus=[lig], mode="modeled").source == "modeled"
+
+
+def test_class_boundary_no_silent_misrouting():
+    core, prot = "WKVKFWKVK", "GGGG" + "WKVKFWKVK" + "GGGG"
+    with pytest.raises(ValueError):
+        presented_span("A" * 15, prot.replace("W", "A"))          # not a 9-mer core
+    with pytest.raises(ValueError):
+        ligand.processing_score("A" * 15, "G" * 5 + "A" * 15)     # not an 8-11mer
+    # class I and class II are separate entry points on purpose: length cannot tell a 9-mer class-II
+    # core from a 9-mer class-I peptide, so nothing may infer the class.
+    assert not hasattr(ligand, "infer_class")
+    assert isinstance(ligand.processing_score(core, prot), float)  # valid AS a class-I 9-mer
+
+
+def test_ligand_background_is_rejected_as_circular():
+    with pytest.raises(ValueError, match="circular"):
+        SpanModel(ctx={k: dict(PROTEOME_AA_FREQ) for k in CTX_KEYS},
+                  lens={15: 1.0}, background="ligand")
+
+
+def test_vendored_span_table_recovers_known_biology():
+    for cls in ("mhc1", "mhc2"):
+        m = ligand.load_span_model(cls)
+        assert set(m.ctx) == set(CTX_KEYS)
+        for k in CTX_KEYS:
+            assert abs(sum(m.ctx[k].values()) - 1.0) < 1e-3
+        assert abs(sum(m.lens.values()) - 1.0) < 1e-3
+    m2 = ligand.load_span_model("mhc2")
+    bgP = PROTEOME_AA_FREQ["P"]
+    # Proline is the aminopeptidase stop signal: ENRICHED just inside the ligand, DEPLETED in the
+    # flank. Sign-explicit on purpose -- this fires if the coordinate convention is ever flipped.
+    assert m2.ctx["ligN+2"]["P"] / bgP > 1.5
+    assert m2.ctx["flankN-1"]["P"] / bgP < 0.5
+    # Cys is depleted ~10x at ligand termini in MS data (alkylation / missed ID), not in the flanks.
+    # That artifact is clamped out at fit time, or the model would refuse every Cys-containing ligand.
+    assert abs(m2.ctx["ligN+1"]["C"] - PROTEOME_AA_FREQ["C"]) < 1e-6
+    assert m2.lens[15] > 0.10          # class-II ligands peak at ~15

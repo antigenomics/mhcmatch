@@ -43,7 +43,8 @@ diffusion model, and the downstream predictors.
 | Per-locus bandwidth `h` / prior-strength `τ` calibration | `Pseudoseq` + fit | Phase 1 |
 | Class-II allele keying (α+β pair) + pseudoseq pair-normalization | — | Phase 1 |
 | Tuned ROC/PR thresholds; FDR over proteome scans | — | Phase 1 |
-| Stability / affinity / cleavage / expression / immunogenicity | — | Phase 2 |
+| Core → full presented ligand span (observed / modeled / fixed) | `mhcmatch.ligand` | **v0.3** (validated, `bench/bench_spans.py`) |
+| Stability / affinity / expression / immunogenicity | — | Phase 2 |
 | NetMHCpan / MixMHCpred head-to-head benchmark + paper | separate repo | Phase 3 |
 
 ## 2. Data
@@ -126,7 +127,17 @@ Each composes with the presentation score into a combined ranking; user will sup
 data. Each is a milestone whose spec is its appendix subsection:
 
 - **pMHC stability** and **binding affinity** (the quantitative complement to the presentation E-value).
-- **Proteasomal cleavage** (C-terminal generation) and N-terminal trimming.
+- ~~**Proteasomal cleavage** (C-terminal generation) and N-terminal trimming.~~ **Done in v0.3, but
+  deliberately NOT as a cleavage predictor** — see `mhcmatch.ligand`. MHC-II is *bind-first,
+  trim-later*: the groove protects the core while exopeptidases erode the flanks, so there is no
+  strong sequence-specific endoprotease step to simulate. The one dedicated MHC-II cleavage motif
+  (Paul et al. 2018, PMID 30127785) reaches AUC 0.767 on ligands and has **zero** predictive power on
+  CD4 epitopes. What the field actually ships is a *learned flank model* over eluted ligands
+  (NetMHCIIpan `-context`, PMID 30446001; MHCflurry-2.0 processing, PMID 32711842), so the
+  `β_clv · c_Cterm` term of appendix eq. (23) is realised as `SpanModel.context_score`, not a
+  protease simulator. Held-out results: `bench/results/spans_mhc{1,2}_human.md`. Note it predicts
+  **ligands, not immunogenicity** — context is known to *degrade* CD4 epitope benchmarks — so it is
+  deliberately not wired into the immunogenicity path.
 - **Expression / translation** scores and **variant frequency** (population genetics priors).
 - **Immunogenicity**: physicochemical TCR-facing features + **TCR precursor frequency** estimates
   (cross-reactivity distance à la Łuksza et al. *Nature* 2022, Q = R×D). The precursor-frequency /
@@ -223,6 +234,12 @@ NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2)
 
 - **Upstream stays generic.** New general-purpose primitives belong in `seqtree`/`tcren`; tuned
   thresholds, predictors, and domain glue stay here.
+- **Two MHC-II registers coexist by design — never merge them.** The *heuristic* register
+  (`store._mhc2_register`, allele-agnostic) backs signatures, `decompose` and logos, where no allele
+  is available; the *model* register (`AnchorModel.best_register`, per-allele) backs scoring and the
+  benchmarks. On real ligands they disagree often — the heuristic score is tied across ≥2 frames on
+  ~66% of ligands — so collapsing them would silently change every `bench/results/` number. The span
+  model sidesteps both: it is register-free (terminus-relative).
 - **Anchors are parametrized** via `seqtree.layout` (presets per class, overridable) — never hardcode
   positions; allele-specific anchors come from the learned pocket weights.
 - **Never fabricate citations** — verify every DOI via a tool (PubMed/arXiv) before adding it to

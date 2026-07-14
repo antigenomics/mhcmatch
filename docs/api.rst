@@ -49,6 +49,14 @@ mhcmatch.calibrate module
    :undoc-members:
    :show-inheritance:
 
+mhcmatch.ligand module
+----------------------
+
+.. automodule:: mhcmatch.ligand
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 mhcmatch.logo module
 --------------------
 
