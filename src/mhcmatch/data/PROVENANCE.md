@@ -32,3 +32,32 @@ best pseudosequence fit (MHC-I single chain vs MHC-II α1+β1 chain-pair), givin
 
     conda run -n tcren-nb python bench/structural_pockets.py \
         --structures ../tcren-ms/data/Canonical2026 --out src/mhcmatch/data
+
+## `ligand_context.tsv`
+
+The ligand-span (flank/context) model consumed by `mhcmatch.ligand.load_span_model()`. Per class
+(`mhc1`, `mhc2`): residue frequencies at the 12 terminus-relative context positions — 3 upstream in
+the source protein, the ligand's own first 3 and last 3, and 3 downstream (the NetMHCIIpan
+`-context` window, PMID 30446001) — plus a ligand-length prior. Laplace-smoothed at fit time, so the
+runtime carries no smoothing parameter. Allele-agnostic (justified, not assumed: per-allele context
+PWMs are within JSD 0.003–0.010 of the pooled one for MHC-II).
+
+Fit from **IEDB** `mhc_ligand_full` (mass-spectrometry / eluted-ligand assays only — binding-affinity
+peptides have experimenter-chosen boundaries, which is the very label being modelled) against the
+UniProt reference proteomes **UP000005640** (human) and **UP000000589** (mouse). 604,201 MHC-I and
+373,904 MHC-II spans survive; every coordinate is **re-derived** by unique exact substring match
+rather than trusting IEDB's annotated `Starting Position`, which is wrong for ~8.8% of rows and
+*silently* wrong for ~3.8%. Cysteine's log-odds at the ligand-terminal positions is clamped to the
+proteome background: C is depleted 8–11× there but not in the flanks, i.e. it is mass-spectrometry
+chemistry (alkylation / missed ID), not processing biology.
+
+Inputs are distributed via the public HF dataset
+<https://huggingface.co/datasets/isalgo/pmhc_data> (`dump/mhc_ligand_full.tsv.gz`,
+`proteome/human.fasta.gz`, `proteome/mouse.fasta.gz`). Regenerate with:
+
+    python bench/train_spans.py \
+        --iedb <pmhc_data>/dump/mhc_ligand_full.tsv.gz \
+        --proteome <pmhc_data>/proteome/human.fasta.gz <pmhc_data>/proteome/mouse.fasta.gz \
+        --cls both --out src/mhcmatch/data/ligand_context.tsv
+
+Held-out validation: `bench/results/spans_mhc2_human.md`, `bench/results/spans_mhc1_human.md`.

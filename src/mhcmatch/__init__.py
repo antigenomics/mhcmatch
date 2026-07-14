@@ -17,6 +17,7 @@ from .diffusion import AnchorModel
 from .proteome import Proteome, SourceHit
 from .pseudoseq import (Pseudoseq, learn_anchor_weights, load_pseudo, normalize_allele,
                         resolve_allele)
+from .ligand import Span, SpanModel, load_span_model, presented_span, processing_score
 from .store import Decomposition, Restriction, Store, anchor_indices, infer_class
 
 __all__ = [
@@ -35,10 +36,16 @@ __all__ = [
     "normalize_allele",
     "resolve_allele",
     "logo",
+    "ligand",
+    "Span",
+    "SpanModel",
+    "load_span_model",
+    "presented_span",
+    "processing_score",
     "__version__",
 ]
 
 try:
     __version__ = _version("mhcmatch")
 except PackageNotFoundError:  # running from a source tree without an install
-    __version__ = "0.2.0"
+    __version__ = "0.3.0"

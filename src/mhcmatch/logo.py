@@ -10,17 +10,14 @@ from __future__ import annotations
 import math
 from collections import Counter
 
-from seqtree import layout
-
 _AA = "ACDEFGHIKLMNPQRSTVWY"
 
 
 def _mhc2_core(peptide):
-    """The register-anchored 9-mer core window (one-pass register trick), or None."""
-    if len(peptide) < 9:
-        return None
-    return max((peptide[s:s + 9] for s in range(len(peptide) - 8)),
-               key=layout._core_anchor_score)
+    """The register-anchored 9-mer core window (heuristic register), or None."""
+    from .store import _mhc2_register
+    s = _mhc2_register(peptide)
+    return None if s is None else peptide[s:s + 9]
 
 
 def motif(store, allele, cls, length=None):

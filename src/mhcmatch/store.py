@@ -81,13 +81,25 @@ def _bh_cutoff(pvals, alpha):
     return cutoff
 
 
+def _mhc2_register(peptide: str):
+    """0-based start of the register-anchored 9-mer core, or None if ``peptide`` is shorter than 9.
+
+    This is the **heuristic** register: a one-pass, allele-agnostic argmax of
+    ``seqtree.layout._core_anchor_score`` (leftmost wins ties). It is the register used for
+    signatures, ``decompose`` and logos, where no allele is available. The per-allele register the
+    model actually scores with is :meth:`mhcmatch.diffusion.AnchorModel.best_register`; on real
+    ligands the two often disagree, and both are kept on purpose.
+    """
+    if len(peptide) < 9:
+        return None
+    return max(range(len(peptide) - 8),
+               key=lambda s: layout._core_anchor_score(peptide[s:s + 9]))
+
+
 def _mhc2_core_anchors(peptide: str) -> tuple:
     """0-based P1/P4/P6/P9 indices of the register-anchored 9-mer core (one-pass register trick)."""
-    if len(peptide) < 9:
-        return ()
-    best_s = max(range(len(peptide) - 8),
-                 key=lambda s: layout._core_anchor_score(peptide[s:s + 9]))
-    return tuple(best_s + j for j in (0, 3, 5, 8))
+    s = _mhc2_register(peptide)
+    return () if s is None else tuple(s + j for j in (0, 3, 5, 8))
 
 
 def anchor_indices(peptide: str, cls: str) -> tuple:
@@ -104,10 +116,9 @@ def resolve_anchor_index(peptide: str, cls: str, anchor: int):
     MHC-II: ``anchor`` is a 1-based position *within the register-anchored 9-mer core* (P1..P9).
     """
     if cls == "mhc2":
-        if len(peptide) < 9:
+        s = _mhc2_register(peptide)
+        if s is None:
             return None
-        s = max(range(len(peptide) - 8),
-                key=lambda i: layout._core_anchor_score(peptide[i:i + 9]))
         idx = s + (anchor - 1)
         return idx if s <= idx < s + 9 else None
     idx = (anchor - 1) if anchor > 0 else (len(peptide) + anchor)
