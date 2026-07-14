@@ -49,6 +49,23 @@ CTX_KEYS = ("flankN-3", "flankN-2", "flankN-1", "ligN+1", "ligN+2", "ligN+3",
             "ligC-3", "ligC-2", "ligC-1", "flankC+1", "flankC+2", "flankC+3")
 
 CORE_LEN = 9          # MHC-II binding core
+
+#: Flank size for **structure prediction** (core ± 2 = a 13mer). Measured, not guessed: across the 93
+#: pMHC-II crystals of the Canonical2026 set the *resolved* peptide has a **median length of 13** with a
+#: median of **2 flanking residues on each side**, and only **13%** resolve <=11 residues. So the
+#: core ± 1 (11mer) that TCRmodel2 and the fine-tuned-AlphaFold pipelines feed their networks is an
+#: input convention, **not** a statement about what is ordered -- it discards real density in most
+#: structures. Reproduce with ``bench/pdb_flanks.py``.
+STRUCTURE_FLANK = 2
+
+#: Flank size for a **synthesised assay peptide** (core ± 6 = a 21mer). What matters for a CD4 assay is
+#: not hitting the eluted boundaries exactly -- the APC re-trims whatever you give it -- but that the
+#: peptide *contains* the natural ligand. Measured on held-out eluted ligands, the fraction of cores
+#: whose full observed ligand is contained in the emitted peptide: 13mer 11%, 15mer 31%, 17mer 52%,
+#: 19mer 67%, **21mer 80%**. Longer also tracks the MHC-II affinity optimum of ~18-20 aa
+#: (O'Brien et al. 2008, PMID 19036163). The conventional 15mer covers only 31%.
+ASSAY_FLANK = 6
+
 _EPS = 1e-6
 
 
@@ -305,6 +322,16 @@ def presented_span(core, protein, model=None, corpus=None, mode="auto", flanks=(
 
     Raises:
         ValueError: if ``core`` is not a substring of ``protein``, or is not 9 residues.
+
+    .. warning::
+       **Do not pick a peptide to synthesise from the ``modeled`` span alone.** Held-out, it places
+       *both* boundaries within +-1 residue only 31% of the time and within +-2 only 47% -- barely
+       better than simply centring a 15mer on the core (28% / 50%), which actually wins at +-3
+       (79% vs 62%). Its real edge is the exact-span hit rate (0.158 vs 0.069), i.e. the question
+       *"what was actually eluted?"* -- not *"what should I make?"*. For the latter use
+       :func:`fixed_span` with :data:`ASSAY_FLANK` (a 21mer, which contains the true ligand 80% of
+       the time) or :data:`STRUCTURE_FLANK` (a 13mer, the median resolved crystal). See
+       ``bench/results/spans_mhc2_human.md``.
     """
     if len(core) != CORE_LEN:
         raise ValueError(f"MHC-II core must be {CORE_LEN} residues, got {len(core)}: {core!r}. "

@@ -97,3 +97,76 @@ in, the model would refuse every Cys-containing ligand.
 **MBP85-99 / DRB1\*15:01.** From core `VHFFKNIVT` in human MBP, the model returns
 `NPVVHFFKNIVTPR` — the canonical DR2 ligand `ENPVVHFFKNIVTPR` minus one N-terminal residue
 (ΔN = 1, ΔC = 0), with the true span among the scored alternatives.
+
+---
+
+# Which peptide should you actually use? (added after review)
+
+The span model's point estimate is **not accurate enough to pick a peptide from**. Two independent
+measurements say so, and they agree on the fallback: **use a fixed flank**.
+
+## 1. Real crystals resolve a 13mer, not an 11mer
+
+`bench/pdb_flanks.py` over the 93 pMHC-II structures of the Canonical2026 set (tcren-ms), assigning
+the 9-mer core by groove burial:
+
+| quantity | value |
+|---|---|
+| median **resolved** peptide length | **13** |
+| median N-flank / C-flank beyond the core | **2 / 2** |
+| structures resolving **≤11** residues | **13%** |
+| structures resolving ≥2 flanking residues on both sides | 47% |
+
+Length histogram: 9:1, 10:1, 11:10, 12:17, **13:25**, 14:11, 15:12, 16:11, 17:2, 19:2, 20:1.
+(MHC-I control, same script: 180/260 are 9mers, 62 are 10mers — the method is sound.)
+
+So **core ± 1 (11mer) is too short.** TCRmodel2 (PMID 37140040) and the fine-tuned AlphaFold of
+Motmaen et al. (PMID 36802421) truncate their *input* to core ± 1, but that is a pipeline convention,
+not a claim about what is ordered — 87% of real structures resolve more than 11 residues.
+**Use core ± 2 (13mer)** for structure prediction: `ligand.STRUCTURE_FLANK`.
+
+## 2. For an assay, coverage beats precision
+
+Held-out (n=3000 cores), against the observed nested set. "Contains a full observed ligand" = the
+emitted peptide brackets a real eluted span, i.e. an APC could produce the natural ligand from it.
+
+| choice | both bounds ±1 | ±2 | ±3 | **contains a full observed ligand** |
+|---|---|---|---|---|
+| flank model (argmax span) | **31%** | 47% | 62% | 36% |
+| fixed centred 13mer (core±2) | 26% | **51%** | 66% | 11% |
+| fixed centred 15mer (core±3) | 28% | 50% | **79%** | 31% |
+| fixed centred 17mer (core±4) | 19% | 39% | 62% | 52% |
+| fixed centred 19mer (core±5) | 10% | 23% | 43% | 67% |
+| fixed centred **21mer** (core±6) | 4% | 12% | 24% | **80%** |
+
+**The model barely beats centring a 15mer on boundary error, and loses to it at ±3.** Its edge is the
+exact-span hit rate (0.158 vs 0.069) — the question *"what was eluted?"*, not *"what should I make?"*.
+
+For a CD4 assay the APC re-trims whatever you give it, so what matters is that the peptide **contains**
+the natural ligand: a 21mer does so 80% of the time, the conventional 15mer only 31%. Longer also
+tracks the MHC-II affinity optimum of ~18–20 aa (O'Brien 2008, PMID 19036163).
+**Use core ± 6 (21mer)** for synthesis: `ligand.ASSAY_FLANK`.
+
+## 3. Length calibration: the mean is right, the spread is too narrow
+
+| | human | mouse |
+|---|---|---|
+| observed mean ligand length | 15.7 | 15.7 |
+| predicted mean length | **15.5** | **15.6** |
+| observed % at 15–16 | 33% | 38% |
+| predicted % at 15–16 | **66%** | **66%** |
+| observed % ≥18 | 22% | 19% |
+| predicted % ≥18 | **4%** | **4%** |
+
+The mean is well calibrated in both species, but the argmax **collapses onto the mode**: it emits a
+15/16mer two-thirds of the time and almost never emits the long (≥18) or short (≤13) ligands that make
+up ~39% of the real distribution. That is inherent to taking a point estimate from a broad
+distribution — and it is the third reason not to treat the emitted span as *the* answer.
+
+## Bottom line
+
+| purpose | use | why |
+|---|---|---|
+| **structure** (TCRmodel2 / AF / Boltz) | **core ± 2 → 13mer** | median resolved crystal; 87% of structures resolve >11 residues |
+| **synthesis / CD4 assay** | **core ± 6 → 21mer** | contains the true ligand 80% of the time; APC re-trims; affinity optimum 18–20 aa |
+| **"what was actually eluted?"** | `presented_span(mode="modeled")` | 2.3× the exact-span hit rate of any fixed choice |

@@ -423,3 +423,20 @@ def test_vendored_span_table_recovers_known_biology():
     # That artifact is clamped out at fit time, or the model would refuse every Cys-containing ligand.
     assert abs(m2.ctx["ligN+1"]["C"] - PROTEOME_AA_FREQ["C"]) < 1e-6
     assert m2.lens[15] > 0.10          # class-II ligands peak at ~15
+
+
+def test_recommended_flanks_are_the_measured_ones():
+    # These two constants ARE the recommendation, and both were wrong before they were measured.
+    # STRUCTURE_FLANK=2 (13mer): across 93 real pMHC-II crystals the RESOLVED peptide has median
+    #   length 13 with ~2 ordered flanking residues per side; only 13% resolve <=11 residues, so the
+    #   core+-1 (11mer) that TCRmodel2/AlphaFold ingest is an input convention, not what is ordered.
+    # ASSAY_FLANK=6 (21mer): an APC re-trims a synthetic peptide, so what matters is that it CONTAINS
+    #   the natural ligand -- 21mer 80% of held-out cores, vs only 31% for the conventional 15mer.
+    # See bench/results/spans_mhc2_human.md and bench/pdb_flanks.py.
+    assert ligand.STRUCTURE_FLANK == 2
+    assert ligand.ASSAY_FLANK == 6
+    core, prot = "WKVKFWKVK", "G" * 20 + "WKVKFWKVK" + "G" * 20
+    st = ligand.fixed_span(core, prot, ligand.STRUCTURE_FLANK, ligand.STRUCTURE_FLANK)
+    asy = ligand.fixed_span(core, prot, ligand.ASSAY_FLANK, ligand.ASSAY_FLANK)
+    assert len(st.peptide) == 13 and core in st.peptide
+    assert len(asy.peptide) == 21 and st.peptide in asy.peptide
