@@ -231,7 +231,10 @@ def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
             a, pr, pp = best
             if pr > rank_threshold:
                 continue
-            d = store.decompose(pep, cls, a)
+            # annotate anchors from the SAME register the model scored (MHC-II), not the heuristic one,
+            # so reported anchors/tcr_facing match the scored core (and the WT-vs-mutant agretopicity).
+            rstart = model.best_register(pep, a)[0] if cls == "mhc2" else None
+            d = store.decompose(pep, cls, a, register_start=rstart)
             p = Prediction(header, pep, a, off, cls, round(pr, 3), round(pp, 4), band_of(pr),
                            d.anchors, d.tcr_facing, var=var)
             if aff is not None:

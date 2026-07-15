@@ -135,10 +135,18 @@ def _mhc2_core_anchors(peptide: str) -> tuple:
     return () if s is None else tuple(s + j for j in (0, 3, 5, 8))
 
 
-def anchor_indices(peptide: str, cls: str) -> tuple:
-    """0-based anchor positions for a peptide: class-I P2/PΩ, class-II core P1/P4/P6/P9."""
+def anchor_indices(peptide: str, cls: str, register_start: int | None = None) -> tuple:
+    """0-based anchor positions for a peptide: class-I P2/PΩ, class-II core P1/P4/P6/P9.
+
+    ``register_start`` (class II only) pins the 9-mer core to an explicit frame — e.g. the model's
+    :meth:`mhcmatch.diffusion.AnchorModel.best_register`, so a caller that *scored* with the per-allele
+    register can *annotate* with the same frame instead of the allele-agnostic heuristic. ``None``
+    keeps the one-pass heuristic register (the default everywhere else)."""
     if cls == "mhc2":
-        return _mhc2_core_anchors(peptide)
+        if register_start is None:
+            return _mhc2_core_anchors(peptide)
+        s = register_start
+        return tuple(s + j for j in (0, 3, 5, 8)) if 0 <= s <= len(peptide) - 9 else ()
     return tuple(sorted(layout.spec_for(cls).resolve(len(peptide))))
 
 
@@ -402,16 +410,21 @@ class Store:
         return out
 
     # -- anchor / TCR-facing split -------------------------------------------
-    def decompose(self, peptide, cls=None, allele=None):
+    def decompose(self, peptide, cls=None, allele=None, register_start=None):
         """Split ``peptide`` into anchor and TCR-facing parts, each masked with ``X``.
 
         ``tcr_facing``: anchors -> X (the recognition readout). ``presentation``: TCR-facing -> X
         (the anchor readout). ``allele`` is accepted for forward-compat (allele-specific learned
         anchors, Phase 1); v0 uses class-default anchor positions.
+
+        ``register_start`` (class II) pins the 9-mer core frame — pass the model register a caller
+        already *scored* with (``AnchorModel.best_register``) so the reported anchors match the scored
+        core; ``None`` keeps the allele-agnostic heuristic register (the two systems stay separate,
+        ROADMAP §7).
         """
         peptide = peptide.strip().upper()
         cls = cls or infer_class(peptide)
-        anchors = set(anchor_indices(peptide, cls))
+        anchors = set(anchor_indices(peptide, cls, register_start))
         tcr = "".join(layout.MASK if i in anchors else c for i, c in enumerate(peptide))
         present = "".join(c if i in anchors else layout.MASK for i, c in enumerate(peptide))
         return Decomposition(peptide, tcr, present, tuple(sorted(anchors)))

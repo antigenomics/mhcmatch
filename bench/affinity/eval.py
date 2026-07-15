@@ -136,6 +136,11 @@ def main():
     ap.add_argument("--species", default="human_all", choices=("human_all", "all"))
     ap.add_argument("--per-allele", type=int, default=50, help="held-out test points per allele")
     ap.add_argument("--min-allele", type=int, default=40, help="min measured points to include an allele")
+    ap.add_argument("--orphan", action="store_true",
+                    help="zero-shot: eval alleles contribute NO training points (leave-allele-out) — "
+                         "the fair axis vs NetMHCpan, which saw them")
+    ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "results"),
+                    help="dir for the persisted markdown table")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
     rng = random.Random(args.seed)
@@ -149,14 +154,16 @@ def main():
                and normalize_allele(a) in pseudo
                and (args.species == "all" or _species(a) == "human")]
 
-    # per-allele held-out test split; the rest trains the mhcmatch model
+    # per-allele held-out test split; the rest trains the mhcmatch model. --orphan makes it
+    # leave-allele-out (eval alleles contribute NO training points) = zero-shot generalization.
     test, train_pts = {}, []
     for a in alleles:
         pts = by_allele[a][:]
         rng.shuffle(pts)
         k = min(args.per_allele, len(pts) // 2)
         test[a] = pts[:k]
-        train_pts += [(p, a, nm) for p, nm in pts[k:]]
+        if not args.orphan:
+            train_pts += [(p, a, nm) for p, nm in pts[k:]]
     for a in by_allele:                       # alleles not evaluated still contribute training signal
         if a not in test:
             train_pts += [(p, a, nm) for p, nm in by_allele[a]]
@@ -205,6 +212,43 @@ def main():
         s = strata[key]
         print(f"{key:<16}{s['n']:>8}{med(s['mm_rho']):>9.3f}{med(s['nm_rho']):>9.3f}"
               f"{med(s['mm_auc']):>9.3f}{med(s['nm_auc']):>9.3f}")
+
+    # persist (parity with bench/compare/): median per-allele Spearman + AUROC@500 nM per stratum.
+    split = "orphan (leave-allele-out, zero-shot)" if args.orphan else "per-allele holdout"
+    os.makedirs(args.out, exist_ok=True)
+    mdpath = os.path.join(args.out, f"affinity_iedb{'_orphan' if args.orphan else ''}.md")
+
+    def _b(a, b):
+        aa, bb = f"{a:.3f}", f"{b:.3f}"
+        return (f"**{aa}**", bb) if a > b else (aa, f"**{bb}**") if b > a else (aa, bb)
+
+    lines = [
+        "# ridge AffinityModel vs NetMHCpan-4.2 — measured IEDB IC50 (per-allele held-out)",
+        "",
+        "> **Note:** this benchmarks the **ridge `AffinityModel`** (`--orphan`-splittable research head), "
+        "**not** the shipped `PottsAffinity`. The ridge head is weaker; for the shipped model's held-out "
+        "affinity see the leak-free `affinity_tesla.md` (per-allele ρ 0.71) and the README.",
+        "",
+        f"Affinity head-to-head on measured IEDB IC50 (`bench/affinity/measured.tsv`), **{split}**; both "
+        "tools scored on the same test pairs. Per-allele median Spearman(pred, −log IC50) and AUROC at "
+        "500 nM, macro over alleles with ≥8 test points. **Bold = better.**",
+        "",
+        f"Fit {n_fit} pts, {len(alleles)} eval alleles, {len(all_pairs)} test pairs. seed {args.seed}.",
+        "",
+        "| stratum | alleles | mhcmatch ρ | NetMHCpan ρ | mhcmatch AUROC | NetMHCpan AUROC |",
+        "|---|--:|--:|--:|--:|--:|",
+    ]
+    for key in sorted(strata):
+        s = strata[key]
+        rho_mm, rho_nm = _b(med(s["mm_rho"]), med(s["nm_rho"]))
+        au_mm, au_nm = _b(med(s["mm_auc"]), med(s["nm_auc"]))
+        lines.append(f"| {key} | {s['n']} | {rho_mm} | {rho_nm} | {au_mm} | {au_nm} |")
+    lines += ["", "> NetMHCpan trained on much of IEDB, so the **holdout** numbers are optimistic for it "
+              "(train/test overlap mhcmatch does not share). The **orphan** split (`--orphan`) is the "
+              "fair zero-shot axis. Cross-check the leak-free `affinity_tesla.md` (held-out measured)."]
+    with open(mdpath, "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+    print(f"\n# wrote {mdpath}")
 
 
 if __name__ == "__main__":
