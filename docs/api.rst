@@ -64,3 +64,11 @@ mhcmatch.logo module
    :members:
    :undoc-members:
    :show-inheritance:
+
+mhcmatch.predict module
+-----------------------
+
+.. automodule:: mhcmatch.predict
+   :members:
+   :undoc-members:
+   :show-inheritance:

@@ -117,6 +117,26 @@ def cmd_span(a):
     print(f"alts      {sp.n_alternatives}" + (f"   support {sp.support}" if sp.support else ""))
 
 
+def cmd_predict(a):
+    from . import predict as P
+    store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
+    alleles = [x.strip() for x in a.alleles.split(",") if x.strip()]
+    preds = P.predict_fasta(store, a.cls, a.fasta, alleles, rank_threshold=a.rank_threshold,
+                            top=a.top, background=a.background, footprint=a.footprint, seed=a.seed)
+    if a.native:
+        P.write_native(preds, a.native)
+        print(f"# wrote {a.native}")
+    if a.scored_csv:
+        P.write_scored_csv(preds, a.scored_csv)
+        print(f"# wrote {a.scored_csv}")
+    if not a.native and not a.scored_csv:
+        print(f"# {len(preds)} predicted binder(s) (%rank <= {a.rank_threshold}) over "
+              f"{len(alleles)} allele(s)")
+        for p in preds[:(a.top or 20)]:
+            print(f"{p.peptide:<15} {p.allele:<18} %rank={p.percent_rank:<6} {p.band:<11} "
+                  f"{p.var.get('gene_name', '')}")
+
+
 def cmd_logo(a):
     from . import logo
     m = logo.motif(_store(a), a.allele, a.cls or "mhc1")
@@ -175,6 +195,20 @@ def main(argv=None):
     sp.add_argument("--flanks", default="3,3", help="left,right sizes for --mode fixed")
     _add_store_opts(sp)                 # only used to supply the observed-ligand corpus
     sp.set_defaults(fn=cmd_span)
+
+    pr = sub.add_parser("predict", help="score a variant peptide-window FASTA -> native + .scored.csv")
+    pr.add_argument("fasta", help="a .peptide.fasta (pipeline schema)")
+    pr.add_argument("--alleles", required=True, help="comma-separated HLA alleles (pipeline form)")
+    pr.add_argument("--cls", required=True, choices=("mhc1", "mhc2"))
+    pr.add_argument("--native", help="write the native TSV here")
+    pr.add_argument("--scored-csv", dest="scored_csv", help="write the pipeline .scored.csv here")
+    pr.add_argument("--rank-threshold", type=float, default=2.0, help="keep binders with %%rank <= this")
+    pr.add_argument("--top", type=int, help="cap binders kept per window (strongest first)")
+    pr.add_argument("--background", default="proteome", choices=("ligand", "proteome", "markov"))
+    pr.add_argument("--footprint", default="adaptive", choices=("anchor", "core", "adaptive"))
+    pr.add_argument("--seed", type=int, default=0)
+    _add_store_opts(pr)
+    pr.set_defaults(fn=cmd_predict)
 
     a = ap.parse_args(argv)
     a.fn(a)

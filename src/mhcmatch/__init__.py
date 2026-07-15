@@ -7,17 +7,19 @@
 - :class:`Proteome` -- near-exact source-peptide lookup (neoantigen -> parent protein).
 - :class:`Pseudoseq` -- pseudosequence allele similarity & cross-allele diffusion (rare-allele rescue).
 - :func:`logo.motif` -- per-allele motif logos + length distributions.
+- :mod:`predict` -- score a variant peptide-window FASTA into native + pipeline-``.scored.csv`` output.
 
 Theory: ``appendix/mhcmatch.tex``. Roadmap: ``ROADMAP.md``.
 """
 from importlib.metadata import PackageNotFoundError, version as _version
 
-from . import logo, search
+from . import logo, predict, search
 from .diffusion import AnchorModel
 from .proteome import Proteome, SourceHit
 from .pseudoseq import (Pseudoseq, learn_anchor_weights, load_pseudo, normalize_allele,
                         resolve_allele)
 from .ligand import Span, SpanModel, load_span_model, presented_span, processing_score
+from .predict import Prediction, predict_fasta, predict_windows
 from .store import Decomposition, Restriction, Store, anchor_indices, infer_class
 
 __all__ = [
@@ -42,6 +44,10 @@ __all__ = [
     "load_span_model",
     "presented_span",
     "processing_score",
+    "predict",
+    "Prediction",
+    "predict_windows",
+    "predict_fasta",
     "__version__",
 ]
 
