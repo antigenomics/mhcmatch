@@ -35,8 +35,32 @@ split is *approximate* (publication year), not an exact "unseen" exclusion. NetM
 public IEDB EL data → the in-corpus holdout is contaminated in NetMHC's favor (rare/zero-shot and the
 allele-specificity task are the fair axes).
 
+## Sample concordance (`sample_concordance.py`) — patient samples
+
+Real patient outputs of the Gamaleya `nextflow_vaccine` pipeline, used to measure mhcmatch ↔ NetMHCpan
+↔ pipeline **agreement** (not accuracy) on actual `.peptide.fasta` windows. Alleles are recovered
+from the pipeline outputs ("guess the haplotype"): TESLA1 from the `.scored.csv` `best_allele` column
+(no typing file), Alekseech from its HLA-LA typing table.
+
+| sample | privacy | dir | inputs | class I alleles | class II alleles |
+|---|---|---|---|---|---|
+| TESLA1 | **public** (published neoantigen benchmark; also in HF `neoag_tested`) | `~/work/academy/gamaleya/epitope_pipeline/TESLA1/` | `TESLA1.{mhcI,mhcII}.peptide.fasta` + `.epitopes.scored.csv` | HLA-A02:01, A68:01, B15:07, B44:02, C03:03, C07:04 | DRB1_1101, DRB1_1301, DRB3_0101, DRB3_0202, DRB4_0101, HLA-DPA10103-DPB10401, HLA-DQA10103-DQB10603, HLA-DQA10501-DQB10301 |
+| Alekseech | **PRIVATE — patient tumour data; never commit/share** | `~/work/academy/gamaleya/epitope_pipeline/Alekseech/` | as above + `Alekseech_norma.alleles.tsv` (HLA-LA typing) | from typing table (local only) | from typing table (local only) |
+
+Allele scorability notes (measured): all 6 TESLA1 class-I alleles are scored by both tools —
+`HLA-B15:07` is **not in the pmhc panel** (any tier) so mhcmatch scores it **zero-shot via
+pseudosequence diffusion**. All 8 class-II alleles score by both; `DRB1_1301` and `DRB3_0202` are
+in-panel but lack a vendored pseudosequence (they still score from their own reference ligands).
+
+Pipeline-reference axis in `.scored.csv`: class I = MHCflurry `affinity_percentile` (lower=stronger);
+class II = TLimmuno2 `affinity` prediction (higher=stronger; its `affinity_percentile` column is empty).
+
 ## Derived / computed artifacts (this repo, not experimental)
 
 - `bench/results/compare_*.md` — **computed** head-to-head tables (seed 0). Regenerate:
   `python bench/compare/run_compare.py --cls {mhc1,mhc2} --benchmark {holdout,loao} --decoy-mode {random,hard} --footprint adaptive`.
+- `bench/results/concordance_tesla1_*.md` — **computed** TESLA1 concordance tables (public). Regenerate:
+  `python bench/compare/sample_concordance.py --sample TESLA1 --cls both`.
+- `bench/results/private/concordance_alekseech_*.md` — **computed**, **PRIVATE** (gitignored). Regenerate:
+  `python bench/compare/sample_concordance.py --sample Alekseech --cls both` (local only).
 - `bench/compare/_cache/*.pkl` — **computed** cached (examples, NetMHC scores); gitignored; delete to force a fresh NetMHC sweep.

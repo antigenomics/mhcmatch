@@ -140,6 +140,28 @@ def paired_bootstrap_delta(metric_fn, scores_a, scores_b, labels, n: int = 1000,
     return float(delta), float(min(1.0, 2 * frac))
 
 
+def spearman(x, y) -> float:
+    """Tie-aware Spearman rank correlation (Pearson of midranks). ``nan`` if <2 aligned points.
+
+    Sign is w.r.t. the values as given: orient both inputs to the same "strength" direction (higher
+    = stronger) before calling, so agreement reads as a positive rho."""
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    if x.size < 2 or x.size != y.size:
+        return float("nan")
+    rx = _midrank(x) - _midrank(x).mean()
+    ry = _midrank(y) - _midrank(y).mean()
+    denom = math.sqrt(float((rx * rx).sum()) * float((ry * ry).sum()))
+    return float((rx * ry).sum() / denom) if denom > 0 else float("nan")
+
+
+def jaccard(a, b) -> float:
+    """|A ∩ B| / |A ∪ B| over two iterables (as sets). ``nan`` if both empty."""
+    a, b = set(a), set(b)
+    u = a | b
+    return float(len(a & b) / len(u)) if u else float("nan")
+
+
 def _norm_cdf(x: float) -> float:
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
@@ -198,4 +220,12 @@ if __name__ == "__main__":
                                    [0.9, 0.8, 0.7, 0.6], [0.6, 0.7, 0.8, 0.9], [1, 1, 0, 0],
                                    n=200, rng=rng)
     assert d > 0 and 0 <= pv <= 1, (d, pv)
-    print("metrics.py self-check OK (auroc, average_precision, ppv@k, delong, bootstrap, paired-delta)")
+    # Spearman: monotone up -> +1, monotone down -> -1, tie-aware
+    assert abs(spearman([1, 2, 3, 4], [10, 20, 30, 40]) - 1.0) < 1e-9
+    assert abs(spearman([1, 2, 3, 4], [40, 30, 20, 10]) + 1.0) < 1e-9
+    assert spearman([1], [1]) != spearman([1], [1])                   # size<2 -> nan
+    assert abs(spearman([1, 2, 2, 3], [1, 2, 2, 3]) - 1.0) < 1e-9      # ties handled
+    assert jaccard({1, 2, 3}, {2, 3, 4}) == 0.5
+    assert jaccard([], []) != jaccard([], [])                          # nan (both empty)
+    print("metrics.py self-check OK (auroc, average_precision, ppv@k, delong, bootstrap, "
+          "paired-delta, spearman, jaccard)")
