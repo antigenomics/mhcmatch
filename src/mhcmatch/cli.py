@@ -77,6 +77,30 @@ def cmd_restriction(a):
         print(line + f"{'yes' if r.binder else 'no':>8}")
 
 
+def cmd_affinity(a):
+    store = _store(a)
+    allele = _resolve_panel_allele(store, a.allele, a.cls)
+    am = store.affinity_model(a.cls)
+    nm = am.predict_ic50(a.peptide, allele)
+    print(f"{a.peptide}  {allele}  predicted IC50 ~ {nm:,.0f} nM")
+    if a.wt:
+        nm_wt = am.predict_ic50(a.wt, allele)
+        print(f"  WT {a.wt}: IC50 ~ {nm_wt:,.0f} nM   amplitude A=Kd_WT/Kd_MT = "
+              f"{am.amplitude(a.wt, a.peptide, allele):.2f}   DAI = {am.dai(a.wt, a.peptide, allele):+.2f}")
+    if a.structure:
+        try:
+            from .structure import StructureScorer
+            sc = StructureScorer(pseudoseq=am.am.ps)
+            mj = sc.mj_energy(a.peptide, allele)
+            if mj == mj:
+                extra = f"   ΔΔG(WT→MT) = {sc.ddg(a.wt, a.peptide, allele):+.2f}" if a.wt else ""
+                print(f"  structural MJ energy = {mj:.2f}{extra}")
+            else:
+                print("  (no structural template for this allele/length)")
+        except ImportError as e:
+            print(f"  (structure scoring unavailable: {e})")
+
+
 def cmd_scan(a):
     hits = _store(a).scan_protein(_read_seq(a.protein), cls=a.cls or "mhc1",
                                   alleles=[a.allele] if a.allele else "all", top=a.top,
@@ -165,6 +189,16 @@ def main(argv=None):
     r.add_argument("--top", type=int, default=10)
     _add_store_opts(r)
     r.set_defaults(fn=cmd_restriction)
+
+    af = sub.add_parser("affinity", help="predict IC50 (nM) + neoantigen amplitude/DAI for a peptide")
+    af.add_argument("peptide")
+    af.add_argument("--allele", required=True)
+    af.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
+    af.add_argument("--wt", help="wild-type peptide -> also report amplitude A=Kd_WT/Kd_MT and DAI")
+    af.add_argument("--structure", action="store_true",
+                    help="also compute the tcren MJ contact energy / ΔΔG (needs the [structure] extra)")
+    _add_store_opts(af)
+    af.set_defaults(fn=cmd_affinity)
 
     s = sub.add_parser("scan", help="find presented peptides in a protein (sequence or FASTA path)")
     s.add_argument("protein")

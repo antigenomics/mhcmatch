@@ -404,6 +404,27 @@ class Store:
                            register_em=register_em, footprint=footprint, rare_max=rare_max,
                            background=background)
 
+    def affinity_model(self, cls="mhc1"):
+        """Quantitative IC50 (nM) + neoantigen amplitude/DAI head (:class:`mhcmatch.AffinityModel`).
+
+        Loads the vendored fit ``data/affinity_<cls>.json`` and builds a matching AnchorModel (using
+        the fit's own ``background``/``footprint``, so runtime features line up with training). Cached
+        per class. Predict with ``.predict_ic50(peptide, allele)`` and the differential
+        ``.amplitude(wt, mut, allele)`` / ``.dai(wt, mut, allele)``.
+        """
+        import json
+        from importlib import resources
+
+        from .affinity import AffinityModel
+        cache = self.__dict__.setdefault("_affinity", {})
+        if cls not in cache:
+            coef = json.loads(resources.files("mhcmatch.data")
+                              .joinpath(f"affinity_{cls}.json").read_text())
+            am = self.anchor_model(cls, background=coef.get("background", "proteome"),
+                                   footprint=coef.get("footprint", "core"))
+            cache[cls] = AffinityModel(am, list(self._panel[cls].epitopes), coef=coef)
+        return cache[cls]
+
     # -- per-allele anchor preferences (feeds pseudoseq diffusion) ------------
     def anchor_preferences(self, cls, anchor):
         """{allele: Counter(residue)} at a 1-based ``anchor`` position (negative from C-term)."""
