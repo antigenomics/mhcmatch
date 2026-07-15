@@ -3,16 +3,18 @@
 Scores every binding-length k-mer of each window (the Gamaleya `nextflow_vaccine` pipeline's
 ``.peptide.fasta``) for a patient's HLA alleles and emits two views:
 
-* **native** (:func:`write_native`) -- one row per predicted binder with the presentation **%rank**,
-  **P(present)**, qualitative **band**, and the anchor / TCR-facing decomposition.
+* **native** (:func:`write_native`) -- one row per predicted binder with presentation **%rank**,
+  **P(present)**, **band**, **IC50 (nM)**, the wild-type counterpart + **agretopicity / amplitude /
+  DAI**, the **synthesise / model** peptides, and the anchor / TCR-facing decomposition.
 * **scored-csv** (:func:`write_scored_csv`) -- the same calls in the pipeline's 57-column
   ``.epitopes.scored.csv`` schema, so mhcmatch can stand in for the MHCflurry/TLimmuno2 predictors.
 
-mhcmatch is a **presentation** model: it scores per-allele %rank / P(present) / band
-(:class:`mhcmatch.calibrate.RankCalibrator`), the NetMHCpan ``%Rank_EL`` analogue -- there is **no nM
-affinity** (a separate regressor). So the export fills ``affinity_percentile`` with the %rank and
-leaves the ``affinity`` (nM) column empty; downstream agretopicity / expression / immunogenicity
-columns are also left to their own modules.
+mhcmatch scores per-allele presentation %rank / P(present) / band
+(:class:`mhcmatch.calibrate.RankCalibrator`, the NetMHCpan ``%Rank_EL`` analogue) **and** quantitative
+IC50 (nM) via the Potts affinity head (:class:`mhcmatch.PottsAffinity`). The export fills ``affinity``
+(nM), ``affinity_percentile`` (%rank), and -- for k-mers that span the somatic mutation --
+``agretopicity`` (Kd_MT/Kd_WT vs the position-aligned wild-type peptide); expression / immunogenicity /
+composite-score columns are left to their own modules.
 
 Alleles are used in whatever form the pipeline supplies (class I ``HLA-A*02:01``; class II
 ``DRB1_1301`` / ``HLA-DPA10103-DPB10401``): built with :meth:`Store.from_pmhc`, the panel keys match,
@@ -26,6 +28,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+from . import ligand
 from .calibrate import RankCalibrator, band as band_of
 
 #: Binding-length k-mers tiled per class (pipeline ``params.mhcI_epit_len`` / ``mhcII_epit_len``).
@@ -45,7 +48,9 @@ SCORED_COLUMNS = (
     "score_affinity_percentile_scaled,score_signature,score,is_driver,driver_class").split(",")
 
 NATIVE_COLUMNS = ("source", "type", "gene_name", "chrom", "pos", "ref", "alt", "peptide", "offset",
-                  "best_allele", "cls", "percent_rank", "p_present", "band", "anchors", "tcr_facing")
+                  "best_allele", "cls", "percent_rank", "p_present", "band", "affinity_nm",
+                  "wt_peptide", "wt_affinity_nm", "agretopicity", "amplitude", "dai",
+                  "synth_peptide", "model_peptide", "anchors", "tcr_facing")
 
 
 @dataclass
@@ -62,6 +67,14 @@ class Prediction:
     band: str            # strong / weak / non-binder
     anchors: tuple       # 0-based anchor indices within the peptide
     tcr_facing: str      # peptide with anchors masked (X) -- the recognition readout
+    affinity_nm: float = float("nan")   # predicted IC50 (nM) for the mutant epitope (Potts head)
+    wt_peptide: str = ""                 # the self (wild-type) counterpart k-mer, "" if none spans the mutation
+    wt_affinity_nm: float = float("nan") # predicted IC50 (nM) of the WT counterpart
+    agretopicity: float = float("nan")   # Kd_MT/Kd_WT (pipeline convention; <1 = mutant binds better)
+    amplitude: float = float("nan")      # Luksza A = Kd_WT/Kd_MT (>1 = mutant binds better)
+    dai: float = float("nan")            # differential agretopicity index log10(Kd_WT/Kd_MT)
+    synth_peptide: str = ""              # peptide to SYNTHESISE (long-peptide vaccine; ~21mer for II)
+    model_peptide: str = ""              # peptide to MODEL structurally (TCR:pMHC; ~13mer for II)
     var: dict = field(default_factory=dict)   # parsed variant header
 
 
@@ -125,17 +138,61 @@ def tile(seq: str, lengths) -> list:
 
 # ----------------------------------------------------------------- scoring ---
 def build_scorer(store, cls, background="proteome", footprint="adaptive", seed=0, n_bg=10000):
-    """``(model, calibrator)`` for ``cls``: an :class:`AnchorModel` + per-allele %rank calibrator.
+    """``(model, calibrator, affinity)`` for ``cls``: an :class:`AnchorModel`, a per-allele %rank
+    calibrator, and the quantitative IC50 head (:class:`PottsAffinity`), or ``None`` if unavailable.
 
-    ``background="proteome"`` puts the score on the presentation axis (ligand-vs-proteome), matching
-    NetMHCpan's %Rank_EL; ``"ligand"`` measures allele-specificity instead."""
+    ``background="proteome"`` puts the presentation score on the presentation axis (ligand-vs-
+    proteome), matching NetMHCpan's %Rank_EL; ``"ligand"`` measures allele-specificity instead."""
     model = store.anchor_model(cls, footprint=footprint, background=background)
     panel = store._panel[cls]
     pos = defaultdict(list)
     for ep, a in zip(panel.epitopes, panel.alleles):
         pos[a].append(ep)
     cal = RankCalibrator(model, list(pos), panel.epitopes, n=n_bg, seed=seed, positives=pos)
-    return model, cal
+    try:
+        aff = store.affinity_model(cls)
+    except Exception:
+        aff = None
+    return model, cal, aff
+
+
+def _aligned_wt(var, seq):
+    """The wild-type counterpart of the mutant window ``seq``, position-aligned (same length), or
+    ``None`` when the WT/mutant windows are not a clean equal-length (missense) pair. Insertions,
+    deletions and frameshifts change the length, so a positional WT k-mer is not defined."""
+    wt = _strip_marker(var.get("wt_window", ""))
+    mt = _strip_marker(var.get("mut_window", ""))
+    if not wt or not mt or len(wt) != len(mt):
+        return None
+    base = mt.find(seq)
+    return wt[base:base + len(seq)] if base >= 0 else None
+
+
+def _windows(store, cls, epitope, protein, allele, epi_start):
+    """``(synthesise, model)`` peptides for ``epitope`` in its source ``protein`` context.
+
+    MHC-I: the peptide *is* the ligand, so both are the epitope (identical, per the class-I convention).
+    MHC-II: extend the 9-mer binding core to a 21-mer (:data:`ligand.ASSAY_FLANK`, contains the true
+    ligand ~80% of the time -- to synthesise) and a 13-mer (:data:`ligand.STRUCTURE_FLANK`, the median
+    resolved crystal -- to model), clipped at the protein termini. Falls back to the epitope on any
+    registration/location failure."""
+    if cls == "mhc1":
+        return epitope, epitope
+    try:
+        rs, _ = store.anchor_model("mhc2").best_register(epitope, allele)
+        core = epitope[rs:rs + 9]
+        cs = epi_start + rs
+        if len(core) != 9 or protein[cs:cs + 9] != core:
+            return epitope, epitope
+        synth = ligand.fixed_span(core, protein, ligand.ASSAY_FLANK, ligand.ASSAY_FLANK, core_start=cs)
+        modl = ligand.fixed_span(core, protein, ligand.STRUCTURE_FLANK, ligand.STRUCTURE_FLANK, core_start=cs)
+        return synth.peptide, modl.peptide
+    except Exception:
+        return epitope, epitope
+
+
+def _round(x, n=1):
+    return round(x, n) if x == x else float("nan")
 
 
 def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
@@ -143,14 +200,21 @@ def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
     """Predict presented epitopes over ``records`` (``[(header, sequence)]``) for ``alleles``.
 
     For each window k-mer the best-presenting allele is chosen (lowest %rank); k-mers whose best
-    %rank is above ``rank_threshold`` are dropped (non-binders). ``top`` optionally caps the number
-    of binders kept per window (strongest first). Returns ``list[Prediction]``.
+    %rank is above ``rank_threshold`` are dropped (non-binders). Each kept binder is annotated with
+    its IC50 (nM), the wild-type counterpart's IC50 + agretopicity / Luksza amplitude / DAI (when the
+    k-mer spans the mutation), and the synthesise / model peptides. ``top`` optionally caps binders
+    per window (strongest first). Returns ``list[Prediction]``.
     """
-    model, cal = build_scorer(store, cls, background, footprint, seed)
+    model, cal, aff = build_scorer(store, cls, background, footprint, seed)
     lengths = KMER_LENS[cls]
     by_window = defaultdict(list)
     for header, seq in records:
         var = parse_variant_header(header)
+        seq = seq.strip().upper()
+        wt_seq = _aligned_wt(var, seq)
+        protein = _strip_marker(var.get("mut_window", "")) or seq
+        base = protein.find(seq)
+        base = base if base >= 0 else 0
         for pep, off in tile(seq, lengths):
             best = None
             for a in alleles:
@@ -165,11 +229,25 @@ def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
             if best is None:
                 continue
             a, pr, pp = best
-            if pr <= rank_threshold:
-                d = store.decompose(pep, cls, a)
-                by_window[header].append(Prediction(
-                    header, pep, a, off, cls, round(pr, 3), round(pp, 4), band_of(pr),
-                    d.anchors, d.tcr_facing, var))
+            if pr > rank_threshold:
+                continue
+            d = store.decompose(pep, cls, a)
+            p = Prediction(header, pep, a, off, cls, round(pr, 3), round(pp, 4), band_of(pr),
+                           d.anchors, d.tcr_facing, var=var)
+            if aff is not None:
+                nm = aff.predict_ic50(pep, a)
+                p.affinity_nm = _round(nm)
+                if wt_seq is not None:
+                    wtk = wt_seq[off:off + len(pep)]
+                    if wtk != pep and set(wtk) <= _AA:       # k-mer spans the mutation
+                        p.wt_peptide = wtk
+                        p.wt_affinity_nm = _round(aff.predict_ic50(wtk, a))
+                        if nm == nm and p.wt_affinity_nm == p.wt_affinity_nm and p.wt_affinity_nm > 0:
+                            p.agretopicity = _round(nm / p.wt_affinity_nm, 4)
+                        p.amplitude = _round(aff.amplitude(wtk, pep, a), 3)
+                        p.dai = _round(aff.dai(wtk, pep, a), 3)
+            p.synth_peptide, p.model_peptide = _windows(store, cls, pep, protein, a, base + off)
+            by_window[header].append(p)
     out = []
     for header, preds in by_window.items():
         preds.sort(key=lambda p: p.percent_rank)
@@ -191,6 +269,11 @@ def _to_pipeline_allele(allele: str, cls: str) -> str:
     return allele
 
 
+def _blank_nan(x):
+    """Empty string for nan/None (keeps CSV cells blank, not the literal ``nan``); else the value."""
+    return "" if (x is None or x != x) else x
+
+
 def write_native(preds, path: str) -> None:
     """Write predictions as a native TSV (one row per predicted binder)."""
     with open(path, "w", newline="") as fh:
@@ -200,17 +283,19 @@ def write_native(preds, path: str) -> None:
             v = p.var
             w.writerow([p.source, v.get("type", ""), v.get("gene_name", ""), v.get("chrom", ""),
                         v.get("pos", ""), v.get("ref", ""), v.get("alt", ""), p.peptide, p.offset,
-                        p.allele, p.cls, p.percent_rank, p.p_present, p.band,
+                        p.allele, p.cls, p.percent_rank, p.p_present, p.band, p.affinity_nm,
+                        p.wt_peptide, p.wt_affinity_nm, p.agretopicity, p.amplitude, p.dai,
+                        p.synth_peptide, p.model_peptide,
                         ";".join(str(i) for i in p.anchors), p.tcr_facing])
 
 
 def write_scored_csv(preds, path: str) -> None:
     """Write predictions in the pipeline's 57-column ``.epitopes.scored.csv`` schema.
 
-    mhcmatch fills the variant-annotation columns (from the header) and the presentation columns
-    (``best_allele``, ``affinity_percentile`` = %rank). ``affinity`` (nM) is left empty -- that is the
-    separate affinity regressor's column -- as are the agretopicity / expression / immunogenicity /
-    composite-score columns, which their own pipeline modules populate."""
+    mhcmatch fills the variant-annotation columns (from the header) and the binding columns:
+    ``best_allele``, ``affinity`` (IC50 nM), ``affinity_percentile`` (%rank), and ``agretopicity``
+    (Kd_MT/Kd_WT for mutation-spanning k-mers). The expression / immunogenicity / composite-score
+    columns are left empty for their own pipeline modules to populate."""
     with open(path, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=SCORED_COLUMNS, extrasaction="ignore")
         w.writeheader()
@@ -225,7 +310,9 @@ def write_scored_csv(preds, path: str) -> None:
                 "tpm": v.get("tpm", ""), "epitope": p.peptide,
                 "epitope_context": _strip_marker(v.get("mut_window", "")),
                 "best_allele": _to_pipeline_allele(p.allele, p.cls),
+                "affinity": _blank_nan(p.affinity_nm),
                 "affinity_percentile": p.percent_rank,
+                "agretopicity": _blank_nan(p.agretopicity),
                 "ref_seq": _strip_marker(v.get("wt_window", "")),
                 "seq": _strip_marker(v.get("mut_window", "")),
                 "ref": v.get("ref", ""), "alt": v.get("alt", ""),

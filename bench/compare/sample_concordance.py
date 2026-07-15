@@ -71,7 +71,11 @@ _KMER_LENS = {"mhc1": (8, 9, 10, 11), "mhc2": (15,)}   # pipeline params.mhcI_ep
 _TOOL = {"mhc1": "NetMHCpan-4.2b", "mhc2": "NetMHCIIpan-4.3i"}
 _STRONG, _WEAK = 0.5, 2.0   # NetMHCpan %rank binding-band thresholds (shared with mhcmatch calibrate.band)
 
-_GAMA = "/Users/mikesh/work/academy/gamaleya/epitope_pipeline"
+# Sample run artifacts live in the private gamaleya-cancer repo (TESLA1 public, others private).
+# Override the root with $GAMALEYA_PIPELINE if the checkout is elsewhere.
+_GAMA = os.environ.get(
+    "GAMALEYA_PIPELINE",
+    "/Users/mikesh/vcs/manuscripts/gamaleya-cancer/pipeline/mhcmatch")
 SAMPLES = {
     "TESLA1": {"dir": os.path.join(_GAMA, "TESLA1"), "private": False},
     "Alekseech": {"dir": os.path.join(_GAMA, "Alekseech"), "private": True},
