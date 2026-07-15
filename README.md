@@ -116,8 +116,11 @@ mhcmatch affinity NLVPMVATV --allele 'A*02:01' --wt NLVPMVATL   # IC50 nM + ampl
 
 ## Data
 
-- **Reference ligands:** `isalgo/pmhc_data` (full / shortlist tiers) — pass the path to
-  `Store.from_pmhc` or set `MHCMATCH_PMHC`.
+- **Reference ligands:** the public HF dataset [`isalgo/pmhc_data`](https://huggingface.co/datasets/isalgo/pmhc_data)
+  (full / shortlist tiers). `Store.from_pmhc()` **auto-fetches** `pmhc/pmhc_<tier>.tsv.gz` on first use
+  (cached by `huggingface_hub`) — no manual download, which is what lets the container/nextflow deploy
+  bootstrap with no pre-staged data. Override with a local copy via `Store.from_pmhc(path=...)` or
+  `$MHCMATCH_PMHC`.
 - **Pseudosequences:** 34-mer groove pseudosequences vendored in `src/mhcmatch/data/` (see its
   `PROVENANCE.md`).
 - **Reference proteomes:** not bundled — supply a UniProt reference proteome FASTA

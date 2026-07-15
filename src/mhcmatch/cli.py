@@ -13,7 +13,8 @@ from . import Proteome, Store
 
 
 def _add_store_opts(p):
-    p.add_argument("--pmhc", help="pmhc_data TSV(.gz); else $MHCMATCH_PMHC/pmhc_<tier>.tsv.gz")
+    p.add_argument("--pmhc", help="pmhc_data TSV(.gz); else $MHCMATCH_PMHC/pmhc_<tier>.tsv.gz, "
+                                  "else auto-fetched from the public HF dataset isalgo/pmhc_data")
     p.add_argument("--tier", default="full", choices=("full", "shortlist"))
     p.add_argument("--species", default="human", choices=("human", "mouse"))
 

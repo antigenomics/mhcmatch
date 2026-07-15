@@ -27,6 +27,22 @@ _AA = set("ACDEFGHIKLMNPQRSTVWY")
 _SCOPES = (0, 1, 2, 3)
 _DEFAULT_LENGTHS = {"mhc1": (8, 9, 10, 11), "mhc2": (13, 14, 15, 16, 17, 18)}
 
+PMHC_REPO = "isalgo/pmhc_data"          # public HF dataset holding the reference presentation tables
+
+
+def fetch_pmhc(tier: str = "full") -> str:
+    """Download the pmhc presentation table for ``tier`` from the public HF dataset :data:`PMHC_REPO`
+    and return the local cached path.
+
+    Fetches only ``pmhc/pmhc_<tier>.tsv.gz`` (~4-12 MB) — never the other dataset directories — and
+    relies on the ``huggingface_hub`` cache, so it downloads once and is instant thereafter. This lets
+    a fresh install or a container bootstrap the reference panel with no pre-staged data, which the
+    nextflow/Docker deploy depends on. Override with a local ``path=``/``$MHCMATCH_PMHC`` when present.
+    """
+    from huggingface_hub import hf_hub_download
+    return hf_hub_download(repo_id=PMHC_REPO, repo_type="dataset",
+                           filename=f"pmhc/pmhc_{tier}.tsv.gz")
+
 
 def infer_class(peptide: str) -> str:
     """Heuristic class from length: MHC-I if <=11, else MHC-II. Pass ``cls`` to override."""
@@ -208,12 +224,13 @@ class Store:
     @classmethod
     def from_pmhc(cls, path=None, tier="full", species=None, classes=("mhc1", "mhc2")):
         """Load the isalgo/pmhc_data TSV(.gz). ``species`` filters the *MHC* species
-        (``"human"`` / ``"mouse"``). If ``path`` is None, uses ``$MHCMATCH_PMHC/pmhc_<tier>.tsv.gz``."""
+        (``"human"`` / ``"mouse"``). If ``path`` is None it uses ``$MHCMATCH_PMHC/pmhc_<tier>.tsv.gz``
+        when that env var is set, otherwise **bootstraps the table from the public HF dataset** via
+        :func:`fetch_pmhc` (downloads only ``pmhc/pmhc_<tier>.tsv.gz``, cached) — so a fresh install or
+        a container needs no pre-staged data."""
         if path is None:
             base = os.environ.get("MHCMATCH_PMHC")
-            if not base:
-                raise ValueError("pass path= or set MHCMATCH_PMHC to the pmhc_data directory")
-            path = os.path.join(base, f"pmhc_{tier}.tsv.gz")
+            path = os.path.join(base, f"pmhc_{tier}.tsv.gz") if base else fetch_pmhc(tier)
         sp = _SPECIES.get(species) if species else None
         keep = {_CLASS[c] for c in classes}
         csv.field_size_limit(10 ** 7)
