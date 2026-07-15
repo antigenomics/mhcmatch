@@ -214,6 +214,10 @@ def test_proteome_source_lookup():
     top = next(h for h in hits if h.protein == "P1" and h.position == 5)
     assert top.n_subs == 1
     assert top.mutations[0][0] == 4   # the mutated position within the peptide
+    # wildtype() fetches the WT counterpart (the self peptide the mutant derives from) for agretopicity.
+    assert pm.wildtype(mutant) == wild
+    assert pm.wildtype(wild) is None                 # an exact self peptide has no mutated WT
+    assert pm.wildtype("YYYYYYYYY") is None           # nothing within 1 sub -> None
 
 
 # -- CLI ----------------------------------------------------------------------

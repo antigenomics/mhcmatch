@@ -95,3 +95,14 @@ class Proteome:
             out.append(SourceHit(name, pos, w, len(muts), muts))
         out.sort(key=lambda h: h.n_subs)
         return out
+
+    def wildtype(self, peptide, max_subs=1):
+        """The wild-type self peptide a mutated ``peptide`` derives from, or ``None``.
+
+        The nearest self peptide within ``max_subs`` substitutions (exact self matches excluded) --
+        the position-aligned WT counterpart needed for agretopicity / DAI when the caller has no WT
+        window (e.g. a bare neoantigen list). ``None`` when nothing is within ``max_subs`` (indel /
+        spliced / non-self origin). Returns the single nearest hit; ties resolve to the first found.
+        """
+        hits = self.find_source(peptide, max_subs=max_subs, exclude_exact=True)
+        return hits[0].ref_peptide if hits else None
