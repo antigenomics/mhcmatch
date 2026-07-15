@@ -292,3 +292,32 @@ class AnchorModel:
         across peptides of different length -- do not use it to rank candidate ligand spans.
         """
         return self.best_register(peptide, allele, raw, eps)[1]
+
+    def anchor_terms(self, peptide, allele, raw=False, eps=1e-3):
+        """Per-position log-odds components at the best register, one per ``self.anchors`` position
+        (the full footprint, ignoring the rare-allele mask), or ``None`` if the peptide is too short.
+
+        Unlike :meth:`score` (their sum) this exposes the vector, so a downstream regressor can weight
+        positions differently -- e.g. the affinity head (:mod:`mhcmatch.affinity`) learns pocket
+        weights for binding energy rather than presentation specificity.
+        """
+        peptide = peptide.strip().upper()
+        st, _ = self.best_register(peptide, allele, raw, eps)
+        if st < 0:
+            return None
+        markov = self.background == "markov"
+        if self.cls == "mhc2":
+            core_pos = [j - 1 for j in self.anchors]
+            w = peptide[st:st + 9]
+            residues = [w[c] for c in core_pos]
+            ctx = [peptide[st + c - 1] if st + c > 0 else "" for c in core_pos] if markov else None
+        else:
+            from .store import resolve_anchor_index
+            idxs = [resolve_anchor_index(peptide, self.cls, j) for j in self.anchors]
+            residues = [peptide[i] for i in idxs]
+            ctx = [peptide[i - 1] if i > 0 else "" for i in idxs] if markov else None
+        terms = []
+        for i, (j, r) in enumerate(zip(self.anchors, residues)):
+            th = self._dist(j, allele, raw)
+            terms.append(math.log((th.get(r, 0.0) + eps) / (self._bg_prob(j, r, ctx[i] if ctx else None) + eps)))
+        return terms

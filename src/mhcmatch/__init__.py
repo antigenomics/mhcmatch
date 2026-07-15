@@ -14,6 +14,7 @@ Theory: ``appendix/mhcmatch.tex``. Roadmap: ``ROADMAP.md``.
 from importlib.metadata import PackageNotFoundError, version as _version
 
 from . import logo, predict, search
+from .affinity import AffinityModel
 from .diffusion import AnchorModel
 from .proteome import Proteome, SourceHit
 from .pseudoseq import (Pseudoseq, learn_anchor_weights, load_pseudo, normalize_allele,
@@ -30,6 +31,7 @@ __all__ = [
     "anchor_indices",
     "search",
     "AnchorModel",
+    "AffinityModel",
     "Proteome",
     "SourceHit",
     "Pseudoseq",

@@ -36,3 +36,6 @@ bench/results/private/
 
 # Obsidian memory-sync marker (machine-local absolute paths + sync hashes)
 .claude/obsidian-sync.json
+
+# affinity training table (regenerable from the IEDB dump via bench/affinity/data.py)
+bench/affinity/measured.tsv
