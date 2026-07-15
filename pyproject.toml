@@ -26,6 +26,7 @@ logo = ["logomaker", "matplotlib"]   # only needed to render logos; PWM/bits com
 pmhc = ["pandas"]                    # convenience IO for large tables
 docs = ["sphinx", "pydata-sphinx-theme"]
 viz = ["networkx"]                   # allele similarity / promiscuity graph (needs Graphviz `dot`)
+structure = ["tcren>=2.2"]           # optional: structure-based MJ ΔΔG head (mhcmatch.structure)
 
 [project.scripts]
 mhcmatch = "mhcmatch.cli:main"

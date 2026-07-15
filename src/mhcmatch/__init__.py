@@ -15,6 +15,7 @@ from importlib.metadata import PackageNotFoundError, version as _version
 
 from . import logo, predict, search
 from .affinity import AffinityModel
+from .structure import StructureScorer
 from .diffusion import AnchorModel
 from .proteome import Proteome, SourceHit
 from .pseudoseq import (Pseudoseq, learn_anchor_weights, load_pseudo, normalize_allele,
@@ -32,6 +33,7 @@ __all__ = [
     "search",
     "AnchorModel",
     "AffinityModel",
+    "StructureScorer",
     "Proteome",
     "SourceHit",
     "Pseudoseq",
