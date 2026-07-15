@@ -40,6 +40,10 @@ development plan is in [`ROADMAP.md`](ROADMAP.md).
 5. **Motif logos** — per-allele information-content logos with length distributions.
 6. **Pseudosequence diffusion** — allele similarity, clustering, and kernel-shrinkage pooling over
    34-mer groove pseudosequences (rare-allele rescue).
+7. **Quantitative affinity (IC50 nM)** — a pan-allele Potts / direct-coupling model (peptide×pocket
+   couplings, fit on measured IEDB IC50) predicts nM affinity and the neoantigen-fitness differentials
+   — Łuksza amplitude `A = Kd_WT/Kd_MT` and the differential agretopicity index — for MHC-I and MHC-II,
+   human and mouse. Optional structure-based MJ ΔΔG via the `[structure]` extra (`tcren`).
 
 ## Install
 
@@ -88,6 +92,13 @@ for r in store.restriction("NLVPMVATV", cls="mhc1", calibrated=True):
     print(r.allele, r.rank, r.p_present, r.band)             # e.g. HLA-A*02:01  1.6  0.98  weak
 
 mhcmatch.logo.motif(store, "HLA-A*02:01", "mhc1")
+
+# quantitative affinity + neoantigen-fitness differentials (Potts model, vendored weights)
+aff = store.affinity_model("mhc1")
+aff.predict_ic50("NLVPMVATV", "HLA-A*02:01")            # -> ~64 nM
+aff.amplitude("NLVPMVATL", "NLVPMVATV", "HLA-A*02:01")  # Kd_WT/Kd_MT (Łuksza eq. 9) -> ~2.05
+aff.dai("NLVPMVATL", "NLVPMVATV", "HLA-A*02:01")        # differential agretopicity (log10 ratio)
+store.affinity_model("mhc2").predict_ic50("PKYVKQNTLKLAT", "HLA-DRB1*15:01")   # MHC-II, core auto-located
 ```
 
 ## Command line
@@ -100,6 +111,7 @@ mhcmatch restriction NLVPMVATV --calibrated                   # + %rank, P(prese
 mhcmatch scan my_protein.fasta --correction bh                # presented windows, BH-FDR controlled
 mhcmatch source MKTAYIAKW --proteome UP000005640_9606.fasta.gz
 mhcmatch logo 'HLA-A*02:01'
+mhcmatch affinity NLVPMVATV --allele 'A*02:01' --wt NLVPMVATL   # IC50 nM + amplitude A=Kd_WT/Kd_MT + DAI
 ```
 
 ## Data
@@ -130,8 +142,38 @@ python bench/compare/run_compare.py --cls mhc1 --decoy-mode hard   --background 
 python bench/compare/run_compare.py --cls mhc1 --decoy-mode random --background proteome  # screening
 ```
 
+### Quantitative affinity (Potts head)
+
+The affinity head is benchmarked head-to-head against **NetMHCpan-4.2 −BA** / **NetMHCIIpan-4.3 −BA**
+on held-out measured IEDB IC50 ([`bench/affinity/`](bench/affinity/); provenance in
+[`bench/affinity/SOURCES.md`](bench/affinity/SOURCES.md)). Metric: median per-allele Spearman ρ against
+measured log-IC50, and AUROC at the 500 nM binder threshold, on the *same* held-out (peptide, allele)
+pairs. **Honest numbers** (per-allele held-out split, seed 0):
+
+| class  | stratum       | alleles | mhcmatch ρ | netMHCpan ρ | mhcmatch AUROC | netMHCpan AUROC |
+|--------|---------------|--------:|-----------:|------------:|---------------:|----------------:|
+| MHC-I  | human common  |      31 |      0.702 |   **0.792** |          0.851 |       **0.913** |
+| MHC-I  | human rare    |      37 |      0.485 |   **0.765** |          0.754 |       **0.930** |
+| MHC-II | human common  |      28 |      0.531 |   **0.774** |          0.798 |       **0.923** |
+| MHC-II | human rare    |      12 |      0.457 |   **0.755** |          0.749 |       **0.914** |
+| MHC-II | mouse (rare)  |       5 |      0.507 |   **0.716** |          0.787 |       **0.893** |
+
+NetMHCpan/IIpan lead on this eval, but the gap is **inflated by train/test overlap we cannot undo**:
+both tools trained on much of IEDB, so the held-out pairs are in-sample for them and out-of-sample for
+mhcmatch. On **truly unseen alleles** (leave-20-alleles-out, zero training rows for the allele) the
+Potts model still generalizes — MHC-I common orphan ρ ≈ 0.57 — because its peptide×pocket couplings
+interpolate across groove-similar alleles. The affinity head is a compact, dependency-light linear
+model (numpy-only dot product at predict time, ~µs/peptide) and gives the WT-vs-mutant **ratio**
+(amplitude / DAI) that percentile ranks cannot express.
+
+```fish
+python bench/affinity/train_potts.py --cls mhc1 --alpha 40                 # MHC-I head-to-head
+python bench/affinity/train_potts.py --cls mhc2 --species all --alpha 40   # MHC-II, human + mouse
+```
+
 ## Status
 
-Beta (v0.2). See [`ROADMAP.md`](ROADMAP.md) for what's next (order-k Markov / covariance null, a
-learned reranker for rare-allele screening, full-tier + temporal cluster sweeps, and the
-stability/affinity/cleavage/immunogenicity predictors).
+Beta (v0.4). Affinity (IC50 nM) + neoantigen amplitude/DAI shipped for MHC-I/II, human & mouse; optional
+structure-based MJ ΔΔG via the `[structure]` extra. See [`ROADMAP.md`](ROADMAP.md) for what's next
+(order-k Markov / covariance null, a learned reranker for rare-allele screening, full-tier + temporal
+cluster sweeps, and the stability/cleavage/immunogenicity predictors).

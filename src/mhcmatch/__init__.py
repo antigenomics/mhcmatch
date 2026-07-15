@@ -14,7 +14,7 @@ Theory: ``appendix/mhcmatch.tex``. Roadmap: ``ROADMAP.md``.
 from importlib.metadata import PackageNotFoundError, version as _version
 
 from . import logo, predict, search
-from .affinity import AffinityModel
+from .affinity import AffinityModel, PottsAffinity
 from .structure import StructureScorer
 from .diffusion import AnchorModel
 from .proteome import Proteome, SourceHit
@@ -33,6 +33,7 @@ __all__ = [
     "search",
     "AnchorModel",
     "AffinityModel",
+    "PottsAffinity",
     "StructureScorer",
     "Proteome",
     "SourceHit",
@@ -58,4 +59,4 @@ __all__ = [
 try:
     __version__ = _version("mhcmatch")
 except PackageNotFoundError:  # running from a source tree without an install
-    __version__ = "0.3.0"
+    __version__ = "0.4.0"

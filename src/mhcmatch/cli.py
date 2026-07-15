@@ -90,7 +90,7 @@ def cmd_affinity(a):
     if a.structure:
         try:
             from .structure import StructureScorer
-            sc = StructureScorer(pseudoseq=am.am.ps)
+            sc = StructureScorer(pseudoseq=store.anchor_model(a.cls).ps)
             mj = sc.mj_energy(a.peptide, allele)
             if mj == mj:
                 extra = f"   ΔΔG(WT→MT) = {sc.ddg(a.wt, a.peptide, allele):+.2f}" if a.wt else ""

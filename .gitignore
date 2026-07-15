@@ -39,3 +39,5 @@ bench/results/private/
 
 # affinity training table (regenerable from the IEDB dump via bench/affinity/data.py)
 bench/affinity/measured.tsv
+# cached NetMHCpan/NetMHCIIpan predictions for the affinity head-to-head
+bench/affinity/_cache/

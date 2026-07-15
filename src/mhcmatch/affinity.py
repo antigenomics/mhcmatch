@@ -51,6 +51,92 @@ def fit_ridge(X, y, lam: float = 1.0):
     return list(np.linalg.solve(X.T @ X + reg, X.T @ y))
 
 
+class PottsAffinity:
+    """Shipped affinity predictor: a Potts / direct-coupling energy model mapped to IC50 (nM).
+
+    The binding energy is ``E = Σ_i h_i(core_i) + Σ_j g_j(pocket_j) + Σ_{i,j} J_{ij}(core_i, pocket_j)``
+    -- single-site fields on the 9-mer peptide core and the 34-mer MHC pseudosequence, plus pairwise
+    couplings between every core and pocket position (the peptide×pocket interaction a purely additive
+    model cannot represent). Weights are vendored (``data/affinity_potts_<cls>.npz``, fit on measured
+    IEDB IC50 by ``bench/affinity/fit_potts.py``), so prediction is a one-hot sparse dot product --
+    numpy only, no sklearn at runtime.
+
+    MHC-I is end-anchored (core = the peptide, N5+C4). MHC-II's 9-mer core is located by
+    ``anchor_model.best_register`` (register-EM on presentation data). Same differential API as
+    :class:`AffinityModel`. Benchmark (per-allele held-out median Spearman ρ vs measured log-IC50):
+    MHC-I common 0.70 / rare 0.49; MHC-II human 0.53 / mouse 0.51 (NetMHCpan/IIpan lead, but with
+    IEDB train/test overlap). Build via :meth:`mhcmatch.Store.affinity_model`.
+    """
+    _AA = "ACDEFGHIKLMNPQRSTVWY"
+    _AAI = {c: i for i, c in enumerate(_AA)}
+
+    def __init__(self, cls_name: str = "mhc1", anchor_model=None):
+        import numpy as np
+        from .pseudoseq import load_pseudo
+        d = np.load(str(resources.files("mhcmatch.data").joinpath(f"affinity_potts_{cls_name}.npz")))
+        self.w, self.b = d["w"], float(d["b"])
+        self.PEPP, self.PSP, self.Q, _ = (int(x) for x in d["meta"])
+        self.NF_PEP = self.PEPP * self.Q
+        self.NF_FIELD = self.NF_PEP + self.PSP * self.Q
+        self.cls = cls_name
+        self.am = anchor_model                      # MHC-II register oracle; unused for MHC-I
+        self.pseudo = load_pseudo(cls_name)
+        self._psidx = {a: [self._AAI.get(c, -1) for c in ps] for a, ps in self.pseudo.items()}
+
+    def _key(self, allele):
+        from .pseudoseq import resolve_allele
+        k, _ = resolve_allele(allele, self.cls)
+        return k
+
+    def _core(self, pep, key):
+        if self.cls == "mhc1" or self.am is None:
+            return pep                              # end-anchored: N5+C4 covers the 9-mer core
+        start, _ = self.am.best_register(pep, key)  # open groove: locate the 9-mer core register
+        return pep[start:start + 9]
+
+    def predict_y(self, peptide, allele) -> float:
+        """log50k score (higher = stronger binder), or ``nan`` if the allele can't be resolved."""
+        key = self._key(allele)
+        ps = self._psidx.get(key) if key else None
+        if ps is None:
+            return float("nan")
+        core = self._core(peptide, key)
+        pidx = [self._AAI.get(c, -1) for c in list(core[:5]) + list(core[-4:])]
+        w, Q, NF_PEP, NF_FIELD, PSP = self.w, self.Q, self.NF_PEP, self.NF_FIELD, self.PSP
+        s = self.b
+        for p, r in enumerate(pidx):
+            if r >= 0:
+                s += w[p * Q + r]                                   # peptide field
+        for q, sx in enumerate(ps):
+            if sx >= 0:
+                s += w[NF_PEP + q * Q + sx]                         # pseudoseq field
+        for p, r in enumerate(pidx):
+            if r < 0:
+                continue
+            base = NF_FIELD + p * PSP * Q * Q
+            for q, sx in enumerate(ps):
+                if sx >= 0:
+                    s += w[base + (q * Q + r) * Q + sx]            # coupling J_pq(core_r, pocket_s)
+        return float(s)
+
+    def predict_ic50(self, peptide, allele) -> float:
+        """Predicted IC50 in nM (``nan`` if the allele is unknown)."""
+        y = self.predict_y(peptide, allele)
+        return float("nan") if y != y else y_to_ic50(y)
+
+    def amplitude(self, wt, mut, allele) -> float:
+        """Łuksza amplitude ``A = Kd_WT/Kd_MT · 1/(1 + Kd_WT·ε/[L])`` (eq. 9)."""
+        kw, km = self.predict_ic50(wt, allele), self.predict_ic50(mut, allele)
+        if kw != kw or km != km:
+            return float("nan")
+        return (kw / km) * (1.0 / (1.0 + kw * _EPS_OVER_L))
+
+    def dai(self, wt, mut, allele) -> float:
+        """Differential agretopicity index ``log10(Kd_WT/Kd_MT)`` (>0 when the mutant binds better)."""
+        kw, km = self.predict_ic50(wt, allele), self.predict_ic50(mut, allele)
+        return math.log10(kw / km) if (kw == kw and km == km and km > 0) else float("nan")
+
+
 class AffinityModel:
     """Predict IC50 (nM) and neoantigen amplitude/DAI from an :class:`mhcmatch.AnchorModel`.
 
@@ -167,3 +253,14 @@ if __name__ == "__main__":
     assert ic50_to_y(50000.0) == 0.0 and abs(y_to_ic50(1.0) - 1.0) < 1e-9
     print(f"affinity.py self-check OK  (fit {n} pts; strong={strong:.0f} nM < weak={weak:.0f} nM; "
           f"amplitude(DDD..,III..)={m.amplitude('D' * 9, 'I' * 9, 'X'):.2f})")
+
+    # Potts self-check on the vendored MHC-I weights (no Store needed for MHC-I: core = the peptide).
+    pa = PottsAffinity("mhc1")
+    a2 = "HLA-A*02:01"
+    strong_nm = pa.predict_ic50("NLVPMVATV", a2)     # canonical A2 binder -> should be a real value
+    weak_nm = pa.predict_ic50("KKKKKKKKK", a2)       # poly-K -> non-binder
+    assert strong_nm == strong_nm and 0 < strong_nm < 50000, strong_nm
+    assert strong_nm < weak_nm, (strong_nm, weak_nm)
+    assert abs(pa.amplitude("NLVPMVATV", "NLVPMVATV", a2)
+               - 1.0 / (1.0 + strong_nm * _EPS_OVER_L)) < 1e-6      # WT==MT -> ratio 1, only the correction
+    print(f"PottsAffinity self-check OK  (A*02:01 NLVPMVATV={strong_nm:.0f} nM < poly-K={weak_nm:.0f} nM)")

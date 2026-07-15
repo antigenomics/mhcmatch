@@ -44,7 +44,8 @@ diffusion model, and the downstream predictors.
 | Class-II allele keying (α+β pair) + pseudoseq pair-normalization | — | Phase 1 |
 | Tuned ROC/PR thresholds; FDR over proteome scans | — | Phase 1 |
 | Core → full presented ligand span (observed / modeled / fixed) | `mhcmatch.ligand` | **v0.3** (validated, `bench/bench_spans.py`) |
-| Stability / affinity / expression / immunogenicity | — | Phase 2 |
+| Binding affinity (IC50 nM) + neoantigen amplitude/DAI; structure MJ ΔΔG | `mhcmatch.PottsAffinity`, `mhcmatch.structure` | **v0.4** (validated, `bench/affinity/`) |
+| Stability / expression / immunogenicity | — | Phase 2 |
 | NetMHCpan / MixMHCpred head-to-head benchmark + paper | separate repo | Phase 3 |
 
 ## 2. Data
@@ -126,7 +127,17 @@ diffusion model, and the downstream predictors.
 Each composes with the presentation score into a combined ranking; user will supply tuning/benchmark
 data. Each is a milestone whose spec is its appendix subsection:
 
-- **pMHC stability** and **binding affinity** (the quantitative complement to the presentation E-value).
+- ~~**pMHC binding affinity** (the quantitative complement to the presentation E-value).~~ **Done in
+  v0.4** — a pan-allele **Potts / direct-coupling** model (single-site fields + peptide×pocket
+  couplings, ridge = Bayesian MAP) fit on measured IEDB IC50, `mhcmatch.PottsAffinity` /
+  `Store.affinity_model`. Predicts IC50 (nM) and the neoantigen-fitness **differentials** — Łuksza
+  amplitude `A = Kd_WT/Kd_MT` (eq. 9) and DAI — for MHC-I and MHC-II, human & mouse (the *same* energy;
+  only the pocket map and the MHC-II core register differ). Held-out per-allele Spearman ρ: MHC-I common
+  0.70 / rare 0.49, MHC-II human 0.53 / mouse 0.51 (trails NetMHCpan/IIpan, whose numbers carry IEDB
+  train/test overlap). Optional structure-based **MJ ΔΔG** via the `[structure]` extra
+  (`mhcmatch.structure`, `tcren`). Benchmark: `bench/affinity/`.
+- **pMHC stability** (dissociation half-life; the `Units=="min"` IEDB rows) — the same regressor,
+  `target="stability"`; a NetMHCstabpan analogue, still to wire in.
 - ~~**Proteasomal cleavage** (C-terminal generation) and N-terminal trimming.~~ **Done in v0.3, but
   deliberately NOT as a cleavage predictor** — see `mhcmatch.ligand`. MHC-II is *bind-first,
   trim-later*: the groove protects the core while exopeptidases erode the flanks, so there is no

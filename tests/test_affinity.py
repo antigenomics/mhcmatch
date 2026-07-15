@@ -4,7 +4,8 @@ import math
 
 import pytest
 
-from mhcmatch.affinity import AffinityModel, _EPS_OVER_L, ic50_to_y, y_to_ic50
+from mhcmatch.affinity import AffinityModel, PottsAffinity, _EPS_OVER_L, ic50_to_y, y_to_ic50
+from mhcmatch.pseudoseq import resolve_allele
 
 
 class _Stub:
@@ -47,6 +48,37 @@ def test_amplitude_and_dai_favour_stronger_mutant():
     m = _fitted()
     assert m.amplitude("DDDDDDDDD", "IIIIIIIII", "X") > 1.0   # mutant binds better -> A>1
     assert m.dai("DDDDDDDDD", "IIIIIIIII", "X") > 0.0
+
+
+def test_potts_predict_strong_binder():
+    """Vendored MHC-I Potts weights: a canonical A*02:01 binder scores far stronger than a poly-K
+    non-binder, and the predicted nM is in range."""
+    pa = PottsAffinity("mhc1")
+    strong = pa.predict_ic50("NLVPMVATV", "HLA-A*02:01")
+    weak = pa.predict_ic50("KKKKKKKKK", "HLA-A*02:01")
+    assert 0.0 < strong < 50000.0
+    assert strong < weak
+
+
+def test_potts_amplitude_self_is_correction():
+    pa = PottsAffinity("mhc1")
+    kd = pa.predict_ic50("NLVPMVATV", "HLA-A*02:01")
+    assert abs(pa.amplitude("NLVPMVATV", "NLVPMVATV", "HLA-A*02:01")
+               - 1.0 / (1.0 + kd * _EPS_OVER_L)) < 1e-6
+
+
+def test_potts_unknown_allele_is_nan():
+    assert math.isnan(PottsAffinity("mhc1").predict_ic50("NLVPMVATV", "HLA-ZZ*99:99"))
+
+
+@pytest.mark.parametrize("name,key", [
+    ("HLA-DRB1*15:01", "DRB1_1501"),
+    ("HLA-DQA1*05:01/DQB1*03:01", "HLA-DQA10501-DQB10301"),
+    ("H2-IAb", "H-2-IAb"),
+    ("I-Ab", "H-2-IAb"),
+])
+def test_class2_allele_resolution(name, key):
+    assert resolve_allele(name, "mhc2") == (key, True)
 
 
 def test_structure_mj_optional():

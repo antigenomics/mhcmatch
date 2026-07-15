@@ -405,24 +405,20 @@ class Store:
                            background=background)
 
     def affinity_model(self, cls="mhc1"):
-        """Quantitative IC50 (nM) + neoantigen amplitude/DAI head (:class:`mhcmatch.AffinityModel`).
+        """Quantitative IC50 (nM) + neoantigen amplitude/DAI head (:class:`mhcmatch.PottsAffinity`).
 
-        Loads the vendored fit ``data/affinity_<cls>.json`` and builds a matching AnchorModel (using
-        the fit's own ``background``/``footprint``, so runtime features line up with training). Cached
-        per class. Predict with ``.predict_ic50(peptide, allele)`` and the differential
-        ``.amplitude(wt, mut, allele)`` / ``.dai(wt, mut, allele)``.
+        Loads the vendored Potts weights ``data/affinity_potts_<cls>.npz`` (fields + peptide×pocket
+        couplings, fit on measured IEDB IC50). For MHC-II it also builds the register oracle (an
+        ``AnchorModel`` with the same ``proteome``/``core`` config used at fit time) so the 9-mer core
+        is located consistently. Cached per class. Predict with ``.predict_ic50(peptide, allele)`` and
+        the differential ``.amplitude(wt, mut, allele)`` / ``.dai(wt, mut, allele)``.
         """
-        import json
-        from importlib import resources
-
-        from .affinity import AffinityModel
+        from .affinity import PottsAffinity
         cache = self.__dict__.setdefault("_affinity", {})
         if cls not in cache:
-            coef = json.loads(resources.files("mhcmatch.data")
-                              .joinpath(f"affinity_{cls}.json").read_text())
-            am = self.anchor_model(cls, background=coef.get("background", "proteome"),
-                                   footprint=coef.get("footprint", "core"))
-            cache[cls] = AffinityModel(am, list(self._panel[cls].epitopes), coef=coef)
+            am = self.anchor_model(cls, background="proteome", footprint="core") \
+                if cls == "mhc2" else None
+            cache[cls] = PottsAffinity(cls, anchor_model=am)
         return cache[cls]
 
     # -- per-allele anchor preferences (feeds pseudoseq diffusion) ------------

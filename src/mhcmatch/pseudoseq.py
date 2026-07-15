@@ -56,19 +56,44 @@ def class2_key(mhc_a: str, mhc_b: str = "") -> str:
     return f"{mhc_a.replace('*', '').replace(':', '')}-{beta}"
 
 
+def class2_from_name(name: str) -> str:
+    """Class-II allele *name* (user- or IEDB-typed) -> mhc2 pseudoseq key, locus-aware.
+
+    Handles DR (beta-only ``'HLA-DRB1*15:01' -> 'DRB1_1501'``), the DP/DQ alpha-beta pair given as
+    ``'HLA-DQA1*05:01/DQB1*03:01'``, and mouse (``'H2-IAb'`` / ``'I-Ab'`` -> ``'H-2-IAb'``). Falls back
+    to :func:`normalize_allele` for anything already in key form.
+    """
+    a = name.strip()
+    au = a.upper()
+    if au.startswith("H2-"):
+        return "H-2-" + a[3:]
+    if au.startswith("H-2"):
+        return normalize_allele(a)
+    if au.startswith("I-"):
+        return class2_key(a)
+    if "/" in a:
+        x, y = a.split("/", 1)
+        return class2_key(x.strip(), y.strip())
+    if "DRB" in au:
+        return class2_key("DRA", a)
+    return normalize_allele(a)
+
+
 def resolve_allele(name: str, cls: str):
     """Resolve a user-typed allele name to a pseudosequence key for ``cls``.
 
-    Returns ``(key, exact)``. ``exact=True`` when ``name`` (after :func:`normalize_allele`) is a known
-    key; otherwise the closest key by name---a missing ``HLA-`` prefix is repaired and a too-short
-    (e.g. two-field ``'HLA-A02:01'``) name is completed by prefix to its first matching key---with
-    ``exact=False``; ``(None, False)`` if nothing matches. Serotype names (``'HLA-A2'``) are not
-    expanded. Lets callers accept messy input (``'A*02:01'``, ``'HLA-A0201'``) and report when a
-    requested allele is unknown rather than silently dropping it.
+    Returns ``(key, exact)``. ``exact=True`` when ``name`` (after :func:`normalize_allele`, or the
+    locus-aware :func:`class2_from_name` for ``cls=="mhc2"``) is a known key; otherwise the closest key
+    by name---a missing ``HLA-`` prefix is repaired and a too-short (e.g. two-field ``'HLA-A02:01'``)
+    name is completed by prefix to its first matching key---with ``exact=False``; ``(None, False)`` if
+    nothing matches. Serotype names (``'HLA-A2'``) are not expanded. Lets callers accept messy input
+    (``'A*02:01'``, ``'HLA-A0201'``) and report when a requested allele is unknown rather than
+    silently dropping it.
     """
     seqs = load_pseudo(cls)
     cand = normalize_allele(name.strip())
-    variants = [cand] + ([] if cand.upper().startswith(("HLA-", "H-2")) else ["HLA-" + cand])
+    variants = ([class2_from_name(name)] if cls == "mhc2" else []) \
+        + [cand] + ([] if cand.upper().startswith(("HLA-", "H-2")) else ["HLA-" + cand])
     for v in variants:
         if v in seqs:
             return v, True
