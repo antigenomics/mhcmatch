@@ -71,7 +71,7 @@ mhcmatch.search.search("NLVPMVATV", big_peptide_set, mode="tcr")   # TCR-facing 
 mhcmatch.search.find_mimics("EAAGIGILTV", self_set, bacterial_sets={...})
 
 # near-exact source of a neoantigen
-pm = mhcmatch.Proteome.from_fasta("UP000005640_9606.fasta.gz")
+pm = mhcmatch.Proteome.from_hf("human")          # auto-fetched from HF (or .from_fasta(<your FASTA>))
 pm.find_source("NLVPMVATV", max_subs=1)
 
 # pseudosequence allele similarity + rare-allele diffusion
@@ -109,7 +109,7 @@ set -x MHCMATCH_PMHC /path/to/pmhc_data                       # or pass --pmhc t
 mhcmatch restriction NLVPMVATV --allele 'A*02:01' --diffuse   # allele name auto-resolved; rare-aware
 mhcmatch restriction NLVPMVATV --calibrated                   # + %rank, P(present), binding band
 mhcmatch scan my_protein.fasta --correction bh                # presented windows, BH-FDR controlled
-mhcmatch source MKTAYIAKW --proteome UP000005640_9606.fasta.gz
+mhcmatch source MKTAYIAKW --proteome human                    # HF name auto-fetched (or a FASTA path)
 mhcmatch logo 'HLA-A*02:01'
 mhcmatch affinity NLVPMVATV --allele 'A*02:01' --wt NLVPMVATL   # IC50 nM + amplitude A=Kd_WT/Kd_MT + DAI
 ```
@@ -123,8 +123,10 @@ mhcmatch affinity NLVPMVATV --allele 'A*02:01' --wt NLVPMVATL   # IC50 nM + ampl
   `$MHCMATCH_PMHC`.
 - **Pseudosequences:** 34-mer groove pseudosequences vendored in `src/mhcmatch/data/` (see its
   `PROVENANCE.md`).
-- **Reference proteomes:** not bundled — supply a UniProt reference proteome FASTA
-  (UP000005640 human / UP000000589 mouse) to `Proteome.from_fasta`.
+- **Reference proteomes:** the human (UP000005640) and mouse (UP000000589) UniProt proteomes — plus
+  pathogen proteomes for mimicry — live in the same HF dataset. `Proteome.from_hf("human")` /
+  `mhcmatch source --proteome human` **auto-fetch** them (cached), or `mhcmatch bootstrap --proteome
+  human,mouse` to pre-fetch. Pass your own FASTA to `Proteome.from_fasta` to override.
 
 ## Benchmark vs NetMHCpan
 

@@ -113,7 +113,8 @@ def cmd_scan(a):
 
 
 def cmd_source(a):
-    hits = Proteome.from_fasta(a.proteome).find_source(a.peptide, max_subs=a.max_subs)
+    pm = Proteome.from_fasta(a.proteome) if os.path.exists(a.proteome) else Proteome.from_hf(a.proteome)
+    hits = pm.find_source(a.peptide, max_subs=a.max_subs)
     if not hits:
         print("# no source within max_subs")
         return
@@ -172,11 +173,13 @@ def cmd_logo(a):
 
 
 def cmd_bootstrap(a):
-    from .store import PMHC_REPO, fetch_pmhc
+    from .store import PMHC_REPO, fetch_pmhc, fetch_proteome
     tiers = ("full", "shortlist") if a.tier == "all" else (a.tier,)
     for t in tiers:
-        print(f"# {t}: {fetch_pmhc(t)}")
-    print(f"# pmhc panel cached from HF dataset {PMHC_REPO}")
+        print(f"# pmhc {t}: {fetch_pmhc(t)}")
+    for name in (x.strip() for x in (a.proteome or "").split(",") if x.strip()):
+        print(f"# proteome {name}: {fetch_proteome(name)}")
+    print(f"# cached from HF dataset {PMHC_REPO}")
 
 
 def main(argv=None):
@@ -221,7 +224,9 @@ def main(argv=None):
 
     so = sub.add_parser("source", help="find the self peptide a neoantigen derives from")
     so.add_argument("peptide")
-    so.add_argument("--proteome", required=True, help="reference proteome FASTA(.gz)")
+    so.add_argument("--proteome", required=True,
+                    help="reference proteome FASTA(.gz) path, or an HF name auto-fetched from the "
+                         "public dataset (human / mouse / a pathogen stem)")
     so.add_argument("--max-subs", type=int, default=1)
     so.set_defaults(fn=cmd_source)
 
@@ -253,9 +258,11 @@ def main(argv=None):
     _add_store_opts(pr)
     pr.set_defaults(fn=cmd_predict)
 
-    bs = sub.add_parser("bootstrap", help="pre-fetch the pmhc reference panel from the public HF dataset")
+    bs = sub.add_parser("bootstrap", help="pre-fetch the pmhc panel (and optionally proteomes) from HF")
     bs.add_argument("--tier", default="all", choices=("full", "shortlist", "all"),
                     help="which panel tier(s) to download into the huggingface_hub cache")
+    bs.add_argument("--proteome", help="also fetch these reference proteomes "
+                                       "(comma-separated: human,mouse,<pathogen stem>)")
     bs.set_defaults(fn=cmd_bootstrap)
 
     a = ap.parse_args(argv)

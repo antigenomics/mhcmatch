@@ -54,6 +54,14 @@ class Proteome:
     def from_fasta(cls, path):
         return cls(read_fasta(path))
 
+    @classmethod
+    def from_hf(cls, name="human"):
+        """Load a reference proteome by name, auto-fetched from the public HF dataset (no manual
+        download). ``name`` = ``"human"`` / ``"mouse"`` (UP000005640 / UP000000589) or a pathogen
+        stem; see :func:`mhcmatch.store.fetch_proteome`."""
+        from .store import fetch_proteome
+        return cls.from_fasta(fetch_proteome(name))
+
     def _index(self, L):
         if L not in self._cache:
             windows, meta = [], []

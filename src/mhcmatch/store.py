@@ -44,6 +44,23 @@ def fetch_pmhc(tier: str = "full") -> str:
                            filename=f"pmhc/pmhc_{tier}.tsv.gz")
 
 
+_PROTEOME_ALIAS = {"human": "human.fasta.gz", "mouse": "mouse.fasta.gz"}
+
+
+def fetch_proteome(name: str = "human") -> str:
+    """Download a reference proteome FASTA from the public HF dataset :data:`PMHC_REPO` (``proteome/``)
+    and return the local cached path.
+
+    ``name`` is ``"human"`` / ``"mouse"`` — the full UniProt proteomes UP000005640 / UP000000589 (for
+    source-protein lookup and peptide-flank extraction) — or a pathogen-proteome stem/filename bundled
+    in the same dataset (e.g. ``"ecoli_K12_UP000000625"``, for molecular-mimicry sets). Cached by
+    ``huggingface_hub``, so it downloads once. Feeds :meth:`mhcmatch.Proteome.from_hf`.
+    """
+    from huggingface_hub import hf_hub_download
+    fname = _PROTEOME_ALIAS.get(name, name if name.endswith(".fasta.gz") else f"{name}.fasta.gz")
+    return hf_hub_download(repo_id=PMHC_REPO, repo_type="dataset", filename=f"proteome/{fname}")
+
+
 def infer_class(peptide: str) -> str:
     """Heuristic class from length: MHC-I if <=11, else MHC-II. Pass ``cls`` to override."""
     return "mhc1" if len(peptide) <= 11 else "mhc2"
