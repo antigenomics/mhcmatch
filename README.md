@@ -1,10 +1,22 @@
-# mhcmatch
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/mhcmatch_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/mhcmatch_light.svg">
+    <!-- Absolute PNG fallback: PyPI strips <picture>/<source> and cannot render a relative or
+         raw-served SVG, so the logo must be an absolute-URL raster here. GitHub uses the SVG sources. -->
+    <img alt="mhcmatch" src="https://raw.githubusercontent.com/antigenomics/mhcmatch/master/assets/mhcmatch_dark.png" width="340">
+  </picture>
+</p>
 
-[![PyPI](https://img.shields.io/pypi/v/mhcmatch)](https://pypi.org/project/mhcmatch/)
-[![CI](https://github.com/antigenomics/mhcmatch/actions/workflows/ci.yml/badge.svg)](https://github.com/antigenomics/mhcmatch/actions/workflows/ci.yml)
-[![Docs](https://github.com/antigenomics/mhcmatch/actions/workflows/docs.yml/badge.svg)](https://antigenomics.github.io/mhcmatch/)
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://pypi.org/project/mhcmatch/)
-[![License](https://img.shields.io/badge/license-GPLv3-green)](LICENSE)
+<h1 align="center">mhcmatch — Peptide–MHC presentation &amp; cross-reactivity</h1>
+
+<p align="center">
+  <a href="https://pypi.org/project/mhcmatch/"><img alt="PyPI" src="https://img.shields.io/pypi/v/mhcmatch"></a>
+  <a href="https://github.com/antigenomics/mhcmatch/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/antigenomics/mhcmatch/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://antigenomics.github.io/mhcmatch/"><img alt="docs" src="https://github.com/antigenomics/mhcmatch/actions/workflows/docs.yml/badge.svg"></a>
+  <img alt="python" src="https://img.shields.io/badge/python-3.10%2B-blue">
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-GPLv3-green"></a>
+</p>
 
 Peptide–MHC presentation, cross-reactivity, and motif tools — the applied peptide–MHC layer on top
 of the [`seqtree`](https://github.com/antigenomics/seqtree) fuzzy-search substrate. `mhcmatch`
