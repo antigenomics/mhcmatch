@@ -26,7 +26,7 @@ RUN pip install --no-cache-dir "git+https://github.com/antigenomics/mhcmatch.git
 
 # Bootstrap the reference ligand panel from the public HF dataset (both tiers, ~12 MB + ~4 MB) into
 # the image's huggingface_hub cache, so from_pmhc() resolves it offline at runtime.
-RUN python -c "from mhcmatch.store import fetch_pmhc; fetch_pmhc('full'); fetch_pmhc('shortlist')"
+RUN mhcmatch bootstrap
 
 # Sanity: the CLI and panel resolve at build time (fails the build early if the ref/panel is wrong).
 RUN mhcmatch --help >/dev/null && \

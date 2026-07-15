@@ -80,3 +80,19 @@ mhcmatch.mimics module
    :members:
    :undoc-members:
    :show-inheritance:
+
+mhcmatch.affinity module
+------------------------
+
+.. automodule:: mhcmatch.affinity
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+mhcmatch.structure module
+-------------------------
+
+.. automodule:: mhcmatch.structure
+   :members:
+   :undoc-members:
+   :show-inheritance:

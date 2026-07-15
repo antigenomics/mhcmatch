@@ -171,6 +171,14 @@ def cmd_logo(a):
         print(f"  pos {i:>2}  {bits:4.2f} bits  " + " ".join(f"{aa}:{p:.2f}" for aa, p in top))
 
 
+def cmd_bootstrap(a):
+    from .store import PMHC_REPO, fetch_pmhc
+    tiers = ("full", "shortlist") if a.tier == "all" else (a.tier,)
+    for t in tiers:
+        print(f"# {t}: {fetch_pmhc(t)}")
+    print(f"# pmhc panel cached from HF dataset {PMHC_REPO}")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="mhcmatch", description="peptide-MHC presentation tools")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -244,6 +252,11 @@ def main(argv=None):
     pr.add_argument("--seed", type=int, default=0)
     _add_store_opts(pr)
     pr.set_defaults(fn=cmd_predict)
+
+    bs = sub.add_parser("bootstrap", help="pre-fetch the pmhc reference panel from the public HF dataset")
+    bs.add_argument("--tier", default="all", choices=("full", "shortlist", "all"),
+                    help="which panel tier(s) to download into the huggingface_hub cache")
+    bs.set_defaults(fn=cmd_bootstrap)
 
     a = ap.parse_args(argv)
     a.fn(a)

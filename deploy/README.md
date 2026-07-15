@@ -9,10 +9,12 @@ infra before use. Nothing here edits the pipeline repo.
 ## What mhcmatch fills (and what it does not)
 
 mhcmatch is a **presentation** model — per-allele **%rank / P(present) / band** (the NetMHCpan
-`%Rank_EL` analogue). In the `.scored.csv` export it fills the variant-annotation columns (from the
-FASTA header), `best_allele`, and `affinity_percentile` (= %rank). It **leaves `affinity` (nM) empty**
-— that column is the separate affinity regressor's job — and leaves `agretopicity`, expression,
-`CDR3`/`TCR-score`, and the composite `score` columns to their own pipeline modules.
+`%Rank_EL` analogue) — plus a **Potts affinity head** (`mhcmatch.PottsAffinity`). In the `.scored.csv`
+export it fills the variant-annotation columns (from the FASTA header), `best_allele`,
+`affinity_percentile` (= %rank), **`affinity` (nM)** from the affinity head, and — for k-mers that span
+the somatic mutation — **`agretopicity`** (Kd_MT/Kd_WT vs the position-aligned wild-type peptide; the
+native table also carries the Łuksza amplitude and DAI). It leaves expression, `CDR3`/`TCR-score`, and
+the composite `score` columns to their own pipeline modules.
 
 Concordance with NetMHCpan on TESLA1/Alekseech (the trust check for this swap) is in
 `bench/results/concordance_tesla1_*.md`: class I pooled Spearman ρ ≈ 0.73–0.76, best-allele agreement
@@ -20,19 +22,21 @@ Concordance with NetMHCpan on TESLA1/Alekseech (the trust check for this swap) i
 
 ## 1. Build the image
 
+No data staging needed — the build runs `mhcmatch bootstrap`, which fetches the reference panel
+(`pmhc/pmhc_{full,shortlist}.tsv.gz`) from the public HF dataset `isalgo/pmhc_data` into the image's
+`huggingface_hub` cache, so the container resolves the panel offline at runtime.
+
 ```zsh
-# panel files into the build context (baked so the image needs no data mount)
-cp ~/hf/pmhc_data/pmhc/pmhc_full.tsv.gz ~/hf/pmhc_data/pmhc/pmhc_shortlist.tsv.gz deploy/
-docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.3.0 \
+docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.4.1 \
     --build-arg SEQTREE_REF=<tag/commit> --build-arg MHCMATCH_REF=<tag/commit> \
     -f deploy/Dockerfile deploy/
-docker push <ISPRAS_REGISTRY>/mhcmatch:0.3.0
+docker push <ISPRAS_REGISTRY>/mhcmatch:0.4.1
 ```
 
 Pin it in `conf/containers.config`:
 
 ```groovy
-withName: MHCMATCH_PREDICT { container = '<ISPRAS_REGISTRY>/mhcmatch:0.3.0' }
+withName: MHCMATCH_PREDICT { container = '<ISPRAS_REGISTRY>/mhcmatch:0.4.1' }
 ```
 
 ## 2. Add the module
