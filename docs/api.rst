@@ -72,3 +72,11 @@ mhcmatch.predict module
    :members:
    :undoc-members:
    :show-inheritance:
+
+mhcmatch.mimics module
+----------------------
+
+.. automodule:: mhcmatch.mimics
+   :members:
+   :undoc-members:
+   :show-inheritance:

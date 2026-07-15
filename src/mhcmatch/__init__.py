@@ -13,7 +13,7 @@ Theory: ``appendix/mhcmatch.tex``. Roadmap: ``ROADMAP.md``.
 """
 from importlib.metadata import PackageNotFoundError, version as _version
 
-from . import logo, predict, search
+from . import logo, mimics, predict, search
 from .affinity import AffinityModel, PottsAffinity
 from .structure import StructureScorer
 from .diffusion import AnchorModel
@@ -53,6 +53,7 @@ __all__ = [
     "Prediction",
     "predict_windows",
     "predict_fasta",
+    "mimics",
     "__version__",
 ]
 
