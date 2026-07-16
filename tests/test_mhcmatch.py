@@ -1,4 +1,5 @@
 """Runnable checks for mhcmatch v0. Mirror seqtree's positive controls where applicable."""
+import collections
 import random
 
 import pytest
@@ -454,3 +455,70 @@ def test_recommended_flanks_are_the_measured_ones():
     asy = ligand.fixed_span(core, prot, ligand.ASSAY_FLANK, ligand.ASSAY_FLANK)
     assert len(st.peptide) == 13 and core in st.peptide
     assert len(asy.peptide) == 21 and st.peptide in asy.peptide
+
+
+# -- MHC-I length awareness -------------------------------------------------------------------
+from mhcmatch.diffusion import MHC1_ANCHORS, MHC1_CORE                  # noqa: E402
+from mhcmatch.store import mhc1_positions                               # noqa: E402
+
+
+def _mhc1_store():
+    recs = [{"epitope": e, "mhc_a": "HLA-A02:01", "mhc_class": "MHCI"} for e in
+            ("GILGFVFTL", "NLVPMVATV", "YLQPRTFLL", "GLCTLVAML", "FLYALALLL", "FLPSDFFPSV",
+             "LLFGYPVYV", "YMLDLQPETT", "RMFPNAPYL", "SLYNTVATL", "KLVALGINAV", "AAGIGILTV")]
+    recs += [{"epitope": e, "mhc_a": "HLA-B07:02", "mhc_class": "MHCI"} for e in
+             ("APRTVALTA", "SPRWYFYYL", "IPSINVHHY")]
+    return Store.from_records(recs)
+
+
+def test_mhc1_positions_never_double_counts():
+    # MHC1_CORE's +5 and -4 both land on index 4 of an 8-mer. Counting it twice makes the score an
+    # inflated, mis-normalised likelihood ratio (two perfectly-correlated terms) and files one residue
+    # under two positions in anchor_preferences. Only the 8-mer collides; 9/10/11 skip the bulge.
+    for L in (8, 9, 10, 11):
+        pos = mhc1_positions(L, MHC1_CORE)
+        real = [i for i in pos if i is not None]
+        assert len(real) == len(set(real)), f"L={L} double-counts an index"
+        assert len(pos) == len(MHC1_CORE), "must stay aligned to `anchors` for per-anchor bookkeeping"
+        assert all(0 <= i < L for i in real)
+        assert all(i is not None for i in mhc1_positions(L, MHC1_ANCHORS)), "5-anchor never collides"
+    assert mhc1_positions(8, MHC1_CORE).count(None) == 1
+    assert all(mhc1_positions(L, MHC1_CORE).count(None) == 0 for L in (9, 10, 11))
+    assert mhc1_positions(4, MHC1_CORE) is None, "too short for the footprint -> None"
+
+
+def test_length_prior_is_off_by_default_and_additive_when_on():
+    s = _mhc1_store()
+    off = s.anchor_model("mhc1", footprint="core", background="proteome")
+    on = s.anchor_model("mhc1", footprint="core", background="proteome", length_prior="score")
+    assert off.length_logodds(9, "HLA-A02:01") == 0.0        # no prior built -> no term
+    # the term is exactly additive: score(on) == score(off) + length_logodds
+    for p in ("GILGFVFTL", "FLPSDFFPSV", "SIINFEHL"):
+        assert on.score(p, "HLA-A02:01") == pytest.approx(
+            off.score(p, "HLA-A02:01") + on.length_logodds(len(p), "HLA-A02:01"))
+    # and it prefers the length the allele actually presents (this panel's A*02:01 is 9-mer heavy)
+    assert on.length_logodds(9, "HLA-A02:01") > on.length_logodds(8, "HLA-A02:01")
+
+
+def test_length_motifs_backoff_is_exact_when_the_length_is_unseen():
+    # The safety property the whole design rests on: n(a,L)=0 must reproduce the pooled model
+    # BIT-FOR-BIT, so alleles with no ligands at a length (rare alleles have a median of zero
+    # 8-mers) provably cannot regress.
+    s = _mhc1_store()
+    off = s.anchor_model("mhc1", footprint="core", background="proteome")
+    on = s.anchor_model("mhc1", footprint="core", background="proteome", length_motifs=True)
+    for p in ("SIINFEHL", "AAAAAAAAAAA"):                     # A*02:01 has no 8- or 11-mers here
+        assert on.score(p, "HLA-A02:01") == off.score(p, "HLA-A02:01")
+    assert on.score("GILGFVFTL", "HLA-A02:01") != off.score("GILGFVFTL", "HLA-A02:01")
+
+
+def test_length_bg_uniform_flattens_the_null_length_mix():
+    from mhcmatch.calibrate import corpus_stats, random_peptides
+    corpus = ["A" * 9] * 80 + ["A" * 8] * 10 + ["A" * 10] * 7 + ["A" * 11] * 3
+    aa, lens = corpus_stats(corpus)
+    got = collections.Counter(
+        len(p) for p in random_peptides(aa, lens, 4000, random.Random(0), "uniform"))
+    assert all(abs(got[L] / 4000 - 0.25) < 0.03 for L in (8, 9, 10, 11))
+    corp = collections.Counter(
+        len(p) for p in random_peptides(aa, lens, 4000, random.Random(0), "corpus"))
+    assert corp[9] / 4000 > 0.7, "'corpus' keeps the ligand length mix (the default, MHC-II needs it)"
