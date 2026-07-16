@@ -576,3 +576,59 @@ def test_imgt_derived_alleles_cover_what_netmhcpan_omits():
     assert p["HLA-F01:01"] == p["HLA-F01:03"] == p["HLA-F01:04"]
     # ...and it is genuinely distinct from the classical loci, i.e. not an alignment artefact.
     assert p["HLA-F01:01"] != p["HLA-A02:01"]
+
+
+from mhcmatch.pseudoseq import alpha_prior, class2_from_name, class2_key    # noqa: E402
+
+
+def test_alpha_imputation_fires_only_on_a_missing_alpha():
+    """A fully-typed class-II input must be bit-identical with the flag on or off.
+
+    The flag exists for the 1.5% of panel records that type only the beta chain ('-DPB11101',
+    2,516 ligands) -- it must never rewrite a typing that is already complete, nor touch DR (whose
+    monomorphic DRA is hardcoded) or mouse.
+    """
+    for a, b in (("HLA-DPA1*01:03", "HLA-DPB1*04:01"), ("HLA-DQA1*05:01", "HLA-DQB1*02:01"),
+                 ("DRA", "HLA-DRB1*15:01"), ("I-Ab", "")):
+        assert class2_key(a, b, True) == class2_key(a, b, False)
+
+    p = load_pseudo("mhc2")
+    # beta-only: imputed to a real groove when on, left alpha-less (and unscorable) when off
+    on, off = class2_from_name("HLA-DPB1*11:01", True), class2_from_name("HLA-DPB1*11:01", False)
+    assert on == "HLA-DPA10201-DPB11101" and on in p
+    assert off == "-DPB11101" and off not in p
+
+
+def test_alpha_prior_refuses_an_ambiguous_groove():
+    """Only betas whose 34-mer is >=95% determined are imputed -- a wrong groove scores silently.
+
+    DQA1*01:02 and DQA1*01:05 share the 2-digit group DQA1*01 but NOT the 34-mer, so DQB1*05:02 looks
+    100% certain at group level while the groove is a 58/42 coin flip. The table is keyed on the
+    groove for exactly that reason; these rare DQ betas stay unresolved on purpose.
+    """
+    prior = alpha_prior()
+    assert prior, "alpha prior table is empty"
+    for beta in ("DQB10503", "DQB10502", "DQB10402", "DQB10602"):
+        assert beta not in prior, f"{beta}'s alpha is ambiguous and must not be imputed"
+    assert prior.get("DPB11101") == "HLA-DPA10201"      # 99% -- the 2,516-ligand case
+    assert prior.get("DQB10302") == "HLA-DQA10301"      # DQ8, rediscovered from linkage disequilibrium
+    assert prior.get("DQB10201") == "HLA-DQA10501"      # DQ2.5
+    p = load_pseudo("mhc2")
+    for beta, alpha in prior.items():
+        assert f"{alpha}-{beta}" in p, f"imputed key {alpha}-{beta} has no groove"
+
+
+def test_store_panel_is_unchanged_by_default_alpha_imputation_is_lookup_only():
+    """`Store.from_records` must default to the pre-2026-07 panel: beta-only records dropped.
+
+    The lookup path imputes by default (nan -> an answer, a strict win); the PANEL path does not.
+    Admitting these ligands was measured over the 13 alleles whose reference set grows: AUROC -0.0019,
+    AUPRC -0.0012, worst where the merge is biggest (DPB1*11:01 +89% ligands, -0.0155 AUROC). Missing
+    alpha-typing marks a noisier study, not just absent metadata. Opposite defaults, each measured.
+    """
+    recs = [{"epitope": "AAKGVAAWSAGTFRQ", "mhc_a": "", "mhc_b": "HLA-DPB1*11:01",
+             "mhc_class": "MHCII"}]
+    off = Store.from_records(recs)._panel["mhc2"]
+    assert off.alleles == [], "a beta-only record must be dropped by default"
+    on = Store.from_records(recs, impute_alpha=True)._panel["mhc2"]
+    assert on.alleles == ["HLA-DPA10201-DPB11101"], "impute_alpha=True must admit it, alpha filled"

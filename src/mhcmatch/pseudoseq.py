@@ -14,6 +14,7 @@ nulls". See ``appendix/mhcmatch.tex`` §4.
 from __future__ import annotations
 
 import math
+import re
 from collections import Counter, defaultdict
 from functools import lru_cache
 from importlib import resources
@@ -34,13 +35,41 @@ def normalize_allele(a: str) -> str:
     return a
 
 
-def class2_key(mhc_a: str, mhc_b: str = "") -> str:
+@lru_cache(maxsize=1)
+def alpha_prior() -> dict:
+    """``DP/DQ beta chain -> most likely alpha chain``, for typings that omit the alpha.
+
+    Learned from the IEDB-derived panel and vendored (``data/mhc2_alpha_prior.tsv``); a beta is
+    listed only when its **34-mer groove** is >=95% determined over >=50 fully-typed ligands. See
+    :func:`class2_key`.
+    """
+    text = resources.files("mhcmatch.data").joinpath("mhc2_alpha_prior.tsv").read_text()
+    out = {}
+    for line in text.splitlines():
+        if line.startswith("#") or line.startswith("beta\t"):
+            continue
+        f = line.split("\t")
+        if len(f) >= 2:
+            out[f[0]] = f[1]
+    return out
+
+
+def class2_key(mhc_a: str, mhc_b: str = "", impute_alpha: bool = True) -> str:
     """pmhc class-II allele -> pseudosequence-FASTA key (locus-aware).
 
     DR (the DRA chain is monomorphic) is keyed by the beta chain alone, e.g.
     ``'HLA-DRB1*01:01' -> 'DRB1_0101'``. DP/DQ are keyed by the alpha-beta pair, e.g.
     ``('HLA-DPA1*01:03', 'HLA-DPB1*04:01') -> 'HLA-DPA10103-DPB10401'``. With no beta chain the
     input is returned unchanged (mouse H-2 and fallbacks).
+
+    ``impute_alpha`` (default on) fills a **missing DP/DQ alpha** from :func:`alpha_prior`, so a
+    beta-only typing resolves to a real groove instead of the unscorable ``'-DPB11101'``. This is the
+    polymorphic-locus analogue of what DR already gets for free from monomorphic DRA. It fires only
+    where the panel pins the *groove* to >=95% over >=50 ligands -- DQA1's polymorphism sits in the
+    alpha1 domain the pseudosequence samples, so a name- or 2-digit-group-level rule is not a
+    substitute: DQA1*01:02 and DQA1*01:05 share the group DQA1*01 but not the 34-mer, which reads as
+    100% certain while the sequence is a 58/42 coin flip. Rare DQ betas are left unresolved on
+    purpose -- a wrong groove scores silently, which is worse than not scoring.
     """
     b = (mhc_b or "").strip()
     if mhc_a.startswith("I-"):                        # mouse: 'I-Ab' / 'I-Ek' -> FASTA 'H-2-IAb'
@@ -50,18 +79,23 @@ def class2_key(mhc_a: str, mhc_b: str = "") -> str:
         return beta.replace("*", "_").replace(":", "")
     if not b:
         return mhc_a
-    beta = b.replace("*", "").replace(":", "")
+    beta = b.replace("*", "").replace(":", "").lstrip("-")   # '-DPB11101' is an alpha-less key, not a beta name
     if beta.startswith("HLA-"):
         beta = beta[4:]
-    return f"{mhc_a.replace('*', '').replace(':', '')}-{beta}"
+    alpha = mhc_a.replace("*", "").replace(":", "")   # NB the HLA- prefix stays: keys are 'HLA-DPA10103-DPB10401'
+    if not alpha and impute_alpha:
+        alpha = alpha_prior().get(beta, "")
+    return f"{alpha}-{beta}"
 
 
-def class2_from_name(name: str) -> str:
+def class2_from_name(name: str, impute_alpha: bool = True) -> str:
     """Class-II allele *name* (user- or IEDB-typed) -> mhc2 pseudoseq key, locus-aware.
 
     Handles DR (beta-only ``'HLA-DRB1*15:01' -> 'DRB1_1501'``), the DP/DQ alpha-beta pair given as
-    ``'HLA-DQA1*05:01/DQB1*03:01'``, and mouse (``'H2-IAb'`` / ``'I-Ab'`` -> ``'H-2-IAb'``). Falls back
-    to :func:`normalize_allele` for anything already in key form.
+    ``'HLA-DQA1*05:01/DQB1*03:01'``, a **DP/DQ beta given alone** (``'HLA-DPB1*11:01' ->
+    'HLA-DPA10201-DPB11101'``, the alpha imputed via :func:`alpha_prior` -- see :func:`class2_key`),
+    and mouse (``'H2-IAb'`` / ``'I-Ab'`` -> ``'H-2-IAb'``). Falls back to :func:`normalize_allele`
+    for anything already in key form.
     """
     a = name.strip()
     au = a.upper()
@@ -73,9 +107,12 @@ def class2_from_name(name: str) -> str:
         return class2_key(a)
     if "/" in a:
         x, y = a.split("/", 1)
-        return class2_key(x.strip(), y.strip())
+        return class2_key(x.strip(), y.strip(), impute_alpha)
     if "DRB" in au:
         return class2_key("DRA", a)
+    # a DP/DQ beta with no alpha alongside it -- the alpha is missing, not merely unwritten
+    if re.search(r"D[PQ]B1", au) and not re.search(r"D[PQ]A1", au):
+        return class2_key("", a, impute_alpha)
     return normalize_allele(a)
 
 

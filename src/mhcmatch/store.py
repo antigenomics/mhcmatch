@@ -255,26 +255,45 @@ class Store:
 
     # -- construction ---------------------------------------------------------
     @classmethod
-    def from_records(cls, records):
+    def from_records(cls, records, impute_alpha: bool = False):
         """records: dicts with ``epitope``, ``mhc_a`` (or ``mhc``), ``mhc_class``; optional
-        ``weight`` (default 1.0) confidence-weights the peptide in anchor-preference estimation."""
+        ``weight`` (default 1.0) confidence-weights the peptide in anchor-preference estimation.
+
+        ``impute_alpha`` admits class-II records that type only the **beta** chain, by filling the
+        most likely alpha from :func:`mhcmatch.pseudoseq.alpha_prior`; otherwise they are dropped
+        (4,824 human records, 1.5% of the panel, 2,516 of them HLA-DPB1*11:01).
+
+        **Default off, unlike the lookup path** (:func:`~mhcmatch.pseudoseq.class2_from_name`, where
+        imputing turns a ``nan`` into an answer and is a strict win). Admitting these ligands to the
+        *reference panel* was measured and it does not help: over the 13 alleles whose reference set
+        grows, held-out AUROC moves **-0.0019** and AUPRC **-0.0012**, and the damage scales with the
+        merge -- HLA-DPA10201-DPB11101 gains 2,339 ligands (+89%) and loses **0.0155 AUROC**. A study
+        that skipped alpha-typing produced noisier ligand calls too, so the missing alpha is a marker
+        of data quality and not merely of absent metadata. Turn it on only if you want coverage of
+        those ligands more than motif purity.
+        """
         from .pseudoseq import class2_key
         store = cls()
         for r in records:
             c = _CLASS.get(str(r.get("mhc_class", "")).strip())
             ep = str(r.get("epitope", "")).strip().upper()
             allele = str(r.get("mhc_a") or r.get("mhc") or "").strip()
-            if c is None or not ep or not allele or not all(x in _AA for x in ep):
+            if c is None or not ep or not all(x in _AA for x in ep):
                 continue
             if c == "mhc2":  # key class II by the alpha-beta pair (locus-aware)
-                allele = class2_key(allele, str(r.get("mhc_b") or "").strip())
+                allele = class2_key(allele, str(r.get("mhc_b") or "").strip(), impute_alpha)
+                if allele.startswith("-"):   # beta-only and no prior for it -> no groove exists
+                    continue
+            if not allele:
+                continue
             store._panel[c].add(ep, allele, float(r.get("weight", 1.0) or 1.0))
         for p in store._panel.values():
             p.build()
         return store
 
     @classmethod
-    def from_pmhc(cls, path=None, tier="full", species=None, classes=("mhc1", "mhc2")):
+    def from_pmhc(cls, path=None, tier="full", species=None, classes=("mhc1", "mhc2"),
+                  impute_alpha: bool = False):
         """Load the isalgo/pmhc_data TSV(.gz). ``species`` filters the *MHC* species
         (``"human"`` / ``"mouse"``). If ``path`` is None it uses ``$MHCMATCH_PMHC/pmhc_<tier>.tsv.gz``
         when that env var is set, otherwise **bootstraps the table from the public HF dataset** via
@@ -296,7 +315,7 @@ class Store:
                 if sp and row.get("mhc_species") != sp:
                     continue
                 recs.append(row)
-        return cls.from_records(recs)
+        return cls.from_records(recs, impute_alpha)
 
     def __len__(self):
         return sum(len(p.epitopes) for p in self._panel.values())

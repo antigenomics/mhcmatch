@@ -55,11 +55,45 @@ byte-identical (asserted at regeneration) and lifted the MixMHCpred3 benchmark f
 silently reintroduce the bug. The IMGT source was added at the same time, taking the human MHC-I
 reference panel from 166/203 scorable alleles to **203/203**.
 
-**Known gap.** 24 of 170 MHC-II panel alleles remain unscorable, e.g. `-DPB11101` (2511 ligands).
-These are **not** missing sequences: the names carry an empty α-chain (`<alpha>-<beta>`), because the
-source study typed only the β chain. IMGT cannot fix a typing gap — it needs an α-chain policy
-(DQA1/DQB1 are in strong linkage disequilibrium, so a most-likely-α rule is defensible). Tracked, not
-fixed.
+## `mhc2_alpha_prior.tsv`
+
+`DP/DQ beta chain -> most likely alpha chain`, used by `pseudoseq.class2_key(..., impute_alpha=True)`
+to key class-II records that type only the β chain. **4824 human MHC-II records (1.5% of the panel;
+2516 of them HLA-DPB1\*11:01 alone) carry an empty `mhc_a`** — they arrive as the groove-less key
+`-DPB11101` and were previously dropped by `Store.from_records` outright. DRA is monomorphic so DR
+needs no table (it is hardcoded in `class2_key`); DPA1/DQA1 are polymorphic and must be learned.
+
+**Derived** (not experimental) from the IEDB-derived pmhc panel — see `bench/compare/SOURCES.md` for
+the panel itself. A β is listed only when its **34-mer groove** is ≥95% determined over ≥50
+fully-typed ligands. 20 β chains qualify; 9 are refused.
+
+The criterion is the *groove*, not the allele name nor its 2-digit group — measured, not assumed.
+`DQA1*01:02` and `DQA1*01:05` share the group `DQA1*01` but have **different 34-mers**, so a
+group-level rule reads 100% certain on `DQB1*05:02` while the sequence is still a 58/42 coin flip
+(DQA1's polymorphism sits in the α1 domain the pseudosequence samples). Refused β chains keep their
+α-less key and stay unscorable on purpose: a wrong groove scores silently, which is worse than not
+scoring. The table rediscovers DQ2.5 (`DQB1*02:01`–`DQA1*05:01`) and DQ8 (`DQB1*03:02`–`DQA1*03:01`)
+blind, which is the expected linkage disequilibrium and a check that the method is sane.
+
+**Where it is on, and where it is not — both measured.** The *lookup* path
+(`class2_from_name`, `class2_key`) imputes by **default**: querying `HLA-DPB1*11:01` returned `nan`
+before and now resolves to a real groove, which is a strict win. The *panel* path
+(`Store.from_records`/`from_pmhc`) defaults to **off**, i.e. beta-only records stay dropped as they
+always were. Admitting them to the reference panel was tested over the 13 alleles whose reference set
+grows and it does **not** help — held-out AUROC **−0.0019**, AUPRC **−0.0012**, and the damage scales
+with the merge: `HLA-DPA10201-DPB11101` gains 2339 ligands (+89%) and loses **0.0155 AUROC**. A study
+that skipped α-typing produced noisier ligand calls too, so a missing α marks data quality, not just
+absent metadata. (Caveat: the held-out positives are fully-typed ligands, so this measures whether
+orphan ligands predict *typed* ones. Whether they predict orphan-like ligands is untested.)
+
+If turned on for the panel (`tier=full`): stranded ligands 4782 → 635, `HLA-DPA10201-DPB11101`
+2618 → 4957. Regenerate the table:
+
+    # see the snippet in this file's git history (commit that added mhc2_alpha_prior.tsv);
+    # it groups panel ligands by beta and keeps the modal 34-mer where P>=0.95 and n>=50.
+
+**Known gap.** 9 DQ β chains fail the bar and stay unresolvable (635 ligands), e.g. `-DQB10503`
+(P(groove)=54%) and `-DQB10502` (n=12). Rare DQ haplotypes are not in tight enough LD to impute.
 
 **History (2026-07-16).** Until this date the header carried only the group's *first* allele, so the
 other 8854 of MHC-I's 12997 alleles (68%) — and 8839 of MHC-II's 11048 (80%) — were **silently
