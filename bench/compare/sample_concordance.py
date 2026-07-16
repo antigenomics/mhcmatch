@@ -38,15 +38,14 @@ Run (needs ``gawk`` on PATH for NetMHCpan's ``-xls`` writer)::
     python bench/compare/sample_concordance.py --sample TESLA1 --cls mhc1 --limit-windows 40  # smoke
 
 **Privacy:** TESLA1 is public -> ``bench/results/``. Alekseech is private patient data -> its outputs
-and NetMHC cache go to gitignored paths (``bench/results/private/``, ``bench/compare/_cache/``); never
-commit or share Alekseech-derived peptides/rows.
+go to a gitignored path (``bench/results/private/``); never commit or share Alekseech-derived
+peptides/rows. Nothing is cached to disk, so no peptide leaves that path.
 """
 from __future__ import annotations
 
 import argparse
 import csv
 import os
-import pickle
 import sys
 from collections import defaultdict
 
@@ -248,22 +247,11 @@ def mhcmatch_rank(model, panel, pos, alleles, peptides, seed=0):
     return out
 
 
-def netmhc_rank(alleles, peptides, cls, cache_path=None, no_cache=False):
-    """``{(allele, peptide): %Rank_EL}`` (lower = stronger) via the NetMHC wrapper, pickle-cached."""
-    key = ("netmhc", cls, sorted(alleles), sorted(peptides))
-    if cache_path and not no_cache and os.path.exists(cache_path):
-        with open(cache_path, "rb") as fh:
-            ck, data = pickle.load(fh)
-        if ck == key:
-            print(f"# reused NetMHC cache ({len(data)} scores) from {cache_path}", file=sys.stderr)
-            return data
+def netmhc_rank(alleles, peptides, cls):
+    """``{(allele, peptide): %Rank_EL}`` (lower = stronger) via the NetMHC wrapper. Not cached --
+    see the note in ``run_compare.py``: benchmark caches here went stale against the model."""
     recs = netmhc.predict({a: sorted(peptides) for a in alleles}, cls, ba=False)
-    data = {k: rec["rank_el"] for k, rec in recs.items() if "rank_el" in rec}
-    if cache_path:
-        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-        with open(cache_path, "wb") as fh:
-            pickle.dump((key, data), fh)
-    return data
+    return {k: rec["rank_el"] for k, rec in recs.items() if "rank_el" in rec}
 
 
 def pipeline_calls(sample, cls):
@@ -341,7 +329,7 @@ def best_allele_agreement(mm, nm, peptides, alleles):
     return agree, total
 
 
-def view_b(sample, cls, model, panel, pos, seed, cache_path, no_cache):
+def view_b(sample, cls, model, panel, pos, seed):
     """3-way agreement on the pipeline's own called ``(epitope, best_allele)`` rows."""
     calls = pipeline_calls(sample, cls)
     alleles = sorted({a for _, a, _ in calls})
@@ -352,7 +340,7 @@ def view_b(sample, cls, model, panel, pos, seed, cache_path, no_cache):
         return None
     peps = sorted({ep for ep, _, _ in rows})
     mm = mhcmatch_rank(model, panel, pos, both, peps, seed=seed)
-    nm = netmhc_rank(sorted(both), peps, cls, cache_path=cache_path, no_cache=no_cache)
+    nm = netmhc_rank(sorted(both), peps, cls)
     triples = [(st, mm.get((a, ep)), nm.get((a, ep)))
                for ep, a, st in rows if (a, ep) in mm and (a, ep) in nm]
     if len(triples) < 2:
@@ -448,17 +436,13 @@ def run_one(sample, cls, args):
 
     a_res = ba_res = None
     if both:
-        cdir = os.path.join(os.path.dirname(__file__), "_cache")
-        cache = os.path.join(cdir, f"concordance_{sample}_{cls}_{args.tier}_A.pkl")
         print(f"# scoring {len(kmers):,} k-mers x {len(both)} alleles ...", file=sys.stderr)
         mm = mhcmatch_rank(model, panel, pos, both, kmers, seed=args.seed)
-        nm = netmhc_rank(both, kmers, cls, cache_path=cache, no_cache=args.no_cache)
+        nm = netmhc_rank(both, kmers, cls)
         a_res = view_a(mm, nm, both)
         ba_res = best_allele_agreement(mm, nm, kmers, both)
 
-    bcache = os.path.join(os.path.dirname(__file__), "_cache",
-                          f"concordance_{sample}_{cls}_{args.tier}_B.pkl")
-    b_res = view_b(sample, cls, model, panel, pos, args.seed, bcache, args.no_cache)
+    b_res = view_b(sample, cls, model, panel, pos, args.seed)
 
     priv = SAMPLES[sample]["private"]
     outdir = os.path.join(args.out, "private") if priv else args.out
@@ -483,7 +467,6 @@ def main(argv=None):
     ap.add_argument("--footprint", default="adaptive", choices=("anchor", "core", "adaptive"))
     ap.add_argument("--limit-windows", type=int, default=0, help="cap windows for a smoke run (0=all)")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--no-cache", action="store_true")
     ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "results"))
     args = ap.parse_args(argv)
     if args.sample not in SAMPLES:

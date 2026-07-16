@@ -1,22 +1,24 @@
-# BUG: the MHC-II binder gate is a length detector
+# FIXED: the MHC-II binder gate was a length detector
 
-**Status: open. Found while building `mhcmatch.ligand` (v0.3); deliberately NOT fixed in that branch,
-because the fix changes `Store.restriction` semantics and every MHC-II number that depends on them.**
+**Status: fixed.** Found while building `mhcmatch.ligand` (v0.3) and deliberately left open there
+(the fix changes `Store.restriction` semantics). Now fixed by gating on a **length-conditional
+%rank** instead of the raw score — option 1 below. Regression test:
+`test_mhc2_binder_gate_is_not_a_length_detector`.
 
 ## The bug
 
-`Store.restriction(..., diffuse=True)` gates binders on `anchor_score > 0.0` (`store.py:291`).
+`Store.restriction(..., diffuse=True)` gated binders on `anchor_score > 0.0`.
 
 But `AnchorModel.score` for MHC-II is a **max over every 9-mer register frame** (`diffusion.py`,
 `best_register`). A longer peptide offers more frames to maximise over, so the score rises with
-length **even on pure noise**. The gate therefore measures length, not binding.
+length **even on pure noise**. The gate therefore measured length, not binding.
 
-## The measurement
+## The measurement (before)
 
 `AnchorModel.score` on **random** peptides (uniform amino acids, no motif whatsoever), allele
 `DRB1_1501`, shortlist tier, 300 peptides per length:
 
-| peptide length | mean score | fraction passing the `s > 0` binder gate |
+| peptide length | mean score | passing the `s > 0` gate |
 |---|---|---|
 | 9 | −2.10 | 23% |
 | 11 | +0.16 | 49% |
@@ -26,35 +28,62 @@ length **even on pure noise**. The gate therefore measures length, not binding.
 | 19 | +2.40 | 97% |
 | 21 | +2.53 | **98%** |
 
-A random 15-mer — the modal MHC-II ligand length — is called a binder 85% of the time. A random
-21-mer, 98% of the time.
+A random 15-mer — the modal MHC-II ligand length — was called a binder 85% of the time. A random
+21-mer, 98%.
 
-## Why it was not caught
+## The fix
 
-MHC-I is unaffected: its anchors are end-relative, so there is no register search and no max, and the
-peptide-length range is narrow (8–11). Every existing MHC-II benchmark
-(`bench/results/register_em_mhc2.md`, the CV sweeps) scores **ranking** — AUC, recovery@k, top-k —
-which is invariant to a monotone length offset when candidates are length-matched. The gate is the
-only place the raw score is compared against an absolute threshold, and nothing benchmarks it.
+The gate is now `vote-significant OR percent_rank(allele, score, length=len(peptide)) <= 2`.
 
-## Fix options (not yet chosen)
+`RankCalibrator._ensure_len` builds the null from random peptides of **exactly the query's length**,
+so the null goes through the same max-over-`L−8`-frames as the query and the frame-selection bias
+**cancels** instead of being modelled. This needs no independence assumption — unlike an
+extreme-value / `F**n` correction, which would be wrong here because overlapping frames are
+correlated. It also makes the false-positive rate an explicit dial: `%rank <= t` passes `t%` of the
+null by construction.
 
-1. **Length-conditioned calibration.** Gate on a %rank from `calibrate.RankCalibrator` against a
-   **length-matched** background, not on the raw score. Note `calibrate.random_peptides()` currently
-   samples length from the corpus distribution, so today's %rank *marginalises* over length rather
-   than conditioning on it — that would need fixing too.
-2. **Length-correct the score.** Subtract the expected max-over-`n` frames under the null, i.e. an
-   extreme-value correction for `n = len(peptide) - 8` frames. Principled, and cheap.
-3. **Gate on the core, not the peptide.** Score only the winning frame's core against a 9-mer null.
+**Class-gated to MHC-II on purpose.** MHC-I is end-anchored — no register search, no max, nothing to
+correct — and its length preference is *real modelled biology* (`length_prior`, on by default since
+v0.5.0). A length-conditional null would delete that signal, which `calibrate.random_peptides`
+already warns about. MHC-I keeps the raw gate and pays no calibration cost; `restriction(cls="mhc1")`
+is byte-identical across this change (verified by digest over 126 peptides x 6 alleles).
 
-Option 1 is the smallest change consistent with the existing calibration machinery; option 2 is the
-most honest about the statistics.
+## The measurement (after)
+
+Same protocol, through `restriction(cls="mhc2", diffuse=True)`:
+
+| peptide length | old gate `s > 0` | new gate `%rank <= 2` |
+|---|---|---|
+| 9 | 20% | **3.7%** |
+| 11 | 46% | **6.7%** |
+| 13 | 74% | **6.3%** |
+| 15 | 84% | **5.3%** |
+| 17 | 90% | **6.0%** |
+| 19 | 93% | **6.0%** |
+| 21 | 95% | **4.7%** |
+
+Flat, as designed. (It sits near 5% rather than exactly 2% because these test peptides are
+uniform-AA while the null uses the corpus AA frequencies — a deliberately different distribution.)
+
+## The cost, stated plainly
+
+On 40 real held-out `DRB1_1501` ligands the gate passes **45%** end-to-end (`vote OR %rank<=2`),
+where the old gate passed **98%**. That is not a regression: the old 98% was meaningless, since the
+same gate also passed 95% of *random* 21-mers — a flag that says yes to everything has perfect
+sensitivity and zero information. The new gate is ~45% sensitive at ~8% false-positive, ~5.6x
+enrichment. The modest sensitivity reflects mhcmatch's genuinely weaker MHC-II model
+(frequent-stratum AUPRC 0.529 vs NetMHCIIpan's 0.759), not the gate.
+
+## Benchmarks: unmoved, by construction
+
+`bench/compare/run_compare.py` scores `AnchorModel.score` directly (via `predictors.mhcmatch_scores`)
+and never calls `restriction`, so no head-to-head number moves. `score` itself is unchanged.
 
 ## Not affected
 
 `mhcmatch.ligand` — the span model never calls `AnchorModel.score`. Span ranking is driven by the
-flank/length model precisely *because* of this bug: the binding term is identical across all spans
-sharing a core and cancels in the argmax, so ranking spans by `AnchorModel.score` would have simply
-returned the longest span every time. There is a regression test pinning this
-(`test_anchor_score_is_length_biased_negative_control`) so the bias cannot be silently "fixed" without
-someone re-reading this file.
+flank/length model precisely *because* the score is length-biased: the binding term is identical
+across all spans sharing a core and cancels in the argmax, so ranking spans by `AnchorModel.score`
+would simply return the longest span every time. **The score is still length-biased and that is still
+correct** — this fix changed the *gate*, not the score, and
+`test_anchor_score_is_length_biased_negative_control` still pins the bias.

@@ -161,8 +161,11 @@ data. Each is a milestone whose spec is its appendix subsection:
 **Head-to-head harness — built** (`bench/compare/`, results in `bench/results/compare_*.md`, provenance
 in `bench/compare/SOURCES.md`). Reproducible comparison vs **NetMHCpan-4.2b** / **NetMHCIIpan-4.3i** on
 two shared per-(peptide,allele) tasks, stratified rare/medium/frequent, with AUROC/AUPRC/PPV@k,
-bootstrap CIs, and paired DeLong / bootstrap significance. Caches (examples, NetMHC scores) so model
-variants re-score in ~2s. Key measured results (seed 0, shortlist, human):
+bootstrap CIs, and paired DeLong / bootstrap significance. **Nothing is cached** — the old
+(examples, NetMHC scores) pickle was keyed on the CLI args while `examples` depends on the eval-allele
+set, so it silently served a stale eval set once the v0.5.0 pseudosequence fix changed which alleles
+are eligible; every run now regenerates (a 35–70 s NetMHC sweep). Key measured results (seed 0,
+shortlist, human):
 
 - **Allele-specificity** (hard negatives = other alleles' ligands — the restriction task mhcmatch is
   built for): **mhcmatch beats NetMHCpan** on MHC-I medium+frequent (AUROC, AUPRC, PPV@k all p<0.001;
@@ -245,7 +248,8 @@ NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2)
 
 ## 6c. Known issues
 
-- **The MHC-II binder gate is a length detector** (`store.py:291`, `anchor_score > 0.0`). `AnchorModel.score` is a max over register frames, so it grows with peptide length even on noise: a **random** 15-mer passes the gate 85% of the time, a random 21-mer 98%. Ranking benchmarks are unaffected (a monotone length offset cancels when candidates are length-matched), which is why it went unnoticed. Measurement and fix options: `bench/results/binder_gate_length_bias.md`. `mhcmatch.ligand` is unaffected — it never uses `AnchorModel.score` to rank spans.
+- ~~**The MHC-II binder gate is a length detector**~~ — **fixed**. `restriction(diffuse=True)` gated on `anchor_score > 0.0`, a max over register frames, so it grew with peptide length even on noise (a random 21-mer passed 98% of the time). It now gates on `percent_rank(..., length=len(peptide)) <= 2`: the null is random peptides at the query's own length, so it takes the same frame-max and the bias cancels. Class-gated to MHC-II — MHC-I is end-anchored and its length preference is real biology a length-conditional null would delete; `restriction(cls="mhc1")` is byte-identical. `bench/results/binder_gate_length_bias.md`.
+- **`restriction(diffuse=True)` ranks on a cross-allele-incomparable raw score.** The diffused anchor log-odds carries a per-allele offset and (from shrinkage) a per-allele scale, so a raw-score argmax systematically buries rare alleles. `calibrated=True` already ranks by per-allele %rank and is the cross-allele-comparable mode. Making %rank the *default* ranker was measured and **deliberately not shipped**: through the shipped `footprint="anchor"` path it is a redistribution, not a win (MHC-I top-1 allele-recovery rare +5.9 / medium +2.3 / frequent −3.5 / overall −1.1 pt). A leave-one-out ligand null was also measured and dropped — redundant under %rank.
 
 ## 7. Conventions
 

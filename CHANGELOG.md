@@ -6,6 +6,32 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [Unreleased]
+
+### Fixed
+
+- **The MHC-II binder gate was a length detector.** `Store.restriction(diffuse=True)` gated on
+  `anchor_score > 0.0`, but `AnchorModel.score` is a max over the `L−8` register frames, so it climbs
+  with peptide length on **pure noise**: a random 15-mer was called a binder 85% of the time, a random
+  21-mer **98%**. The gate now uses `percent_rank(allele, score, length=len(peptide)) <= 2` — a null
+  of random peptides at the *query's own length*, so it goes through the same frame-max and the bias
+  cancels (no independence assumption, unlike an extreme-value correction; overlapping frames are
+  correlated). False-positive rate is now flat in length (3.7–6.7% for L=9…21) and is an explicit
+  dial: `%rank <= t` passes `t%` of the null by construction. **Class-gated to MHC-II**: MHC-I is
+  end-anchored with no frame max, and its length preference is real modelled biology that a
+  length-conditional null would delete — `restriction(cls="mhc1")` is byte-identical and pays no
+  calibration cost. Sensitivity on real held-out ligands goes 98% → 45% end-to-end; the old 98% was
+  meaningless next to a 95% false-positive rate. No benchmark moves (`run_compare` scores
+  `AnchorModel.score`, never `restriction`). See `bench/results/binder_gate_length_bias.md`.
+- **The benchmark harness cached stale results.** `run_compare.py` keyed its `(examples, NetMHC
+  scores)` pickle on the CLI args only — but `examples` depends on the eval-allele set, and
+  `select_eval_alleles` gates on `a in pseudo`, so v0.5.0's pseudosequence fix silently changed which
+  alleles are eligible while the key did not. The harness then served examples built from a **stale
+  eval set** (rare n=21 against the true 24), producing numbers that disagreed with the committed
+  results. **All disk caching is removed** from `run_compare.py`, `sample_concordance.py` and
+  `bench/affinity/eval.py`; every run regenerates (a 35–70 s NetMHC sweep). The uncached harness now
+  reproduces `compare_mhc1_human_hard_ligandbg.md` byte-identically.
+
 ## [0.5.0] — 2026-07-16
 
 **Allele coverage was broken: 68% of MHC-I and 80% of MHC-II alleles could not be resolved at all.**

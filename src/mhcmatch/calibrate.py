@@ -85,10 +85,14 @@ class RankCalibrator:
         rng = random.Random(seed)
         aa, lens = corpus_stats(corpus)
         self._model = model
+        self._aa = aa
+        self._n = n
+        self._seed = seed
         self._rands = random_peptides(aa, lens, n, rng, length_bg)
         self._positives = positives or {}
-        self._bg = {}   # allele -> sorted background scores (lazy)
-        self._iso = {}  # allele -> isotonic (xs, ys) (lazy)
+        self._bg = {}      # allele -> sorted background scores (lazy)
+        self._bg_len = {}  # (allele, L) -> sorted length-conditional background scores (lazy)
+        self._iso = {}     # allele -> isotonic (xs, ys) (lazy)
 
     def _ensure(self, allele: str):
         """Compute and cache the allele's background (and isotonic P) on first use -- so a query over
@@ -104,11 +108,39 @@ class RankCalibrator:
             if ps:
                 self._iso[allele] = _isotonic([(s, 1) for s in ps] + [(s, 0) for s in bg])
 
-    def percent_rank(self, allele: str, score: float) -> float:
+    def _ensure_len(self, allele: str, length: int):
+        """Background of random peptides of **exactly** ``length`` for ``allele`` (lazy, per (a, L)).
+
+        This is what makes a %rank comparable across peptide lengths. ``AnchorModel.score`` is a max
+        over the ``L-8`` MHC-II register frames, so it grows with ``L`` even on noise; scoring the
+        null peptides at the *same* length puts them through the same max, so the frame-selection
+        bias cancels instead of being modelled. No independence assumption (unlike an
+        extreme-value/``F**n`` correction) -- the overlapping frames are correlated and this does not
+        care."""
+        key = (allele, length)
+        if key in self._bg_len:
+            return
+        rng = random.Random(f"{self._seed}:{length}")   # per-length stream, deterministic
+        res, rw = zip(*self._aa.items())
+        peps = ["".join(rng.choices(res, rw, k=length)) for _ in range(self._n)]
+        self._bg_len[key] = sorted(s for s in (self._model.score(p, allele) for p in peps)
+                                   if s != float("-inf"))
+
+    def percent_rank(self, allele: str, score: float, length: int | None = None) -> float:
         """Percentile of ``score`` in the allele's background: % of random peptides scoring higher
-        (lower = stronger binder). ``nan`` if the allele has no background."""
-        self._ensure(allele)
-        bg = self._bg.get(allele)
+        (lower = stronger binder). ``nan`` if the allele has no background.
+
+        ``length`` conditions the null on that peptide length (:meth:`_ensure_len`) instead of
+        marginalising over the corpus length mix -- required for any **absolute** threshold (a binder
+        gate), since the raw score is length-inflated. Leave it ``None`` to rank peptides of a single
+        length against each other, where the marginal null is what preserves MHC-I's real length
+        preference."""
+        if length is not None:
+            self._ensure_len(allele, length)
+            bg = self._bg_len.get((allele, length))
+        else:
+            self._ensure(allele)
+            bg = self._bg.get(allele)
         if not bg:
             return float("nan")
         above = len(bg) - bisect.bisect_right(bg, score)
@@ -127,7 +159,10 @@ class RankCalibrator:
         return ys[max(0, min(i, len(ys) - 1))]
 
 
-def band(percent_rank: float, strong: float = 0.5, weak: float = 2.0) -> str:
+STRONG_RANK, WEAK_RANK = 0.5, 2.0   # NetMHCpan %rank binding-band thresholds
+
+
+def band(percent_rank: float, strong: float = STRONG_RANK, weak: float = WEAK_RANK) -> str:
     """Qualitative binding band from %rank (NetMHCpan class-I thresholds): strong/weak/non-binder."""
     if percent_rank != percent_rank:
         return "unknown"

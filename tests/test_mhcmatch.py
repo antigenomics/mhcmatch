@@ -364,6 +364,23 @@ def test_anchor_score_is_length_biased_negative_control():
     assert mean(19) > mean(9)
 
 
+def test_mhc2_binder_gate_is_not_a_length_detector():
+    # The score IS length-biased (test above) -- so an absolute `anchor_score > 0` binder gate was a
+    # length detector: it passed a random 15-mer 85% of the time and a random 21-mer 98%
+    # (bench/results/binder_gate_length_bias.md). restriction() now gates on a %rank against random
+    # peptides OF THE SAME LENGTH, which puts the null through the same frame-max, so the bias
+    # cancels: the false-positive rate must be flat in length, not a ramp.
+    store, _ = _mhc2_store()
+    rng = random.Random(0)
+    rates = {}
+    for L in (9, 15, 21):
+        peps = ["".join(rng.choice(_AA) for _ in range(L)) for _ in range(40)]
+        rates[L] = sum(store.restriction(p, cls="mhc2", alleles=["DRB1_1501"],
+                                         diffuse=True)[0].binder for p in peps) / len(peps)
+    assert max(rates.values()) <= 0.35, rates       # nothing like the old 85-98%
+    assert rates[21] - rates[9] <= 0.25, rates      # and no ramp with length
+
+
 def test_bounds_pad_and_clipping():
     core = "WKVKFWKVK"
     prot = core + "AAAA"                          # core flush against the N-terminus

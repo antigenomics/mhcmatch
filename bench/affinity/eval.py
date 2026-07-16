@@ -7,7 +7,7 @@ Spearman(pred, measured log-IC50) and AUROC at the 500 nM binder threshold; aggr
     conda run -n tcren-nb python bench/affinity/eval.py            # human common+rare
     conda run -n tcren-nb python bench/affinity/eval.py --species all --per-allele 60
 
-NetMHCpan predictions are cached (bench/affinity/_cache/netmhc_<sig>.json). Caveat: NetMHCpan was
+NetMHCpan predictions are recomputed every run (nothing is cached to disk). Caveat: NetMHCpan was
 trained on much of IEDB, so its numbers here are optimistic (train/test overlap we can't undo);
 mhcmatch is trained only on the complementary split. Read the gap with that in mind -- the fair
 signal is the RARE / non-human strata where NetMHCpan's training is thin.
@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import math
 import os
 import random
@@ -29,7 +28,6 @@ from mhcmatch.affinity import AffinityModel                   # noqa: E402
 from mhcmatch.pseudoseq import load_pseudo, normalize_allele  # noqa: E402
 
 MEAS = os.path.join(os.path.dirname(__file__), "measured.tsv")
-CACHE = os.path.join(os.path.dirname(__file__), "_cache")
 PMHC = "/Users/mikesh/hf/pmhc_data/pmhc/pmhc_full.tsv.gz"
 
 
@@ -103,14 +101,9 @@ def netmhc_key(allele):
 
 
 def netmhc_predict(pairs):
-    """{(peptide, allele): aff_nm} from NetMHCpan (-BA), cached by a hash of the request."""
-    import hashlib
+    """{(peptide, allele): aff_nm} from NetMHCpan (-BA). Not cached -- see the note in
+    ``bench/compare/run_compare.py``: benchmark caches here went stale against the model."""
     import netmhc
-    os.makedirs(CACHE, exist_ok=True)
-    sig = hashlib.md5(repr(sorted(pairs)).encode()).hexdigest()[:12]
-    path = os.path.join(CACHE, f"netmhc_{sig}.json")
-    if os.path.exists(path):
-        return {tuple(k.split("\t")): v for k, v in json.load(open(path)).items()}
     by_allele = defaultdict(list)
     for pep, allele in pairs:
         by_allele[allele].append(pep)
@@ -127,7 +120,6 @@ def netmhc_predict(pairs):
         for pep in peps:
             if pep in recs and "aff_nm" in recs[pep]:
                 out[(pep, allele)] = recs[pep]["aff_nm"]
-    json.dump({f"{k[0]}\t{k[1]}": v for k, v in out.items()}, open(path, "w"))
     return out
 
 

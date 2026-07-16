@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import pickle
 import random
 import sys
 from collections import defaultdict
@@ -95,8 +94,8 @@ def aggregate(data, rng):
 
 
 def gen_examples(rc, ev, cls, benchmark, prot, forb, rng, frac, cap, n_decoys, decoy_mode, hard):
-    """Positives + decoys only (no scoring), so the example set + NetMHC scores can be cached and
-    reused across every mhcmatch model variant (fair comparison + fast iteration)."""
+    """Positives + decoys only (no scoring): the example set is independent of the mhcmatch model,
+    so every variant in a sweep is compared on identical examples."""
     rmap = task.rarity(rc)
 
     def bt(test, rm):
@@ -164,7 +163,6 @@ def main():
     ap.add_argument("--frac", type=float, default=0.3)
     ap.add_argument("--cap", type=int, default=40)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--no-cache", action="store_true", help="ignore the cached examples+NetMHC scores")
     ap.add_argument("--out", default=os.path.join(os.path.dirname(__file__), "..", "results"))
     args = ap.parse_args()
     rng = random.Random(args.seed)
@@ -184,27 +182,17 @@ def main():
           f"{len(ev)} eval; {len(dropped)} of panel unsupported by {_TOOL_LABEL[args.cls]}")
 
     forb = task.forbidden_set(rc)
-    # (examples, NetMHC scores) are independent of the mhcmatch model -> cache and reuse across
-    # footprint/kernel/tau variants (fair: identical examples; fast: skip the 35-70s NetMHC sweep).
-    ckey = "_".join(str(x) for x in (args.cls, args.species, args.tier, args.benchmark, args.seed,
-                                     args.n_sample, args.limit_alleles, args.n_decoys, args.frac,
-                                     args.cap, args.decoy_mode))
-    cdir = os.path.join(os.path.dirname(__file__), "_cache")
-    cpath = os.path.join(cdir, f"{ckey}.pkl")
-    if os.path.exists(cpath) and not args.no_cache:
-        with open(cpath, "rb") as fh:
-            examples, nm = pickle.load(fh)
-        print(f"# reused cached examples+NetMHC ({len(examples)} examples) from {cpath}")
-    else:
-        prot = task.ProteomeSampler(os.path.join(args.pmhc_dir, "proteome", "human.fasta.gz"))
-        hard = task.HardNegativeSampler(rc) if args.decoy_mode == "hard" else None
-        examples = gen_examples(rc, ev, args.cls, args.benchmark, prot, forb, rng,
-                                args.frac, args.cap, args.n_decoys, args.decoy_mode, hard)
-        print(f"# scoring {len(examples)} examples with NetMHC ...", file=sys.stderr)
-        nm = predictors.netmhc_scores(examples, args.cls)
-        os.makedirs(cdir, exist_ok=True)
-        with open(cpath, "wb") as fh:
-            pickle.dump((examples, nm), fh)
+    # Nothing is cached, deliberately. The old (examples, NetMHC) pickle was keyed on the CLI args
+    # only, but `examples` depends on `ev` -- and select_eval_alleles gates on `a in pseudo`, so the
+    # v0.5.0 pseudosequence fix silently changed which alleles are eligible while the key did not.
+    # The harness then served examples built from a stale eval set (rare n=21 vs the committed 24).
+    # Regenerating every run costs a 35-70s NetMHC sweep and is always consistent with the model.
+    prot = task.ProteomeSampler(os.path.join(args.pmhc_dir, "proteome", "human.fasta.gz"))
+    hard = task.HardNegativeSampler(rc) if args.decoy_mode == "hard" else None
+    examples = gen_examples(rc, ev, args.cls, args.benchmark, prot, forb, rng,
+                            args.frac, args.cap, args.n_decoys, args.decoy_mode, hard)
+    print(f"# scoring {len(examples)} examples with NetMHC ...", file=sys.stderr)
+    nm = predictors.netmhc_scores(examples, args.cls)
     mm = score_mhcmatch(rc, examples, args.cls, args.benchmark, args.footprint,
                         h=args.h, tau=args.tau, weights=args.weights, background=args.background)
     data = predictors.aligned(examples, {"mhcmatch": mm, "netmhcpan": nm})

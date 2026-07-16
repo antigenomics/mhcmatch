@@ -29,7 +29,6 @@ appendix/*.fls
 appendix/*.fdb_latexmk
 
 # head-to-head benchmark cache (examples + NetMHC scores)
-bench/compare/_cache/
 
 # private-sample concordance outputs (e.g. Alekseech patient data — never commit or share)
 bench/results/private/
@@ -43,4 +42,3 @@ bench/results/private/
 # affinity training table (regenerable from the IEDB dump via bench/affinity/data.py)
 bench/affinity/measured.tsv
 # cached NetMHCpan/NetMHCIIpan predictions for the affinity head-to-head
-bench/affinity/_cache/

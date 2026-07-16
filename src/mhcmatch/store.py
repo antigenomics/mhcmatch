@@ -362,12 +362,23 @@ class Store:
 
         With ``diffuse=True`` the diffusion-shrunk anchor log-odds
         (:class:`mhcmatch.diffusion.AnchorModel`) **ranks** and the neighbour vote/enrichment
-        **gates**: an allele is a binder if it is vote-significant *or* its anchors are plausible
-        (``anchor_score > 0``). On held-out (novel) peptides the anchor log-odds is the far better
-        ranker---the vote method relies on same-allele signature neighbours, which are sparse for a
-        genuinely new peptide, so vote-first ranking buries the true allele; the diffused anchor
-        score scores every allele directly and rescues rare ones. Vote breaks ties. Without
-        diffusion, vote fraction ranks and the call returns ``[]`` when there are no neighbours.
+        **gates**: an allele is a binder if it is vote-significant *or* the anchors are plausible.
+        On held-out (novel) peptides the anchor log-odds is the far better ranker---the vote method
+        relies on same-allele signature neighbours, which are sparse for a genuinely new peptide, so
+        vote-first ranking buries the true allele; the diffused anchor score scores every allele
+        directly and rescues rare ones. Vote breaks ties. Without diffusion, vote fraction ranks and
+        the call returns ``[]`` when there are no neighbours.
+
+        "Anchors are plausible" is **class-specific**, and the difference is load-bearing:
+
+        - **MHC-II**: ``%rank <= 2`` against random peptides *of the query's own length*. ``score`` is
+          a max over the ``L-8`` register frames, so it climbs with length even on pure noise -- the
+          old absolute ``anchor_score > 0`` gate was a *length detector* (it passed a random 15-mer
+          85% of the time, a random 21-mer 98%). Scoring the null at the same length puts it through
+          the same frame-max, so the bias cancels. This costs a per-(allele, length) calibration.
+        - **MHC-I**: still ``anchor_score > 0``. It is end-anchored -- no register search, no max, no
+          length inflation to correct -- and its length preference is real modelled biology that a
+          length-conditional null would delete. MHC-I results are unchanged and pay no calibration.
         """
         peptide = peptide.strip().upper()
         cls = cls or infer_class(peptide)
@@ -378,19 +389,38 @@ class Store:
         n = sum(tally.values()) if tally else 0
         thr = -math.log10(alpha)
         diffuse = diffuse or calibrated
+        allele_set = list(self._allele_set(panel, alleles))
         am = self._anchor_model(cls) if diffuse else None
-        cal = self._rank_calibrator(cls) if calibrated else None
+        # The MHC-II binder gate needs a length-conditional null, which needs a calibrator -- so build
+        # one when diffusing class II even if the caller did not ask for calibrated outputs. MHC-I is
+        # end-anchored (no register max to inflate with length) and its length preference is real
+        # modelled biology, so it keeps the raw gate and pays nothing. A panel-less store has no
+        # corpus to calibrate against and must stay graceful (returns []).
+        need_cal = diffuse and (calibrated or cls == "mhc2")
+        cal = self._rank_calibrator(cls) if (need_cal and allele_set and panel.epitopes) else None
+        if diffuse:
+            from .calibrate import WEAK_RANK, band
         out = []
-        for a in self._allele_set(panel, alleles):
+        for a in allele_set:
             k = tally.get(a, 0) if tally else 0
             vote = k / n if n else 0.0
             enr = -math.log10(max(_binom_sf(k, n, panel.freq[a]), 1e-300)) if (k and n) else 0.0
             if diffuse:
                 s = am.score(peptide, a)
-                binder = (enr >= thr and k > 0) or s > 0.0
+                binder = enr >= thr and k > 0
+                if not binder:
+                    if cls == "mhc2" and cal is not None:
+                        # %rank against random peptides OF THIS LENGTH. The raw `s > 0` gate measured
+                        # length, not binding: `score` maxes over the L-8 register frames, so it
+                        # climbs with L even on noise (a random 21-mer passed 98% of the time).
+                        # Scoring the null at the same length puts it through the same max, so the
+                        # frame-selection bias cancels rather than being modelled.
+                        pr = cal.percent_rank(a, s, length=len(peptide))
+                        binder = pr == pr and pr <= WEAK_RANK
+                    else:
+                        binder = s > 0.0      # MHC-I: end-anchored, no frame max to correct for
                 r = Restriction(a, vote, enr, k, binder, round(s, 3))
-                if cal is not None:
-                    from .calibrate import band
+                if calibrated and cal is not None:
                     r.rank = round(cal.percent_rank(a, s), 3)
                     r.p_present = round(cal.p_present(a, s), 4)
                     r.band = band(r.rank)
