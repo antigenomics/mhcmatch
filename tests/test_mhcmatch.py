@@ -557,3 +557,22 @@ def test_pseudoseq_groups_are_exact_identity_not_similarity():
     for cls in ("mhc1", "mhc2"):
         seqs = load_pseudo(cls)
         assert all(len(s) == 34 for s in seqs.values())
+
+
+def test_imgt_derived_alleles_cover_what_netmhcpan_omits():
+    """The FASTA carries IPD-IMGT/HLA-derived alleles NetMHCpan's table never had.
+
+    HLA-F is the clearest case: absent from MHC_pseudo.dat entirely, so it has no known 34-mer to
+    check against -- it is trusted because HLA-E and HLA-G round-trip 100% through the same
+    cross-gene column mapping (see data/PROVENANCE.md). HLA-A*30:14 is a plain gap in the table.
+    Both stranded real panel ligands before 2026-07-16.
+    """
+    p = load_pseudo("mhc1")
+    assert len(p) > 20000, f"{len(p)} keys -- the IMGT source is missing?"
+    for allele in ("HLA-A30:14", "HLA-F01:01", "HLA-F01:03", "HLA-F01:04"):
+        assert allele in p, f"{allele} absent -- IMGT-derived alleles not vendored?"
+        assert set(p[allele]) <= set("ACDEFGHIKLMNPQRSTVWY"), f"{allele} has a non-residue"
+    # HLA-F's groove is near-monomorphic: its alleles differ outside the 34 positions.
+    assert p["HLA-F01:01"] == p["HLA-F01:03"] == p["HLA-F01:04"]
+    # ...and it is genuinely distinct from the classical loci, i.e. not an alignment artefact.
+    assert p["HLA-F01:01"] != p["HLA-A02:01"]

@@ -11,20 +11,55 @@ group, space-separated: `>ALLELE [ALLELE ...]|n=<count>`. All of them are keys i
 `pseudoseq.load_pseudo`, so a query for any allele in the group returns that group's sequence —
 which *is* that allele's own sequence, since the group is defined by exact 34-mer identity.
 
-- **MHC-I:** 4143 unique sequences over **12997 alleles** (human HLA-A/B/C, mouse H-2, others).
+- **MHC-I:** 5407 unique sequences over **20082 alleles** (human HLA-A/B/C/E/F/G, mouse H-2, others).
 - **MHC-II:** 2209 unique sequences over **11048 alleles** (human HLA-DR/DQ/DP, mouse H-2 I-A/I-E, others).
 
-Derived from the NetMHCpan pseudosequence definition by the sibling `antigenomics/tcren` repo's
-`scripts/build_pseudo_fasta.py`. Used by `mhcmatch.pseudoseq` as the allele-similarity alphabet for
-the cross-allele diffusion model (see `appendix/mhcmatch.tex` §4). Regenerate with:
+Two sources, built by the sibling `antigenomics/tcren` repo's `scripts/build_pseudo_fasta.py`:
 
+1. **NetMHCpan's tables** (`MHC_pseudo.dat`, `pseudosequence.2023.all.X.dat`) — 12997 MHC-I alleles.
+   Authoritative wherever present.
+2. **IPD-IMGT/HLA 3.65.0** (`ANHIG/IMGTHLA`, `alignments/{A,B,C,E,F,G}_prot.txt`) — **+7085**
+   class-I alleles the NetMHCpan table has never covered. It lags IMGT and omits **HLA-F entirely**.
+   The 34 groove positions are *not* hardcoded: they are recovered by consensus from the alleles the
+   table already knows, cross-checked between genes (HLA-B and HLA-C solve independently and agree),
+   then applied to genes with too few knowns by aligning reference sequences — with **HLA-E and
+   HLA-G as positive controls** (both round-trip 100%, which is what licenses HLA-F, whose 0 known
+   alleles leave nothing to check directly). Verified by re-deriving every known allele:
+   **21935 exact, 4 mismatch (0.018%)**. The 4 are indel-bearing alleles (A\*24:164, A\*24:399,
+   A\*32:80, B\*51:50) where NetMHCpan-4.2 places the gap one slot from IMGT 3.65.0; NetMHCpan wins
+   every conflict, so no already-covered allele can change. 81% of the added alleles simply join an
+   existing 34-mer group — new HLA alleles usually differ outside the groove.
+
+Used by `mhcmatch.pseudoseq` as the allele-similarity alphabet for the cross-allele diffusion model
+(see `appendix/mhcmatch.tex` §4). Regenerate with:
+
+    for g in A B C E F G; do
+      curl -sSo ~/vcs/tmp/imgt/${g}_prot.txt \
+        https://raw.githubusercontent.com/ANHIG/IMGTHLA/Latest/alignments/${g}_prot.txt
+    done
     python ../tcren-ms/scripts/build_pseudo_fasta.py \
         --mhci  ~/work/academy/software/netMHCpan-4.2/data/MHC_pseudo.dat \
         --mhcii ~/work/academy/software/netMHCIIpan-4.3/data/pseudosequence.2023.all.X.dat \
+        --imgt-alignments ~/vcs/tmp/imgt \
         --out src/mhcmatch/data
 
-These files are static reference data and small (~500 KB total), so they are vendored rather than
+These files are static reference data and small (~800 KB total), so they are vendored rather than
 fetched. Re-sync from `tcren` if the pseudosequence definition is updated upstream.
+
+**History (2026-07-16).** Until this date the header carried only the group's *first* allele, so the
+other 8854 of MHC-I's 12997 alleles (68%) — and 8839 of MHC-II's 11048 (80%) — were **silently
+unresolvable**, among them common specificities like HLA-B\*14:02, B\*18:05 and C\*03:04. The
+collapse was always correct; only the name index was lost. Restoring it left every 34-mer
+byte-identical (asserted at regeneration) and lifted the MixMHCpred3 benchmark from maxF1 0.8807 to
+0.8908. Both this file and `tcren`'s builder were fixed; a re-sync from an unfixed `tcren` would
+silently reintroduce the bug. The IMGT source was added at the same time, taking the human MHC-I
+reference panel from 166/203 scorable alleles to **203/203**.
+
+**Known gap.** 24 of 170 MHC-II panel alleles remain unscorable, e.g. `-DPB11101` (2511 ligands).
+These are **not** missing sequences: the names carry an empty α-chain (`<alpha>-<beta>`), because the
+source study typed only the β chain. IMGT cannot fix a typing gap — it needs an α-chain policy
+(DQA1/DQB1 are in strong linkage disequilibrium, so a most-likely-α rule is defensible). Tracked, not
+fixed.
 
 **History (2026-07-16).** Until this date the header carried only the group's *first* allele, so the
 other 8854 of MHC-I's 12997 alleles (68%) — and 8839 of MHC-II's 11048 (80%) — were **silently
