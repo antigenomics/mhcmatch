@@ -1,10 +1,19 @@
-# Deploying mhcmatch into the Gamaleya `nextflow_vaccine` pipeline
+# mhcmatch as a Nextflow module
 
-`mhcmatch predict` replaces the pipeline's binding predictors (MHCflurry class I, TLimmuno2 class II)
-with a single presentation model. It emits both mhcmatch's **native** table and a
-pipeline-compatible **`.scored.csv`** (the `--scored-csv` mode). These artifacts — a Dockerfile and a
-nextflow process — are **templates for review**; adjust the pins, registry, and wiring to the ISPRAS
-infra before use. Nothing here edits the pipeline repo.
+`mhcmatch predict` replaces the neoantigen pipeline's binding predictors (MHCflurry class I, TLimmuno2
+class II) with a single presentation model. It emits both mhcmatch's **native** table and a
+pipeline-compatible **`.scored.csv`** (the `--scored-csv` mode). This directory is a self-contained
+nf-core-style module (`main.nf` + `nextflow.config` + `environment.yml` + `Dockerfile`), laid out like
+[`arda`'s integration](../../../../arda/integrations/nextflow/arda/). These artifacts are **templates
+for review** — adjust the pins, registry, and wiring to the ISPRAS infra before use.
+
+```
+integrations/nextflow/mhcmatch/
+  main.nf            the MHCMATCH_PREDICT process
+  nextflow.config    per-process config: species (from params.genome), publishDir, tier/rank params
+  environment.yml    conda env (pip: mhcmatch, which pulls seqtree) for -profile conda
+  Dockerfile         image (mhcmatch + seqtree + baked panel) for -profile docker
+```
 
 ## What mhcmatch fills (and what it does not)
 
@@ -20,7 +29,21 @@ Concordance with NetMHCpan on TESLA1/Alekseech (the trust check for this swap) i
 `bench/results/concordance_tesla1_*.md`: class I pooled Spearman ρ ≈ 0.73–0.76, best-allele agreement
 71–82%; class II good for DRB, weaker for DP/DQ heterodimers.
 
-## 1. Build the image
+## Species — follows `params.genome`, no extra parameter
+
+`mhcmatch predict` takes `--species human|mouse` (human & mouse share one engine; the panel and
+pseudosequences cover both). The module's `nextflow.config` maps the pipeline's iGenomes assembly key
+to it via `ext.args`, **exactly as the ARDA module does**, so mhcmatch follows the assembly the rest of
+the pipeline already runs on:
+
+```
+GRCm39 -> --species mouse        anything else (GRCh38, ...) -> --species human
+```
+
+Override in your own config if you need a different mapping; the allele names (HLA vs H-2) also imply
+the species, so a human run with HLA alleles is unaffected by the default.
+
+## 1. Build the image (only for `-profile docker`)
 
 No data staging needed — the build runs `mhcmatch bootstrap`, which fetches the reference panel
 (`pmhc/pmhc_{full,shortlist}.tsv.gz`) from the public HF dataset `isalgo/pmhc_data` into the image's
@@ -28,21 +51,23 @@ No data staging needed — the build runs `mhcmatch bootstrap`, which fetches th
 
 ```zsh
 docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.4.1 \
-    --build-arg SEQTREE_REF=<tag/commit> --build-arg MHCMATCH_REF=<tag/commit> \
-    -f deploy/Dockerfile deploy/
+    --build-arg MHCMATCH_VERSION=0.4.1 \
+    integrations/nextflow/mhcmatch/
 docker push <ISPRAS_REGISTRY>/mhcmatch:0.4.1
 ```
 
-Pin it in `conf/containers.config`:
+Point `container` at it (in `main.nf` or, better, an override in `conf/containers.config`):
 
 ```groovy
 withName: MHCMATCH_PREDICT { container = '<ISPRAS_REGISTRY>/mhcmatch:0.4.1' }
 ```
 
+(`-profile conda` needs none of this — it builds the env from `environment.yml`.)
+
 ## 2. Add the module
 
-Copy `deploy/nextflow/mhcmatch_predict.nf` to
-`modules/neoantigens_workflow/mhcmatch_predict/main.nf`. It consumes the same
+Copy this directory to `modules/neoantigens_workflow/mhcmatch/` and `includeConfig` its
+`nextflow.config` from your workflow config. `main.nf` consumes the same
 `tuple val(meta), path(fasta), val(alleles)` channel the pipeline already builds (plus a `val(cls)`
 tag), so it honors the existing `.mhcI.txt` / `.mhcII.txt` allele strings from HLA-LA (and, later,
 OptiType — no change: OptiType just fills the same files).
@@ -53,8 +78,8 @@ In `workflows/neoantigens/main.nf`, around the predictor seam (~lines 226–244)
 path behind a param so the default pipeline is unchanged:
 
 ```groovy
-include { MHCMATCH_PREDICT as MHCMATCH_MHCI  } from '../../modules/neoantigens_workflow/mhcmatch_predict/main'
-include { MHCMATCH_PREDICT as MHCMATCH_MHCII } from '../../modules/neoantigens_workflow/mhcmatch_predict/main'
+include { MHCMATCH_PREDICT as MHCMATCH_MHCI  } from '../../modules/neoantigens_workflow/mhcmatch/main'
+include { MHCMATCH_PREDICT as MHCMATCH_MHCII } from '../../modules/neoantigens_workflow/mhcmatch/main'
 
 if (params.predictor == 'mhcmatch') {
     MHCMATCH_MHCI ( MERGE_FASTAS_MHCI.out.sequences.join(mhcI_alleles).map  { m, f, a -> [m, f, a, 'mhc1'] } )
@@ -66,8 +91,8 @@ if (params.predictor == 'mhcmatch') {
 }
 ```
 
-Add to `nextflow.config` `params {}`: `predictor = 'mhcflurry'` (default), optional
-`mhcmatch_tier = 'full'`, `mhcmatch_rank_threshold = 2.0`.
+Add to `nextflow.config` `params {}`: `predictor = 'mhcflurry'` (default). The module's own
+`nextflow.config` already sets `mhcmatch_tier = 'full'` and `mhcmatch_rank_threshold = 2.0`.
 
 ## Integration modes
 
