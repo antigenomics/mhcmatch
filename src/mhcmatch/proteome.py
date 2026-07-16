@@ -13,7 +13,8 @@ from dataclasses import dataclass
 
 from seqtree import Index, SearchParams
 
-_AA = set("ACDEFGHIKLMNPQRSTVWY")
+_AA_ORDER = "ACDEFGHIKLMNPQRSTVWY"
+_AA = set(_AA_ORDER)
 
 
 def read_fasta(path):
@@ -95,3 +96,45 @@ class Proteome:
             out.append(SourceHit(name, pos, w, len(muts), muts))
         out.sort(key=lambda h: h.n_subs)
         return out
+
+    def _window_set(self, L):
+        """Set of all length-``L`` standard-AA proteome windows (lazy). ~1 GB/length as a Python set --
+        much lighter than the seqtree index, and O(1) membership for the 1-sub wildtype fast path."""
+        key = ("set", L)
+        if key not in self._cache:
+            s = set()
+            for seq in self.seqs.values():
+                seq = seq.upper()
+                for i in range(len(seq) - L + 1):
+                    w = seq[i:i + L]
+                    if all(c in _AA for c in w):
+                        s.add(w)
+            self._cache[key] = s
+        return self._cache[key]
+
+    def wildtype(self, peptide, max_subs=1):
+        """The wild-type self peptide a mutated ``peptide`` derives from, or ``None``.
+
+        A self peptide exactly one substitution away (its point-mutation origin) -- the position-aligned
+        WT counterpart needed for agretopicity / DAI when the caller has no WT window (e.g. a bare
+        neoantigen list like TESLA). ``None`` when nothing is one sub away (indel / spliced / non-self,
+        or the peptide is itself an exact self peptide with no mutated origin). Ties resolve to the
+        first variant found (position, then residue order).
+
+        For ``max_subs=1`` this uses a hash-set fast path (generate the L*19 single-sub variants and
+        test proteome membership -- microseconds/peptide, so it scales to large corpora); larger
+        ``max_subs`` falls back to the general :meth:`find_source` fuzzy search.
+        """
+        q = peptide.strip().upper()
+        if max_subs == 1 and all(c in _AA for c in q):
+            ws = self._window_set(len(q))
+            for i in range(len(q)):
+                pre, post = q[:i], q[i + 1:]
+                for a in _AA_ORDER:
+                    if a != q[i]:
+                        v = pre + a + post
+                        if v in ws:
+                            return v
+            return None
+        hits = self.find_source(peptide, max_subs=max_subs, exclude_exact=True)
+        return hits[0].ref_peptide if hits else None

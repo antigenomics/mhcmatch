@@ -66,6 +66,16 @@ def test_decompose_mhc2():
     assert d.presentation.count("X") == len(d.peptide) - 4
 
 
+def test_decompose_mhc2_register_start():
+    # register_start pins the 9-mer core frame (the model register a caller scored with), overriding
+    # the heuristic register: P1/P4/P6/P9 of a core starting at index 2 -> {2,5,7,10}. (C4b)
+    pep = "A" * 15
+    assert mhcmatch.Store().decompose(pep, cls="mhc2", register_start=2).anchors == (2, 5, 7, 10)
+    assert mhcmatch.Store().decompose(pep, cls="mhc2", register_start=99).anchors == ()   # guarded
+    # default (register_start=None) still uses the heuristic register (unchanged behavior).
+    assert len(mhcmatch.Store().decompose(pep, cls="mhc2").anchors) == 4
+
+
 def test_bare_store_restriction_is_graceful():
     # A Store never loaded via from_records/from_pmhc has no reference panel; restriction()
     # and alleles() must return empty rather than AttributeError (decompose() still works on it).
@@ -204,6 +214,10 @@ def test_proteome_source_lookup():
     top = next(h for h in hits if h.protein == "P1" and h.position == 5)
     assert top.n_subs == 1
     assert top.mutations[0][0] == 4   # the mutated position within the peptide
+    # wildtype() fetches the WT counterpart (the self peptide the mutant derives from) for agretopicity.
+    assert pm.wildtype(mutant) == wild
+    assert pm.wildtype(wild) is None                 # an exact self peptide has no mutated WT
+    assert pm.wildtype("YYYYYYYYY") is None           # nothing within 1 sub -> None
 
 
 # -- CLI ----------------------------------------------------------------------

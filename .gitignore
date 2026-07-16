@@ -37,6 +37,9 @@ bench/results/private/
 # Obsidian memory-sync marker (machine-local absolute paths + sync hashes)
 .claude/obsidian-sync.json
 
+# per-feature git worktrees (see CLAUDE.md) — live inside the repo dir but are never committed
+.claude/worktrees/
+
 # affinity training table (regenerable from the IEDB dump via bench/affinity/data.py)
 bench/affinity/measured.tsv
 # cached NetMHCpan/NetMHCIIpan predictions for the affinity head-to-head

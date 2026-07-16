@@ -37,6 +37,30 @@ Quickstart
    am = store.anchor_model("mhc1")
    am.score("NLVPMVATV", "HLA-A*02:01")            # am.score(..., raw=True) disables borrowing
 
+   # calibrated, cross-allele-comparable presentation: %rank / P(present) / band
+   store.restriction("NLVPMVATV", diffuse=True, calibrated=True)
+
+   # quantitative affinity: IC50 (nM) + neoantigen amplitude / DAI vs the wild-type peptide (Potts head)
+   aff = store.affinity_model("mhc1")
+   aff.predict_ic50("NLVPMVATV", "HLA-A*02:01")
+   aff.amplitude("NLVPMVATL", "NLVPMVATV", "HLA-A*02:01")     # (wild-type, mutant, allele)
+
+Pipeline integration
+--------------------
+
+Score a variant peptide-window FASTA (the neoantigen-pipeline schema) into the pipeline's
+``.scored.csv`` plus mhcmatch's richer native table:
+
+.. code-block:: fish
+
+   mhcmatch predict sample.mhcI.peptide.fasta --alleles 'HLA-A*02:01,HLA-B*07:02' \
+       --cls mhc1 --species human --scored-csv out.scored.csv --native out.native.tsv
+
+A ready nf-core-style Nextflow module (``MHCMATCH_PREDICT``) — a drop-in for MHCflurry (class I) and
+TLimmuno2 (class II) — lives in ``integrations/nextflow/mhcmatch/`` (``main.nf`` + ``nextflow.config``
++ ``environment.yml`` + ``Dockerfile``); species follows ``params.genome``, mirroring the ``arda``
+module.
+
 Data
 ----
 
