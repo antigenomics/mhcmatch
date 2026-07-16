@@ -74,7 +74,7 @@ class AnchorModel:
     def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0,
                  learn_weights=True, prune_dpi=False, weights="learned", blend_alpha=0.5,
                  register_em=2, footprint="anchor", rare_max=30, background="ligand",
-                 length_prior=False):
+                 length_prior=False, length_motifs=False):
         """``weights``: ``"learned"`` (per-anchor MI over the panel, default), ``"structural"``
         (contact-frequency weights from pMHC structures, :func:`load_structural_weights`),
         ``"blend"`` (convex mix ``blend_alpha``*structural + (1-``blend_alpha``)*learned, mean-1
@@ -92,7 +92,11 @@ class AnchorModel:
         structurally blind to -- see :meth:`length_logodds`. ``"score"`` folds it into
         :meth:`score`, so ``%rank`` and everything downstream inherit it; ``"post"`` only exposes
         :meth:`length_logodds` for a caller that composes it itself; ``False`` (default) is the
-        length-blind v0.4 behaviour."""
+        length-blind v0.4 behaviour.
+
+        ``length_motifs`` (MHC-I only) estimates the residue distributions **per peptide length**
+        instead of pooling every length into one counter -- see :meth:`_dist_len`. Complementary to
+        ``length_prior``: the prior is over ``L``, the motifs are over residues *given* ``L``."""
         self.cls = cls
         self.background = background
         self.length_prior = length_prior
@@ -128,6 +132,17 @@ class AnchorModel:
             self.len_prefs = None
             self._len_bg = None
         self._len_cache = {}
+        # per-(length, anchor) residue counters: {(L, j): {allele: Counter}} -- MHC-I only (the
+        # MHC-II core is always 9 by construction, so there is no length axis to split).
+        if length_motifs and cls == "mhc1":
+            self.prefs_len = {(L, j): by_len[L]
+                              for j in self.anchors
+                              for by_len in [store.anchor_preferences(cls, j, anchors=self.anchors,
+                                                                      by_length=True)]
+                              for L in by_len}
+        else:
+            self.prefs_len = None
+        self._cache_len = {}
         self.bg = {}
         for j in self.anchors:
             c = Counter()
@@ -188,6 +203,48 @@ class AnchorModel:
                                               prior_strength=self.prior_strength)
         return self._cache[key]
 
+    def _dist_len(self, j, allele, raw, length):
+        """Length-specific residue distribution at anchor ``j`` -- a two-stage backoff.
+
+        The pooled :meth:`_dist` mixes every peptide length into one counter, so what it returns is
+        essentially the 9-mer motif (~2/3 of the panel) applied to 8/10/11-mers as well. Measured
+        within-length maxF1 vs MixMHCpred3.0 (which fits a separate PPM per length): 9-mers are at
+        parity (0.905 vs 0.926) while 8-mers are not (0.613 vs 0.811). But per-(allele, length) counts
+        are thin -- rare alleles have a *median of zero* 8-mers -- so a plain per-length motif would
+        overfit. Hence:
+
+        1. cross-allele, same length: ``π = shrink(prefs_len[(L,j)], a, anchor=j, τ)`` -- borrow this
+           length's motif from groove-similar alleles;
+        2. cross-length, same allele: ``θ = (n_{a,L}·π + τ·m) / (n_{a,L} + τ)`` where ``m`` is the
+           pooled :meth:`_dist` -- back off to the allele's own length-pooled motif.
+
+        Self-adapting and exactly backwards-compatible: ``n_{a,L}=0`` returns ``m`` **identically**, so
+        an allele with no ligands at this length scores bit-for-bit as it does today. ``anchor=j`` (not
+        ``(L, j)``) is passed to ``shrink`` on purpose: :meth:`Pseudoseq._w` falls back to *uniform*
+        groove weights on an unknown key, so keying by the tuple would silently discard every learned
+        MI weight. ``raw=True`` (the no-borrowing ablation) keeps the pooled estimate.
+        """
+        if raw or self.prefs_len is None:
+            return self._dist(j, allele, raw)
+        key = (j, allele, length)
+        hit = self._cache_len.get(key)
+        if hit is not None:                          # steady state: one dict lookup, like _dist
+            return hit
+        pooled = self._dist(j, allele, raw)
+        pl = self.prefs_len.get((length, j))
+        own = pl.get(allele) if pl else None
+        n = float(sum(own.values())) if own else 0.0
+        if n <= 0:                                   # backoff identity: exactly today's model
+            self._cache_len[key] = pooled
+            return pooled
+        pi = self.ps.shrink(pl, allele, anchor=j, candidates=list(pl),
+                            prior_strength=self.prior_strength)
+        tau = self.prior_strength
+        out = {r: (n * pi.get(r, 0.0) + tau * pooled.get(r, 0.0)) / (n + tau)
+               for r in set(pi) | set(pooled)}
+        self._cache_len[key] = out
+        return out
+
     def _refit_registers(self, store):
         """One register-EM pass (MHC-II): re-assign each training peptide to the frame its current
         model scores best, then re-estimate the per-anchor preferences and background from that frame.
@@ -230,21 +287,24 @@ class AnchorModel:
             return PROTEOME_AA_FREQ.get(r, 1e-4)
         return self.bg[j].get(r, 0) / self._nbg[j]
 
-    def _anchor_logodds(self, residues, allele, raw, eps, mask=None, contexts=None):
+    def _anchor_logodds(self, residues, allele, raw, eps, mask=None, contexts=None, length=None):
         """Sum of per-anchor log-odds for ``residues`` (one residue per ``self.anchors`` position).
 
         ``mask`` (indices into ``self.anchors``) restricts the sum to those positions -- used by the
         adaptive footprint to score rare alleles on the primary anchors only. ``contexts`` (the
         residue preceding each scored position) supplies the order-1 Markov null when
         ``background="markov"``. A ``None`` residue is a signed-anchor collision already counted by an
-        earlier position (see :func:`mhcmatch.store.mhc1_positions`) and contributes nothing."""
+        earlier position (see :func:`mhcmatch.store.mhc1_positions`) and contributes nothing.
+        ``length`` (MHC-I, with ``length_motifs``) selects the length-specific motif via
+        :meth:`_dist_len`."""
         s = 0.0
         idxs = range(len(self.anchors)) if mask is None else mask
+        use_len = length is not None and self.prefs_len is not None
         for i in idxs:
             j, r = self.anchors[i], residues[i]
             if r is None:
                 continue
-            th = self._dist(j, allele, raw)
+            th = self._dist_len(j, allele, raw, length) if use_len else self._dist(j, allele, raw)
             p_a = th.get(r, 0.0)
             p_bg = self._bg_prob(j, r, contexts[i] if contexts else None)
             s += math.log((p_a + eps) / (p_bg + eps))
@@ -329,7 +389,7 @@ class AnchorModel:
         ctx = [(peptide[i - 1] if i else "") if i is not None else None
                for i in idxs] if markov else None
         s = self._anchor_logodds([peptide[i] if i is not None else None for i in idxs],
-                                 allele, raw, eps, mask, ctx)
+                                 allele, raw, eps, mask, ctx, len(peptide))
         if self.length_prior == "score":
             s += self.length_logodds(len(peptide), allele, eps)
         return 0, s

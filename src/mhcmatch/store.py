@@ -459,7 +459,7 @@ class Store:
     # -- diffusion-powered forward scorer -------------------------------------
     def anchor_model(self, cls="mhc1", h=2.0, prior_strength=10.0, anchors=None, learn_weights=True,
                      prune_dpi=False, weights="learned", register_em=2, footprint="anchor",
-                     rare_max=30, background="ligand", length_prior=False):
+                     rare_max=30, background="ligand", length_prior=False, length_motifs=False):
         """Anchor-factored presentation model with cross-allele kernel-shrinkage diffusion.
 
         See :class:`mhcmatch.diffusion.AnchorModel`. The diffusion rescues rare alleles by borrowing
@@ -478,7 +478,8 @@ class Store:
         return AnchorModel(self, cls=cls, anchors=anchors, h=h, prior_strength=prior_strength,
                            learn_weights=learn_weights, prune_dpi=prune_dpi, weights=weights,
                            register_em=register_em, footprint=footprint, rare_max=rare_max,
-                           background=background, length_prior=length_prior)
+                           background=background, length_prior=length_prior,
+                           length_motifs=length_motifs)
 
     def affinity_model(self, cls="mhc1"):
         """Quantitative IC50 (nM) + neoantigen amplitude/DAI head (:class:`mhcmatch.PottsAffinity`).
@@ -498,15 +499,22 @@ class Store:
         return cache[cls]
 
     # -- per-allele anchor preferences (feeds pseudoseq diffusion) ------------
-    def anchor_preferences(self, cls, anchor, anchors=None):
+    def anchor_preferences(self, cls, anchor, anchors=None, by_length=False):
         """{allele: Counter(residue)} at a 1-based ``anchor`` position (negative from C-term).
 
         ``anchors`` (MHC-I): the full footprint. When given, signed-anchor collisions on short peptides
         are resolved with :func:`mhc1_positions` -- the *same* rule the scorer uses -- so a residue is
         filed under exactly one position. Without it an 8-mer's index-4 residue lands in both ``+5``
-        and ``-4``, and training would disagree with scoring."""
+        and ``-4``, and training would disagree with scoring.
+
+        ``by_length=True`` returns ``{peptide_length: {allele: Counter(residue)}}`` instead. The pooled
+        (default) form mixes every length into one counter, so the motif it yields is really the
+        9-mer motif (~2/3 of the panel) applied to 8/10/11-mers too -- measurably wrong off-9. Splitting
+        by length is what the estimator in :meth:`mhcmatch.diffusion.AnchorModel._dist_len` backs off
+        from, since per-(allele, length) counts are thin (rare alleles have a median of *zero* 8-mers).
+        """
         panel = self._panel[cls]
-        prefs = defaultdict(Counter)
+        prefs = defaultdict(lambda: defaultdict(Counter)) if by_length else defaultdict(Counter)
         use_pos = cls == "mhc1" and anchors is not None
         slot = anchors.index(anchor) if use_pos else None
         for ep, a, w in zip(panel.epitopes, panel.alleles, panel.weights):
@@ -515,7 +523,11 @@ class Store:
                 idx = None if pos is None else pos[slot]
             else:
                 idx = resolve_anchor_index(ep, cls, anchor)
-            if idx is not None:
+            if idx is None:
+                continue
+            if by_length:
+                prefs[len(ep)][a][ep[idx]] += w
+            else:
                 prefs[a][ep[idx]] += w
         return prefs
 
