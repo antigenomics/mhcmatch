@@ -205,9 +205,20 @@ needing fetched neoantigen/self/pathogen sets are flagged.
 - **Tuned `alpha` thresholds + FDR** over `scan_protein` windows × panel (appendix §5).
 - ~~Class-II register: the one-pass heuristic register is a proxy; try GibbsCluster-style multi-pass
   register~~ **done** — `AnchorModel` scores the best 9-mer frame per allele and runs `register_em`
-  best-frame EM passes (default 2 for MHC-II). Held-out binder-vs-decoy AUC (`bench_diffusion --cls
-  mhc2`, seed 0): rare 0.775→0.806, medium 0.757→0.790, frequent 0.727→0.827; recovers the known
-  DRB1\*15:01 restriction of MBP85-99 (rank 2/149). See `bench/results/register_em_mhc2.md`.
+  best-frame EM passes (default 2 for MHC-II); recovers the known DRB1\*15:01 restriction of
+  MBP85-99 (rank 2/149).
+- ~~Class-II register: `score` takes a **max** over frames, which discards *where* the core sits~~
+  **done in v0.6** — `AnchorModel(register="marginal")`, now the MHC-II default, integrates the
+  register out: `log Σ_r P(r | L, allele)·exp(s_r)` under a per-allele core-offset prior fit free
+  from the register-EM's own frame assignments and kernel-shrunk over groove neighbours. The prior is
+  signal, not bookkeeping: real cores are sharply peaked in offset (DRB1_0101 15mers H/Hmax **0.670**)
+  while the same model lands uniformly on random peptides (**0.998**), so a decoy's argmax frame sits
+  at a low-prior offset while a real ligand's sits at the peak — and it survives length-matched decoys
+  because the prior is normalized within a length. Held-out AUC (`bench_diffusion --cls mhc2`, seed 0,
+  `register_em=2`): rare 0.774→0.780, medium 0.764→0.776, frequent **0.830→0.853**. Head-to-head vs
+  NetMHCIIpan-4.3i: **every stratum × metric improves, none regresses**; the rare stratum flips to
+  winning all three metrics (n.s. at n=19) and the frequent AUPRC gap closes -0.174→-0.125 (hard) /
+  -0.308→-0.250 (screening). See `bench/results/register_em_mhc2.md` and `compare_mhc2_human_*.md`.
 - **Class-II / mouse calibration**: pool nulls over kernel clusters for thin mouse panels; a
   per-allele %rank vs a random-peptide background for cross-allele-comparable scores.
 - ~~Feed the shrunk null into `restriction`~~ **done** (diffuse gate/rescue, vote still ranks).

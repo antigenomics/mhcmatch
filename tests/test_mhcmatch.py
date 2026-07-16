@@ -1,5 +1,6 @@
 """Runnable checks for mhcmatch v0. Mirror seqtree's positive controls where applicable."""
 import collections
+import math
 import random
 
 import pytest
@@ -178,7 +179,13 @@ def _sig_build(rng, allele, sig, n, recs):
 
 def test_mhc2_register_max_and_em():
     # Per-allele register: a planted 9-mer core scores higher for its own allele than for another,
-    # and register-max is frame-invariant (the same core at different offsets scores identically).
+    # under both register modes.
+    #
+    # Frame-invariance (the same core at different offsets scoring identically) is a property of
+    # register="max" ONLY, because it reads off the winning frame and discards the rest. It is
+    # deliberately FALSE for register="marginal": that integrates over every frame under the
+    # core-offset prior, so both the offset and the padding context move the score. Do not "fix"
+    # marginal to satisfy it -- see AnchorModel.score.
     coreX, coreY = "WKVKFWKVK", "DKEKDDKEK"        # distinct allele motifs
     recs = []
     for pad in range(5):                            # core placed at every offset in a 13-mer
@@ -186,9 +193,43 @@ def test_mhc2_register_max_and_em():
                      "mhc_a": "DRA*01:01", "mhc_b": "DRB1*15:01", "mhc_class": "MHCII"})
         recs.append({"epitope": "S" * pad + coreY + "S" * (4 - pad),
                      "mhc_a": "DRA*01:01", "mhc_b": "DRB1*13:01", "mhc_class": "MHCII"})
-    am = Store.from_records(recs * 4).anchor_model("mhc2")   # register_em=2 by default
-    assert am.score("GG" + coreX + "GG", "DRB1_1501") > am.score("GG" + coreX + "GG", "DRB1_1301")
-    assert am.score("G" + coreX + "GGG", "DRB1_1501") == am.score("GGG" + coreX + "G", "DRB1_1501")
+    store = Store.from_records(recs * 4)
+    for reg in ("max", "marginal"):                          # register_em=2 by default
+        am = store.anchor_model("mhc2", register=reg)
+        assert am.score("GG" + coreX + "GG", "DRB1_1501") > am.score("GG" + coreX + "GG", "DRB1_1301")
+    mx = store.anchor_model("mhc2", register="max")
+    assert mx.score("G" + coreX + "GGG", "DRB1_1501") == mx.score("GGG" + coreX + "G", "DRB1_1501")
+
+
+def test_mhc2_offset_prior_learns_where_the_cores_sit():
+    # The core-offset prior is what register="marginal" buys: real class-II cores sit ~3 residues
+    # from the N-terminus (measured H/Hmax 0.67 on DRB1_0101 15mers vs 0.998 on random peptides),
+    # so the prior must concentrate on the offsets an allele's own ligands use -- and it is
+    # PER-ALLELE, not one global shape. Two alleles are needed at minimum: with a single allele the
+    # background="ligand" null equals that allele's own marginal, every frame scores ~0, and the
+    # register argmax is an arbitrary tie.
+    coreX, coreY = "WKVKFWKVK", "DQDQNDQDQ"                  # distinct anchor motifs at 1,4,6,9
+    rng = random.Random(0)
+    flank = "AGILPRSTV"                                      # shares no residue with either core
+
+    def pep(core, off):
+        return ("".join(rng.choice(flank) for _ in range(off)) + core
+                + "".join(rng.choice(flank) for _ in range(4 - off)))
+
+    recs = []
+    for _ in range(60):
+        recs.append({"epitope": pep(coreX, 2), "mhc_a": "DRA*01:01", "mhc_b": "DRB1*15:01",
+                     "mhc_class": "MHCII"})                  # DR15 cores always at offset 2
+        recs.append({"epitope": pep(coreY, 0), "mhc_a": "DRA*01:01", "mhc_b": "DRB1*13:01",
+                     "mhc_class": "MHCII"})                  # DR13 cores always at offset 0
+    am = Store.from_records(recs).anchor_model("mhc2")
+    lx = am._offset_logprior("DRB1_1501", 13)
+    ly = am._offset_logprior("DRB1_1301", 13)
+    assert len(lx) == 5                                      # 13 - 8 frames
+    assert lx.index(max(lx)) == 2                            # each allele learned its own offset,
+    assert ly.index(max(ly)) == 0                            # not a shared global shape
+    # and it is a proper distribution over frames, not an unnormalized score
+    assert abs(sum(math.exp(x) for x in lx) - 1.0) < 1e-9
 
 
 def test_restriction_diffuse_rescues_rare():
@@ -308,11 +349,18 @@ def _mhc2_store():
 
 def test_best_register_is_bit_identical_to_score():
     store, core = _mhc2_store()
-    am = store.anchor_model("mhc2")
+    am = store.anchor_model("mhc2", register="max")
     pep = "GG" + core + "GG"
     st, sc = am.best_register(pep, "DRB1_1501")
-    assert sc == am.score(pep, "DRB1_1501")        # score() is best_register()[1], exactly
+    assert sc == am.score(pep, "DRB1_1501")        # under register="max", score() IS best_register()[1]
     assert 0 <= st <= len(pep) - 9
+    # register="marginal" (the default) deliberately breaks that identity: it integrates over every
+    # frame instead of reading the winning one, so score() < max-over-frames. best_register() still
+    # returns the argmax frame either way -- decompose/logos/affinity read it as a register oracle
+    # and must not shift.
+    mg = store.anchor_model("mhc2")
+    assert mg.best_register(pep, "DRB1_1501") == (st, sc)
+    assert mg.score(pep, "DRB1_1501") < sc
     # the winning core is a property of the sequence, not of where it sits: the same 9-mer must win
     # at any padding offset, and the score must match (the pre-existing frame-invariance contract).
     p1, p2 = "G" + core + "GGG", "GGG" + core + "G"
@@ -352,16 +400,20 @@ def test_span_score_is_length_unbiased():
 
 
 def test_anchor_score_is_length_biased_negative_control():
-    # Documented negative control for the trap above: AnchorModel.score is a max over register
-    # frames, so on RANDOM peptides -- carrying no motif at all -- it still rises with length,
-    # purely because a longer peptide offers more frames to maximise over. That is why span ranking
-    # uses the flank model and not this. If this ever stops holding, revisit SpanModel.best_span.
+    # Documented negative control for the trap above: on RANDOM peptides -- carrying no motif at all
+    # -- AnchorModel.score still rises with length. Under register="max" that is a max over more
+    # frames; under register="marginal" (the default) the offset prior normalizes the frame count
+    # away but a Jensen residual remains (measured on real data, DRB1_1501, 9mer -> 21mer: +4.44
+    # nats under max vs +2.28 under marginal -- halved, not gone). Either way span ranking must use
+    # the flank model and not this. If this ever stops holding for BOTH modes, revisit
+    # SpanModel.best_span and bench/results/binder_gate_length_bias.md.
     rng = random.Random(3)
-    am, _ = _mhc2_store()
-    am = am.anchor_model("mhc2")
-    mean = lambda L: sum(                                             # noqa: E731
-        am.score("".join(rng.choice(_AA) for _ in range(L)), "DRB1_1501") for _ in range(80)) / 80
-    assert mean(19) > mean(9)
+    store, _ = _mhc2_store()
+    for reg in ("max", "marginal"):
+        am = store.anchor_model("mhc2", register=reg)
+        mean = lambda L: sum(                                         # noqa: E731
+            am.score("".join(rng.choice(_AA) for _ in range(L)), "DRB1_1501") for _ in range(80)) / 80
+        assert mean(19) > mean(9), reg
 
 
 def test_mhc2_binder_gate_is_not_a_length_detector():
@@ -370,15 +422,37 @@ def test_mhc2_binder_gate_is_not_a_length_detector():
     # (bench/results/binder_gate_length_bias.md). restriction() now gates on a %rank against random
     # peptides OF THE SAME LENGTH, which puts the null through the same frame-max, so the bias
     # cancels: the false-positive rate must be flat in length, not a ramp.
+    #
+    # This pins the %rank clause itself rather than the whole of restriction(). The end-to-end path
+    # cannot be measured on a fixture this size: `_mhc2_store()` is 40 peptides over 7 residues, and
+    # random probes hit k-mer neighbours 58-85% of the time there (even at 600 peptides over 15
+    # residues), so the *vote* clause decides the outcome -- and it fires more as length grows,
+    # manufacturing the very ramp this test looks for. Probes are drawn from the panel's own residue
+    # composition, matching the calibrator's null: uniform-`_AA` probes are full of residues the
+    # panel never saw, which hit the eps floor and score ~0 against a null its own padding drags
+    # down, and `register="marginal"` widens that gap with frame count.
+    #
+    # Both are fixture artifacts. On the real panel the gate is flat in length and identical under
+    # register="max" and "marginal" -- DRB1_1501 8/12/10% vs 8/12/11% at L=9/15/21 -- and the ramp
+    # the old gate produced (85% at 15, 98% at 21) is measured in binder_gate_length_bias.md.
+    from mhcmatch.calibrate import WEAK_RANK
     store, _ = _mhc2_store()
+    cal, am = store._rank_calibrator("mhc2"), store._anchor_model("mhc2")
+    aa = collections.Counter()
+    for p in store._panel["mhc2"].epitopes:
+        aa.update(p)
+    res, w = zip(*aa.items())
     rng = random.Random(0)
     rates = {}
     for L in (9, 15, 21):
-        peps = ["".join(rng.choice(_AA) for _ in range(L)) for _ in range(40)]
-        rates[L] = sum(store.restriction(p, cls="mhc2", alleles=["DRB1_1501"],
-                                         diffuse=True)[0].binder for p in peps) / len(peps)
-    assert max(rates.values()) <= 0.35, rates       # nothing like the old 85-98%
-    assert rates[21] - rates[9] <= 0.25, rates      # and no ramp with length
+        peps = ["".join(rng.choices(res, w, k=L)) for _ in range(200)]
+        rates[L] = sum(cal.percent_rank("DRB1_1501", am.score(p, "DRB1_1501"), length=L) <= WEAK_RANK
+                       for p in peps) / len(peps)
+    # `%rank <= t` passes t% of the null by construction -- AT EVERY LENGTH. That is the whole point:
+    # the null takes the same frame-max as the query, so the length inflation cancels instead of
+    # being modelled. Nothing like the old 85-98%, and no ramp.
+    assert max(rates.values()) <= 0.10, rates
+    assert abs(rates[21] - rates[9]) <= 0.08, rates
 
 
 def test_bounds_pad_and_clipping():

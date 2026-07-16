@@ -31,6 +31,50 @@ versioning is [SemVer](https://semver.org).
   results. **All disk caching is removed** from `run_compare.py`, `sample_concordance.py` and
   `bench/affinity/eval.py`; every run regenerates (a 35–70 s NetMHC sweep). The uncached harness now
   reproduces `compare_mhc1_human_hard_ligandbg.md` byte-identically.
+### MHC-II scores now integrate the binding register out instead of maximising over it
+
+`AnchorModel.score` for MHC-II was `max_r s_r` over every 9-mer core frame, which throws away *where*
+the core sits. It now defaults to a marginal likelihood, `log Σ_r P(r | L, allele)·exp(s_r)`, under a
+learned per-allele core-offset prior.
+
+The prior is real signal, not bookkeeping. Real class-II cores sit ~3 residues from the N-terminus
+(the groove protects the core while exopeptidases erode the flanks), so their offset distribution is
+sharply peaked — DRB1_0101 15mers, H/Hmax **0.670** — while the *same model* lands uniformly on random
+peptides (**0.998**). A decoy's argmax frame therefore sits at a low-prior offset about as often as
+not while a real ligand's sits at the peak, and because the prior is normalized *within* a length the
+term survives length-matched decoys rather than cancelling.
+
+**Measured, head-to-head vs NetMHCIIpan-4.3i (seed 0, shortlist, identical examples): every stratum ×
+metric improves and none regresses.**
+
+| task | stratum | metric | `max` (old) | `marginal` (new) | Δ |
+|---|---|---|---|---|---|
+| allele-specificity | rare | AUPRC | 0.454 | **0.515** | +0.061 |
+| allele-specificity | frequent | AUROC | 0.880 | **0.893** | +0.013 |
+| allele-specificity | frequent | AUPRC | 0.508 | **0.557** | +0.049 |
+| screening | rare | AUPRC | 0.555 | **0.652** | +0.097 |
+| screening | rare | PPV@P | 0.376 | **0.541** | +0.165 |
+| screening | frequent | AUPRC | 0.467 | **0.524** | +0.057 |
+
+The rare stratum flips from losing AUPRC/PPV@P to winning all three metrics on both decoy modes (not
+significant at n=19). The frequent AUPRC gap to NetMHCIIpan closes -0.174→-0.125 (hard) and
+-0.308→-0.250 (screening) — narrowed, not closed.
+
+- **Changed (MHC-II only):** `AnchorModel(register="marginal")` / `Store.anchor_model(register=...)`
+  is the new default. Pass `register="max"` for the previous behaviour. MHC-I is untouched (it is
+  end-anchored, so there is no register to integrate).
+- **Unchanged:** `AnchorModel.best_register` still returns the argmax frame, so `decompose`, logos and
+  the Potts affinity register oracle are unaffected. MBP85-99 / DRB1\*15:01 still ranks 2/149.
+- **Cost:** MHC-II scoring 105k → **92k peptide-allele/s** (−12%; the prior is a cached per-(allele,
+  length) lookup plus a logsumexp over frames that were computed anyway). Model fit is unchanged
+  within noise (2.85s vs 2.86s on the 72k-peptide human shortlist panel) — the prior is estimated
+  from the register-EM's existing frame assignments rather than a separate pass over the data.
+- **Re-baselined:** `bench/results/register_em_mhc2.md`, `compare_mhc2_human_hard_ligandbg.md`,
+  `compare_mhc2_human_random_proteomebg.md` — each keeps the old column alongside the new.
+- **Does not fix the binder gate.** Marginalizing halves the length inflation (random peptides,
+  9mer → 21mer: +4.44 nats → **+2.28**) but leaves a Jensen residual, so a random 21-mer would still
+  pass a raw-score gate two thirds of the time. The gate is fixed separately and orthogonally by the
+  length-conditional `%rank` above.
 
 ## [0.5.0] — 2026-07-16
 

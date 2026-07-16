@@ -9,9 +9,10 @@
 
 `Store.restriction(..., diffuse=True)` gated binders on `anchor_score > 0.0`.
 
-But `AnchorModel.score` for MHC-II is a **max over every 9-mer register frame** (`diffusion.py`,
-`best_register`). A longer peptide offers more frames to maximise over, so the score rises with
-length **even on pure noise**. The gate therefore measured length, not binding.
+But `AnchorModel.score` for MHC-II is a max over the 9-mer register frames (`diffusion.py`,
+`best_register`) — under v0.6's `register="marginal"` default a *normalized* one, but see below. A
+longer peptide offers more frames, so the score rises with length **even on pure noise**. The gate
+therefore measured length, not binding.
 
 ## The measurement (before)
 
@@ -41,6 +42,25 @@ so the null goes through the same max-over-`L−8`-frames as the query and the f
 extreme-value / `F**n` correction, which would be wrong here because overlapping frames are
 correlated. It also makes the false-positive rate an explicit dial: `%rank <= t` passes `t%` of the
 null by construction.
+
+### v0.6's `register="marginal"` does not remove the need for this gate
+
+The v0.6 default replaces the frame max with `log Σ_r P(r | L, allele)·exp(s_r)`. Since
+`Σ_r P(r|L) = 1` the frame count is normalized away, so the obvious expectation is that it removes
+the bias by itself. **It does not** — random peptides, `DRB1_1501`, shortlist, 300 per length:
+
+| length | frames | `max` mean | `max` pass | `marginal` mean | `marginal` pass |
+|---|---|---|---|---|---|
+| 9 | 1 | −1.61 | 26% | −1.61 | 26% |
+| 15 | 7 | +2.00 | 89% | +0.45 | 61% |
+| 21 | 13 | +2.83 | 98% | **+0.67** | **66%** |
+| **inflation 9→21** | | **+4.44 nats** | | **+2.28 nats** | |
+
+The residual is **Jensen convergence**, not a max: `log((1/n)Σ e^{s_r})` is biased low at small `n`
+and rises towards `log E[e^s]`, so it **saturates** (+0.45 → +0.54 → +0.67 across 7 → 11 → 13 frames)
+rather than growing like `ln n`. Halved, still not a binding test — a random 21-mer would pass two
+thirds of the time. The length-conditional %rank is what fixes the gate; the register work is
+orthogonal to it.
 
 **Class-gated to MHC-II on purpose.** MHC-I is end-anchored — no register search, no max, nothing to
 correct — and its length preference is *real modelled biology* (`length_prior`, on by default since

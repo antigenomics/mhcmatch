@@ -111,7 +111,7 @@ def gen_examples(rc, ev, cls, benchmark, prot, forb, rng, frac, cap, n_decoys, d
 
 
 def score_mhcmatch(rc, examples, cls, benchmark, footprint, h=2.0, tau=10.0, weights="learned",
-                   background="ligand"):
+                   background="ligand", register="marginal"):
     """mhcmatch scores, reconstructing the train split from the positive examples so scoring is
     decoupled from example generation. holdout: one store minus held (allele,peptide) pairs.
     loao: per-allele store retrained without that allele."""
@@ -119,7 +119,8 @@ def score_mhcmatch(rc, examples, cls, benchmark, footprint, h=2.0, tau=10.0, wei
 
     def mk(train):
         return Store.from_records(train).anchor_model(
-            cls, h=h, prior_strength=tau, weights=weights, footprint=footprint, background=background)
+            cls, h=h, prior_strength=tau, weights=weights, footprint=footprint,
+            background=background, register=register)
 
     if benchmark == "holdout":
         held = {(e.allele, e.peptide) for e in examples if e.label == 1}
@@ -151,6 +152,9 @@ def main():
     ap.add_argument("--decoy-mode", default="random", choices=("random", "hard"),
                     help="random = proteome+shuffle (presented-vs-random); hard = other-allele "
                          "ligands (allele-specificity)")
+    ap.add_argument("--register", default="marginal", choices=("marginal", "max"),
+                    help="MHC-II register handling: marginalize under the learned core-offset prior "
+                         "(default) or max over frames (pre-v0.6). Ignored for MHC-I.")
     ap.add_argument("--footprint", default="anchor", choices=("anchor", "core", "adaptive"),
                     help="mhcmatch footprint: anchors, full core, or adaptive (anchors for rare "
                          "alleles, core otherwise)")
@@ -194,7 +198,8 @@ def main():
     print(f"# scoring {len(examples)} examples with NetMHC ...", file=sys.stderr)
     nm = predictors.netmhc_scores(examples, args.cls)
     mm = score_mhcmatch(rc, examples, args.cls, args.benchmark, args.footprint,
-                        h=args.h, tau=args.tau, weights=args.weights, background=args.background)
+                        h=args.h, tau=args.tau, weights=args.weights, background=args.background,
+                        register=args.register)
     data = predictors.aligned(examples, {"mhcmatch": mm, "netmhcpan": nm})
     print(f"# {len(data)}/{len(examples)} examples scored by both tools")
     rows = aggregate(data, rng)
