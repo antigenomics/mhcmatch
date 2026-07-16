@@ -17,6 +17,7 @@ import math
 import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from functools import lru_cache
 
 from seqtree import KmerIndex, SearchParams, layout
 
@@ -166,6 +167,32 @@ def resolve_anchor_index(peptide: str, cls: str, anchor: int):
     return idx if 0 <= idx < len(peptide) else None
 
 
+@lru_cache(maxsize=256)
+def mhc1_positions(length: int, anchors: tuple) -> tuple | None:
+    """0-based peptide index for each signed MHC-I ``anchor``, with collisions resolved.
+
+    Signed anchors collide on short peptides: :data:`mhcmatch.diffusion.MHC1_CORE`'s ``+5`` and ``-4``
+    both resolve to index 4 of an 8-mer. Counting that residue twice makes the score an inflated,
+    mis-normalized likelihood ratio (two perfectly-correlated terms), and files the same residue under
+    two positions in :meth:`Store.anchor_preferences`. Here the first anchor to claim an index keeps
+    it; a losing anchor yields ``None`` and contributes nothing.
+
+    The return is **aligned to ``anchors``** (same length), so callers keep their per-anchor
+    bookkeeping. Returns ``None`` if any anchor falls outside the peptide (too short to score).
+
+    This is the single mapping shared by the scorer (:meth:`mhcmatch.diffusion.AnchorModel.score`) and
+    the preference estimator, so training and scoring cannot disagree about which residue sits where.
+    """
+    out, seen = [], set()
+    for j in anchors:
+        idx = (j - 1) if j > 0 else (length + j)
+        if not 0 <= idx < length:
+            return None
+        out.append(None if idx in seen else idx)
+        seen.add(idx)
+    return tuple(out)
+
+
 class _Panel:
     """One MHC class: presentation-signature KmerIndex + allele bookkeeping."""
 
@@ -228,26 +255,45 @@ class Store:
 
     # -- construction ---------------------------------------------------------
     @classmethod
-    def from_records(cls, records):
+    def from_records(cls, records, impute_alpha: bool = False):
         """records: dicts with ``epitope``, ``mhc_a`` (or ``mhc``), ``mhc_class``; optional
-        ``weight`` (default 1.0) confidence-weights the peptide in anchor-preference estimation."""
+        ``weight`` (default 1.0) confidence-weights the peptide in anchor-preference estimation.
+
+        ``impute_alpha`` admits class-II records that type only the **beta** chain, by filling the
+        most likely alpha from :func:`mhcmatch.pseudoseq.alpha_prior`; otherwise they are dropped
+        (4,824 human records, 1.5% of the panel, 2,516 of them HLA-DPB1*11:01).
+
+        **Default off, unlike the lookup path** (:func:`~mhcmatch.pseudoseq.class2_from_name`, where
+        imputing turns a ``nan`` into an answer and is a strict win). Admitting these ligands to the
+        *reference panel* was measured and it does not help: over the 13 alleles whose reference set
+        grows, held-out AUROC moves **-0.0019** and AUPRC **-0.0012**, and the damage scales with the
+        merge -- HLA-DPA10201-DPB11101 gains 2,339 ligands (+89%) and loses **0.0155 AUROC**. A study
+        that skipped alpha-typing produced noisier ligand calls too, so the missing alpha is a marker
+        of data quality and not merely of absent metadata. Turn it on only if you want coverage of
+        those ligands more than motif purity.
+        """
         from .pseudoseq import class2_key
         store = cls()
         for r in records:
             c = _CLASS.get(str(r.get("mhc_class", "")).strip())
             ep = str(r.get("epitope", "")).strip().upper()
             allele = str(r.get("mhc_a") or r.get("mhc") or "").strip()
-            if c is None or not ep or not allele or not all(x in _AA for x in ep):
+            if c is None or not ep or not all(x in _AA for x in ep):
                 continue
             if c == "mhc2":  # key class II by the alpha-beta pair (locus-aware)
-                allele = class2_key(allele, str(r.get("mhc_b") or "").strip())
+                allele = class2_key(allele, str(r.get("mhc_b") or "").strip(), impute_alpha)
+                if allele.startswith("-"):   # beta-only and no prior for it -> no groove exists
+                    continue
+            if not allele:
+                continue
             store._panel[c].add(ep, allele, float(r.get("weight", 1.0) or 1.0))
         for p in store._panel.values():
             p.build()
         return store
 
     @classmethod
-    def from_pmhc(cls, path=None, tier="full", species=None, classes=("mhc1", "mhc2")):
+    def from_pmhc(cls, path=None, tier="full", species=None, classes=("mhc1", "mhc2"),
+                  impute_alpha: bool = False):
         """Load the isalgo/pmhc_data TSV(.gz). ``species`` filters the *MHC* species
         (``"human"`` / ``"mouse"``). If ``path`` is None it uses ``$MHCMATCH_PMHC/pmhc_<tier>.tsv.gz``
         when that env var is set, otherwise **bootstraps the table from the public HF dataset** via
@@ -269,7 +315,7 @@ class Store:
                 if sp and row.get("mhc_species") != sp:
                     continue
                 recs.append(row)
-        return cls.from_records(recs)
+        return cls.from_records(recs, impute_alpha)
 
     def __len__(self):
         return sum(len(p.epitopes) for p in self._panel.values())
@@ -432,7 +478,7 @@ class Store:
     # -- diffusion-powered forward scorer -------------------------------------
     def anchor_model(self, cls="mhc1", h=2.0, prior_strength=10.0, anchors=None, learn_weights=True,
                      prune_dpi=False, weights="learned", register_em=2, footprint="anchor",
-                     rare_max=30, background="ligand"):
+                     rare_max=30, background="ligand", length_prior="score", length_motifs=True):
         """Anchor-factored presentation model with cross-allele kernel-shrinkage diffusion.
 
         See :class:`mhcmatch.diffusion.AnchorModel`. The diffusion rescues rare alleles by borrowing
@@ -443,13 +489,16 @@ class Store:
         binding core (MHC-I P1-P5 + PΩ-3..PΩ, MHC-II 9-mer core) -- more discriminative when
         non-anchor positions carry allele-specific signal. ``background="ligand"`` (default) is the
         allele-specificity null; ``"proteome"`` is the presentation null (better for ligand-vs-random
-        screening) -- see :data:`mhcmatch.diffusion.PROTEOME_AA_FREQ`.
+        screening) -- see :data:`mhcmatch.diffusion.PROTEOME_AA_FREQ`. ``length_prior="score"``
+        (MHC-I) adds the per-allele ligand-length factor the anchor log-odds is blind to --
+        see :meth:`mhcmatch.diffusion.AnchorModel.length_logodds`.
         """
         from .diffusion import AnchorModel
         return AnchorModel(self, cls=cls, anchors=anchors, h=h, prior_strength=prior_strength,
                            learn_weights=learn_weights, prune_dpi=prune_dpi, weights=weights,
                            register_em=register_em, footprint=footprint, rare_max=rare_max,
-                           background=background)
+                           background=background, length_prior=length_prior,
+                           length_motifs=length_motifs)
 
     def affinity_model(self, cls="mhc1"):
         """Quantitative IC50 (nM) + neoantigen amplitude/DAI head (:class:`mhcmatch.PottsAffinity`).
@@ -469,12 +518,51 @@ class Store:
         return cache[cls]
 
     # -- per-allele anchor preferences (feeds pseudoseq diffusion) ------------
-    def anchor_preferences(self, cls, anchor):
-        """{allele: Counter(residue)} at a 1-based ``anchor`` position (negative from C-term)."""
+    def anchor_preferences(self, cls, anchor, anchors=None, by_length=False):
+        """{allele: Counter(residue)} at a 1-based ``anchor`` position (negative from C-term).
+
+        ``anchors`` (MHC-I): the full footprint. When given, signed-anchor collisions on short peptides
+        are resolved with :func:`mhc1_positions` -- the *same* rule the scorer uses -- so a residue is
+        filed under exactly one position. Without it an 8-mer's index-4 residue lands in both ``+5``
+        and ``-4``, and training would disagree with scoring.
+
+        ``by_length=True`` returns ``{peptide_length: {allele: Counter(residue)}}`` instead. The pooled
+        (default) form mixes every length into one counter, so the motif it yields is really the
+        9-mer motif (~2/3 of the panel) applied to 8/10/11-mers too -- measurably wrong off-9. Splitting
+        by length is what the estimator in :meth:`mhcmatch.diffusion.AnchorModel._dist_len` backs off
+        from, since per-(allele, length) counts are thin (rare alleles have a median of *zero* 8-mers).
+        """
+        panel = self._panel[cls]
+        prefs = defaultdict(lambda: defaultdict(Counter)) if by_length else defaultdict(Counter)
+        use_pos = cls == "mhc1" and anchors is not None
+        slot = anchors.index(anchor) if use_pos else None
+        for ep, a, w in zip(panel.epitopes, panel.alleles, panel.weights):
+            if use_pos:
+                pos = mhc1_positions(len(ep), anchors)
+                idx = None if pos is None else pos[slot]
+            else:
+                idx = resolve_anchor_index(ep, cls, anchor)
+            if idx is None:
+                continue
+            if by_length:
+                prefs[len(ep)][a][ep[idx]] += w
+            else:
+                prefs[a][ep[idx]] += w
+        return prefs
+
+    def length_preferences(self, cls):
+        """``{allele: Counter(peptide_length)}`` over the panel -- the per-allele ligand-length
+        distribution, publication-weighted like :meth:`anchor_preferences`.
+
+        MHC-I alleles differ strongly here (9-mer share ranges ~0.32-0.96; ``HLA-B*52:01`` is ~65%
+        8-mers), and the anchor log-odds is blind to it: its term count is length-invariant, so a
+        9-mer and a 10-mer with the same anchor residues score identically. This feeds
+        :meth:`mhcmatch.diffusion.AnchorModel._length_logodds`, which restores the missing factor.
+
+        ``logo.motif`` computes a per-allele length histogram too, but unshrunk and for display only.
+        """
         panel = self._panel[cls]
         prefs = defaultdict(Counter)
         for ep, a, w in zip(panel.epitopes, panel.alleles, panel.weights):
-            idx = resolve_anchor_index(ep, cls, anchor)
-            if idx is not None:
-                prefs[a][ep[idx]] += w
+            prefs[a][len(ep)] += w
         return prefs

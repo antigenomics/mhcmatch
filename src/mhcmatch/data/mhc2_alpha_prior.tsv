@@ -1,0 +1,39 @@
+# Most likely alpha chain per DP/DQ beta chain, learned from the IEDB-derived pmhc panel.
+#
+# MHC-II is an alpha-beta heterodimer, but many studies type only the beta chain, leaving panel keys
+# like "-DPB11101" (2,511 ligands) with no groove and therefore unscorable. DRA is monomorphic so DR
+# needs no table (pseudoseq.class2_key hardcodes it); DPA1/DQA1 are polymorphic and must be learned.
+# DQA1-DQB1 sit in strong linkage disequilibrium, so the pairing is highly predictable for common
+# haplotypes -- this table rediscovers DQ2.5 (DQB1*02:01-DQA1*05:01) and DQ8 (DQB1*03:02-DQA1*03:01)
+# without being told they exist.
+#
+# Criterion: P(34-mer GROOVE | beta) >= 0.95 over >= 50 fully-typed panel ligands.
+# The GROOVE, not the allele name nor its 2-digit group: DQA1*01:02 and DQA1*01:05 share the group
+# DQA1*01 but have different 34-mers, so a group-level rule reads 100% certain while the sequence is
+# still a 58/42 coin flip -- DQA1 polymorphism sits in the alpha1 domain the pseudosequence samples.
+# Measured, not assumed. Rare DQ betas fail the bar and are deliberately left unresolved: a wrong
+# groove scores silently, which is worse than not scoring at all.
+#
+# alpha is written exactly as it appears in a real key, i.e. keys rebuild as f"{alpha}-{beta}".
+# Regenerate: see src/mhcmatch/data/PROVENANCE.md
+beta	alpha	p_groove	n_ligands
+DPB10101	HLA-DPA10201	0.9747	6173
+DPB10201	HLA-DPA10103	0.9961	8901
+DPB10301	HLA-DPA10103	0.9726	8943
+DPB10401	HLA-DPA10103	0.9978	15158
+DPB10402	HLA-DPA10103	0.9999	6755
+DPB10501	HLA-DPA10202	0.9984	11595
+DPB10601	HLA-DPA10103	1.0000	2978
+DPB10901	HLA-DPA10201	0.9905	6434
+DPB11001	HLA-DPA10201	1.0000	7815
+DPB110401	HLA-DPA10103	1.0000	402
+DPB11101	HLA-DPA10201	0.9920	2639
+DPB11301	HLA-DPA10201	1.0000	7229
+DPB11401	HLA-DPA10201	0.9990	9938
+DPB11701	HLA-DPA10201	0.9976	6274
+DPB11901	HLA-DPA10202	1.0000	1224
+DQB10201	HLA-DQA10501	0.9837	4227
+DQB10202	HLA-DQA10201	0.9928	7761
+DQB10301	HLA-DQA10505	0.9689	7985
+DQB10302	HLA-DQA10301	0.9760	5449
+DQB10401	HLA-DQA10302	1.0000	110

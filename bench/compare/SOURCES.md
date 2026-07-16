@@ -49,8 +49,9 @@ from the pipeline outputs ("guess the haplotype"): TESLA1 from the `.scored.csv`
 
 Allele scorability notes (measured): all 6 TESLA1 class-I alleles are scored by both tools —
 `HLA-B15:07` is **not in the pmhc panel** (any tier) so mhcmatch scores it **zero-shot via
-pseudosequence diffusion**. All 8 class-II alleles score by both; `DRB1_1301` and `DRB3_0202` are
-in-panel but lack a vendored pseudosequence (they still score from their own reference ligands).
+pseudosequence diffusion**. All 8 class-II alleles score by both; `DRB1_1301` and `DRB3_0202` now
+have a vendored pseudosequence (they were casualties of the header-index bug fixed 2026-07-16 —
+see `src/mhcmatch/data/PROVENANCE.md`), so they diffuse rather than relying on their own ligands.
 
 Pipeline-reference axis in `.scored.csv`: class I = MHCflurry `affinity_percentile` (lower=stronger);
 class II = TLimmuno2 `affinity` prediction (higher=stronger; its `affinity_percentile` column is empty).

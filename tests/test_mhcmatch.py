@@ -1,4 +1,5 @@
 """Runnable checks for mhcmatch v0. Mirror seqtree's positive controls where applicable."""
+import collections
 import random
 
 import pytest
@@ -454,3 +455,189 @@ def test_recommended_flanks_are_the_measured_ones():
     asy = ligand.fixed_span(core, prot, ligand.ASSAY_FLANK, ligand.ASSAY_FLANK)
     assert len(st.peptide) == 13 and core in st.peptide
     assert len(asy.peptide) == 21 and st.peptide in asy.peptide
+
+
+# -- MHC-I length awareness -------------------------------------------------------------------
+from mhcmatch.diffusion import MHC1_ANCHORS, MHC1_CORE                  # noqa: E402
+from mhcmatch.store import mhc1_positions                               # noqa: E402
+
+
+def _mhc1_store():
+    recs = [{"epitope": e, "mhc_a": "HLA-A02:01", "mhc_class": "MHCI"} for e in
+            ("GILGFVFTL", "NLVPMVATV", "YLQPRTFLL", "GLCTLVAML", "FLYALALLL", "FLPSDFFPSV",
+             "LLFGYPVYV", "YMLDLQPETT", "RMFPNAPYL", "SLYNTVATL", "KLVALGINAV", "AAGIGILTV")]
+    recs += [{"epitope": e, "mhc_a": "HLA-B07:02", "mhc_class": "MHCI"} for e in
+             ("APRTVALTA", "SPRWYFYYL", "IPSINVHHY")]
+    return Store.from_records(recs)
+
+
+def test_mhc1_positions_never_double_counts():
+    # MHC1_CORE's +5 and -4 both land on index 4 of an 8-mer. Counting it twice makes the score an
+    # inflated, mis-normalised likelihood ratio (two perfectly-correlated terms) and files one residue
+    # under two positions in anchor_preferences. Only the 8-mer collides; 9/10/11 skip the bulge.
+    for L in (8, 9, 10, 11):
+        pos = mhc1_positions(L, MHC1_CORE)
+        real = [i for i in pos if i is not None]
+        assert len(real) == len(set(real)), f"L={L} double-counts an index"
+        assert len(pos) == len(MHC1_CORE), "must stay aligned to `anchors` for per-anchor bookkeeping"
+        assert all(0 <= i < L for i in real)
+        assert all(i is not None for i in mhc1_positions(L, MHC1_ANCHORS)), "5-anchor never collides"
+    assert mhc1_positions(8, MHC1_CORE).count(None) == 1
+    assert all(mhc1_positions(L, MHC1_CORE).count(None) == 0 for L in (9, 10, 11))
+    assert mhc1_positions(4, MHC1_CORE) is None, "too short for the footprint -> None"
+
+
+def test_length_prior_is_on_by_default_and_exactly_additive():
+    # ON by default since v0.5.0 (+0.031 maxF1 on the MixMHCpred3 benchmark, precision AND recall up).
+    # The anchor log-odds sums a length-INVARIANT number of terms, so without this a 10-mer and a
+    # 9-mer with the same anchors score bit-identically -- see data/PROVENANCE.md and the CHANGELOG.
+    s = _mhc1_store()
+    off = s.anchor_model("mhc1", footprint="core", background="proteome",
+                         length_prior=False, length_motifs=False)
+    on = s.anchor_model("mhc1", footprint="core", background="proteome", length_motifs=False)
+    assert on.length_prior == "score", "the length prior must be ON by default"
+    assert off.length_logodds(9, "HLA-A02:01") == 0.0        # no prior built -> no term
+    # the term is exactly additive: score(on) == score(off) + length_logodds
+    for p in ("GILGFVFTL", "FLPSDFFPSV", "SIINFEHL"):
+        assert on.score(p, "HLA-A02:01") == pytest.approx(
+            off.score(p, "HLA-A02:01") + on.length_logodds(len(p), "HLA-A02:01"))
+    # and it prefers the length the allele actually presents (this panel's A*02:01 is 9-mer heavy)
+    assert on.length_logodds(9, "HLA-A02:01") > on.length_logodds(8, "HLA-A02:01")
+
+
+def test_length_motifs_backoff_is_exact_when_the_length_is_unseen():
+    # The safety property the whole design rests on: n(a,L)=0 must reproduce the pooled model
+    # BIT-FOR-BIT, so alleles with no ligands at a length (rare alleles have a median of zero
+    # 8-mers) provably cannot regress.
+    s = _mhc1_store()
+    # prior OFF in both arms: this isolates the MOTIF backoff from the (now default-on) length prior
+    off = s.anchor_model("mhc1", footprint="core", background="proteome",
+                         length_prior=False, length_motifs=False)
+    on = s.anchor_model("mhc1", footprint="core", background="proteome",
+                        length_prior=False, length_motifs=True)
+    assert on.prefs_len is not None and off.prefs_len is None
+    for p in ("SIINFEHL", "AAAAAAAAAAA"):                     # A*02:01 has no 8- or 11-mers here
+        assert on.score(p, "HLA-A02:01") == off.score(p, "HLA-A02:01")
+    assert on.score("GILGFVFTL", "HLA-A02:01") != off.score("GILGFVFTL", "HLA-A02:01")
+
+
+def test_length_bg_uniform_flattens_the_null_length_mix():
+    from mhcmatch.calibrate import corpus_stats, random_peptides
+    corpus = ["A" * 9] * 80 + ["A" * 8] * 10 + ["A" * 10] * 7 + ["A" * 11] * 3
+    aa, lens = corpus_stats(corpus)
+    got = collections.Counter(
+        len(p) for p in random_peptides(aa, lens, 4000, random.Random(0), "uniform"))
+    assert all(abs(got[L] / 4000 - 0.25) < 0.03 for L in (8, 9, 10, 11))
+    corp = collections.Counter(
+        len(p) for p in random_peptides(aa, lens, 4000, random.Random(0), "corpus"))
+    assert corp[9] / 4000 > 0.7, "'corpus' keeps the ligand length mix (the default, MHC-II needs it)"
+
+
+from mhcmatch.pseudoseq import load_pseudo, resolve_allele                 # noqa: E402
+
+
+def test_every_allele_in_a_collapsed_pseudoseq_group_is_resolvable():
+    """A FASTA header lists every allele sharing the 34-mer -- all of them must be keys.
+
+    Until 2026-07 the header carried only the group's first allele, so 68% of MHC-I and 80% of MHC-II
+    alleles were silently unresolvable -- including HLA-B*14:02, B*18:05, C*03:04. `load_pseudo` and
+    tcren's `build_pseudo_fasta.py` were fixed together; re-syncing the FASTA from an unfixed upstream
+    would reintroduce it, hence this test guards the data, not the parser.
+    """
+    for cls, floor in (("mhc1", 12000), ("mhc2", 10000)):
+        p = load_pseudo(cls)
+        assert len(p) > floor, f"{cls}: {len(p)} keys -- header index lost? (expected >{floor})"
+
+    p1 = load_pseudo("mhc1")
+    # each is a non-representative that shares its group's groove exactly -- not an approximation
+    for allele, rep in (("HLA-B14:02", "HLA-B14:01"), ("HLA-B18:05", "HLA-B18:01"),
+                        ("HLA-C03:04", "HLA-C03:03"), ("HLA-C03:02", "HLA-C03:01")):
+        assert allele in p1, f"{allele} unresolvable -- the collapsed-group index is broken"
+        assert p1[allele] == p1[rep], f"{allele} must carry {rep}'s 34-mer verbatim"
+        assert resolve_allele(allele, "mhc1") == (allele, True)
+
+
+def test_pseudoseq_groups_are_exact_identity_not_similarity():
+    """Collapsing is by *exact* 34-mer equality, so a group's members are interchangeable inputs.
+
+    Guards against a future 'helpful' fuzzy/nearest-neighbour alias, which would silently score one
+    allele with another's motif -- the collapse is only sound because the sequences are identical.
+    """
+    for cls in ("mhc1", "mhc2"):
+        seqs = load_pseudo(cls)
+        assert all(len(s) == 34 for s in seqs.values())
+
+
+def test_imgt_derived_alleles_cover_what_netmhcpan_omits():
+    """The FASTA carries IPD-IMGT/HLA-derived alleles NetMHCpan's table never had.
+
+    HLA-F is the clearest case: absent from MHC_pseudo.dat entirely, so it has no known 34-mer to
+    check against -- it is trusted because HLA-E and HLA-G round-trip 100% through the same
+    cross-gene column mapping (see data/PROVENANCE.md). HLA-A*30:14 is a plain gap in the table.
+    Both stranded real panel ligands before 2026-07-16.
+    """
+    p = load_pseudo("mhc1")
+    assert len(p) > 20000, f"{len(p)} keys -- the IMGT source is missing?"
+    for allele in ("HLA-A30:14", "HLA-F01:01", "HLA-F01:03", "HLA-F01:04"):
+        assert allele in p, f"{allele} absent -- IMGT-derived alleles not vendored?"
+        assert set(p[allele]) <= set("ACDEFGHIKLMNPQRSTVWY"), f"{allele} has a non-residue"
+    # HLA-F's groove is near-monomorphic: its alleles differ outside the 34 positions.
+    assert p["HLA-F01:01"] == p["HLA-F01:03"] == p["HLA-F01:04"]
+    # ...and it is genuinely distinct from the classical loci, i.e. not an alignment artefact.
+    assert p["HLA-F01:01"] != p["HLA-A02:01"]
+
+
+from mhcmatch.pseudoseq import alpha_prior, class2_from_name, class2_key    # noqa: E402
+
+
+def test_alpha_imputation_fires_only_on_a_missing_alpha():
+    """A fully-typed class-II input must be bit-identical with the flag on or off.
+
+    The flag exists for the 1.5% of panel records that type only the beta chain ('-DPB11101',
+    2,516 ligands) -- it must never rewrite a typing that is already complete, nor touch DR (whose
+    monomorphic DRA is hardcoded) or mouse.
+    """
+    for a, b in (("HLA-DPA1*01:03", "HLA-DPB1*04:01"), ("HLA-DQA1*05:01", "HLA-DQB1*02:01"),
+                 ("DRA", "HLA-DRB1*15:01"), ("I-Ab", "")):
+        assert class2_key(a, b, True) == class2_key(a, b, False)
+
+    p = load_pseudo("mhc2")
+    # beta-only: imputed to a real groove when on, left alpha-less (and unscorable) when off
+    on, off = class2_from_name("HLA-DPB1*11:01", True), class2_from_name("HLA-DPB1*11:01", False)
+    assert on == "HLA-DPA10201-DPB11101" and on in p
+    assert off == "-DPB11101" and off not in p
+
+
+def test_alpha_prior_refuses_an_ambiguous_groove():
+    """Only betas whose 34-mer is >=95% determined are imputed -- a wrong groove scores silently.
+
+    DQA1*01:02 and DQA1*01:05 share the 2-digit group DQA1*01 but NOT the 34-mer, so DQB1*05:02 looks
+    100% certain at group level while the groove is a 58/42 coin flip. The table is keyed on the
+    groove for exactly that reason; these rare DQ betas stay unresolved on purpose.
+    """
+    prior = alpha_prior()
+    assert prior, "alpha prior table is empty"
+    for beta in ("DQB10503", "DQB10502", "DQB10402", "DQB10602"):
+        assert beta not in prior, f"{beta}'s alpha is ambiguous and must not be imputed"
+    assert prior.get("DPB11101") == "HLA-DPA10201"      # 99% -- the 2,516-ligand case
+    assert prior.get("DQB10302") == "HLA-DQA10301"      # DQ8, rediscovered from linkage disequilibrium
+    assert prior.get("DQB10201") == "HLA-DQA10501"      # DQ2.5
+    p = load_pseudo("mhc2")
+    for beta, alpha in prior.items():
+        assert f"{alpha}-{beta}" in p, f"imputed key {alpha}-{beta} has no groove"
+
+
+def test_store_panel_is_unchanged_by_default_alpha_imputation_is_lookup_only():
+    """`Store.from_records` must default to the pre-2026-07 panel: beta-only records dropped.
+
+    The lookup path imputes by default (nan -> an answer, a strict win); the PANEL path does not.
+    Admitting these ligands was measured over the 13 alleles whose reference set grows: AUROC -0.0019,
+    AUPRC -0.0012, worst where the merge is biggest (DPB1*11:01 +89% ligands, -0.0155 AUROC). Missing
+    alpha-typing marks a noisier study, not just absent metadata. Opposite defaults, each measured.
+    """
+    recs = [{"epitope": "AAKGVAAWSAGTFRQ", "mhc_a": "", "mhc_b": "HLA-DPB1*11:01",
+             "mhc_class": "MHCII"}]
+    off = Store.from_records(recs)._panel["mhc2"]
+    assert off.alleles == [], "a beta-only record must be dropped by default"
+    on = Store.from_records(recs, impute_alpha=True)._panel["mhc2"]
+    assert on.alleles == ["HLA-DPA10201-DPB11101"], "impute_alpha=True must admit it, alpha filled"

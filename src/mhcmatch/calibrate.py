@@ -25,10 +25,26 @@ def corpus_stats(peptides):
     return aa, lens
 
 
-def random_peptides(aa: Counter, lens: Counter, n: int, rng):
-    """``n`` random peptides with residue ~ ``aa`` frequency and length ~ ``lens`` distribution."""
+def random_peptides(aa: Counter, lens: Counter, n: int, rng, length_bg: str = "corpus"):
+    """``n`` random peptides with residue ~ ``aa`` frequency and length ~ ``lens`` distribution.
+
+    ``length_bg`` selects the **length** composition of the null:
+
+    - ``"corpus"`` (default): length ~ ``lens``, i.e. the reference ligands' own distribution
+      (~9-mer heavy). Kept for MHC-II and for backwards compatibility.
+    - ``"uniform"``: equal numbers of each length in ``lens``. This is what a *screen* actually sees --
+      ``scan_protein``/``predict_windows`` tile every length, and a proteome yields ~n-L+1 windows per
+      length (uniform to <1% for n >> L). It is also the convention of the %rank-style predictors
+      mhcmatch is compared against. Use it for MHC-I, where the length preference is real biology that
+      the score must be allowed to express against a length-neutral null.
+
+    Note ``"uniform"`` is **not** the same as a length-conditional (per-length) background: that would
+    normalize each length to its own null and *delete* the length signal, which is wanted for the
+    MHC-II register-max gate but is exactly wrong for MHC-I.
+    """
     res, rw = zip(*aa.items())
-    lvals, lw = zip(*lens.items())
+    lvals = sorted(lens)
+    lw = [1.0] * len(lvals) if length_bg == "uniform" else [lens[L] for L in lvals]
     return ["".join(rng.choices(res, rw, k=rng.choices(lvals, lw)[0])) for _ in range(n)]
 
 
@@ -61,13 +77,15 @@ class RankCalibrator:
     ``model`` is an :class:`mhcmatch.AnchorModel`; ``alleles`` the panel to calibrate; ``corpus`` an
     iterable of reference peptides (for the background AA/length distribution). If ``positives`` (a
     ``{allele: [peptides]}`` map of known ligands) is given, a monotone isotonic P(present) is fit
-    per allele from those positives vs the background."""
+    per allele from those positives vs the background. ``length_bg`` -- see :func:`random_peptides`;
+    ``"uniform"`` is the right null for MHC-I once the score carries a length prior."""
 
-    def __init__(self, model, alleles, corpus, n: int = 10000, seed: int = 0, positives=None):
+    def __init__(self, model, alleles, corpus, n: int = 10000, seed: int = 0, positives=None,
+                 length_bg: str = "corpus"):
         rng = random.Random(seed)
         aa, lens = corpus_stats(corpus)
         self._model = model
-        self._rands = random_peptides(aa, lens, n, rng)
+        self._rands = random_peptides(aa, lens, n, rng, length_bg)
         self._positives = positives or {}
         self._bg = {}   # allele -> sorted background scores (lazy)
         self._iso = {}  # allele -> isotonic (xs, ys) (lazy)
