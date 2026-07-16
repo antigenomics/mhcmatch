@@ -459,7 +459,7 @@ class Store:
     # -- diffusion-powered forward scorer -------------------------------------
     def anchor_model(self, cls="mhc1", h=2.0, prior_strength=10.0, anchors=None, learn_weights=True,
                      prune_dpi=False, weights="learned", register_em=2, footprint="anchor",
-                     rare_max=30, background="ligand"):
+                     rare_max=30, background="ligand", length_prior=False):
         """Anchor-factored presentation model with cross-allele kernel-shrinkage diffusion.
 
         See :class:`mhcmatch.diffusion.AnchorModel`. The diffusion rescues rare alleles by borrowing
@@ -470,13 +470,15 @@ class Store:
         binding core (MHC-I P1-P5 + PΩ-3..PΩ, MHC-II 9-mer core) -- more discriminative when
         non-anchor positions carry allele-specific signal. ``background="ligand"`` (default) is the
         allele-specificity null; ``"proteome"`` is the presentation null (better for ligand-vs-random
-        screening) -- see :data:`mhcmatch.diffusion.PROTEOME_AA_FREQ`.
+        screening) -- see :data:`mhcmatch.diffusion.PROTEOME_AA_FREQ`. ``length_prior="score"``
+        (MHC-I) adds the per-allele ligand-length factor the anchor log-odds is blind to --
+        see :meth:`mhcmatch.diffusion.AnchorModel.length_logodds`.
         """
         from .diffusion import AnchorModel
         return AnchorModel(self, cls=cls, anchors=anchors, h=h, prior_strength=prior_strength,
                            learn_weights=learn_weights, prune_dpi=prune_dpi, weights=weights,
                            register_em=register_em, footprint=footprint, rare_max=rare_max,
-                           background=background)
+                           background=background, length_prior=length_prior)
 
     def affinity_model(self, cls="mhc1"):
         """Quantitative IC50 (nM) + neoantigen amplitude/DAI head (:class:`mhcmatch.PottsAffinity`).
@@ -515,4 +517,21 @@ class Store:
                 idx = resolve_anchor_index(ep, cls, anchor)
             if idx is not None:
                 prefs[a][ep[idx]] += w
+        return prefs
+
+    def length_preferences(self, cls):
+        """``{allele: Counter(peptide_length)}`` over the panel -- the per-allele ligand-length
+        distribution, publication-weighted like :meth:`anchor_preferences`.
+
+        MHC-I alleles differ strongly here (9-mer share ranges ~0.32-0.96; ``HLA-B*52:01`` is ~65%
+        8-mers), and the anchor log-odds is blind to it: its term count is length-invariant, so a
+        9-mer and a 10-mer with the same anchor residues score identically. This feeds
+        :meth:`mhcmatch.diffusion.AnchorModel._length_logodds`, which restores the missing factor.
+
+        ``logo.motif`` computes a per-allele length histogram too, but unshrunk and for display only.
+        """
+        panel = self._panel[cls]
+        prefs = defaultdict(Counter)
+        for ep, a, w in zip(panel.epitopes, panel.alleles, panel.weights):
+            prefs[a][len(ep)] += w
         return prefs

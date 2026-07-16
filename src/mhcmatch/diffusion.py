@@ -73,7 +73,8 @@ class AnchorModel:
 
     def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0,
                  learn_weights=True, prune_dpi=False, weights="learned", blend_alpha=0.5,
-                 register_em=2, footprint="anchor", rare_max=30, background="ligand"):
+                 register_em=2, footprint="anchor", rare_max=30, background="ligand",
+                 length_prior=False):
         """``weights``: ``"learned"`` (per-anchor MI over the panel, default), ``"structural"``
         (contact-frequency weights from pMHC structures, :func:`load_structural_weights`),
         ``"blend"`` (convex mix ``blend_alpha``*structural + (1-``blend_alpha``)*learned, mean-1
@@ -85,9 +86,16 @@ class AnchorModel:
         every training peptide to the frame its *own* model scores best and re-estimates the
         preferences, so training and scoring use the same (best-frame) register. The default ``2``
         lifts held-out binder-vs-decoy AUC across rare/medium/frequent MHC-II alleles (frequent
-        +0.10); ``0`` keeps the one-pass heuristic register. Ignored for MHC-I (end-anchored)."""
+        +0.10); ``0`` keeps the one-pass heuristic register. Ignored for MHC-I (end-anchored).
+
+        ``length_prior`` (MHC-I only) adds the per-allele ligand-length factor the anchor log-odds is
+        structurally blind to -- see :meth:`length_logodds`. ``"score"`` folds it into
+        :meth:`score`, so ``%rank`` and everything downstream inherit it; ``"post"`` only exposes
+        :meth:`length_logodds` for a caller that composes it itself; ``False`` (default) is the
+        length-blind v0.4 behaviour."""
         self.cls = cls
         self.background = background
+        self.length_prior = length_prior
         self._markov1 = load_markov1() if background == "markov" else None
         core = MHC1_CORE if cls == "mhc1" else MHC2_CORE
         prim = MHC1_ANCHORS if cls == "mhc1" else MHC2_ANCHORS
@@ -111,6 +119,15 @@ class AnchorModel:
         # ``anchors`` lets the estimator resolve signed-anchor collisions the same way the scorer does.
         self.prefs = {j: store.anchor_preferences(cls, j, anchors=self.anchors)
                       for j in self.anchors}
+        # per-allele ligand-length distribution (MHC-I): the factor the anchor log-odds cannot see
+        if length_prior and cls == "mhc1":
+            from .store import _DEFAULT_LENGTHS
+            self.len_prefs = store.length_preferences(cls)
+            self._len_bg = 1.0 / len(_DEFAULT_LENGTHS[cls])   # a screen tiles every length uniformly
+        else:
+            self.len_prefs = None
+            self._len_bg = None
+        self._len_cache = {}
         self.bg = {}
         for j in self.anchors:
             c = Counter()
@@ -233,6 +250,35 @@ class AnchorModel:
             s += math.log((p_a + eps) / (p_bg + eps))
         return s
 
+    def length_logodds(self, length, allele, eps=1e-3):
+        """``log P(L | allele) - log P_bg(L)`` -- the ligand-length factor, in nats. MHC-I only;
+        ``0.0`` when the model was built without ``length_prior``.
+
+        The anchor log-odds is structurally length-blind: it sums a *length-invariant* number of
+        per-position terms, so a 9-mer and a 10-mer with the same anchor residues score identically.
+        But MHC-I length preference is strong and allele-specific (9-mer share ~0.32-0.96), and a
+        screen tiles every length, so ``P_bg`` is uniform. The exact factorization
+
+            log P(pep|ligand,a)/P(pep|decoy) = [log P(L|a) - log P_bg(L)] + [log P(res|L,a)/P(res|L,decoy)]
+
+        is over two *different* variables, so this term adds to the anchor sum and cannot double-count
+        it. Weight is fixed at 1 -- it is a log-likelihood ratio, not a tunable feature.
+
+        ``P(L|a)`` is the panel's per-allele length histogram, kernel-shrunk toward groove-similar
+        alleles by the same bounded-prior estimator used for residues (:meth:`Pseudoseq.shrink`, which
+        is generic over the key type), so a rare allele borrows a length profile instead of trusting a
+        handful of ligands. ``anchor=None`` gives uniform groove weights -- correct here, since length
+        preference is whole-groove (A/B/F pocket geometry), not a single pocket's property.
+        """
+        if self.len_prefs is None:
+            return 0.0
+        if allele not in self._len_cache:
+            self._len_cache[allele] = self.ps.shrink(
+                self.len_prefs, allele, anchor=None, candidates=list(self.len_prefs),
+                prior_strength=self.prior_strength)
+        th = self._len_cache[allele]
+        return math.log((th.get(length, 0.0) + eps) / (self._len_bg + eps))
+
     def _score_mask(self, allele):
         """Position subset for ``allele`` under the adaptive footprint (None = all positions)."""
         if self._rare_mask is not None and self._counts.get(allele, 0) <= self._rare_max:
@@ -282,8 +328,11 @@ class AnchorModel:
             return -1, float("-inf")
         ctx = [(peptide[i - 1] if i else "") if i is not None else None
                for i in idxs] if markov else None
-        return 0, self._anchor_logodds([peptide[i] if i is not None else None for i in idxs],
-                                       allele, raw, eps, mask, ctx)
+        s = self._anchor_logodds([peptide[i] if i is not None else None for i in idxs],
+                                 allele, raw, eps, mask, ctx)
+        if self.length_prior == "score":
+            s += self.length_logodds(len(peptide), allele, eps)
+        return 0, s
 
     def score(self, peptide, allele, raw=False, eps=1e-3):
         """Anchor log-odds of ``peptide`` for ``allele`` vs the panel background.
