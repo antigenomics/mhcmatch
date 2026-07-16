@@ -17,6 +17,7 @@ import math
 import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from functools import lru_cache
 
 from seqtree import KmerIndex, SearchParams, layout
 
@@ -164,6 +165,32 @@ def resolve_anchor_index(peptide: str, cls: str, anchor: int):
         return idx if s <= idx < s + 9 else None
     idx = (anchor - 1) if anchor > 0 else (len(peptide) + anchor)
     return idx if 0 <= idx < len(peptide) else None
+
+
+@lru_cache(maxsize=256)
+def mhc1_positions(length: int, anchors: tuple) -> tuple | None:
+    """0-based peptide index for each signed MHC-I ``anchor``, with collisions resolved.
+
+    Signed anchors collide on short peptides: :data:`mhcmatch.diffusion.MHC1_CORE`'s ``+5`` and ``-4``
+    both resolve to index 4 of an 8-mer. Counting that residue twice makes the score an inflated,
+    mis-normalized likelihood ratio (two perfectly-correlated terms), and files the same residue under
+    two positions in :meth:`Store.anchor_preferences`. Here the first anchor to claim an index keeps
+    it; a losing anchor yields ``None`` and contributes nothing.
+
+    The return is **aligned to ``anchors``** (same length), so callers keep their per-anchor
+    bookkeeping. Returns ``None`` if any anchor falls outside the peptide (too short to score).
+
+    This is the single mapping shared by the scorer (:meth:`mhcmatch.diffusion.AnchorModel.score`) and
+    the preference estimator, so training and scoring cannot disagree about which residue sits where.
+    """
+    out, seen = [], set()
+    for j in anchors:
+        idx = (j - 1) if j > 0 else (length + j)
+        if not 0 <= idx < length:
+            return None
+        out.append(None if idx in seen else idx)
+        seen.add(idx)
+    return tuple(out)
 
 
 class _Panel:
@@ -469,12 +496,23 @@ class Store:
         return cache[cls]
 
     # -- per-allele anchor preferences (feeds pseudoseq diffusion) ------------
-    def anchor_preferences(self, cls, anchor):
-        """{allele: Counter(residue)} at a 1-based ``anchor`` position (negative from C-term)."""
+    def anchor_preferences(self, cls, anchor, anchors=None):
+        """{allele: Counter(residue)} at a 1-based ``anchor`` position (negative from C-term).
+
+        ``anchors`` (MHC-I): the full footprint. When given, signed-anchor collisions on short peptides
+        are resolved with :func:`mhc1_positions` -- the *same* rule the scorer uses -- so a residue is
+        filed under exactly one position. Without it an 8-mer's index-4 residue lands in both ``+5``
+        and ``-4``, and training would disagree with scoring."""
         panel = self._panel[cls]
         prefs = defaultdict(Counter)
+        use_pos = cls == "mhc1" and anchors is not None
+        slot = anchors.index(anchor) if use_pos else None
         for ep, a, w in zip(panel.epitopes, panel.alleles, panel.weights):
-            idx = resolve_anchor_index(ep, cls, anchor)
+            if use_pos:
+                pos = mhc1_positions(len(ep), anchors)
+                idx = None if pos is None else pos[slot]
+            else:
+                idx = resolve_anchor_index(ep, cls, anchor)
             if idx is not None:
                 prefs[a][ep[idx]] += w
         return prefs

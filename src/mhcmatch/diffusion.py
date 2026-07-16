@@ -107,8 +107,10 @@ class AnchorModel:
             self._rare_mask = None
             self._counts = None
         self.prior_strength = prior_strength
-        # per-anchor preference {anchor: {allele: Counter(residue)}} and background marginals
-        self.prefs = {j: store.anchor_preferences(cls, j) for j in self.anchors}
+        # per-anchor preference {anchor: {allele: Counter(residue)}} and background marginals.
+        # ``anchors`` lets the estimator resolve signed-anchor collisions the same way the scorer does.
+        self.prefs = {j: store.anchor_preferences(cls, j, anchors=self.anchors)
+                      for j in self.anchors}
         self.bg = {}
         for j in self.anchors:
             c = Counter()
@@ -217,11 +219,14 @@ class AnchorModel:
         ``mask`` (indices into ``self.anchors``) restricts the sum to those positions -- used by the
         adaptive footprint to score rare alleles on the primary anchors only. ``contexts`` (the
         residue preceding each scored position) supplies the order-1 Markov null when
-        ``background="markov"``."""
+        ``background="markov"``. A ``None`` residue is a signed-anchor collision already counted by an
+        earlier position (see :func:`mhcmatch.store.mhc1_positions`) and contributes nothing."""
         s = 0.0
         idxs = range(len(self.anchors)) if mask is None else mask
         for i in idxs:
             j, r = self.anchors[i], residues[i]
+            if r is None:
+                continue
             th = self._dist(j, allele, raw)
             p_a = th.get(r, 0.0)
             p_bg = self._bg_prob(j, r, contexts[i] if contexts else None)
@@ -271,12 +276,14 @@ class AnchorModel:
                 if s > best:                              # leftmost wins ties, as max() did
                     best, best_st = s, st
             return best_st, best
-        from .store import resolve_anchor_index
-        idxs = [resolve_anchor_index(peptide, self.cls, j) for j in self.anchors]
-        if any(i is None for i in idxs):
+        from .store import mhc1_positions
+        idxs = mhc1_positions(len(peptide), self.anchors)
+        if idxs is None:                                  # too short for the footprint
             return -1, float("-inf")
-        ctx = [peptide[i - 1] if i > 0 else "" for i in idxs] if markov else None
-        return 0, self._anchor_logodds([peptide[i] for i in idxs], allele, raw, eps, mask, ctx)
+        ctx = [(peptide[i - 1] if i else "") if i is not None else None
+               for i in idxs] if markov else None
+        return 0, self._anchor_logodds([peptide[i] if i is not None else None for i in idxs],
+                                       allele, raw, eps, mask, ctx)
 
     def score(self, peptide, allele, raw=False, eps=1e-3):
         """Anchor log-odds of ``peptide`` for ``allele`` vs the panel background.
@@ -300,6 +307,9 @@ class AnchorModel:
         Unlike :meth:`score` (their sum) this exposes the vector, so a downstream regressor can weight
         positions differently -- e.g. the affinity head (:mod:`mhcmatch.affinity`) learns pocket
         weights for binding energy rather than presentation specificity.
+
+        The width is always ``len(self.anchors)``: a signed-anchor collision (an 8-mer's ``+5``/``-4``)
+        contributes ``0.0`` rather than dropping a column, so the vector stays a fixed-width feature.
         """
         peptide = peptide.strip().upper()
         st, _ = self.best_register(peptide, allele, raw, eps)
@@ -312,12 +322,16 @@ class AnchorModel:
             residues = [w[c] for c in core_pos]
             ctx = [peptide[st + c - 1] if st + c > 0 else "" for c in core_pos] if markov else None
         else:
-            from .store import resolve_anchor_index
-            idxs = [resolve_anchor_index(peptide, self.cls, j) for j in self.anchors]
-            residues = [peptide[i] for i in idxs]
-            ctx = [peptide[i - 1] if i > 0 else "" for i in idxs] if markov else None
+            from .store import mhc1_positions
+            idxs = mhc1_positions(len(peptide), self.anchors)
+            residues = [peptide[i] if i is not None else None for i in idxs]
+            ctx = [(peptide[i - 1] if i else "") if i is not None else None
+                   for i in idxs] if markov else None
         terms = []
         for i, (j, r) in enumerate(zip(self.anchors, residues)):
+            if r is None:                                 # collision: already counted at an earlier j
+                terms.append(0.0)
+                continue
             th = self._dist(j, allele, raw)
             terms.append(math.log((th.get(r, 0.0) + eps) / (self._bg_prob(j, r, ctx[i] if ctx else None) + eps)))
         return terms
