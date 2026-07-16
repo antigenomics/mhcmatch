@@ -522,3 +522,38 @@ def test_length_bg_uniform_flattens_the_null_length_mix():
     corp = collections.Counter(
         len(p) for p in random_peptides(aa, lens, 4000, random.Random(0), "corpus"))
     assert corp[9] / 4000 > 0.7, "'corpus' keeps the ligand length mix (the default, MHC-II needs it)"
+
+
+from mhcmatch.pseudoseq import load_pseudo, resolve_allele                 # noqa: E402
+
+
+def test_every_allele_in_a_collapsed_pseudoseq_group_is_resolvable():
+    """A FASTA header lists every allele sharing the 34-mer -- all of them must be keys.
+
+    Until 2026-07 the header carried only the group's first allele, so 68% of MHC-I and 80% of MHC-II
+    alleles were silently unresolvable -- including HLA-B*14:02, B*18:05, C*03:04. `load_pseudo` and
+    tcren's `build_pseudo_fasta.py` were fixed together; re-syncing the FASTA from an unfixed upstream
+    would reintroduce it, hence this test guards the data, not the parser.
+    """
+    for cls, floor in (("mhc1", 12000), ("mhc2", 10000)):
+        p = load_pseudo(cls)
+        assert len(p) > floor, f"{cls}: {len(p)} keys -- header index lost? (expected >{floor})"
+
+    p1 = load_pseudo("mhc1")
+    # each is a non-representative that shares its group's groove exactly -- not an approximation
+    for allele, rep in (("HLA-B14:02", "HLA-B14:01"), ("HLA-B18:05", "HLA-B18:01"),
+                        ("HLA-C03:04", "HLA-C03:03"), ("HLA-C03:02", "HLA-C03:01")):
+        assert allele in p1, f"{allele} unresolvable -- the collapsed-group index is broken"
+        assert p1[allele] == p1[rep], f"{allele} must carry {rep}'s 34-mer verbatim"
+        assert resolve_allele(allele, "mhc1") == (allele, True)
+
+
+def test_pseudoseq_groups_are_exact_identity_not_similarity():
+    """Collapsing is by *exact* 34-mer equality, so a group's members are interchangeable inputs.
+
+    Guards against a future 'helpful' fuzzy/nearest-neighbour alias, which would silently score one
+    allele with another's motif -- the collapse is only sound because the sequences are identical.
+    """
+    for cls in ("mhc1", "mhc2"):
+        seqs = load_pseudo(cls)
+        assert all(len(s) == 34 for s in seqs.values())

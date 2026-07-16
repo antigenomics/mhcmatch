@@ -4,18 +4,35 @@
 
 NetMHCpan-style **34-residue MHC pseudosequences** — the polymorphic groove positions that contact
 the peptide (class I: α1/α2 of the MHC heavy chain; class II: α1 of the α-chain + β1 of the
-β-chain). Header format `>ALLELE|n=<count>`; `X` marks an ambiguous/unresolved position.
+β-chain). `X` marks an ambiguous/unresolved position.
 
-- **MHC-I:** 4143 alleles (human HLA-A/B/C, mouse H-2, and other species).
-- **MHC-II:** 2209 alleles (human HLA-DR/DQ/DP, mouse H-2 I-A/I-E, others).
+Alleles sharing a 34-mer are collapsed to one record. The header lists **every** allele of the
+group, space-separated: `>ALLELE [ALLELE ...]|n=<count>`. All of them are keys in
+`pseudoseq.load_pseudo`, so a query for any allele in the group returns that group's sequence —
+which *is* that allele's own sequence, since the group is defined by exact 34-mer identity.
 
-Copied verbatim from the sibling `antigenomics/tcren` repository
-(`tcren-ms/src/tcren/data/{mhci,mhcii}_pseudo.fa`, built by its `scripts/build_pseudo_fasta.py`),
-which derives them from the NetMHCpan pseudosequence definition. Used by `mhcmatch.pseudoseq` as the
-allele-similarity alphabet for the cross-allele diffusion model (see `appendix/mhcmatch.tex` §4).
+- **MHC-I:** 4143 unique sequences over **12997 alleles** (human HLA-A/B/C, mouse H-2, others).
+- **MHC-II:** 2209 unique sequences over **11048 alleles** (human HLA-DR/DQ/DP, mouse H-2 I-A/I-E, others).
 
-These files are static reference data and small (~340 KB total), so they are vendored rather than
+Derived from the NetMHCpan pseudosequence definition by the sibling `antigenomics/tcren` repo's
+`scripts/build_pseudo_fasta.py`. Used by `mhcmatch.pseudoseq` as the allele-similarity alphabet for
+the cross-allele diffusion model (see `appendix/mhcmatch.tex` §4). Regenerate with:
+
+    python ../tcren-ms/scripts/build_pseudo_fasta.py \
+        --mhci  ~/work/academy/software/netMHCpan-4.2/data/MHC_pseudo.dat \
+        --mhcii ~/work/academy/software/netMHCIIpan-4.3/data/pseudosequence.2023.all.X.dat \
+        --out src/mhcmatch/data
+
+These files are static reference data and small (~500 KB total), so they are vendored rather than
 fetched. Re-sync from `tcren` if the pseudosequence definition is updated upstream.
+
+**History (2026-07-16).** Until this date the header carried only the group's *first* allele, so the
+other 8854 of MHC-I's 12997 alleles (68%) — and 8839 of MHC-II's 11048 (80%) — were **silently
+unresolvable**, among them common specificities like HLA-B\*14:02, B\*18:05 and C\*03:04. The
+collapse was always correct; only the name index was lost. Restoring it left every 34-mer
+byte-identical (asserted at regeneration) and lifted the MixMHCpred3 benchmark from maxF1 0.8807 to
+0.8908. Both this file and `tcren`'s builder were fixed; a re-sync from an unfixed `tcren` would
+silently reintroduce the bug.
 
 ## `structural_pockets_mhc1.tsv` / `structural_pockets_mhc2.tsv`
 

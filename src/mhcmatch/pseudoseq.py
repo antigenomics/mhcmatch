@@ -106,14 +106,22 @@ def resolve_allele(name: str, cls: str):
 
 @lru_cache(maxsize=2)
 def load_pseudo(cls: str) -> dict:
-    """``allele-id -> 34-mer`` for the bundled pseudosequence FASTA of a class."""
+    """``allele-id -> 34-mer`` for the bundled pseudosequence FASTA of a class.
+
+    Alleles sharing a 34-mer are collapsed to one FASTA record whose header lists **every** such
+    allele (``>A B C|n=3``), so all of them are keys here. Listing only the first would silently make
+    the rest unscorable -- they are not rare variants: 8,854 of the source table's 12,997 alleles
+    (68%) are non-representatives, among them HLA-B*14:02, B*18:05 and C*03:04.
+    """
     text = resources.files("mhcmatch.data").joinpath(_FA[cls]).read_text()
-    out, header = {}, None
+    out, names = {}, ()
     for line in text.splitlines():
         if line.startswith(">"):
-            header = line[1:].split("|")[0].split()[0]
-        elif header is not None:
-            out[header] = line.strip()
+            names = tuple(line[1:].split("|")[0].split())
+        elif names:
+            seq = line.strip()
+            for n in names:
+                out[n] = seq
     return out
 
 
