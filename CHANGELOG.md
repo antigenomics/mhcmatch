@@ -60,6 +60,13 @@ The rare stratum flips from losing AUPRC/PPV@P to winning all three metrics on b
 significant at n=19). The frequent AUPRC gap to NetMHCIIpan closes -0.174→-0.125 (hard) and
 -0.308→-0.250 (screening) — narrowed, not closed.
 
+Cross-allele ranking (`cv_mhc2_human_full.md`, 5-fold CV) improves too — top5 0.327 → **0.422**,
+frequent recovery@5 0.298 → **0.409**, non-binder AUROC 0.556 → 0.596 — with **one exception**: rare
+recovery@5 is flat-to-slightly-down (raw 0.490 → 0.487, diffuse 0.455 → 0.438), both inside one SD.
+A rare allele has too few ligands to estimate its own offset shape, so it borrows one from groove
+neighbours and there is little allele-specific offset signal left to add. Cross-allele diffusion
+remains neutral-to-negative for MHC-II; this work does not change that.
+
 - **Changed (MHC-II only):** `AnchorModel(register="marginal")` / `Store.anchor_model(register=...)`
   is the new default. Pass `register="max"` for the previous behaviour. MHC-I is untouched (it is
   end-anchored, so there is no register to integrate).
