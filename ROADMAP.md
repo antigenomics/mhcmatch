@@ -54,8 +54,10 @@ diffusion model, and the downstream predictors.
   *full* (every IEDB-positive epitope–allele assay) and *shortlist* (epitope–allele pairs with ≥2
   publications). Columns: `epitope, gene[UniProt], species, mhc_a, mhc_b, mhc_class, mhc_species,
   reference_id`. Human + mouse. Pass the path to `Store.from_pmhc` or set `$MHCMATCH_PMHC`.
-- **Pseudosequences** — 34-mer NetMHCpan-style groove pseudosequences (4143 MHC-I + 2209 MHC-II
-  alleles incl. mouse H-2), vendored in `src/mhcmatch/data/`. Re-sync from `tcren` if updated.
+- **Pseudosequences** — 34-mer NetMHCpan-style groove pseudosequences over **20082 MHC-I + 11048
+  MHC-II alleles** (5407 / 2209 unique grooves; incl. mouse H-2), vendored in `src/mhcmatch/data/`.
+  From NetMHCpan's tables plus IPD-IMGT/HLA for the class-I alleles they omit (HLA-F entirely).
+  Regenerate with `bench/build_pseudo_fasta.py`; see `src/mhcmatch/data/PROVENANCE.md`.
 - **Reference proteomes** — UniProt reference proteome FASTAs (UP000005640 human / UP000000589
   mouse) for near-exact source lookup; not vendored (fetched / user-supplied, cache gitignored).
 

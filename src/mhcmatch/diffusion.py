@@ -74,7 +74,7 @@ class AnchorModel:
     def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0,
                  learn_weights=True, prune_dpi=False, weights="learned", blend_alpha=0.5,
                  register_em=2, footprint="anchor", rare_max=30, background="ligand",
-                 length_prior=False, length_motifs=False):
+                 length_prior="score", length_motifs=True):
         """``weights``: ``"learned"`` (per-anchor MI over the panel, default), ``"structural"``
         (contact-frequency weights from pMHC structures, :func:`load_structural_weights`),
         ``"blend"`` (convex mix ``blend_alpha``*structural + (1-``blend_alpha``)*learned, mean-1

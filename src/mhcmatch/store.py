@@ -478,7 +478,7 @@ class Store:
     # -- diffusion-powered forward scorer -------------------------------------
     def anchor_model(self, cls="mhc1", h=2.0, prior_strength=10.0, anchors=None, learn_weights=True,
                      prune_dpi=False, weights="learned", register_em=2, footprint="anchor",
-                     rare_max=30, background="ligand", length_prior=False, length_motifs=False):
+                     rare_max=30, background="ligand", length_prior="score", length_motifs=True):
         """Anchor-factored presentation model with cross-allele kernel-shrinkage diffusion.
 
         See :class:`mhcmatch.diffusion.AnchorModel`. The diffusion rescues rare alleles by borrowing

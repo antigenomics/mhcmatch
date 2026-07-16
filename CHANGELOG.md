@@ -3,6 +3,86 @@
 All notable changes to `mhcmatch`. Format loosely follows [Keep a Changelog](https://keepachangelog.com);
 versioning is [SemVer](https://semver.org).
 
+> Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
+> the 0.4.x range.
+
+## [0.5.0] — 2026-07-16
+
+**Allele coverage was broken: 68% of MHC-I and 80% of MHC-II alleles could not be resolved at all.**
+Plus the MHC-I score becomes length-aware by default. No API breaks; some defaults change (below).
+
+### Fixed
+
+- **Pseudosequence name index (the headline).** Alleles sharing a 34-mer groove collapse to one FASTA
+  record, but only the *first* allele's name was written — the other **8854 of MHC-I's 12997** and
+  **8839 of MHC-II's 11048** were silently unresolvable. Not rare variants: `HLA-B*14:02`, `B*18:05`,
+  `C*03:04`, `C*03:02` all returned nothing while `HLA-C03:438` shipped. `restriction()` and
+  `predict()` gave no answer for any of them. The collapse was always right; the name index was lost.
+  Headers now list every allele of the group; each resolves to **its own true 34-mer** (the group is
+  exact-identity, so this is not a nearest-neighbour guess).
+- **MHC-I 8-mer anchor collision.** `MHC1_CORE`'s `+5` and `−4` both mapped to index 4 of an 8-mer,
+  double-counting it in the score *and* filing one residue under two positions during training.
+  `store.mhc1_positions` is now the single de-duplicated mapping shared by scorer and estimator.
+  **8-mer scores change.**
+
+### Added
+
+- **IPD-IMGT/HLA as a second pseudosequence source** — **+7085 class-I alleles** (20082 total, 5407
+  unique grooves). NetMHCpan's table lags IMGT and omits **HLA-F entirely**. The 34 positions are
+  recovered from the alleles the table already covers, cross-checked between genes (HLA-B and HLA-C
+  solve independently and agree), and verified by re-deriving every known allele: **21935 exact, 4
+  mismatch (0.018%)**. NetMHCpan wins every conflict, so no covered allele changes. The human MHC-I
+  reference panel goes **166/203 → 203/203** scorable. Regenerate with `bench/build_pseudo_fasta.py`
+  (now vendored here; mhcmatch no longer re-syncs this data from `tcren`).
+- **DP/DQ α-chain imputation for lookup** (`pseudoseq.alpha_prior`, `data/mhc2_alpha_prior.tsv`).
+  MHC-II is an αβ heterodimer but 1.5% of panel records type only β. `HLA-DPB1*11:01` returned `nan`;
+  it now resolves to `HLA-DPA10201-DPB11101`. Learned from the panel, keyed on **P(34-mer groove | β)
+  ≥ 0.95 over ≥ 50 ligands** — the groove, not the allele name or its 2-digit group (`DQA1*01:02` and
+  `DQA1*01:05` share the group but not the 34-mer). Rediscovers DQ2.5 and DQ8 from linkage
+  disequilibrium. 9 rare DQ βs fail the bar and stay unresolved on purpose.
+
+### Changed
+
+- **`length_prior` and `length_motifs` now default ON for MHC-I.** The anchor log-odds summed a
+  length-invariant number of terms, so a 10-mer and a 9-mer with the same anchors scored
+  bit-identically — while a length-only classifier reaches maxF1 0.802 on the MixMHCpred3 benchmark.
+  Adds a per-allele ligand-length factor (kernel-shrunk over groove pseudosequences, so rare alleles
+  borrow a length profile from neighbours) plus per-length motifs with an exact backoff: an allele
+  with no ligands at length L reproduces the pooled model bit-for-bit and provably cannot regress.
+  MHC-II is untouched (both are class-gated). Pass `length_prior=False, length_motifs=False` for the
+  old behaviour. Costs ~9% throughput.
+- **`Store.from_records`/`from_pmhc` gain `impute_alpha` (default OFF).** Opposite to the lookup path,
+  and measured: admitting β-only records to the reference *panel* moves held-out AUROC −0.0019 and
+  AUPRC −0.0012 over the 13 affected alleles, worst where the merge is biggest (`DPB1*11:01` +89%
+  ligands → −0.0155 AUROC). A study that skipped α-typing produced noisier ligand calls too.
+
+### Benchmarks
+
+MixMHCpred3 (20 HLA-typed samples, leak-free panel; MixMHCpred3.0 = 0.911, BigMHC = 0.911,
+NetMHCpan4.1 = 0.899):
+
+| | maxF1 |
+|---|---|
+| 0.4.2 | 0.8501 |
+| **0.5.0** | **0.8907** |
+
+Length work +0.0306 and the name-index fix +0.0104 are additive (+0.0410 predicted, +0.0407 measured).
+The IMGT source is worth **0.000 here by design** — every benchmark allele was already covered; it buys
+coverage, not score. `bench/results/compare_*.md` are regenerated.
+
+**The head-to-head numbers moved and the eval set moved with them** — `select_eval_alleles` gates on
+`a in pseudo`, so fixing the name index made previously-invisible alleles eligible (MHC-I rare 21 → 24,
+MHC-II 37 → 47 total). The strata are **not comparable to 0.4.2's**, and NetMHCpan/NetMHCIIpan — fixed
+binaries — moved too (MHC-I rare AUROC 0.971 → 0.945; MHC-II rare 0.858 → 0.881), which only the eval
+set changing can explain.
+
+- **MHC-I allele-specificity improved**: rare went from −0.021 AUROC (NetMHCpan's) to **+0.008** (a
+  wash); frequent AUPRC 0.812 → **0.850**. Medium/frequent stay significant wins (p < 0.001).
+- **MHC-II**: on a *frozen* eval set the model change alone is +0.0008 AUROC / −0.0107 AUPRC — and that
+  AUPRC delta is one allele with a **single** ligand (`DRB1_0302`, held out, hence scored zero-shot)
+  moving one rank. 95% CI [−0.0367, +0.0029], 31/40 alleles same-or-better, frequent stratum +0.0002.
+  No regression.
+
 ## [0.3.0] — 2026-07-14
 
 **Core → full presented ligand** (`mhcmatch.ligand`), plus the register refactor it needed. Backward

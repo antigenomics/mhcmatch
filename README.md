@@ -137,9 +137,16 @@ per-(peptide, allele) task, stratified by allele rarity, with AUROC / AUPRC / PP
 paired significance. Headline results (shortlist tier, human, seed 0):
 
 - **Allele-specificity** (which allele presents a peptide — the restriction problem): mhcmatch **beats**
-  NetMHCpan on MHC-I medium and frequent alleles (AUROC, AUPRC and PPV@k, p < 0.001).
+  NetMHCpan on MHC-I medium and frequent alleles on AUROC, AUPRC *and* PPV@k (all p < 0.001; e.g.
+  frequent AUPRC 0.850 vs 0.769). Rare MHC-I is a wash (+0.008 AUROC, p = 0.41).
 - **Presented-vs-random screening** (`background="proteome"`): mhcmatch **beats** NetMHCpan on MHC-I
-  medium/frequent and NetMHCIIpan on MHC-II rare alleles. Rare MHC-I remains NetMHCpan's.
+  frequent alleles (AUROC p < 0.001, AUPRC 0.881 vs 0.846, p = 0.001). Medium and rare are a wash —
+  the deltas sit inside the CI. This task is much easier for both tools (every AUROC ≥ 0.97).
+- **MHC-II**: NetMHCIIpan leads on medium and frequent alleles (p < 0.001); rare is a wash (Δ AUROC
+  +0.013 specificity / −0.015 screening, both inside the CI). Read these with
+  [`SOURCES.md`](bench/compare/SOURCES.md) in hand: NetMHCIIpan trained on essentially all public IEDB
+  eluted-ligand data, so the in-corpus medium/frequent strata are contaminated in its favour and the
+  rare/zero-shot axis is the fair one.
 - **Speed:** mhcmatch scores ~**68×** faster (pure Python, ~195k peptide-allele scores/s).
 
 ```fish

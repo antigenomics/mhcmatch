@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mhcmatch"
-version = "0.4.2"
+version = "0.5.0"
 description = "Peptide-MHC presentation, cross-reactivity and motif tools on the seqtree substrate"
 readme = "README.md"
 requires-python = ">=3.10"

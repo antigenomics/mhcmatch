@@ -487,10 +487,15 @@ def test_mhc1_positions_never_double_counts():
     assert mhc1_positions(4, MHC1_CORE) is None, "too short for the footprint -> None"
 
 
-def test_length_prior_is_off_by_default_and_additive_when_on():
+def test_length_prior_is_on_by_default_and_exactly_additive():
+    # ON by default since v0.5.0 (+0.031 maxF1 on the MixMHCpred3 benchmark, precision AND recall up).
+    # The anchor log-odds sums a length-INVARIANT number of terms, so without this a 10-mer and a
+    # 9-mer with the same anchors score bit-identically -- see data/PROVENANCE.md and the CHANGELOG.
     s = _mhc1_store()
-    off = s.anchor_model("mhc1", footprint="core", background="proteome")
-    on = s.anchor_model("mhc1", footprint="core", background="proteome", length_prior="score")
+    off = s.anchor_model("mhc1", footprint="core", background="proteome",
+                         length_prior=False, length_motifs=False)
+    on = s.anchor_model("mhc1", footprint="core", background="proteome", length_motifs=False)
+    assert on.length_prior == "score", "the length prior must be ON by default"
     assert off.length_logodds(9, "HLA-A02:01") == 0.0        # no prior built -> no term
     # the term is exactly additive: score(on) == score(off) + length_logodds
     for p in ("GILGFVFTL", "FLPSDFFPSV", "SIINFEHL"):
@@ -505,8 +510,12 @@ def test_length_motifs_backoff_is_exact_when_the_length_is_unseen():
     # BIT-FOR-BIT, so alleles with no ligands at a length (rare alleles have a median of zero
     # 8-mers) provably cannot regress.
     s = _mhc1_store()
-    off = s.anchor_model("mhc1", footprint="core", background="proteome")
-    on = s.anchor_model("mhc1", footprint="core", background="proteome", length_motifs=True)
+    # prior OFF in both arms: this isolates the MOTIF backoff from the (now default-on) length prior
+    off = s.anchor_model("mhc1", footprint="core", background="proteome",
+                         length_prior=False, length_motifs=False)
+    on = s.anchor_model("mhc1", footprint="core", background="proteome",
+                        length_prior=False, length_motifs=True)
+    assert on.prefs_len is not None and off.prefs_len is None
     for p in ("SIINFEHL", "AAAAAAAAAAA"):                     # A*02:01 has no 8- or 11-mers here
         assert on.score(p, "HLA-A02:01") == off.score(p, "HLA-A02:01")
     assert on.score("GILGFVFTL", "HLA-A02:01") != off.score("GILGFVFTL", "HLA-A02:01")
