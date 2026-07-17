@@ -71,6 +71,46 @@ def test_potts_unknown_allele_is_nan():
     assert math.isnan(PottsAffinity("mhc1").predict_ic50("NLVPMVATV", "HLA-ZZ*99:99"))
 
 
+@pytest.mark.parametrize("cls", ["mhc1", "mhc2"])
+def test_potts_weights_declare_the_dedup_encoding(cls):
+    """The vendored weights must stamp ``meta[4] == 1``.
+
+    ``_pep_idx`` picks its peptide encoding from this field, so it binds the scorer to the weights: 0
+    (or absent) is the legacy ``core[:5] + core[-4:]`` slice, where an 8-mer's index 4 fills two slots
+    and contributes two perfectly-correlated field terms. Weights fit under one encoding and scored
+    under the other silently mis-score every 8-mer, and nothing else in the suite would notice.
+    """
+    assert PottsAffinity(cls).enc == 1
+
+
+def test_potts_8mer_uses_eight_distinct_slots():
+    """The 8-mer collision is gone: ``mhc1_positions`` drops the ``-4`` anchor rather than aliasing it
+    onto index 4, so an 8-mer fills 8 slots, not 9 with one counted twice."""
+    from mhcmatch.diffusion import MHC1_CORE
+    from mhcmatch.store import mhc1_positions
+    idx = mhc1_positions(8, MHC1_CORE)
+    assert idx.count(None) == 1                      # the aliased anchor is dropped, not duplicated
+    filled = [i for i in idx if i is not None]
+    assert sorted(filled) == list(range(8)) and len(set(filled)) == 8
+    assert PottsAffinity("mhc1")._pep_idx("SLYNTGAT")[5] == -1   # that slot contributes nothing
+
+
+@pytest.mark.parametrize("cls,pep,allele,want", [
+    ("mhc1", "NLVPMVATV", "HLA-A*02:01", 52.5),
+    ("mhc1", "GILGFVFTL", "HLA-A*02:01", 31.7),
+    ("mhc1", "SLYNTGAT", "HLA-A*02:01", 4579.1),          # 8-mer: the encoding fix's blast radius
+])
+def test_potts_vendored_scores_are_pinned(cls, pep, allele, want):
+    """Numerical regression on the vendored weights.
+
+    Nothing else pins them, so a refit or a weight swap could change every shipped affinity number and
+    still pass CI. These are not ground truth -- they are a tripwire. If a deliberate refit moves them,
+    update the values in the same commit and say so in the CHANGELOG.
+    """
+    got = PottsAffinity(cls).predict_ic50(pep, allele)
+    assert abs(got - want) / want < 0.02, f"{pep}/{allele}: {got:.1f} nM, pinned {want} nM"
+
+
 @pytest.mark.parametrize("name,key", [
     ("HLA-DRB1*15:01", "DRB1_1501"),
     ("HLA-DQA1*05:01/DQB1*03:01", "HLA-DQA10501-DQB10301"),

@@ -6,6 +6,65 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.7.1] — 2026-07-17
+
+**Potts affinity weights refit under the de-duplicated 8-mer encoding.** A correctness release: it
+activates the `enc=1` fix that has been dead code since v0.6.1, and makes the vendored weights
+reproducible from a documented command. **Every MHC-I and MHC-II affinity number changes.** It is
+**not** a performance release — the refit is neutral within noise, measured, and that is on the record.
+
+### Changed
+
+- **`data/affinity_potts_mhc{1,2}.npz` refit** (`meta[4]=1`). MHC-I 22,971 → 29,651 nonzero weights,
+  `b` +0.1185 → +0.0003; MHC-II 30,929 → 31,551, `b` +0.2819 → +0.1875. Two things move together and
+  neither is a method change:
+  - **The 8-mer collision is now actually fixed.** v0.6.1 fixed the *code* on both sides and bound the
+    encoding to the weights via `meta[4]`, so the fix could only activate atomically with a refit —
+    which never came. Every shipped 8-mer score until now used the legacy `core[:5] + core[-4:]` slice,
+    where index 4 fills two slots and contributes two perfectly-correlated field terms. **8-mer scores
+    change materially; L≥9 scores change only via the refit below.**
+  - **The training set grew 73,880 → 84,709 points / 108 → 132 alleles.** The weights were fit
+    2026-07-15 against `mhci_pseudo.fa` naming **4,143** alleles; `3bda000` ("68% of alleles were
+    unscorable") and `0cd2d42` ("+7,085 alleles") landed **the next day** and took it to **20,082
+    names / 5,407 grooves**, and the weights were never refit. All 4,143 old keys carry a
+    byte-identical 34-mer today (0 changed, 15,939 added) — the fix *added* alleles, so the old weights
+    were under-trained, never wrong.
+
+  This also **resolves the "shipped weights are unreproducible" note** in the benchmark repo's
+  `results/potts_mhc1_encoding_defects.md` (shipped 22,971 nonzero vs a fresh refit's 29,666 *with the
+  legacy encoding restored*). The cause was the pseudosequence table, not `measured.tsv` drift; the old
+  weights reproduce bit-exactly under `mhci_pseudo.fa@9e2444f`. Nothing needed pinning.
+
+### Added
+
+- **Regression tests for the vendored weights** (`tests/test_affinity.py`) — `meta[4] == 1` per class, an
+  8-mer slot-mapping assertion, and pinned IC50 values for three (peptide, allele) pairs. There were
+  **none**: a weight swap or a silent refit changed every shipped affinity score and still passed CI.
+
+### Measured, and deliberately NOT shipped
+
+- **BLOSUM/MJ "smarter than one-hot" encoding — tested, null, dropped.** `train_potts.set_soft(tau,k)`
+  had implemented BLOSUM admixture on the groove axis all along, pinned to one-hot, never swept. Swept
+  jointly with `alpha`, paired, 5 seeds: every arm lands inside **±0.010** rho against a 0.166
+  common−rare gap. The reason is structural, not a shrug — soft encoding is *generalized ridge* under
+  metric `(SSᵀ)⁻¹` (verified to 2.2e-16), and `S` is full-rank at every `(tau,k)`, so it adds **zero**
+  new directions. Predicted to act like `alpha ×2.5`; measured, soft(τ=2,k=5)@α=40 reproduces
+  one-hot@α=80 to within noise. `alpha=40` is already optimal, so there is nothing to win. Softening
+  the *peptide* axis (which the design pins hard, and which NetMHCpan-4.0 does not) is the only arm with
+  consistently positive signs and it is worth **+0.004**. Full result and mechanism:
+  `bench/results/potts_encoding_ablation.md`.
+- **Defect 1 (length-blindness) is still live and still unfixed.** `SLYNTGATL` and `SLYNTAAAGATL` score
+  bit-identically. Per-length intercepts were measured here and are null on per-allele Spearman: the
+  large effects (8-mers bind **5.5×** weaker than 9-mers within an allele) sit at 5.6% of the corpus.
+  The recorded **+0.059 AUROC** for a length prior belongs to the *NCI immunogenicity ranking* task, not
+  affinity regression. Tracked in ROADMAP §6c.
+
+### Fixed
+
+- `bench/affinity/fit_potts.py` wrote to `MultiplexedPath('…')` as a literal directory name when `--out`
+  was omitted (`mhcmatch.data` is a namespace package, so `str(resources.files(...))` is a repr, not a
+  path) — the default target never worked. *(benchmark repo)*
+
 ## [0.7.0] — 2026-07-17
 
 **Per-allele motif mixtures for MHC-II, on by default.** A class-II allele now scores a mixture of
