@@ -140,9 +140,12 @@ remains neutral-to-negative for MHC-II; this work does not change that.
 - **Unchanged:** `AnchorModel.best_register` still returns the argmax frame, so `decompose`, logos and
   the Potts affinity register oracle are unaffected. MBP85-99 / DRB1\*15:01 still ranks 2/149.
 - **Cost:** MHC-II scoring 105k → **92k peptide-allele/s** (−12%; the prior is a cached per-(allele,
-  length) lookup plus a logsumexp over frames that were computed anyway). Model fit is unchanged
-  within noise (2.85s vs 2.86s on the 72k-peptide human shortlist panel) — the prior is estimated
-  from the register-EM's existing frame assignments rather than a separate pass over the data.
+  length) lookup plus a logsumexp over frames that were computed anyway). **Model build is unchanged**
+  — 10.16s vs master's 9.99s on the full human class-II panel — because the offset tally rides along
+  inside `_refit_registers`' existing sweep. It has to: `predict._windows` rebuilds a model per
+  binder (PR #3's 20-hour bug, ~10s × 7,460 binders), so the first cut of this, which paid for its
+  own pass over the panel at 13.51s (+35%), would have made that 28 hours. `register_em=0` has no
+  sweep to ride and still pays for a pass (5.86s); it is not the default.
 - **Re-baselined:** `bench/results/register_em_mhc2.md`, `compare_mhc2_human_hard_ligandbg.md`,
   `compare_mhc2_human_random_proteomebg.md` — each keeps the old column alongside the new. Note
   `register_em_mhc2.md`'s rare/medium rows also moved because v0.5.0's allele-coverage fix changed

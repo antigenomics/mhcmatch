@@ -17,7 +17,14 @@ Two orthogonal MHC-II knobs:
 | 0 (heuristic) | max | 0.739 / 0.760 | 0.734 / 0.724 | 0.793 / 0.793 |
 | 0 (heuristic) | marginal | 0.743 / 0.769 | 0.744 / 0.749 | 0.829 / 0.829 |
 | 2 | max | 0.773 / 0.774 | 0.776 / 0.764 | 0.830 / 0.830 |
-| **2 (default)** | **marginal** | **0.775 / 0.780** | **0.785 / 0.776** | **0.853 / 0.853** |
+| **2 (default)** | **marginal** | **0.775 / 0.780** | **0.786 / 0.775** | **0.853 / 0.853** |
+
+The offset tally rides along inside `_refit_registers`' existing sweep (that loop already has each
+peptide's frame), so with the EM on — the default — the prior costs **nothing**: model build is
+10.16s against master's 9.99s. An earlier version paid for its own pass over the panel and cost
+13.51s (+35%), which matters because `predict._windows` rebuilt a model per binder (PR #3's 20-hour
+bug, ~10s × 7,460 binders); +35% would have made it 28 hours. With `register_em=0` there is no sweep
+to ride, so that path still pays (5.86s) — it is not the default.
 
 **The two knobs compose; neither subsumes the other.** Marginalizing lifts every cell (frequent
 +0.036 at `register_em=0`, +0.023 at `2`); the EM lifts every cell independently (frequent +0.024
