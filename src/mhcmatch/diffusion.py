@@ -37,6 +37,9 @@ MHC2_ANCHORS = (1, 4, 6, 9)
 MHC1_CORE = (1, 2, 3, 4, 5, -4, -3, -2, -1)
 MHC2_CORE = (1, 2, 3, 4, 5, 6, 7, 8, 9)
 
+# Laplace pseudo-count per core-offset frame (see AnchorModel._fit_offset_prior).
+_OFFSET_ALPHA = 0.5
+
 # Human proteome amino-acid frequencies (UniProt UP000005640). The log-odds NULL: with
 # ``background="ligand"`` (default) the denominator is the pooled-ligand anchor marginal, so the
 # score measures allele *specificity* (this allele vs the average presented ligand) -- best for the
@@ -74,7 +77,7 @@ class AnchorModel:
     def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0,
                  learn_weights=True, prune_dpi=False, weights="learned", blend_alpha=0.5,
                  register_em=2, footprint="anchor", rare_max=30, background="ligand",
-                 length_prior="score", length_motifs=True):
+                 length_prior="score", length_motifs=True, register="marginal"):
         """``weights``: ``"learned"`` (per-anchor MI over the panel, default), ``"structural"``
         (contact-frequency weights from pMHC structures, :func:`load_structural_weights`),
         ``"blend"`` (convex mix ``blend_alpha``*structural + (1-``blend_alpha``)*learned, mean-1
@@ -96,10 +99,15 @@ class AnchorModel:
 
         ``length_motifs`` (MHC-I only) estimates the residue distributions **per peptide length**
         instead of pooling every length into one counter -- see :meth:`_dist_len`. Complementary to
-        ``length_prior``: the prior is over ``L``, the motifs are over residues *given* ``L``."""
+        ``length_prior``: the prior is over ``L``, the motifs are over residues *given* ``L``.
+
+        ``register`` (MHC-II only) decides how the unobserved binding register enters :meth:`score`:
+        ``"marginal"`` (default) integrates it out under a learned core-offset prior; ``"max"`` is the
+        pre-v0.6 max-over-frames. See :meth:`score`."""
         self.cls = cls
         self.background = background
         self.length_prior = length_prior
+        self.register = register
         self._markov1 = load_markov1() if background == "markov" else None
         core = MHC1_CORE if cls == "mhc1" else MHC2_CORE
         prim = MHC1_ANCHORS if cls == "mhc1" else MHC2_ANCHORS
@@ -156,8 +164,14 @@ class AnchorModel:
         w = self._build_weights(weights, cls, prune_dpi, blend_alpha)
         self.ps = Pseudoseq(cls, h=h, weights=w)
         self._cache = {}
+        self.offset_prefs = {}
+        self._off_cache = {}
         for _ in range(register_em if cls == "mhc2" else 0):
-            self._refit_registers(store)
+            self._refit_registers(store)   # also tallies self.offset_prefs, free (same sweep)
+        if cls == "mhc2":
+            if not register_em:            # no EM sweep to piggyback on -- pay for one
+                self._fit_offset_prior(store)
+            self._smooth_offset_prior()
 
     def _learned_weights(self, cls, prune_dpi):
         seqs = load_pseudo(cls)
@@ -258,6 +272,7 @@ class AnchorModel:
         panel = store._panel[self.cls]
         core_pos = [j - 1 for j in self.anchors]
         prefs = {j: {} for j in self.anchors}
+        offsets = {}
         for ep, a, wt in zip(panel.epitopes, panel.alleles, panel.weights):
             if len(ep) < 9:
                 continue
@@ -265,7 +280,12 @@ class AnchorModel:
             w9 = ep[best_st:best_st + 9]
             for j, c in zip(self.anchors, core_pos):
                 prefs[j].setdefault(a, Counter())[w9[c]] += wt
+            # tally the core offset in the same sweep -- this loop already has the frame, and a
+            # separate pass over the panel to re-derive it cost +35% on model build (see
+            # _fit_offset_prior).
+            offsets.setdefault(len(ep), {}).setdefault(a, Counter())[best_st] += wt
         self.prefs = prefs
+        self.offset_prefs = offsets
         for j in self.anchors:
             cc = Counter()
             for cnt in prefs[j].values():
@@ -345,6 +365,87 @@ class AnchorModel:
             return self._rare_mask
         return None
 
+    def _frame_scores(self, peptide, allele, raw=False, eps=1e-3):
+        """Anchor log-odds of every 9-mer core frame of ``peptide`` (MHC-II), indexed by frame start.
+
+        ``peptide`` must already be stripped/upper-cased. MHC-I is end-anchored, so there is no frame
+        list to build and this is class-II only.
+        """
+        core_pos = [j - 1 for j in self.anchors]
+        mask = self._score_mask(allele)
+        markov = self.background == "markov"
+        out = []
+        for st in range(len(peptide) - 8):
+            w = peptide[st:st + 9]
+            ctx = [peptide[st + c - 1] if st + c > 0 else "" for c in core_pos] if markov else None
+            out.append(self._anchor_logodds([w[c] for c in core_pos], allele, raw, eps, mask, ctx))
+        return out
+
+    def _smooth_offset_prior(self):
+        """Add the Laplace pseudo-count to every frame of every (length, allele) offset counter.
+
+        Long peptides are rare (the panel has ~1.4k 25mers against ~84k 15mers) but offer the most
+        frames, so without this an offset that merely went unobserved at some length would score as
+        near-impossible on a handful of peptides. It self-adapts: negligible against a frequent
+        allele's thousands of ligands, dominant where there are five. Run once, after the counts are
+        final -- applying it per EM pass would compound it.
+        """
+        for length, by_allele in self.offset_prefs.items():
+            for cnt in by_allele.values():
+                for i in range(length - 8):
+                    cnt[i] += _OFFSET_ALPHA
+        self._off_cache = {}
+
+    def _fit_offset_prior(self, store):
+        """Standalone core-offset tally, for ``register_em=0`` only.
+
+        With the EM on (the default) :meth:`_refit_registers` tallies offsets in the sweep it already
+        makes over the panel, so this costs nothing. With the EM off there is no such sweep, and this
+        pays for its own -- ~3.5s on the full human class-II panel, a 35% model-build regression that
+        is not worth paying on the default path.
+
+        Estimate ``P(frame start | length, allele)`` from the model's frame assignments.
+
+        Real class-II cores sit ~3 residues from the peptide's N-terminus -- the groove protects the
+        core while exopeptidases erode the flanks to a steady state -- so the offset is sharply peaked
+        on real ligands (measured H/Hmax 0.67 for DRB1_0101 15mers) while the *same* model lands
+        uniformly on random peptides (0.998). :meth:`score`'s max-over-frames discards that signal.
+        Counts are kept per length and shrunk over groove-similar alleles at score time, so an allele
+        with no ligands of a given length borrows its neighbours' offset shape. Smoothing is
+        :meth:`_smooth_offset_prior`, applied once by the caller.
+        """
+        prefs = {}
+        panel = store._panel[self.cls]
+        for ep, a, wt in zip(panel.epitopes, panel.alleles, panel.weights):
+            if len(ep) < 9:
+                continue
+            st, _ = self.best_register(ep, a)
+            if st >= 0:
+                prefs.setdefault(len(ep), {}).setdefault(a, Counter())[st] += wt
+        self.offset_prefs = prefs
+
+    def _offset_logprior(self, allele, length):
+        """``log P(frame start | length, allele)`` per frame, kernel-shrunk over groove neighbours.
+
+        Uniform when the length is unseen in training and no neighbour supplies it -- which reduces
+        :meth:`score`'s marginal to an unpriored average over frames, still normalized in length.
+        Smoothing lives in :meth:`_fit_offset_prior`, so every frame here already has mass.
+        """
+        n = length - 8
+        key = (allele, length)
+        if key in self._off_cache:
+            return self._off_cache[key]
+        lp = [-math.log(n)] * n
+        by_allele = self.offset_prefs.get(length)
+        if by_allele:
+            # shrink() is generic over the counter's key type: offsets here, residues elsewhere.
+            th = self.ps.shrink(by_allele, allele, prior_strength=self.prior_strength)
+            tot = sum(th.get(i, 0.0) for i in range(n))
+            if tot > 0:                                   # else: no own data and no kernel neighbour
+                lp = [math.log(th[i] / tot) for i in range(n)]
+        self._off_cache[key] = lp
+        return lp
+
     def best_register(self, peptide, allele, raw=False, eps=1e-3):
         """Best-scoring binding register of ``peptide`` for ``allele``, as ``(start, score)``.
 
@@ -373,15 +474,9 @@ class AnchorModel:
         if self.cls == "mhc2":
             if len(peptide) < 9:
                 return -1, float("-inf")
-            core_pos = [j - 1 for j in self.anchors]      # 1-based core positions -> 0-based
-            best_st, best = -1, float("-inf")
-            for st in range(len(peptide) - 8):
-                w = peptide[st:st + 9]
-                ctx = [peptide[st + c - 1] if st + c > 0 else "" for c in core_pos] if markov else None
-                s = self._anchor_logodds([w[c] for c in core_pos], allele, raw, eps, mask, ctx)
-                if s > best:                              # leftmost wins ties, as max() did
-                    best, best_st = s, st
-            return best_st, best
+            fs = self._frame_scores(peptide, allele, raw, eps)
+            best = max(fs)
+            return fs.index(best), best                   # leftmost wins ties, as max() did
         from .store import mhc1_positions
         idxs = mhc1_positions(len(peptide), self.anchors)
         if idxs is None:                                  # too short for the footprint
@@ -400,14 +495,35 @@ class AnchorModel:
         ``raw=True`` uses the allele's own anchor frequencies (no borrowing); the default diffuses
         over groove-similar alleles. Returns ``-inf`` if the peptide is too short for the anchors.
 
-        For MHC-II the binding **register is chosen per allele**: every 9-mer core frame is scored and
-        the best-scoring frame is returned (NNAlign/GibbsCluster-style), instead of a fixed
-        allele-agnostic heuristic register. MHC-I anchors are peptide-end-relative (no register search).
+        MHC-I anchors are peptide-end-relative, so there is no register search. For MHC-II the binding
+        register is unobserved and ``register`` decides how it is handled:
 
-        Note this grows with peptide length (a max over more frames), so it is **not** comparable
-        across peptides of different length -- do not use it to rank candidate ligand spans.
+        ``"marginal"`` (default) integrates it out --
+        ``log Σ_r P(r | L, allele) · exp(s_r)`` over frames ``r`` (see :meth:`_offset_logprior`).
+        The offset prior is real signal, not bookkeeping: a decoy's best frame lands at a low-prior
+        offset about as often as not, while a real ligand's lands at the peaked one, and because the
+        prior is normalized within a length the term still separates length-matched candidates.
+
+        ``"max"`` is the pre-v0.6 behaviour, ``max_r s_r`` -- a max over ``L-8`` frames, which grows
+        with peptide length even under the null (`bench/results/binder_gate_length_bias.md`).
+
+        **Neither mode is comparable across peptide lengths.** ``"marginal"`` normalizes the frame
+        count away and roughly halves the inflation, but a Jensen residual remains (measured on
+        random peptides, DRB1_1501, 9mer -> 21mer: +4.44 nats under ``"max"``, +2.28 under
+        ``"marginal"``) -- it saturates towards ``log E[e^s]`` rather than growing like ``ln n``, but
+        it is not zero. So an absolute binder call needs a length-matched ``%rank``, not this score,
+        and candidate ligand spans must be ranked by :mod:`mhcmatch.ligand`'s flank model -- ranking
+        them here would still just prefer the longest span.
         """
-        return self.best_register(peptide, allele, raw, eps)[1]
+        peptide = peptide.strip().upper()
+        if self.cls != "mhc2" or self.register != "marginal":
+            return self.best_register(peptide, allele, raw, eps)[1]
+        if len(peptide) < 9:
+            return float("-inf")
+        terms = [f + p for f, p in zip(self._frame_scores(peptide, allele, raw, eps),
+                                       self._offset_logprior(allele, len(peptide)))]
+        m = max(terms)
+        return m + math.log(sum(math.exp(t - m) for t in terms))
 
     def anchor_terms(self, peptide, allele, raw=False, eps=1e-3):
         """Per-position log-odds components at the best register, one per ``self.anchors`` position

@@ -31,6 +31,124 @@ versioning is [SemVer](https://semver.org).
   results. **All disk caching is removed** from `run_compare.py`, `sample_concordance.py` and
   `bench/affinity/eval.py`; every run regenerates (a 35–70 s NetMHC sweep). The uncached harness now
   reproduces `compare_mhc1_human_hard_ligandbg.md` byte-identically.
+### MHC-II scores now integrate the binding register out instead of maximising over it
+
+`AnchorModel.score` for MHC-II was `max_r s_r` over every 9-mer core frame, which throws away *where*
+the core sits. It now defaults to a marginal likelihood, `log Σ_r P(r | L, allele)·exp(s_r)`, under a
+learned per-allele core-offset prior.
+
+The prior is real signal, not bookkeeping. Real class-II cores sit ~3 residues from the N-terminus
+(the groove protects the core while exopeptidases erode the flanks), so their offset distribution is
+sharply peaked — DRB1_0101 15mers, H/Hmax **0.670** — while the *same model* lands uniformly on random
+peptides (**0.998**). A decoy's argmax frame therefore sits at a low-prior offset about as often as
+not while a real ligand's sits at the peak, and because the prior is normalized *within* a length the
+term survives length-matched decoys rather than cancelling.
+
+**Measured, head-to-head vs NetMHCIIpan-4.3i (seed 0, shortlist, identical examples): every stratum ×
+metric improves and none regresses.**
+
+| task | stratum | metric | `max` (old) | `marginal` (new) | Δ |
+|---|---|---|---|---|---|
+| allele-specificity | rare | AUPRC | 0.454 | **0.515** | +0.061 |
+| allele-specificity | frequent | AUROC | 0.880 | **0.893** | +0.013 |
+| allele-specificity | frequent | AUPRC | 0.508 | **0.557** | +0.049 |
+| screening | rare | AUPRC | 0.555 | **0.652** | +0.097 |
+| screening | rare | PPV@P | 0.376 | **0.541** | +0.165 |
+| screening | frequent | AUPRC | 0.467 | **0.524** | +0.057 |
+
+The rare stratum flips from losing AUPRC/PPV@P to winning all three metrics on both decoy modes (not
+significant at n=19). The frequent AUPRC gap to NetMHCIIpan closes -0.174→-0.125 (hard) and
+-0.308→-0.250 (screening) — narrowed, not closed.
+
+Cross-allele ranking (`cv_mhc2_human_full.md`, 5-fold CV) improves too — top5 0.327 → **0.422**,
+frequent recovery@5 0.298 → **0.409**, non-binder AUROC 0.556 → 0.596 — with **one exception**: rare
+recovery@5 is flat-to-slightly-down (raw 0.490 → 0.487, diffuse 0.455 → 0.438), both inside one SD.
+A rare allele has too few ligands to estimate its own offset shape, so it borrows one from groove
+neighbours and there is little allele-specific offset signal left to add. Cross-allele diffusion
+remains neutral-to-negative for MHC-II; this work does not change that.
+
+- **Changed (MHC-II only):** `AnchorModel(register="marginal")` / `Store.anchor_model(register=...)`
+  is the new default. Pass `register="max"` for the previous behaviour. MHC-I is untouched (it is
+  end-anchored, so there is no register to integrate).
+- **Unchanged:** `AnchorModel.best_register` still returns the argmax frame, so `decompose`, logos and
+  the Potts affinity register oracle are unaffected. MBP85-99 / DRB1\*15:01 still ranks 2/149.
+- **Cost:** MHC-II scoring 105k → **92k peptide-allele/s** (−12%; the prior is a cached per-(allele,
+  length) lookup plus a logsumexp over frames that were computed anyway). Model fit is unchanged
+  within noise (2.85s vs 2.86s on the 72k-peptide human shortlist panel) — the prior is estimated
+  from the register-EM's existing frame assignments rather than a separate pass over the data.
+- **Re-baselined:** `bench/results/register_em_mhc2.md`, `compare_mhc2_human_hard_ligandbg.md`,
+  `compare_mhc2_human_random_proteomebg.md` — each keeps the old column alongside the new.
+- **Does not fix the binder gate.** Marginalizing halves the length inflation (random peptides,
+  9mer → 21mer: +4.44 nats → **+2.28**) but leaves a Jensen residual, so a random 21-mer would still
+  pass a raw-score gate two thirds of the time. The gate is fixed separately and orthogonally by the
+  length-conditional `%rank` above.
+
+### Assay provenance: the panel is not what SOURCES said, and the benchmark can now say so
+
+`bench/affinity/SOURCES.md` claimed the presentation tables "keep eluted-ligand positives only".
+**False** — **36,881** class-II (epitope, allele) pairs have no mass-spectrometry assay at all
+(14,969 competitive-radioactivity, 13,416 high-throughput multiplexed, 8,343
+competitive-fluorescence, 237 Edman degradation). What the tables drop is the quantitative
+*measurement*, not the binding-assay *rows*. Both SOURCES files are corrected.
+
+New: `bench/compare/provenance.py` + `run_compare.py --el-only`, an **evaluation stratum** that makes
+only mass-spec-supported pairs eligible as positives. **Training still uses the whole corpus** —
+binding-assay peptides do bind, so they are valid motif evidence, and the house rule is one corpus
+tuned per task by parameter (`CLAUDE.md`), never a smaller training set to make a benchmark look
+clean. Assay type is absent from the pmhc schema, so it is joined from the raw IEDB dump on
+`(epitope, reference_id)` — present in both tables, so no restriction-name parsing — and cached
+(3.19M pairs, ~90s to build).
+
+**Source-conditioning was tested and rejected.** The obvious refinement is an adjusted general model
+per provenance, since EL boundaries are biological (offset H/Hmax 0.720) and binding-assay boundaries
+are experimenter-chosen (0.990, flat as random). Held out, the corpus-learned offset prior beats a
+uniform one by **+0.010** on EL queries and **+0.001** on BA queries — it helps where boundaries carry
+information and is harmless where they do not. The general model already serves EL, BA and in-silico
+queries; no `source` switch is warranted.
+
+**The share is confounded with allele, which is what makes it matter:**
+
+| panel | frequent alleles | thin alleles | alleles with zero EL |
+|---|---|---|---|
+| human class II | 25.7% non-MS | 83.1% non-MS | **15 of 52** |
+| mouse class II | H-2-IAb 4% non-MS | H-2-IEd/IAs/IAq ~100% | **6 of 13** |
+
+- **The human `rare` stratum has no eluted-ligand positives to evaluate on** — 15 of 52 alleles have
+  zero eluted ligands, 8 more are under a 20-ligand floor. mhcmatch's rare-stratum win
+  (`compare_mhc2_human_hard_ligandbg.md`, AUROC 0.842 vs 0.813) therefore answers "reproduce IEDB",
+  not "find eluted ligands". Both are real questions; the pair is reported.
+- **It does not move the gap.** Both tools score higher on eluted-ligand positives, and the frequent
+  gap barely shifts (AUROC -0.053 → -0.050, AUPRC -0.124 → -0.124). It changes what a number is
+  *about*, not who wins.
+- Binding-assay rows stay in training — those peptides do bind, so they are valid *motif* evidence.
+  What they are not is evidence about *boundaries* (`bench/results/length_prior_mhc2.md`).
+
+### First mouse MHC-II head-to-head — two tables, two questions
+
+Both are reported; neither supersedes the other.
+
+**`compare_mhc2_mouse_hard_ligandbg.md` — reproduce IEDB's mouse annotation. mhcmatch wins all nine
+cells**, the only panel where it leads every stratum on every metric (medium AUROC +0.422,
+AUPRC +0.424, p<0.001). Recorded observation: NetMHCIIpan's medium AUROC is 0.464, below chance —
+mouse provenance is confounded with allele (H-2-IAb 96% mass-spec over 10,797 peptides; H-2-IEd/IAs/IAq
+0%), so a BA-only allele's positives face I-Ab's real-ligand decoys and an EL-trained tool ranks the
+decoys higher. `n` is 1/4/3 alleles of 13.
+
+**`compare_mhc2_mouse_random_proteomebg.md` — find eluted ligands (`--el-only`, proteome decoys).**
+NetMHCIIpan is above chance everywhere and nothing separates the tools: AUROC 0.793 vs 0.789
+(+0.004, p=0.94), NetMHCIIpan's AUPRC lead inside its own interval (0.256 vs 0.320, p=0.49). Three
+alleles — H-2-IAb (7,990 EL), H-2-IAd (161), H-2-IEk (97) — of a 13-allele panel.
+
+This does refute the idea that mouse is the "uncontaminated axis" — the obstacle was never
+NetMHCIIpan's thin mouse training, it is the panel's provenance imbalance.
+
+- **Fixed:** `run_compare.py` hardcoded `human.fasta.gz` as the decoy proteome regardless of
+  `--species`. Measured impact was small (KL(mouse‖human) over proteome AA frequencies = 0.00043
+  nats), but the flag was being ignored. `PROTEOME_AA_FREQ` / `proteome_markov1.tsv` stay human as a
+  documented approximation.
+- `provenance.el_only(min_peptides=20)` drops alleles too thin to support a metric, and **logs** what
+  it dropped. Without the floor the mouse "rare" stratum is three alleles with 2, 3 and 11 ligands,
+  where mhcmatch "wins" AUROC by +0.248 and the opponent's PPV@P is a coin flip.
 
 ## [0.5.0] — 2026-07-16
 

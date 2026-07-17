@@ -55,7 +55,8 @@ def load(path, cls, species="HomoSapiens"):
 
 def run(pmhc, cls="mhc1", species="HomoSapiens", rare_min=4, rare_max=30, freq_min=200,
         heldout=0.4, neg=100, freq_sample=20, h=2.0, prior_strength=10.0, anchors=None,
-        weighted=False, weight_cap=10.0, seed=0, register_em=0, verbose=True):  # medium = (rare_max, freq_min)
+        weighted=False, weight_cap=10.0, seed=0, register_em=0, register="marginal",
+        verbose=True):  # medium = (rare_max, freq_min)
     """Evaluate raw vs diffused AUC for rare and frequent alleles. Returns
     ``{"rare": (n, auc_raw, auc_diff), "frequent": (...)}``."""
     rng = random.Random(seed)
@@ -104,7 +105,7 @@ def run(pmhc, cls="mhc1", species="HomoSapiens", rare_min=4, rare_max=30, freq_m
             train_recs.append({"epitope": e, "mhc_a": a, "mhc_class": label, "weight": w})
     store = Store.from_records(train_recs)
     model = store.anchor_model(cls, h=h, prior_strength=prior_strength, anchors=anchors,
-                               register_em=register_em)
+                               register_em=register_em, register=register)
     all_peps = [e for p in by_allele.values() for e in p]
 
     def group(alleles):
@@ -161,10 +162,13 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--register-em", type=int, default=0,
                     help="MHC-II best-frame register-EM passes (0 = one-pass heuristic register)")
+    ap.add_argument("--register", default="marginal", choices=("marginal", "max"),
+                    help="MHC-II register handling in score(): marginalize under the core-offset "
+                         "prior (default) or take the max over frames (pre-v0.6)")
     a = ap.parse_args()
     run(a.pmhc, a.cls, a.species, a.rare_min, a.rare_max, a.freq_min, a.heldout, a.neg,
         a.freq_sample, a.h, a.prior_strength, a.anchors, a.weighted, a.weight_cap, a.seed,
-        a.register_em)
+        a.register_em, a.register)
 
 
 if __name__ == "__main__":

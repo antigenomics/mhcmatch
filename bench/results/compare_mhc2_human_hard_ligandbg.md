@@ -4,12 +4,52 @@ NetMHCpan comparison (NetMHCIIpan-4.3i); shared binder-vs-decoy task, 19:1 lengt
 
 | stratum | metric | n alleles | mhcmatch | NetMHCIIpan-4.3i | Δ (mm−net) | 95% CI | p |
 |---|---|---|---|---|---|---|---|
-| rare | AUROC | 19 | **0.826** | 0.813 | +0.013 | [-0.097, 0.117] | 0.247 |
-| rare | AUPRC | 19 | 0.454 | **0.473** | -0.019 | [-0.189, 0.136] | 0.794 |
-| rare | PPV@P | 19 | 0.297 | **0.372** | -0.075 | [-0.298, 0.123] | 0.497 |
-| medium | AUROC | 8 | 0.810 | **0.842** | -0.032 | [-0.077, 0.023] | 0.051 |
-| medium | AUPRC | 8 | 0.443 | **0.496** | -0.053 | [-0.125, 0.008] | 0.106 |
-| medium | PPV@P | 8 | 0.445 | **0.494** | -0.049 | [-0.152, 0.043] | 0.362 |
-| frequent | AUROC | 20 | 0.880 | **0.945** | -0.065 | [-0.111, -0.024] | 0.000 |
-| frequent | AUPRC | 20 | 0.508 | **0.682** | -0.174 | [-0.249, -0.097] | 0.000 |
-| frequent | PPV@P | 20 | 0.491 | **0.662** | -0.171 | [-0.230, -0.113] | 0.000 |
+| rare | AUROC | 19 | **0.842** | 0.813 | +0.029 | [-0.061, 0.117] | 0.105 |
+| rare | AUPRC | 19 | **0.521** | 0.473 | +0.047 | [-0.132, 0.221] | 0.593 |
+| rare | PPV@P | 19 | **0.402** | 0.372 | +0.031 | [-0.180, 0.241] | 0.777 |
+| medium | AUROC | 8 | 0.825 | **0.842** | -0.017 | [-0.059, 0.038] | 0.297 |
+| medium | AUPRC | 8 | 0.471 | **0.496** | -0.025 | [-0.091, 0.035] | 0.441 |
+| medium | PPV@P | 8 | 0.458 | **0.494** | -0.036 | [-0.126, 0.046] | 0.444 |
+| frequent | AUROC | 20 | 0.892 | **0.945** | -0.053 | [-0.097, -0.014] | 0.000 |
+| frequent | AUPRC | 20 | 0.558 | **0.682** | -0.124 | [-0.204, -0.045] | 0.002 |
+| frequent | PPV@P | 20 | 0.521 | **0.662** | -0.141 | [-0.207, -0.077] | 0.000 |
+
+## Re-baseline: `register="marginal"` is now the default (v0.6)
+
+The table above is `--register marginal`. The previous default was `max` (max over 9-mer frames).
+Identical examples, identical NetMHC scores, identical seed — only `AnchorModel.score` changed
+(`bench/compare/run_compare.py --register {max,marginal}`):
+
+| stratum | metric | mhcmatch `max` (old default) | mhcmatch `marginal` (new) | Δ |
+|---|---|---|---|---|
+| rare | AUROC | 0.826 | **0.842** | +0.016 |
+| rare | AUPRC | 0.454 | **0.521** | +0.067 |
+| rare | PPV@P | 0.297 | **0.402** | +0.105 |
+| medium | AUROC | 0.810 | **0.825** | +0.015 |
+| medium | AUPRC | 0.443 | **0.471** | +0.028 |
+| medium | PPV@P | 0.445 | **0.458** | +0.013 |
+| frequent | AUROC | 0.880 | **0.892** | +0.012 |
+| frequent | AUPRC | 0.508 | **0.558** | +0.050 |
+| frequent | PPV@P | 0.491 | **0.521** | +0.030 |
+
+**Every stratum × metric improves; none regresses.** The rare stratum flips from losing AUPRC/PPV to
+winning all three (not significant at n=19: p=0.11 / 0.59 / 0.78). The frequent AUPRC gap narrows
+-0.174 → **-0.124**.
+
+**Why it works.** `max_r s_r` throws away *where* the core sits. Real class-II cores are sharply
+peaked in offset — exopeptidases erode the flanks down to the groove — while the same model lands
+uniformly on random peptides (measured, DRB1_0101 15mers: H/Hmax **0.670** real vs **0.998** random;
+mode at offset 3-4, matching the 2/2 median flank of the 93 pMHC-II crystals in `pdb_flanks.py`). So a
+decoy's best frame sits at a low-prior offset about as often as not while a real ligand's sits at the
+peak, and because the prior is normalized *within* a length the term survives length-matched decoys
+instead of cancelling. See `AnchorModel.score` / `register_em_mhc2.md`.
+
+**What it does not fix.** `marginal` roughly halves the max's length inflation but does not remove it
+(random peptides, DRB1_1501, 9mer → 21mer: **+4.44 nats** under `max` vs **+2.28** under `marginal`;
+the residual is Jensen convergence to `log E[e^s]`, which saturates rather than growing like `ln n`).
+The *gate* is fixed separately by `AnchorModel.null_threshold` — see `binder_gate_length_bias.md`.
+
+See also `compare_mhc2_human_hard_ligandbg_elonly.md` — the same task restricted to
+mass-spec-supported pairs.
+
+> Regenerating this file **overwrites everything above** (`report.write`). Re-append this section.

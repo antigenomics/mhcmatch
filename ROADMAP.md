@@ -169,7 +169,16 @@ shortlist, human):
 
 - **Allele-specificity** (hard negatives = other alleles' ligands — the restriction task mhcmatch is
   built for): **mhcmatch beats NetMHCpan** on MHC-I medium+frequent (AUROC, AUPRC, PPV@k all p<0.001;
-  frequent AUPRC 0.81 vs 0.69); MHC-II wins rare AUROC, trails AUPRC (data-limited class).
+  frequent AUPRC 0.81 vs 0.69); MHC-II **wins the rare stratum on all three metrics since v0.6's
+  register fix** (AUROC 0.842 vs 0.813, AUPRC 0.521 vs 0.473, PPV@P 0.402 vs 0.372; n.s. at n=19) and
+  trails medium/frequent. **Mouse MHC-II: mhcmatch wins all nine cells**
+  (`compare_mhc2_mouse_hard_ligandbg.md`) — the only panel where it leads every stratum on every
+  metric. Scope note, not a caveat on the wins: with positives restricted to mass-spec-supported
+  pairs the human rare stratum has nothing left to evaluate (15 of 52 alleles have zero eluted
+  ligands, 8 more are under a 20-ligand floor), so that number answers "reproduce IEDB" rather than
+  "find eluted ligands" — both are real questions and both are reported. The frequent gap is
+  unmoved by the stratum (AUROC −0.053 → −0.050). See
+  `bench/results/compare_mhc2_human_hard_ligandbg_elonly.md`.
 - **Presented-vs-random screening** (NetMHCpan's %rank home turf): NetMHCpan wins on precision;
   training-free tuning can't close a 0.06–0.16 AUPRC gap → a learned reranker is the lever (Phase 3b).
 - **Speed:** mhcmatch ~68× faster (195k vs 2.9k peptide-allele scores/s), pure Python.
@@ -205,9 +214,42 @@ needing fetched neoantigen/self/pathogen sets are flagged.
 - **Tuned `alpha` thresholds + FDR** over `scan_protein` windows × panel (appendix §5).
 - ~~Class-II register: the one-pass heuristic register is a proxy; try GibbsCluster-style multi-pass
   register~~ **done** — `AnchorModel` scores the best 9-mer frame per allele and runs `register_em`
-  best-frame EM passes (default 2 for MHC-II). Held-out binder-vs-decoy AUC (`bench_diffusion --cls
-  mhc2`, seed 0): rare 0.775→0.806, medium 0.757→0.790, frequent 0.727→0.827; recovers the known
-  DRB1\*15:01 restriction of MBP85-99 (rank 2/149). See `bench/results/register_em_mhc2.md`.
+  best-frame EM passes (default 2 for MHC-II); recovers the known DRB1\*15:01 restriction of
+  MBP85-99 (rank 2/149).
+- ~~Class-II register: `score` takes a **max** over frames, which discards *where* the core sits~~
+  **done in v0.6** — `AnchorModel(register="marginal")`, now the MHC-II default, integrates the
+  register out: `log Σ_r P(r | L, allele)·exp(s_r)` under a per-allele core-offset prior fit free
+  from the register-EM's own frame assignments and kernel-shrunk over groove neighbours. The prior is
+  signal, not bookkeeping: real cores are sharply peaked in offset (DRB1_0101 15mers H/Hmax **0.670**)
+  while the same model lands uniformly on random peptides (**0.998**), so a decoy's argmax frame sits
+  at a low-prior offset while a real ligand's sits at the peak — and it survives length-matched decoys
+  because the prior is normalized within a length. Held-out AUC (`bench_diffusion --cls mhc2`, seed 0,
+  `register_em=2`): rare 0.774→0.780, medium 0.764→0.776, frequent **0.830→0.853**. Head-to-head vs
+  NetMHCIIpan-4.3i: **every stratum × metric improves, none regresses**; the rare stratum flips to
+  winning all three metrics (n.s. at n=19) and the frequent AUPRC gap closes -0.174→-0.125 (hard) /
+  -0.308→-0.250 (screening). See `bench/results/register_em_mhc2.md` and `compare_mhc2_human_*.md`.
+- ~~**Mouse MHC-II head-to-head** (never run)~~ **done — two tables, two questions, both reported.**
+  *Reproduce IEDB's mouse annotation* (`compare_mhc2_mouse_hard_ligandbg.md`): **mhcmatch wins all
+  nine cells**, medium AUROC +0.422 / AUPRC +0.424 (p<0.001) — recorded observation, NetMHCIIpan's
+  medium AUROC is 0.464, below chance. *Find eluted ligands* (`compare_mhc2_mouse_random_proteomebg.md`,
+  `--el-only` + proteome decoys): NetMHCIIpan above chance everywhere and nothing separates the tools
+  — AUROC 0.793 vs 0.789 (p=0.94), NetMHCIIpan's AUPRC lead inside its interval (0.256 vs 0.320,
+  p=0.49), over H-2-IAb / IAd / IEk. `n` = 1/4/3 and 3 alleles of 13, so the pair corroborates the
+  human shape rather than demonstrating anything alone. The mechanism behind the two tables diverging is
+  provenance confounded with allele (H-2-IAb 96% EL vs H-2-IEd/IAs/IAq 0%). This **refutes the premise
+  that mouse is the uncontaminated axis**: the obstacle is not NetMHCIIpan's thin mouse training, it
+  is the panel's provenance imbalance.
+- **Source-conditioned model: tested, not needed.** One corpus + a `source` (EL/BA/in-silico)
+  parameter is the natural refinement, and the offset prior is the lever that would carry it (EL
+  boundaries are biological, H/Hmax 0.720; binding-assay boundaries are experimenter-chosen, 0.990 —
+  flat as random peptides). Held out, the corpus-learned prior beats a uniform one by **+0.010** on EL
+  queries and **+0.001** on BA queries: it helps where boundaries inform and is harmless where they do
+  not. The general model already serves all three sources; `background` / `footprint` / `register` /
+  `h` / `tau` stay the per-task knobs. Re-test if provenance ever enters the pmhc schema.
+- **Species hardcodes**: `run_compare.py`'s decoy proteome was hardcoded to `human.fasta.gz`
+  regardless of `--species` — **fixed**. `PROTEOME_AA_FREQ` and `proteome_markov1.tsv` remain human;
+  measured, that is a documented approximation and not a blocker (KL(mouse‖human) over proteome AA
+  frequencies = **0.00043 nats**, max 8.4% relative on any residue).
 - **Class-II / mouse calibration**: pool nulls over kernel clusters for thin mouse panels; a
   per-allele %rank vs a random-peptide background for cross-allele-comparable scores.
 - ~~Feed the shrunk null into `restriction`~~ **done** (diffuse gate/rescue, vote still ranks).
@@ -250,6 +292,11 @@ NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2)
 
 - ~~**The MHC-II binder gate is a length detector**~~ — **fixed**. `restriction(diffuse=True)` gated on `anchor_score > 0.0`, a max over register frames, so it grew with peptide length even on noise (a random 21-mer passed 98% of the time). It now gates on `percent_rank(..., length=len(peptide)) <= 2`: the null is random peptides at the query's own length, so it takes the same frame-max and the bias cancels. Class-gated to MHC-II — MHC-I is end-anchored and its length preference is real biology a length-conditional null would delete; `restriction(cls="mhc1")` is byte-identical. `bench/results/binder_gate_length_bias.md`.
 - **`restriction(diffuse=True)` ranks on a cross-allele-incomparable raw score.** The diffused anchor log-odds carries a per-allele offset and (from shrinkage) a per-allele scale, so a raw-score argmax systematically buries rare alleles. `calibrated=True` already ranks by per-allele %rank and is the cross-allele-comparable mode. Making %rank the *default* ranker was measured and **deliberately not shipped**: through the shipped `footprint="anchor"` path it is a redistribution, not a win (MHC-I top-1 allele-recovery rare +5.9 / medium +2.3 / frequent −3.5 / overall −1.1 pt). A leave-one-out ligand null was also measured and dropped — redundant under %rank.
+- **The benchmark and the shipped default train on different distributions — measured, it does not matter.** `bench/compare/splits.py`'s `train_records` emits **one unweighted record per unique peptide**, while `Store.from_pmhc` → `from_records` adds **every row with no dedup**, so a ligand's training weight is silently its distinct-publication count (MHC-I 1.55× mean and up to **70 rows** for one (peptide, allele) pair; MHC-II 1.13×, max 51). Measured on held-out MHC-II binder-vs-decoy, dedup'd-vs-publication-weighted training: mean AUC **0.831 vs 0.831** (Δ −0.001, per-allele −0.005…+0.004). So the published head-to-head does describe the shipped model in every way that has been measured. **Not fixed on purpose** — either fix re-baselines every number for no measured gain. Fix it if the weighting is ever made deliberate.
+- **`from_records`' `weight` field is inert in production.** It reads `float(r.get("weight", 1.0))`, but neither pmhc table has a `weight` column and `n_references` (shortlist only) is read by nothing — so every shipped ligand is weight 1.0 and the weighting above is carried by row *count*. `bench_diffusion.py --weighted` is the only caller that ever sets it. The knob looks live and is not.
+- **Out-of-range peptides are admitted but mostly quarantined.** `_DEFAULT_LENGTHS` is a background/scan-window convention, not an ingest filter, so `from_pmhc` admits 109,304 MHC-I rows (10.5%) outside 8–11 (37,327 12-mers, 17,914 13-mers, and absurdities down to a length-2 "epitope") and 56,934 MHC-II rows (17.7%) outside 13–18. Too-short peptides are already inert — `anchor_preferences` skips them via the `mhc1_positions`/`resolve_anchor_index` `None` guard, as do the register-EM and the offset prior. Long ones (a 15-mer labelled MHCI resolves all five end-anchors) land in their own bucket under `length_motifs=True` and so cannot pollute the 8–11 motifs directly — but they *can* reach rare alleles through `_dist_len`'s backoff to the pooled counter. Second-order; unmeasured.
+
+- **`calibrate.random_peptides(length_bg="uniform")` is still unwired.** It exists and its docstring calls it the right null for MHC-I now that the MHC-I score carries a length prior, but both production call sites (`store.py`, `predict.py`) still construct `RankCalibrator` with the default `length_bg="corpus"`, so MHC-I's `%rank` marginalises over the corpus length mix rather than a length-neutral one. Unrelated to the gate above (that is a different mechanism); `"corpus"` remains correct for MHC-II.
 
 ## 7. Conventions
 

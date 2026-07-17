@@ -508,7 +508,8 @@ class Store:
     # -- diffusion-powered forward scorer -------------------------------------
     def anchor_model(self, cls="mhc1", h=2.0, prior_strength=10.0, anchors=None, learn_weights=True,
                      prune_dpi=False, weights="learned", register_em=2, footprint="anchor",
-                     rare_max=30, background="ligand", length_prior="score", length_motifs=True):
+                     rare_max=30, background="ligand", length_prior="score", length_motifs=True,
+                     register="marginal"):
         """Anchor-factored presentation model with cross-allele kernel-shrinkage diffusion.
 
         See :class:`mhcmatch.diffusion.AnchorModel`. The diffusion rescues rare alleles by borrowing
@@ -521,14 +522,17 @@ class Store:
         allele-specificity null; ``"proteome"`` is the presentation null (better for ligand-vs-random
         screening) -- see :data:`mhcmatch.diffusion.PROTEOME_AA_FREQ`. ``length_prior="score"``
         (MHC-I) adds the per-allele ligand-length factor the anchor log-odds is blind to --
-        see :meth:`mhcmatch.diffusion.AnchorModel.length_logodds`.
+        see :meth:`mhcmatch.diffusion.AnchorModel.length_logodds`. ``register="marginal"`` (MHC-II
+        default) integrates the unobserved binding register out under a learned core-offset prior;
+        ``"max"`` restores the pre-v0.6 max-over-frames -- see
+        :meth:`mhcmatch.diffusion.AnchorModel.score`.
         """
         from .diffusion import AnchorModel
         return AnchorModel(self, cls=cls, anchors=anchors, h=h, prior_strength=prior_strength,
                            learn_weights=learn_weights, prune_dpi=prune_dpi, weights=weights,
                            register_em=register_em, footprint=footprint, rare_max=rare_max,
                            background=background, length_prior=length_prior,
-                           length_motifs=length_motifs)
+                           length_motifs=length_motifs, register=register)
 
     def affinity_model(self, cls="mhc1"):
         """Quantitative IC50 (nM) + neoantigen amplitude/DAI head (:class:`mhcmatch.PottsAffinity`).
