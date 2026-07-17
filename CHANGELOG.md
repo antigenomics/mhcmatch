@@ -6,6 +6,99 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.7.2] — 2026-07-17
+
+**Three global constants were wrong on a heterogeneous panel; two now have per-allele/per-position
+estimators.** Every knob below **ships inert at its default and is measured byte-identical**, so no
+committed number re-baselines and nothing is a behaviour change until it is opted into. The headline is
+diagnostic rather than a default flip: the class-II frequent gap is a **register-EM convergence failure
+on HLA-DP**, not a motif deficit or an estimator-variance problem.
+
+Results: `2026-mhcmatch-benchmark/KEY_FINDINGS.md`, `bench/results/register_em_convergence_dp.md`,
+`bench/results/blosum_pseudocount.md`. Design: [`appendix/hierarchical_rules.md`](appendix/hierarchical_rules.md).
+
+### Added
+
+- **`AnchorModel(register_em="converge")`** — run the best-frame register EM to convergence **per
+  allele** (freeze each one when its own frame assignments stop moving) instead of a shared pass count.
+  No count serves the panel: HLA-DP is still improving at 32 passes while the rare stratum reaches its
+  fixed point by 8 and never moves again, so the shipped `2` is an *early stop that flatters rare*, not
+  a correct value. Measured on MHC-II human screening (K=3): frequent AUPRC **0.625 → 0.667**, gap to
+  NetMHCIIpan-4.3i **−0.149 → −0.108 (28% closed)**. It **dominates every constant tried** — equal to
+  `em=32` on frequent, better on medium (0.510) and rare (0.635), and **1.36× cheaper** (73 s vs 100 s),
+  because frozen alleles skip the frame search.
+  - The gain is DP-specific (**+0.043** mean vs DR **−0.005**) and the causal test passes:
+    HLA-DPA1\*01:03/DPB1\*04:01, the DP allele already converged (H/Hmax 0.635), moves **+0.000 exactly**.
+    No threshold, no allele family named, no benchmark label — DP earns its passes by still moving, and
+    DRB1\*04:04 (0.2% eluted-ligand, boundaries genuinely arbitrary) keeps its flat prior rather than
+    being forced to sharpen.
+  - **Not the default, deliberately:** it is a *screening* win and a *restriction* cost — on
+    `--decoy-mode hard` frequent barely moves (+0.001) while rare PPV@P flips from a win over
+    NetMHCIIpan (0.402 vs 0.372) to a loss (0.350). A knob that must flip per task is usually still
+    wrong; see `hierarchical_rules.md` for the frame-tally fix that should remove the trade.
+- **`AnchorModel(prior_strength="auto")`** — empirical-Bayes shrinkage concentration **per anchor
+  position**, by method of moments on the Dirichlet-multinomial
+  (`τ_j = Σ_r m_j(r)(1−m_j(r)) / Var_between(j) − 1`), estimated on alleles with n ≥ 200 (where sampling
+  noise is negligible) and applied to all. One global `τ=10` is wrong **in opposite directions at once**:
+  between-allele PWM variance spans **71×** across MHC-I core positions, so at P4 (alleles barely differ)
+  τ=10 leaves 33% of a rare allele's sampling noise in, while at P2 (alleles differ enormously) it
+  discards 67% of its only real signal.
+  - **Recovers the known anchors unsupervised**, which is the check that it measures what it claims:
+    MHC-I P2 τ=**1.0** (B pocket) and PΩ τ=**1.7** (F pocket) against P4 τ=**71.5**; MHC-II's four lowest
+    are P1/P4/P6/P9 — the hardcoded `MHC2_ANCHORS`. The global τ=10 is correct for **exactly one position
+    in nine** (MHC-I P3). MHC-II's spread is 6× where MHC-I's is 71×: the open groove as a number.
+  - Measured: MHC-II screening **rare AUPRC 0.648 → 0.689 (+0.041)**, extending the margin over
+    NetMHCIIpan from +0.038 to **+0.079** (PPV 0.534 → 0.594) — the largest rare gain measured. It acts
+    where τ carries mass (67–77% at rare, 0.9% at frequent). MHC-I restriction frequent holds and nudges
+    up (AUPRC 0.850 → **0.854**); rare 0.749 → 0.726 flips to a loss.
+  - **`converge` and `"auto"` do not compose**: together they keep the frequent gain (0.668, best PPV
+    0.629) but τ's rare gain vanishes (0.689 → 0.630). That is a *positive* result about the mechanism —
+    τ fixes **residue** borrowing while rare's damage under convergence is in the **frames**, which are
+    tallied at full weight though the model that chose them was 67–77% borrowed. It locates the next fix.
+  - Lengths and core offsets keep a scalar (`_tau_scalar`): they are not residue distributions, so a
+    per-residue-position τ is meaningless for them. τ is fit on the **final** prefs, after the register
+    EM (which bootstraps on the scalar), so the EM, the background null and the mixture assignments are
+    unchanged.
+- **`AnchorModel(pseudocount=β, pseudo_matrix=None)`** and **`pseudoseq.blosum62_conditional()`** — a
+  mass-preserving BLOSUM62 substitution pseudocount on the anchor counters, `ĉ(r) = (1−w)·c(r) +
+  w·Σ_r' c(r')·P(r|r')` with `w = β/(n+β)`. The Nielsen et al. 2004 recipe (PMID 14962912) that
+  NetMHCpan's own lineage has used since 2004 and mhcmatch never had. **Ships off (β=0) because it is a
+  measured negative** — see below. `P(a|b) = p_a·2^(s_ab/2)` needs no q_ij table and no new dependency
+  (seqtree's BLOSUM62 was already imported for the allele kernel).
+
+### Measured and rejected (recorded, not shipped)
+
+- **BLOSUM pseudocounts make class-II screening monotonically worse**: frequent AUPRC 0.625 → 0.622 →
+  0.618 → 0.612 → 0.602 over β = 0/25/50/100/200; the gap *widens* −0.149 → −0.173. The premise was sound
+  and stands — only 28.0% of *frequent* MHC-II (allele, anchor) cells observe all 20 residues, and the
+  count-0/count-1 boundary is a **3.8-nat cliff on a ~1σ Poisson difference** (HLA-A\*30:01 P2, n=734).
+  **Mechanism, pre-registered before the run:** grading the never-seen penalty improves *bulk* ordering
+  (rare/medium AUROC +0.006/+0.009 at β=25) but lifts the chemically plausible **near-miss** decoys that
+  sit at the **top** of the ranking — which is what AUPRC and PPV measure. Every screening decoy is a
+  proteome window, so its residues are plausible by construction. **The model's overconfidence about
+  never-seen residues was doing useful work.** This ruled out estimator variance and redirected the
+  search to the register.
+- **MJ contact potentials not adopted**: measured **79% rank-1** (essentially a hydrophobicity axis), so
+  they cannot express "an R pocket takes K but not S", and they need a temperature unsettable from first
+  principles — where BLOSUM's conditional is parameter-free (reproduces the matrix to KL ≤ 0.011
+  bits/column, argmax agreeing in all 20 columns; recovered `q_ab` symmetric to 5.1e-04). `pseudo_matrix`
+  exists so the bench can pass an MJ conditional without mhcmatch vendoring MJ data or taking a `tcren`
+  dep.
+- **`eps=1e-3` is not the lever**: it *does* extinguish the τ prior at frequent alleles (prior mass
+  1.25e-05, ~80× below eps) and clips decoys asymmetrically (13.7% of MHC-I frequent decoy lookups vs
+  0.3% of positives) — but the metric is **flat from eps=0 to 1e-3**. Clipping shifts decoys roughly
+  uniformly, and uniform shifts do not move a ranking. Left exactly where it is.
+
+### Docs
+
+- [`appendix/hierarchical_rules.md`](appendix/hierarchical_rules.md) — the design: global prior → family
+  (kernel communities, Q=0.94/0.90) → allele, with the shrinkage strength derived from the variance ratio
+  rather than tuned. Names the remaining violator: `footprint`'s `rare_max=30`, a capacity threshold
+  sitting **exactly** on the evaluation stratum's boundary.
+- `ROADMAP.md` §6b — the presentation-null item is **mostly shipped**, not open (`background="proteome"`
+  is the `log(θ_A/p_proteome)` it prescribes, it is the CLI default, and the screening benchmark has been
+  running it all along). Records the three refuted mechanisms so no future session re-chases them.
+
 ## [0.7.1] — 2026-07-17
 
 **Potts affinity weights refit under the de-duplicated 8-mer encoding.** A correctness release: it

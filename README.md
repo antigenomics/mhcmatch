@@ -87,6 +87,13 @@ store.anchor_model("mhc1", footprint="adaptive")             # anchors for rare 
 store.anchor_model("mhc1", background="proteome")            # presentation null (is it presented at all?)
 store.anchor_model("mhc1", background="ligand")              # specificity null (which allele? — default)
 
+# per-allele / per-position estimators (v0.7.2) — all inert at their defaults
+store.anchor_model("mhc2", register_em="converge")           # each allele's register EM runs to ITS OWN
+                                                             # fixed point, not a shared pass count
+store.anchor_model("mhc1", prior_strength="auto")            # empirical-Bayes tau per anchor position
+store.anchor_model("mhc2", pseudocount=50)                   # BLOSUM substitution pseudocount (a measured
+                                                             # negative; off by default — see CHANGELOG)
+
 # calibrated, cross-allele-comparable output (NetMHCpan %Rank_EL analogue + P(present) + band)
 for r in store.restriction("NLVPMVATV", cls="mhc1", calibrated=True):
     print(r.allele, r.rank, r.p_present, r.band)             # e.g. HLA-A*02:01  1.6  0.98  weak
@@ -148,11 +155,18 @@ paired significance. Headline results (shortlist tier, human, seed 0):
 - **Presented-vs-random screening** (`background="proteome"`): mhcmatch **beats** NetMHCpan on MHC-I
   frequent alleles (AUROC p < 0.001, AUPRC 0.881 vs 0.846, p = 0.001). Medium and rare are a wash —
   the deltas sit inside the CI. This task is much easier for both tools (every AUROC ≥ 0.97).
-- **MHC-II**: NetMHCIIpan leads on medium and frequent alleles (p < 0.001); rare is a wash (Δ AUROC
-  +0.013 specificity / −0.015 screening, both inside the CI). Read these with
-  `compare/SOURCES.md` in hand: NetMHCIIpan trained on essentially all public IEDB
+- **MHC-II** (K=3 mixture, the shipped default): mhcmatch **wins the rare stratum** on both tasks
+  (screening AUPRC 0.648 vs 0.610; specificity 0.521 vs 0.473) and NetMHCIIpan leads medium and frequent.
+  **The frequent gap is one locus, not the class:** per-allele, DP averages **−0.305** AUPRC while **DR
+  is already at parity or better (+0.010)** — "class II", "frequent" and "DP" are three labels for one
+  cell. The mechanism is a **register-EM convergence failure on DPA1\*02:01** (core-offset prior at
+  H/Hmax 0.89–0.98, i.e. random-peptide flat, on 100% mass-spec ligands); `register_em="converge"` closes
+  **28%** of it (0.625 → 0.667). See `bench/results/register_em_convergence_dp.md`.
+  Read these with `compare/SOURCES.md` in hand: NetMHCIIpan trained on essentially all public IEDB
   eluted-ligand data, so the in-corpus medium/frequent strata are contaminated in its favour and the
   rare/zero-shot axis is the fair one.
+- **Mouse MHC-II**: mhcmatch **wins all nine cells** on the specificity task
+  (`compare_mhc2_mouse_hard_ligandbg.md`) — the only panel where it leads every stratum on every metric.
 - **Speed:** mhcmatch scores ~**68×** faster (pure Python, ~195k peptide-allele scores/s).
 
 ```fish
