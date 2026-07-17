@@ -6,7 +6,23 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
-## [Unreleased]
+## [0.6.0] — 2026-07-17
+
+**MHC-II scoring changes by default**, and two gates that were measuring the wrong thing are fixed.
+No API breaks; `AnchorModel(register="max")` restores the previous score.
+
+- **MHC-II `score` integrates the binding register out** instead of maxing over frames. Every stratum
+  × metric improves against NetMHCIIpan-4.3i; the rare stratum flips to winning all three. Frequent
+  AUPRC gap −0.174 → −0.124.
+- **The binder gate was a length detector** — a random 21-mer passed 98% of the time. Now a
+  length-conditional `%rank ≤ 2`, MHC-II only; `restriction(cls="mhc1")` is byte-identical.
+- **`predict_windows` was ~20× slower than it needed to be** — `_windows()` rebuilt an `AnchorModel`
+  per binder (~10s each, ~20h over a 7,460-binder cohort) and re-derived the register from the wrong
+  model, so the synthesised peptide could be cut from a frame the reported anchors did not describe.
+- **The bench harness served stale examples** from a cache keyed on CLI args while the eligible
+  allele set changed underneath. Caching is gone.
+- **`bench/` now lives in [2026-mhcmatch-benchmark](https://github.com/antigenomics/2026-mhcmatch-benchmark)**;
+  `bench/results/*.md` referenced below resolve there.
 
 ### Fixed
 
