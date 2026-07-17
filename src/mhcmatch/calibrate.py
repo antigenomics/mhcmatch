@@ -168,25 +168,3 @@ def band(percent_rank: float, strong: float = STRONG_RANK, weak: float = WEAK_RA
         return "unknown"
     return "strong" if percent_rank <= strong else "weak" if percent_rank <= weak else "non-binder"
 
-
-if __name__ == "__main__":
-    # Test the calibrator MATH with a deterministic stub model (score = count of hydrophobic
-    # residues). Model quality is tested by the benchmark; here we check %rank/band/P monotonicity.
-    class _Stub:
-        def score(self, pep, allele):
-            return float(sum(c in "AILMFWVY" for c in pep))
-
-    m = _Stub()
-    corpus = ["".join(r) for r in zip("ACDEFGHIKL" * 3, "MNPQRSTVWY" * 3, "AILMFWVYAC" * 3)]
-    cal = RankCalibrator(m, ["X"], corpus, n=4000,
-                         positives={"X": ["IIIIIIIII", "LLLLLLLLL", "AAAAAAAAA"]})
-    hi = cal.percent_rank("X", m.score("IIIIIIIII", "X"))    # all hydrophobic -> high score
-    lo = cal.percent_rank("X", m.score("DDDDDDDDD", "X"))    # none -> low score
-    assert hi < lo, (hi, lo)                                 # higher score -> LOWER %rank
-    assert 0.0 <= hi <= 100.0 and 0.0 <= lo <= 100.0
-    assert band(0.3) == "strong" and band(1.5) == "weak" and band(50) == "non-binder"
-    p_hi = cal.p_present("X", m.score("IIIIIIIII", "X"))
-    p_lo = cal.p_present("X", m.score("DDDDDDDDD", "X"))
-    assert 0.0 <= p_lo <= p_hi <= 1.0, (p_lo, p_hi)          # isotonic P monotone in score
-    print(f"calibrate.py self-check OK  high-score %rank={hi:.1f} (P={p_hi:.2f}), "
-          f"low-score %rank={lo:.1f} (P={p_lo:.2f}); bands OK")

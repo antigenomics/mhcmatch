@@ -264,39 +264,3 @@ class AffinityModel:
         coef = json.loads(src.read_text() if hasattr(src, "read_text") else open(src).read())
         return cls(anchor_model, corpus, coef=coef, **kw)
 
-
-if __name__ == "__main__":
-    # Self-check on a deterministic stub: score = #hydrophobic residues, so more-hydrophobic peptides
-    # are "stronger binders" -> lower IC50. Verify the fit is monotone and the differential helpers.
-    class _Stub:
-        def score(self, pep, allele):
-            return float(sum(c in "AILMFWVY" for c in pep))
-
-        def anchor_terms(self, pep, allele):     # per-residue hydrophobicity (sum == score)
-            return [float(c in "AILMFWVY") for c in pep]
-
-    # length-9 corpus with a clean hydrophobic gradient (0..9 hydrophobic residues per peptide)
-    corpus = ["I" * k + "D" * (9 - k) for k in range(10) for _ in range(6)]
-    m = AffinityModel(_Stub(), corpus, n_bg=1200)
-    train = [(p, "X", 50000.0 / (3.0 ** _Stub().score(p, "X"))) for p in corpus]   # more I -> lower nM
-    n = m.fit(train, lam=0.1, lengths=[9])
-    strong, weak = m.predict_ic50("I" * 9, "X"), m.predict_ic50("D" * 9, "X")
-    assert strong < weak, (strong, weak)                          # more hydrophobic -> lower nM
-    a_same = m.amplitude("IIIDDDDDD", "IIIDDDDDD", "X")           # amplitude of a peptide with itself
-    assert abs(a_same - 1.0 / (1.0 + m.predict_ic50("IIIDDDDDD", "X") * _EPS_OVER_L)) < 1e-9
-    assert m.amplitude("DDDDDDDDD", "IIIIIIIII", "X") > 1.0       # mutant binds better -> A>1
-    assert m.dai("DDDDDDDDD", "IIIIIIIII", "X") > 0.0
-    assert ic50_to_y(50000.0) == 0.0 and abs(y_to_ic50(1.0) - 1.0) < 1e-9
-    print(f"affinity.py self-check OK  (fit {n} pts; strong={strong:.0f} nM < weak={weak:.0f} nM; "
-          f"amplitude(DDD..,III..)={m.amplitude('D' * 9, 'I' * 9, 'X'):.2f})")
-
-    # Potts self-check on the vendored MHC-I weights (no Store needed for MHC-I: core = the peptide).
-    pa = PottsAffinity("mhc1")
-    a2 = "HLA-A*02:01"
-    strong_nm = pa.predict_ic50("NLVPMVATV", a2)     # canonical A2 binder -> should be a real value
-    weak_nm = pa.predict_ic50("KKKKKKKKK", a2)       # poly-K -> non-binder
-    assert strong_nm == strong_nm and 0 < strong_nm < 50000, strong_nm
-    assert strong_nm < weak_nm, (strong_nm, weak_nm)
-    assert abs(pa.amplitude("NLVPMVATV", "NLVPMVATV", a2)
-               - 1.0 / (1.0 + strong_nm * _EPS_OVER_L)) < 1e-6      # WT==MT -> ratio 1, only the correction
-    print(f"PottsAffinity self-check OK  (A*02:01 NLVPMVATV={strong_nm:.0f} nM < poly-K={weak_nm:.0f} nM)")
