@@ -50,7 +50,7 @@ diffusion model, and the downstream predictors.
 | Class-II allele keying (α+β pair) + pseudoseq pair-normalization | — | Phase 1 |
 | Tuned ROC/PR thresholds; FDR over proteome scans | — | Phase 1 |
 | Core → full presented ligand span (observed / modeled / fixed) | `mhcmatch.ligand` | **v0.3** (validated, `bench/bench_spans.py`) |
-| Binding affinity (IC50 nM) + neoantigen amplitude/DAI; structure MJ ΔΔG | `mhcmatch.PottsAffinity`, `mhcmatch.structure` | **v0.4** (validated, `bench/affinity/`) |
+| Binding affinity (IC50 nM) + neoantigen amplitude/DAI; structure MJ ΔΔG | `mhcmatch.PottsAffinity`, `mhcmatch.structure` | **v0.4**, weights refit v0.7.1 (`bench/affinity/`; open issues in §6c) |
 | Stability / expression / immunogenicity | — | Phase 2 |
 | NetMHCpan / MixMHCpred head-to-head benchmark + paper | separate repo | Phase 3 |
 
@@ -315,6 +315,43 @@ groove positions). Worth evaluating against:
   closely (top-5 neighbour Jaccard 0.76) but predicts modal anchors no better (LOO 0.43 vs 0.46
   BLOSUM). Since the BLOSUM Gram distance is already a substitution log-odds, `exp(-δ)` *is* a
   likelihood kernel — BLOSUM stays the default; Fisher is a validated equivalent, not a win. Appendix §4.
+- **BLOSUM/MJ "smarter than one-hot" encoding for the Potts affinity head — measured and rejected. Do
+  not redo.** `train_potts.set_soft(tau,k)` had implemented the groove-axis BLOSUM admixture all along,
+  pinned to one-hot and never swept. Swept jointly with `alpha`, paired, 5 seeds: everything lands
+  inside **±0.010** rho against a 0.166 gap (`bench/results/potts_encoding_ablation.md`). It is
+  structural, not bad luck: `X_soft = X_onehot·blockdiag(Sᵀ)` with `S` **full-rank at every (tau,k)**,
+  so soft encoding is *generalized ridge* under metric `(SSᵀ)⁻¹` (verified to 2.2e-16) and adds **zero
+  new directions** — it is a prior, not a feature. Predicted to act like `alpha ×2.5`; measured,
+  soft(τ=2,k=5)@α=40 reproduces one-hot@α=80 to within noise, and `alpha=40` is already optimal. For
+  anyone tempted: (a) the motivating "81% of couplings are zero = ignorance" is a **tautology** —
+  L2+lsqr from `x0=0` cannot leave an unobserved column non-zero — and those dead cells are ~1–3% of a
+  real prediction (live terms 99.8% trained-common / 99.2% trained-rare / **98.8% never-trained**);
+  (b) in-sample the rare/common rho gap is **0.013**, so the held-out gap is variance, not bias;
+  (c) `tau=1` (the CLI default) is a no-op — even `k=20` leaves 89% self-weight — so a `--soft-k`-only
+  sweep returns a *false* null; (d) **BLOSUM neighbours are not HLA neighbours**: 64.9% of the
+  substitutions distinguishing common A\*02/B\*27/B\*44/B\*35/A\*68/A\*11 subtypes are BLOSUM ≤ −1
+  (B\*44:02 vs B\*44:03 is one position, D→L, **−4**). Softening the *peptide* axis is the only
+  positive arm (+0.004) and is the axis NetMHCpan-4.0 encodes (PMID 28978689); the one published
+  one-hot ablation (Nielsen 2003, PMID 12717023, PCC 0.877→0.899) is **528 peptides, one allele** —
+  BLOSUM is a small-data prior and this head has n=84,709.
+- **Low-rank / bilinear couplings (Hopfield-Potts) — rejected on analysis, not run.** BLOSUM62 has one
+  eigenvalue **−22.918** carrying 14.2% of its nuclear norm; the apparent "d=1" of `exp(BLOSUM/1)` is a
+  **tryptophan scale artifact** (`exp(11)` = 59,874 = 97.9% of Frobenius mass; the top eigenvector is
+  the W indicator). Scale-free, d90 ≈ 16–18 — there is no natural small `d`. And Cocco/Monasson/Weigt
+  (PMID 23990764) find the *low*-eigenvalue modes are the localized, structure-bearing ones, so
+  truncating the top destroys exactly what you wanted.
+- **More training grooves — the only lever that raises rank, and it did nothing at the margin tested.**
+  The groove design is rank **105 of 680**, capped by 129 distinct 34-mers; every new groove adds ≤1
+  rank and no encoding adds any. But adding 24 alleles / **21 new grooves** / 10,829 rows (the v0.7.1
+  refit) moved nothing (−0.006 / −0.004 / −0.000). Rank is not binding at this margin. The untested
+  version is bigger: `load_points` keeps only `ineq == "="`, discarding the censored `<`/`>` rows
+  (`SOURCES.md` records 242,070 nM rows vs the 104,143 the filter keeps for MHC-I) — Tobit / censored
+  regression would add points *and* grooves.
+- **The gap to NetMHCpan looks like a hypothesis-class gap, not an encoding one.** Groove pockets are
+  not exchangeable (master determinants 9/63/67/116 vs inert 7/24/59/69/158, PMID 26040913), so one
+  global kernel is mis-specified. NetMHCpan absorbs that in a nonlinear hidden layer — BLOSUM is
+  invertible, so its ANN just relearns the position-specific deviations. **A linear ridge has no escape
+  valve.** Consistent with the reranker already deferred in §6b.
 
 **Tooling to evaluate when figures/logos matter:**
 - **[kuva](https://github.com/Psy-Fer/kuva)** — Rust scientific plotting library (SVG/PNG/PDF, ~60
@@ -335,6 +372,45 @@ NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2)
 - **Out-of-range peptides are admitted but mostly quarantined.** `_DEFAULT_LENGTHS` is a background/scan-window convention, not an ingest filter, so `from_pmhc` admits 109,304 MHC-I rows (10.5%) outside 8–11 (37,327 12-mers, 17,914 13-mers, and absurdities down to a length-2 "epitope") and 56,934 MHC-II rows (17.7%) outside 13–18. Too-short peptides are already inert — `anchor_preferences` skips them via the `mhc1_positions`/`resolve_anchor_index` `None` guard, as do the register-EM and the offset prior. Long ones (a 15-mer labelled MHCI resolves all five end-anchors) land in their own bucket under `length_motifs=True` and so cannot pollute the 8–11 motifs directly — but they *can* reach rare alleles through `_dist_len`'s backoff to the pooled counter. Second-order; unmeasured.
 
 - **`calibrate.random_peptides(length_bg="uniform")` is still unwired.** It exists and its docstring calls it the right null for MHC-I now that the MHC-I score carries a length prior, but both production call sites (`store.py`, `predict.py`) still construct `RankCalibrator` with the default `length_bg="corpus"`, so MHC-I's `%rank` marginalises over the corpus length mix rather than a length-neutral one. Unrelated to the gate above (that is a different mechanism); `"corpus"` remains correct for MHC-II.
+
+- **The MHC-I Potts affinity score is length-blind (Defect 1) — open.** Every slot index is taken from
+  one end or the other (`{0..4} ∪ {L-4..L-1}`), so nothing in the energy depends on `len(peptide)`:
+  `SLYNTGATL` and `SLYNTAAAGATL` score **bit-identically**. The legacy `AffinityModel` this head
+  replaced carried length one-hots; the Potts rewrite dropped them. The effect is real on the affinity
+  target — within-allele, an 8-mer binds **5.5×** weaker than a 9-mer (Δln IC50 +1.702, worse in 11/13
+  alleles), a 10-mer 1.5×, an 11-mer 2.2×. **But per-length intercepts are measured null** on per-allele
+  Spearman, because the large effects live at 8/11-mers = 5.6% of the corpus and the dominant 9-vs-10
+  contrast is only 0.13 SD of within-allele IC50 spread. The recorded **+0.059 AUROC** is the *NCI
+  immunogenicity ranking* task (near-uniform candidate lengths, 61.8% 9-mer positives) — a different
+  question. **Fix it for the ranking path**, minding the recorded composition trap (add
+  `length_logodds` *after* ranking; inside the calibrator's background it normalises straight back out,
+  0.912 vs 0.921). Slots `{0..4} ∪ {L-4..L-1}` also silently discard the middle of 10–12mers, which a
+  length term does not fix. `bench/results/{potts_mhc1_encoding_defects,potts_encoding_ablation}.md`.
+
+- **The Potts head is a supervised ridge, not a DCA fit — the name overclaims.** It is penalized least
+  squares on one-hot pair features against a scalar label: no partition function, no pseudo-likelihood,
+  no MCMC. `J_ij` is *not* a direct-coupling estimate and should not be read as one. Rename or caveat.
+
+- **The Potts numbers in `README.md` have no backing results file.** `0.702 / 0.485 / 0.531 / 0.457`
+  appear in no `bench/results/*.md`; their source is a docstring (`affinity.py:67`), and the only
+  recorded per-allele table (`affinity_iedb.md`) is the *ridge `AffinityModel`*, not Potts. Today's
+  eval pool is 96 alleles vs the 68 those runs report. Measured on the current corpus (5 seeds, paired,
+  no NetMHCpan filter): **orphan 0.504 / rare 0.543 / common 0.709** — rare is materially better than
+  the README claims. Regenerate the table or drop it; per §"Benchmarks" every run gets recorded.
+
+- **~1/3 of the Potts "rare-allele gap" is the ruler, not the model.** Median SD(ln IC50) is 3.127 for
+  common alleles vs 2.559 for rare (s=0.818); binder fraction 0.462 vs 0.636. Range-restriction
+  attenuation alone maps a model measuring 0.709 on common to **0.628** on rare. Partial
+  Spearman(n_points, rho | SD) = **−0.062**: once label spread is controlled, training support does not
+  predict per-allele rho at all. The realistic rare ceiling is ~0.63. Report attenuation-corrected
+  numbers rather than treating the gap as a model defect.
+
+- **`fit_potts.py` takes the MHC-II register oracle from live defaults.** It builds
+  `Store.anchor_model("mhc2", …)`, which decides the 9-mer core of every class-II training peptide, so
+  the oracle's defaults are part of the weights' provenance — and they move (`78ae3e1` made
+  `n_motifs=3` the MHC-II default on 2026-07-17, after the v0.4 weights were fit). It now pins
+  `n_motifs=1, length_prior=False, length_motifs=False` explicitly. **Whether the affinity head should
+  adopt the shipped K=3 oracle is open and unmeasured.**
 
 ## 7. Conventions
 
