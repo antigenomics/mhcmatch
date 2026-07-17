@@ -15,8 +15,8 @@ from collections import Counter
 from functools import lru_cache
 from importlib import resources
 
-from .pseudoseq import (Pseudoseq, learn_anchor_weights, load_pseudo, load_structural_weights,
-                        normalize_allele)
+from .pseudoseq import (Pseudoseq, blosum62_conditional, learn_anchor_weights, load_pseudo,
+                        load_structural_weights, normalize_allele)
 
 # Presentation-scoring footprint: the N-pocket (P1,P2,P3) + C-pocket (PΩ-1,PΩ). P2/PΩ are the
 # primary buried anchors; P1/P3/PΩ-1 are pocket-proximal auxiliary positions that empirically lift
@@ -40,6 +40,17 @@ MHC2_CORE = (1, 2, 3, 4, 5, 6, 7, 8, 9)
 
 # Laplace pseudo-count per core-offset frame (see AnchorModel._fit_offset_prior).
 _OFFSET_ALPHA = 0.5
+
+# Empirical-Bayes tau (prior_strength="auto", see AnchorModel._fit_tau). _TAU_MIN_N is where the
+# sampling variance is negligible enough to read the between-allele variance off directly; the
+# MIN/MAX are numeric guards, not tuned values (the panel lands at 1.0-71).
+_AA20 = "ACDEFGHIKLMNPQRSTVWY"
+_TAU_DEFAULT, _TAU_MIN, _TAU_MAX = 10.0, 0.05, 1e3
+_TAU_MIN_N, _TAU_MIN_ALLELES = 200, 3
+
+# Runaway backstop for register_em="converge" -- not a tuned value: the panel converges far below it
+# (measured: every human MHC-II allele is frozen by pass ~30, most by pass 2).
+_EM_CAP = 64
 
 # Dirichlet pseudo-count per motif component, and the number of mixture-EM passes
 # (see AnchorModel._refit_mixture). ponytail: fixed until n_motifs>1 is measured to be worth a knob.
@@ -86,7 +97,8 @@ class AnchorModel:
     def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0,
                  learn_weights=True, prune_dpi=False, weights="learned", blend_alpha=0.5,
                  register_em=2, footprint="anchor", rare_max=30, background="ligand",
-                 length_prior="score", length_motifs=True, register="marginal", n_motifs=3):
+                 length_prior="score", length_motifs=True, register="marginal", n_motifs=3,
+                 pseudocount=0.0, pseudo_matrix=None):
         """``weights``: ``"learned"`` (per-anchor MI over the panel, default), ``"structural"``
         (contact-frequency weights from pMHC structures, :func:`load_structural_weights`),
         ``"blend"`` (convex mix ``blend_alpha``*structural + (1-``blend_alpha``)*learned, mean-1
@@ -99,6 +111,10 @@ class AnchorModel:
         preferences, so training and scoring use the same (best-frame) register. The default ``2``
         lifts held-out binder-vs-decoy AUC across rare/medium/frequent MHC-II alleles (frequent
         +0.10); ``0`` keeps the one-pass heuristic register. Ignored for MHC-I (end-anchored).
+        ``"converge"`` runs each allele to its *own* fixed point instead of a shared count -- see
+        :meth:`_converge_registers`. No global pass count is right for every allele: HLA-DP is still
+        improving at 32 passes while the rare stratum is done by 8, so ``2`` is an early stop that
+        flatters rare rather than a correct value.
 
         ``length_prior`` (MHC-I only) adds the per-allele ligand-length factor the anchor log-odds is
         structurally blind to -- see :meth:`length_logodds`. ``"score"`` folds it into
@@ -191,14 +207,86 @@ class AnchorModel:
         self.prefs_mix = None
         self.log_pi = None
         self._cache_mix = {}
-        for _ in range(register_em if cls == "mhc2" else 0):
-            self._refit_registers(store)   # also tallies self.offset_prefs, free (same sweep)
+        self._frames = {}
+        self._em_passes = 0
+        # tau is fit on the *final* prefs below; the register EM bootstraps on the scalar.
+        self._tau = None
+        # lengths and core offsets are not residue distributions, so a per-residue-position tau is
+        # meaningless for them -- they keep a scalar.
+        self._tau_scalar = _TAU_DEFAULT if prior_strength == "auto" else prior_strength
+        if cls == "mhc2":
+            if register_em == "converge":
+                self._converge_registers(store)
+            else:
+                for _ in range(register_em):
+                    self._refit_registers(store)   # also tallies offset_prefs, free (same sweep)
         if cls == "mhc2":
             if not register_em:            # no EM sweep to piggyback on -- pay for one
                 self._fit_offset_prior(store)
             self._smooth_offset_prior()
-            if n_motifs > 1:               # needs the offset prior: the E-step scores the marginal
-                self._refit_mixture(store)
+        self._tau = self._fit_tau() if prior_strength == "auto" else None
+        if cls == "mhc2" and n_motifs > 1:  # needs the offset prior: the E-step scores the marginal
+            self._refit_mixture(store)
+        self._add_pseudocounts(pseudocount, pseudo_matrix)   # last: everything above fits on raw counts
+
+    def _add_pseudocounts(self, beta, matrix=None):
+        """Mass-preserving BLOSUM substitution pseudocount on every residue counter (Nielsen et al. 2004,
+        PMID 14962912). ``beta=0`` (default) returns immediately and the model is bit-identical.
+
+            ``w = β / (n + β)``;   ``ĉ(r) = (1-w)·c(r) + w·Σ_r' c(r')·P(r|r')``
+
+        Nothing else in the model grades an *unobserved* residue by its chemistry. At a well-sampled anchor
+        that makes the count-0/count-1 boundary a cliff -- HLA-A*30:01 P2 (n=734) scores a residue seen once
+        at -1.0 nats and one seen zero times at -4.6, a 3.8-nat assertion resting on a ~1σ Poisson
+        difference. Neither the τ prior nor ``eps`` can fix it: τ carries ~1% of the mass at a frequent
+        allele, and ``eps`` is a constant, so it cannot say *which* unobserved residue is plausible.
+
+        Three properties, each load-bearing:
+
+        * **Mass-preserving** (``Σ_r ĉ = n``, since ``Σ_r P(r|r') = 1``). :meth:`Pseudoseq.shrink` reads
+          both ``n_own`` and ``m``, so leaving the mass alone keeps its ``τ/(n+τ)`` balance exactly as it
+          was at every allele -- β is orthogonal to τ. The additive form ``c(r) + β·g(r)`` instead crushes
+          the kernel prior that wins the rare stratum (at n=5, β=50: τ's share 67% → 15%).
+        * **Count-adaptive** ``w``. A fixed blur commutes with ``shrink`` and so smooths a 5-ligand allele
+          and a 23k-ligand allele by exactly the same amount -- pure bias at the saturated end. ``w`` → 0
+          as n → ∞, so the estimator stays consistent and A*02:01 is left alone (0.2% at β=50).
+        * **Called last in** ``__init__``. ``self.bg``, the MI weights, the register-EM frames and the
+          mixture's component *assignments* are all fit on the raw counters above and stay bit-identical at
+          any β; only the scored distributions move.
+
+        ``matrix`` overrides the conditional (``{observed: {r: P(r|observed)}}``) -- the benchmark passes an
+        MJ-derived one to measure BLOSUM-vs-MJ without mhcmatch vendoring MJ data or taking a tcren dep.
+        """
+        if beta <= 0:
+            return
+        cond = matrix or blosum62_conditional()
+
+        def smooth(c):
+            n = sum(c.values())
+            if n <= 0:                     # LOAO/zero-shot: no own counts, w would be 1 and g undefined
+                return c
+            w = beta / (n + beta)
+            g = Counter()
+            for obs, cnt in c.items():
+                pr = cond.get(obs)
+                if pr is None:             # X/B/Z/U: no substitution model -- leave its mass in place
+                    g[obs] += cnt
+                    continue
+                for r, p in pr.items():
+                    g[r] += cnt * p
+            return Counter({r: (1 - w) * c.get(r, 0.0) + w * g.get(r, 0.0) for r in set(c) | set(g)})
+
+        for j in self.anchors:
+            for a in list(self.prefs[j]):
+                self.prefs[j][a] = smooth(self.prefs[j][a])
+        for d in (self.prefs_len or {}).values():
+            for a in list(d):
+                d[a] = smooth(d[a])
+        for mix in (self.prefs_mix or []):
+            for d in mix.values():
+                for a in list(d):
+                    d[a] = smooth(d[a])
+        self._cache, self._cache_len, self._cache_mix = {}, {}, {}
 
     def _learned_weights(self, cls, prune_dpi):
         seqs = load_pseudo(cls)
@@ -257,7 +345,7 @@ class AnchorModel:
         if key not in self._cache:
             self._cache[key] = self.ps.shrink(self.prefs[j], allele, anchor=j,
                                               candidates=self._candidates(j),
-                                              prior_strength=self.prior_strength)
+                                              prior_strength=self._tau_at(j))
         pooled = self._cache[key]
         if k is None or self.prefs_mix is None:
             return pooled
@@ -270,7 +358,7 @@ class AnchorModel:
         if n <= 0:                                   # backoff identity: the pooled single-PWM motif
             self._cache_mix[mkey] = pooled
             return pooled
-        tau = self.prior_strength
+        tau = self._tau_at(j)
         out = {r: (own.get(r, 0.0) + tau * pooled.get(r, 0.0)) / (n + tau)
                for r in set(own) | set(pooled)}
         self._cache_mix[mkey] = out
@@ -311,14 +399,100 @@ class AnchorModel:
             self._cache_len[key] = pooled
             return pooled
         pi = self.ps.shrink(pl, allele, anchor=j, candidates=list(pl),
-                            prior_strength=self.prior_strength)
-        tau = self.prior_strength
+                            prior_strength=self._tau_at(j))
+        tau = self._tau_at(j)
         out = {r: (n * pi.get(r, 0.0) + tau * pooled.get(r, 0.0)) / (n + tau)
                for r in set(pi) | set(pooled)}
         self._cache_len[key] = out
         return out
 
-    def _refit_registers(self, store):
+    def _fit_tau(self, min_n=_TAU_MIN_N, min_alleles=_TAU_MIN_ALLELES):
+        """Empirical-Bayes shrinkage concentration ``τ_j`` per anchor position (method of moments).
+
+        ``τ`` is how hard an allele's own counts are pulled toward its groove neighbours, and a single
+        global constant is wrong in *opposite directions at once*. Measured on the panel: the
+        between-allele variance of the PWM spans **71×** across MHC-I core positions (P2 0.433, PΩ
+        0.308, P4 0.012). At P4 alleles barely differ, so a rare allele's own counts are almost pure
+        sampling noise and should be shrunk away -- τ=10 against n=5 leaves 33% of it in. At P2 alleles
+        differ enormously, so those counts are the one real signal a rare allele has -- and τ=10 throws
+        67% of it away.
+
+        For a Dirichlet-multinomial with mean ``m_j`` and concentration ``τ_j``, the between-allele
+        variance of the observed frequencies is ``m(1-m)/(τ+1)`` once sampling noise is negligible.
+        Estimating on well-sampled alleles only (``n ≥ min_n``, where that holds) and summing over
+        residues to kill the per-residue noise:
+
+            ``τ_j = Σ_r m_j(r)·(1 - m_j(r)) / Var_between(j)  -  1``
+
+        The hyperparameter is estimated where it is *estimable* (data-rich alleles) and applied to all
+        -- which is what a hierarchical prior is for. Nothing here sees a benchmark label, a stratum
+        boundary, or an allele family: it is the training panel's own between-allele variance.
+
+        Recovers the known anchors unsupervised, which is the check that it is measuring what it
+        claims: MHC-I gives P2 τ=1.0 and PΩ τ=1.7 against P4 τ=71; MHC-II's four lowest are P1/P4/P6/P9
+        -- the hardcoded :data:`MHC2_ANCHORS`. Positions with too few well-sampled alleles fall back to
+        the scalar default, so the estimator never invents a τ it cannot support.
+        """
+        taus = {}
+        for j in self.anchors:
+            prefs = self.prefs[j]
+            rich = [c for c in prefs.values() if sum(c.values()) >= min_n]
+            if len(rich) < min_alleles:
+                taus[j] = _TAU_DEFAULT
+                continue
+            pool = Counter()
+            for c in rich:
+                pool.update(c)
+            n = sum(pool.values()) or 1
+            m = {r: pool.get(r, 0) / n for r in _AA20}
+            var = 0.0
+            for r in _AA20:
+                ps = [c.get(r, 0) / sum(c.values()) for c in rich]
+                var += sum((p - m[r]) ** 2 for p in ps) / len(ps)
+            num = sum(m[r] * (1 - m[r]) for r in _AA20)
+            taus[j] = min(_TAU_MAX, max(_TAU_MIN, num / var - 1)) if var > 0 else _TAU_MAX
+        return taus
+
+    def _tau_at(self, j):
+        """``τ`` for anchor ``j`` -- per-position (``prior_strength="auto"``) or the global scalar."""
+        return self._tau[j] if self._tau else self._tau_scalar
+
+    def _converge_registers(self, store, cap=_EM_CAP):
+        """Run the register EM to convergence **per allele** (MHC-II) instead of a fixed global count.
+
+        A fixed ``register_em=N`` gives a 6,800-ligand DP allele and a 5-ligand DRB the same N passes,
+        and no N is right for both: measured on the head-to-head, HLA-DP is still improving at N=32
+        (frequent screening AUPRC 0.625 -> 0.667) while the rare stratum reaches its fixed point by
+        N=8 and never moves again. So N=2 is not "correct" for rare, it is an early stop that happens
+        to land well. The number of passes an allele deserves is a property of *its own* data, so let
+        each allele say when it is done: freeze it once its frame assignments stop changing.
+
+        This is the same self-adapting-backoff law the rest of the model already obeys -- ``_dist``'s
+        ``n_k=0 -> pooled``, ``_dist_len``'s ``n_{a,L}=0 -> pooled``, ``shrink``'s ``(nπ+τm)/(n+τ)``
+        -- applied to the one knob that was still a global constant. No ligand-count threshold and no
+        allele family is named: DP earns its passes by still moving, and an allele that converged on
+        pass 1 is left exactly where it was (measured: HLA-DPA1*01:03/DPB1*04:01, whose prior is
+        already peaked at H/Hmax 0.635, moves +0.000 AUPRC under extra passes).
+
+        Cheaper than the equivalent global count, not dearer: frozen alleles skip the frame search, and
+        the alleles that iterate longest are a minority of the panel.
+
+        ponytail: an allele is frozen for good on its first stable pass. It could in principle
+        un-converge when a groove neighbour moves, since ``_dist`` mixes in the neighbour mean -- but
+        that term is ``τ/(n+τ)``, i.e. 0.15% for the n=6,768 DP alleles that iterate longest, and the
+        thin alleles where it is large converge in one or two passes anyway. Re-check every pass if a
+        panel ever shows an allele oscillating.
+        """
+        frozen, passes = set(), 0
+        alleles = set(store._panel[self.cls].alleles)
+        for passes in range(1, cap + 1):
+            changed = self._refit_registers(store, frozen=frozen)
+            frozen = alleles - changed
+            if not changed:
+                break
+        self._em_passes = passes
+
+    def _refit_registers(self, store, frozen=None):
         """One register-EM pass (MHC-II): re-assign each training peptide to the frame its current
         model scores best, then re-estimate the per-anchor preferences and background from that frame.
         Uses the current (pre-pass) distributions for assignment; ``self.prefs`` is replaced only after
@@ -327,15 +501,26 @@ class AnchorModel:
         Frames are assigned by :meth:`best_register`, so the register the EM fits is the same one
         :meth:`score` reads off. (For MHC-II the adaptive-footprint mask is always ``None``, so this
         is identical to the previous hand-rolled loop; under ``background="markov"`` the assignment
-        now uses the same Markov null it is scored with, which it previously did not.)"""
+        now uses the same Markov null it is scored with, which it previously did not.)
+
+        ``frozen``: alleles that have already converged -- their peptides reuse the stored frame rather
+        than re-searching it, which is what makes :meth:`_converge_registers` cheap. Returns the set of
+        alleles whose assignment changed this pass (every allele, on the first pass)."""
         panel = store._panel[self.cls]
         core_pos = [j - 1 for j in self.anchors]
         prefs = {j: {} for j in self.anchors}
         offsets = {}
-        for ep, a, wt in zip(panel.epitopes, panel.alleles, panel.weights):
+        changed, frames = set(), {}
+        for i, (ep, a, wt) in enumerate(zip(panel.epitopes, panel.alleles, panel.weights)):
             if len(ep) < 9:
                 continue
-            best_st, _ = self.best_register(ep, a)
+            if frozen and a in frozen:
+                best_st = self._frames[i]                # converged: reuse, skip the frame search
+            else:
+                best_st, _ = self.best_register(ep, a)
+                if self._frames.get(i) != best_st:
+                    changed.add(a)
+            frames[i] = best_st
             w9 = ep[best_st:best_st + 9]
             for j, c in zip(self.anchors, core_pos):
                 prefs[j].setdefault(a, Counter())[w9[c]] += wt
@@ -345,6 +530,7 @@ class AnchorModel:
             offsets.setdefault(len(ep), {}).setdefault(a, Counter())[best_st] += wt
         self.prefs = prefs
         self.offset_prefs = offsets
+        self._frames = frames
         for j in self.anchors:
             cc = Counter()
             for cnt in prefs[j].values():
@@ -352,6 +538,7 @@ class AnchorModel:
             self.bg[j] = cc
         self._nbg = {j: (sum(self.bg[j].values()) or 1) for j in self.anchors}
         self._cache = {}
+        return changed
 
     def _best_frame(self, peptide, allele, k):
         """Frame start that motif component ``k`` scores best. Falls back to the pooled model's frame
@@ -509,7 +696,7 @@ class AnchorModel:
         if allele not in self._len_cache:
             self._len_cache[allele] = self.ps.shrink(
                 self.len_prefs, allele, anchor=None, candidates=list(self.len_prefs),
-                prior_strength=self.prior_strength)
+                prior_strength=self._tau_scalar)
         th = self._len_cache[allele]
         return math.log((th.get(length, 0.0) + eps) / (self._len_bg + eps))
 
@@ -594,7 +781,7 @@ class AnchorModel:
         by_allele = self.offset_prefs.get(length)
         if by_allele:
             # shrink() is generic over the counter's key type: offsets here, residues elsewhere.
-            th = self.ps.shrink(by_allele, allele, prior_strength=self.prior_strength)
+            th = self.ps.shrink(by_allele, allele, prior_strength=self._tau_scalar)
             tot = sum(th.get(i, 0.0) for i in range(n))
             if tot > 0:                                   # else: no own data and no kernel neighbour
                 lp = [math.log(th[i] / tot) for i in range(n)]
