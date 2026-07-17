@@ -6,6 +6,55 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.7.0] — 2026-07-17
+
+**Per-allele motif mixtures for MHC-II, on by default.** A class-II allele now scores a mixture of
+`K` PWM components (`AnchorModel(n_motifs=3)`, the new default) instead of one, closing ~40% of the
+frequent-stratum AUPRC gap to NetMHCIIpan-4.3i. No API break — `n_motifs=1` restores the single-PWM
+model and never enters the mixture path. MHC-I is unaffected (the mixture is class-II only).
+
+This is the other half of GibbsCluster-style deconvolution: v0.6 marginalised over the binding
+*register*; this fits the *motif*. It answers the "can extra matrices help?" question — and the
+answer is a mixture, because the score is a sum of per-position log-odds and that family is closed
+under addition, so any additive "extra matrix" collapses to one PWM. Only `log Σ_k π_k exp(s_k)` adds
+capacity.
+
+### Added
+
+- **`AnchorModel(n_motifs=K)` / `Store.anchor_model(n_motifs=K)`** — K motif components per allele,
+  fit by EM on the whole corpus (no external labels, no NetMHCpan), scored as
+  `log Σ_k π_k Σ_r P(r|L,a)·exp(s_{k,r})`. Default **3** for MHC-II. Capacity self-adapts with **no
+  ligand-count threshold**: a component with no counts for an allele returns that allele's pooled
+  (shrunk) motif *identically*, so a thin allele degrades to the single PWM. Symmetry is broken by a
+  deterministic `crc32(peptide) % K` init (reproducible; no seed to plumb).
+
+### Changed
+
+- **MHC-II scoring uses the K=3 mixture by default.** Measured, human MHC-II holdout (seed 0), frequent
+  stratum AUPRC vs NetMHCIIpan-4.3i: allele-specificity **0.558 → 0.614** (gap −0.124 → −0.068),
+  screening **0.521 → 0.625** (−0.254 → −0.149). K sweep is monotone to 3 and flat at 4. Nothing
+  regresses beyond noise; the rare stratum mhcmatch already wins stays won. The gain is concentrated
+  in **DP** (mean per-allele ΔAUPRC +0.108 vs DR +0.037) — DP scored 0.11–0.42 under a single PWM
+  against DR's 0.6–0.94, so the human class-II "frequent gap" was largely a DP gap. See the benchmark
+  repo's `bench/results/motif_mixture_mhc2.md`.
+- **Calibrated MHC-II paths are ~3× slower** — this is where the mixture's cost lands, and only here.
+  `restriction(calibrated=True)` per-peptide ~5.8s → ~17s; the `RankCalibrator` build ~17s → ~67s;
+  `predict` likewise. The fast paths are untouched: default `restriction` (vote/enrichment, builds no
+  `AnchorModel`) and `mhcmatch.ligand` span ranking (never calls `AnchorModel.score`). Set
+  `n_motifs=1` to recover the previous speed. MHC-II model build 2.1s → ~19s (opt-in, once).
+
+### Notes
+
+- **What the components are not:** they come back 90–98% the *same* motif (per-anchor JS 0.02–0.05 of
+  a possible 1.0), so this is not "each allele has two distinct binding motifs." Since `_m_step` gives
+  each component its own best frame, the gain is plausibly a richer *register* model, not a richer
+  motif model — recorded as untested. This also sidesteps the GibbsCluster multi-allele-deconvolution
+  concern (its clusters are co-eluted *alleles*; our corpus is allele-labelled).
+- **Measured on human MHC-II only.** Mouse and the interaction with the `%rank`/calibration accuracy
+  are unvalidated; changing `n_motifs` back to 1 is the escape hatch.
+- Doc fix: `load_markov1`'s docstring claimed `background="markov"` lifts MHC-I rare screening AUPRC
+  ~+0.02; the committed tables say −0.019 (a sign flip). Corrected.
+
 ## [0.6.1] — 2026-07-17
 
 ### Fixed: the Potts affinity model's 8-mer encoding collision (code; weights deferred)
