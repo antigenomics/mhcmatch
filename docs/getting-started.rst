@@ -29,8 +29,8 @@ Quickstart
    mhcmatch.search.search("NLVPMVATV", big_peptide_set, mode="tcr")
    mhcmatch.search.find_mimics("EAAGIGILTV", self_set, bacterial_sets={...})
 
-   # near-exact source of a neoantigen
-   pm = mhcmatch.Proteome.from_fasta("UP000005640_9606.fasta.gz")
+   # near-exact source of a neoantigen (proteome auto-fetched from HF, cached)
+   pm = mhcmatch.Proteome.from_hf("human")          # or from_fasta(path) to override
    pm.find_source("NLVPMVATV", max_subs=1)
 
    # diffusion-powered forward scorer (rescues rare alleles)
@@ -67,5 +67,6 @@ Data
 - **Reference ligands** — ``isalgo/pmhc_data`` (full / shortlist tiers); pass the path to
   :meth:`mhcmatch.Store.from_pmhc` or set ``MHCMATCH_PMHC``.
 - **Pseudosequences** — 34-mer groove pseudosequences vendored in ``src/mhcmatch/data/``.
-- **Reference proteomes** — supply a UniProt reference proteome FASTA to
-  :meth:`mhcmatch.Proteome.from_fasta` (not bundled).
+- **Reference proteomes** — :meth:`mhcmatch.Proteome.from_hf` auto-fetches the human (UP000005640),
+  mouse (UP000000589), and pathogen proteomes from HF on first use (cached); ``mhcmatch bootstrap``
+  pre-fetches them. Pass your own FASTA to :meth:`mhcmatch.Proteome.from_fasta` to override.

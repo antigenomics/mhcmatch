@@ -1,6 +1,7 @@
 """Anchor-factored presentation scoring with cross-allele kernel-shrinkage diffusion.
 
-A per-allele anchor log-odds predictor -- a small PWM over the anchor positions (MHC-I P2/PΩ) --
+A per-allele anchor log-odds predictor -- a small PWM over the anchor positions (MHC-I N-pocket +
+C-pocket, :data:`MHC1_ANCHORS`) --
 whose per-allele anchor residue distributions are smoothed toward groove-similar alleles via
 :class:`mhcmatch.Pseudoseq`. With ``raw=True`` (or bandwidth ``h -> 0``) there is no borrowing and a
 rare allele scores off its own few peptides; with diffusion on, it borrows from frequent
@@ -89,7 +90,8 @@ def load_markov1():
 class AnchorModel:
     """Per-allele anchor presentation model with optional cross-allele diffusion.
 
-    Built from a :class:`mhcmatch.Store`. ``anchors`` are 1-based positions (default MHC-I P2/PΩ).
+    Built from a :class:`mhcmatch.Store`. ``anchors`` are 1-based positions (default MHC-I
+    :data:`MHC1_ANCHORS` = N-pocket P1/P2/P3 + C-pocket PΩ-1/PΩ; MHC-II :data:`MHC2_ANCHORS` = P1/P4/P6/P9).
     Per-anchor groove-position weights are learned by mutual information unless ``learn_weights`` is
     False; the kernel bandwidth ``h`` controls how much rare alleles borrow.
     """
@@ -117,10 +119,10 @@ class AnchorModel:
         flatters rare rather than a correct value.
 
         ``length_prior`` (MHC-I only) adds the per-allele ligand-length factor the anchor log-odds is
-        structurally blind to -- see :meth:`length_logodds`. ``"score"`` folds it into
+        structurally blind to -- see :meth:`length_logodds`. ``"score"`` (default) folds it into
         :meth:`score`, so ``%rank`` and everything downstream inherit it; ``"post"`` only exposes
-        :meth:`length_logodds` for a caller that composes it itself; ``False`` (default) is the
-        length-blind v0.4 behaviour.
+        :meth:`length_logodds` for a caller that composes it itself; ``False`` is the length-blind v0.4
+        behaviour.
 
         ``length_motifs`` (MHC-I only) estimates the residue distributions **per peptide length**
         instead of pooling every length into one counter -- see :meth:`_dist_len`. Complementary to
@@ -207,6 +209,11 @@ class AnchorModel:
         self.prefs_mix = None
         self.log_pi = None
         self._cache_mix = {}
+        # Memo of _frame_scores (MHC-II). Pure in (peptide, allele, raw, eps, k) while prefs / prefs_mix
+        # / bg are fixed, so it is cleared wherever those are -- the same three sites as _cache/_cache_mix
+        # (_refit_registers, _m_step, _add_pseudocounts). Cuts the K=3 build ~2.4x: the mixture EM scores
+        # every frame twice (E-step then M-step best-frame) and the panel has ~2x duplicate rows.
+        self._frame_cache = {}
         self._frames = {}
         self._em_passes = 0
         # tau is fit on the *final* prefs below; the register EM bootstraps on the scalar.
@@ -287,6 +294,7 @@ class AnchorModel:
                 for a in list(d):
                     d[a] = smooth(d[a])
         self._cache, self._cache_len, self._cache_mix = {}, {}, {}
+        self._frame_cache = {}                       # counters modified in place -> frame scores stale
 
     def _learned_weights(self, cls, prune_dpi):
         seqs = load_pseudo(cls)
@@ -538,6 +546,7 @@ class AnchorModel:
             self.bg[j] = cc
         self._nbg = {j: (sum(self.bg[j].values()) or 1) for j in self.anchors}
         self._cache = {}
+        self._frame_cache = {}                       # prefs/bg reassigned -> frame scores stale
         return changed
 
     def _best_frame(self, peptide, allele, k):
@@ -606,6 +615,7 @@ class AnchorModel:
         self.log_pi = {a: [math.log((v + _MIX_ALPHA) / (sum(t) + K * _MIX_ALPHA)) for v in t]
                        for a, t in mass.items()}
         self._cache_mix = {}
+        self._frame_cache = {}                       # prefs_mix reassigned -> frame scores stale
 
     def _refit_mixture(self, store, passes=_MIX_PASSES):
         """Fit ``n_motifs`` motif components per allele by EM over the whole corpus (MHC-II).
@@ -710,8 +720,13 @@ class AnchorModel:
         """Anchor log-odds of every 9-mer core frame of ``peptide`` (MHC-II), indexed by frame start.
 
         ``peptide`` must already be stripped/upper-cased. MHC-I is end-anchored, so there is no frame
-        list to build and this is class-II only. ``k`` scores under motif component ``k``.
+        list to build and this is class-II only. ``k`` scores under motif component ``k``. Memoized on
+        ``self._frame_cache`` -- see the note where it is initialized.
         """
+        ck = (peptide, allele, raw, eps, k)
+        hit = self._frame_cache.get(ck)
+        if hit is not None:
+            return hit
         core_pos = [j - 1 for j in self.anchors]
         mask = self._score_mask(allele)
         markov = self.background == "markov"
@@ -721,6 +736,7 @@ class AnchorModel:
             ctx = [peptide[st + c - 1] if st + c > 0 else "" for c in core_pos] if markov else None
             out.append(self._anchor_logodds([w[c] for c in core_pos], allele, raw, eps, mask, ctx,
                                             k=k))
+        self._frame_cache[ck] = out
         return out
 
     def _smooth_offset_prior(self):
