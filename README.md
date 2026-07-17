@@ -176,13 +176,28 @@ pairs. **Honest numbers** (per-allele held-out split, seed 0):
 | MHC-II | human rare    |      12 |      0.457 |   **0.755** |          0.749 |       **0.914** |
 | MHC-II | mouse (rare)  |       5 |      0.507 |   **0.716** |          0.787 |       **0.893** |
 
+> **Provenance warning (2026-07-17).** The table above has **no backing results file** — its numbers
+> trace to a docstring, and the only recorded per-allele table (`bench/results/affinity_iedb.md`) is the
+> older ridge `AffinityModel`, not this head. It also predates the v0.7.1 weight refit and a
+> pseudosequence fix that grew the eval pool from 68 alleles to 96. Measured on the current corpus
+> (5 seeds, paired, `bench/results/potts_encoding_ablation.md`): **orphan 0.504 / rare 0.543 / common
+> 0.709** — i.e. **rare is materially better than the 0.485 above**. Treat the row as stale pending a
+> regenerated head-to-head.
+
 NetMHCpan/IIpan lead on this eval, but the gap is **inflated by train/test overlap we cannot undo**:
 both tools trained on much of IEDB, so the held-out pairs are in-sample for them and out-of-sample for
 mhcmatch. On **truly unseen alleles** (leave-20-alleles-out, zero training rows for the allele) the
-Potts model still generalizes — MHC-I common orphan ρ ≈ 0.57 — because its peptide×pocket couplings
+Potts model still generalizes — MHC-I orphan ρ ≈ 0.50 measured — because its peptide×pocket couplings
 interpolate across groove-similar alleles. The affinity head is a compact, dependency-light linear
 model (numpy-only dot product at predict time, ~µs/peptide) and gives the WT-vs-mutant **ratio**
 (amplitude / DAI) that percentile ranks cannot express.
+
+Two caveats worth carrying into any reading of the rare column. **About a third of the rare gap is the
+ruler, not the model**: median SD(ln IC50) is 3.127 for common alleles vs 2.559 for rare, and
+range-restriction attenuation alone maps a model measuring 0.709 on common to **0.628** on rare — while
+partial Spearman(n_points, ρ | SD) is **−0.062**, i.e. training support does not predict per-allele ρ
+once label spread is controlled. And the head is **length-blind** (`SLYNTGATL` and `SLYNTAAAGATL` score
+identically) — ROADMAP §6c.
 
 ```fish
 python bench/affinity/train_potts.py --cls mhc1 --alpha 40                 # MHC-I head-to-head
