@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# NOTE: write() OVERWRITES the whole results file, so any prose added to bench/results/compare_*.md
+# by hand (interpretation, re-baseline tables, caveats) is destroyed by the next run. Re-append it
+# after re-running, or keep it in a separate _elonly-style file.
 """Emit the head-to-head result table as markdown (winner bolded per row), matching the existing
 ``bench/results/*.md`` convention. One row per (stratum, metric); higher = better for every metric.
 """
