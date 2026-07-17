@@ -729,6 +729,38 @@ def test_pseudocount_leaves_the_fitted_latents_alone():
     assert a.log_pi == b.log_pi, "mixture component assignments must not move with beta"
 
 
+def test_frame_score_memo_is_bit_identical_to_recompute():
+    # _frame_scores is memoized to cut the K=3 build ~2.7x. The cache is only correct if it is cleared
+    # wherever prefs/prefs_mix/bg change (_refit_registers, _m_step, _add_pseudocounts). A stale cache
+    # would silently corrupt every MHC-II score, so pin that the memoized build is bit-identical to a
+    # cache-bypassed one -- fitted state AND scores.
+    import mhcmatch.diffusion as D
+
+    def _nocache(self, peptide, allele, raw=False, eps=1e-3, k=None):
+        core_pos = [j - 1 for j in self.anchors]
+        mask = self._score_mask(allele)
+        markov = self.background == "markov"
+        out = []
+        for st in range(len(peptide) - 8):
+            w = peptide[st:st + 9]
+            ctx = [peptide[st + c - 1] if st + c > 0 else "" for c in core_pos] if markov else None
+            out.append(self._anchor_logodds([w[c] for c in core_pos], allele, raw, eps, mask, ctx, k=k))
+        return out
+
+    store, pep = _mhc2_bimodal_store()
+    memo = store.anchor_model("mhc2", n_motifs=3)
+    orig = D.AnchorModel._frame_scores
+    try:
+        D.AnchorModel._frame_scores = _nocache
+        ref = store.anchor_model("mhc2", n_motifs=3)
+    finally:
+        D.AnchorModel._frame_scores = orig
+    assert memo.log_pi == ref.log_pi, "mixture assignments diverged -> stale frame cache"
+    probes = [pep(_MODE_A) for _ in range(6)] + [pep(_MODE_B) for _ in range(6)]
+    for p in probes:
+        assert memo.score(p, "DRB1_1501") == ref.score(p, "DRB1_1501"), "score diverged -> stale cache"
+
+
 def test_register_em_converge_reaches_a_real_fixed_point():
     # v0.7.2 HEADLINE, previously untested: register_em="converge" runs the best-frame EM to each
     # allele's OWN fixed point. Mutation-tested -- freezing every allele after pass 1 (which deletes the
