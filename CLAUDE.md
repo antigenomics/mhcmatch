@@ -22,6 +22,11 @@ git worktree remove .claude/worktrees/<name>            # when the branch is con
 - Consolidate finished results back and remove the worktree; merging `<name>` into `master` is a
   separate, deliberate step — `master` is never modified while parallel work is in flight.
 
+> **Benchmarks live in a separate repo.** `bench/` moved to
+> [`2026-mhcmatch-benchmark`](https://github.com/antigenomics/2026-mhcmatch-benchmark) — the head-to-head harness, the `bench/results/*.md`
+> tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
+> below resolve there, not here.
+
 ## Benchmarks — record the result, and scrutinise asymmetrically *on purpose*
 
 **Every benchmark run that completes gets recorded. Never delete a result because we won it.**

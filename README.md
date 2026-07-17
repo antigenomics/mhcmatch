@@ -130,9 +130,15 @@ mhcmatch affinity NLVPMVATV --allele 'A*02:01' --wt NLVPMVATL   # IC50 nM + ampl
 
 ## Benchmark vs NetMHCpan
 
+> **Benchmarks live in a separate repo.** `bench/` moved to
+> [`2026-mhcmatch-benchmark`](https://github.com/antigenomics/2026-mhcmatch-benchmark) — the head-to-head harness, the `bench/results/*.md`
+> tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
+> below resolve there, not here.
+
+
 A reproducible head-to-head against **NetMHCpan-4.2b** and **NetMHCIIpan-4.3i** lives in
-[`bench/compare/`](bench/compare/) (results in `bench/results/compare_*.md`, provenance and caveats in
-[`bench/compare/SOURCES.md`](bench/compare/SOURCES.md)). It compares the two tools on the *same*
+`bench/compare/` (results in `bench/results/compare_*.md`, provenance and caveats in
+`bench/compare/SOURCES.md`). It compares the two tools on the *same*
 per-(peptide, allele) task, stratified by allele rarity, with AUROC / AUPRC / PPV@k, bootstrap CIs and
 paired significance. Headline results (shortlist tier, human, seed 0):
 
@@ -144,7 +150,7 @@ paired significance. Headline results (shortlist tier, human, seed 0):
   the deltas sit inside the CI. This task is much easier for both tools (every AUROC ≥ 0.97).
 - **MHC-II**: NetMHCIIpan leads on medium and frequent alleles (p < 0.001); rare is a wash (Δ AUROC
   +0.013 specificity / −0.015 screening, both inside the CI). Read these with
-  [`SOURCES.md`](bench/compare/SOURCES.md) in hand: NetMHCIIpan trained on essentially all public IEDB
+  `compare/SOURCES.md` in hand: NetMHCIIpan trained on essentially all public IEDB
   eluted-ligand data, so the in-corpus medium/frequent strata are contaminated in its favour and the
   rare/zero-shot axis is the fair one.
 - **Speed:** mhcmatch scores ~**68×** faster (pure Python, ~195k peptide-allele scores/s).
@@ -157,8 +163,8 @@ python bench/compare/run_compare.py --cls mhc1 --decoy-mode random --background 
 ### Quantitative affinity (Potts head)
 
 The affinity head is benchmarked head-to-head against **NetMHCpan-4.2 −BA** / **NetMHCIIpan-4.3 −BA**
-on held-out measured IEDB IC50 ([`bench/affinity/`](bench/affinity/); provenance in
-[`bench/affinity/SOURCES.md`](bench/affinity/SOURCES.md)). Metric: median per-allele Spearman ρ against
+on held-out measured IEDB IC50 (`bench/affinity/`; provenance in
+`bench/affinity/SOURCES.md`). Metric: median per-allele Spearman ρ against
 measured log-IC50, and AUROC at the 500 nM binder threshold, on the *same* held-out (peptide, allele)
 pairs. **Honest numbers** (per-allele held-out split, seed 0):
 

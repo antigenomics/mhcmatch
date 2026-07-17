@@ -8,6 +8,12 @@ the build plan. Phase sections marked _(TBD)_ await detail.
 
 ---
 
+
+> **Benchmarks live in a separate repo.** `bench/` moved to
+> [`2026-mhcmatch-benchmark`](https://github.com/antigenomics/2026-mhcmatch-benchmark) — the head-to-head harness, the `bench/results/*.md`
+> tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
+> below resolve there, not here.
+
 ## 0. What mhcmatch is
 
 `mhcmatch` is the **applied peptide–MHC tool**. It sits on two upstream libraries and stays focused
