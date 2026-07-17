@@ -1,6 +1,7 @@
 """Anchor-factored presentation scoring with cross-allele kernel-shrinkage diffusion.
 
-A per-allele anchor log-odds predictor -- a small PWM over the anchor positions (MHC-I P2/PΩ) --
+A per-allele anchor log-odds predictor -- a small PWM over the anchor positions (MHC-I N-pocket +
+C-pocket, :data:`MHC1_ANCHORS`) --
 whose per-allele anchor residue distributions are smoothed toward groove-similar alleles via
 :class:`mhcmatch.Pseudoseq`. With ``raw=True`` (or bandwidth ``h -> 0``) there is no borrowing and a
 rare allele scores off its own few peptides; with diffusion on, it borrows from frequent
@@ -89,7 +90,8 @@ def load_markov1():
 class AnchorModel:
     """Per-allele anchor presentation model with optional cross-allele diffusion.
 
-    Built from a :class:`mhcmatch.Store`. ``anchors`` are 1-based positions (default MHC-I P2/PΩ).
+    Built from a :class:`mhcmatch.Store`. ``anchors`` are 1-based positions (default MHC-I
+    :data:`MHC1_ANCHORS` = N-pocket P1/P2/P3 + C-pocket PΩ-1/PΩ; MHC-II :data:`MHC2_ANCHORS` = P1/P4/P6/P9).
     Per-anchor groove-position weights are learned by mutual information unless ``learn_weights`` is
     False; the kernel bandwidth ``h`` controls how much rare alleles borrow.
     """
@@ -117,10 +119,10 @@ class AnchorModel:
         flatters rare rather than a correct value.
 
         ``length_prior`` (MHC-I only) adds the per-allele ligand-length factor the anchor log-odds is
-        structurally blind to -- see :meth:`length_logodds`. ``"score"`` folds it into
+        structurally blind to -- see :meth:`length_logodds`. ``"score"`` (default) folds it into
         :meth:`score`, so ``%rank`` and everything downstream inherit it; ``"post"`` only exposes
-        :meth:`length_logodds` for a caller that composes it itself; ``False`` (default) is the
-        length-blind v0.4 behaviour.
+        :meth:`length_logodds` for a caller that composes it itself; ``False`` is the length-blind v0.4
+        behaviour.
 
         ``length_motifs`` (MHC-I only) estimates the residue distributions **per peptide length**
         instead of pooling every length into one counter -- see :meth:`_dist_len`. Complementary to

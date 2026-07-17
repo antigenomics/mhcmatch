@@ -167,7 +167,9 @@ paired significance. Headline results (shortlist tier, human, seed 0):
   rare/zero-shot axis is the fair one.
 - **Mouse MHC-II**: mhcmatch **wins all nine cells** on the specificity task
   (`compare_mhc2_mouse_hard_ligandbg.md`) — the only panel where it leads every stratum on every metric.
-- **Speed:** mhcmatch scores ~**68×** faster (pure Python, ~195k peptide-allele scores/s).
+- **Speed:** MHC-I scores ~**68×** faster than NetMHCpan (pure Python, ~195k–260k peptide-allele
+  scores/s, warm cache). The MHC-II default is heavier — 3 mixture components × ~7 register frames per
+  score — at ~19k scores/s (~6.6× NetMHCIIpan); still pure Python, no compiled extension.
 
 ```fish
 python bench/compare/run_compare.py --cls mhc1 --decoy-mode hard   --background ligand    # specificity
@@ -220,7 +222,9 @@ python bench/affinity/train_potts.py --cls mhc2 --species all --alpha 40   # MHC
 
 ## Status
 
-Beta (v0.4). Affinity (IC50 nM) + neoantigen amplitude/DAI shipped for MHC-I/II, human & mouse; optional
-structure-based MJ ΔΔG via the `[structure]` extra. See [`ROADMAP.md`](ROADMAP.md) for what's next
-(order-k Markov / covariance null, a learned reranker for rare-allele screening, full-tier + temporal
-cluster sweeps, and the stability/cleavage/immunogenicity predictors).
+Beta (v0.7.2). Presentation scoring (per-allele diffusion, K=3 motif mixture, marginal register,
+per-allele register-EM convergence, empirical-Bayes τ), affinity (IC50 nM) + neoantigen amplitude/DAI,
+ligand spans, and calibrated %rank — all for MHC-I/II, human & mouse; optional structure-based MJ ΔΔG
+via the `[structure]` extra. See [`ROADMAP.md`](ROADMAP.md) for what's next (a learned reranker for
+rare-allele screening, ligandome-refit couplings for MHC-II cooperativity, full-tier + temporal cluster
+sweeps, and the stability/immunogenicity predictors).

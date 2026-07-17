@@ -193,7 +193,8 @@ shortlist, human):
   external labels) and closes **0.104** of the class-II frequent screening AUPRC gap
   (0.521→0.625 vs 0.775; −0.254 → −0.149). A reranker may still be worth building, but it is not the
   only lever. See `bench/results/motif_mixture_mhc2.md`.
-- **Speed:** mhcmatch ~68× faster (195k vs 2.9k peptide-allele scores/s), pure Python.
+- **Speed:** MHC-I ~68× faster (195k vs 2.9k peptide-allele scores/s, warm cache), pure Python; the
+  MHC-II K=3 default is ~19k scores/s (~6.6×) — heavier per score, still pure Python.
 
 Model upgrades landed here: full-core PWM + **rarity-adaptive footprint** (`AnchorModel(footprint=
 "adaptive")`, class-aware: anchors-for-rare on MHC-I, full core on MHC-II) and **per-allele %rank +
