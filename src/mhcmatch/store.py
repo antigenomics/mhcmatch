@@ -356,9 +356,16 @@ class Store:
         the non-binder flag (binder iff binomial-tail p <= alpha and the allele got votes).
 
         ``calibrated=True`` (implies ``diffuse``) additionally fills each result's ``rank`` (per-allele
-        %rank vs a random-peptide background, lower = stronger -- NetMHCpan ``%Rank_EL`` analogue),
-        ``p_present``, and qualitative ``band`` (strong/weak/non-binder). The %rank is the
-        cross-allele-comparable score; it also re-ranks the results (ascending %rank).
+        %rank vs a random-peptide background, lower = stronger), ``p_present``, and qualitative ``band``
+        (strong/weak/non-binder). The %rank is the cross-allele-comparable score; it also re-ranks the
+        results (ascending %rank).
+
+        This rank is on the **allele-specificity** axis (the model here is ``background="ligand"``): it
+        asks *how strongly this allele, versus other alleles, prefers the peptide* -- so it can band a
+        canonical, widely-shared ligand as "weak" even when the allele is unambiguously the correct
+        restriction. For the **presentation** axis -- *is this presented at all*, the NetMHCpan
+        ``%Rank_EL`` question -- score with a proteome null via :func:`mhcmatch.predict.predict_windows`
+        / ``mhcmatch predict`` (``background="proteome"``).
 
         With ``diffuse=True`` the diffusion-shrunk anchor log-odds
         (:class:`mhcmatch.diffusion.AnchorModel`) **ranks** and the neighbour vote/enrichment

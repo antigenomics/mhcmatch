@@ -193,7 +193,8 @@ shortlist, human):
   external labels) and closes **0.104** of the class-II frequent screening AUPRC gap
   (0.521→0.625 vs 0.775; −0.254 → −0.149). A reranker may still be worth building, but it is not the
   only lever. See `bench/results/motif_mixture_mhc2.md`.
-- **Speed:** mhcmatch ~68× faster (195k vs 2.9k peptide-allele scores/s), pure Python.
+- **Speed:** MHC-I ~68× faster (195k vs 2.9k peptide-allele scores/s, warm cache), pure Python; the
+  MHC-II K=3 default is ~19k scores/s (~6.6×) — heavier per score, still pure Python.
 
 Model upgrades landed here: full-core PWM + **rarity-adaptive footprint** (`AnchorModel(footprint=
 "adaptive")`, class-aware: anchors-for-rare on MHC-I, full core on MHC-II) and **per-allele %rank +
@@ -231,7 +232,7 @@ calibrated=True)` and the CLI `--calibrated`).
      clips decoys asymmetrically (13.7% of MHC-I frequent decoy lookups vs 0.3% of positives). But the
      metric is **flat from eps=0 to 1e-3** (degrading only at ≥1e-2): clipping shifts decoys roughly
      uniformly, and uniform shifts do not move a ranking. It sits in a flat basin. Not the lever, and not
-     removable cheaply — 3 arithmetic sites (`diffusion.py:484,514,724`), and deleting it needs a
+     removable cheaply — 3 arithmetic sites (`diffusion.py:673,703,913`), and deleting it needs a
      `_bg_prob` floor under `background="ligand"` (ZeroDivisionError on X/B/U/Z) and a length floor
      (`length_logodds` math-domain error on a 12-mer).
   3. ~~Peptide-flanking regions (PFRs)~~ — **refuted.** MHC-II scores only the 9-mer core

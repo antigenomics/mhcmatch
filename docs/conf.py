@@ -22,6 +22,9 @@ extensions = [
 autodoc_mock_imports = ["seqtree", "numpy", "logomaker", "matplotlib", "pandas"]
 autosummary_generate = False
 autodoc_member_order = "bysource"
+# Render __init__ docstrings alongside the class docstring: AnchorModel documents all 19 parameters in
+# __init__, and without "both" Sphinx publishes only the short class docstring and drops them.
+autoclass_content = "both"
 autodoc_typehints = "description"
 napoleon_google_docstring = True
 

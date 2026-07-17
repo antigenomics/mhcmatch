@@ -68,7 +68,7 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 |---|---|---|
 | `mhcmatch.search` | `search(mode="tcr"\|"mhc")`, `find_mimics` | large-scale similarity; neoantigen mimicry with per-allele E-values |
 | `mhcmatch.Proteome` | `from_hf("human")`, `from_fasta`, `find_source` | neoantigen → parent self peptide, protein, position, mutation |
-| `mhcmatch.Pseudoseq` | `kernel`, `neighbors`, `cluster`, `shrink`, `blosum62_conditional` | allele-similarity kernel over 34-mer grooves; kernel communities respect allele families (Q=0.94/0.90) |
+| `mhcmatch.Pseudoseq` | `kernel`, `neighbors`, `cluster`, `shrink` | allele-similarity kernel over 34-mer grooves; kernel communities respect allele families (Q=0.94/0.90). `pseudoseq.blosum62_conditional()` is a **module function**, not a method |
 | `mhcmatch.PottsAffinity` | `store.affinity_model` | IC50 (nM), amplitude `A = Kd_WT/Kd_MT`, DAI. Vendored weights |
 | `mhcmatch.ligand` | `SpanModel`, `presented_span`, `processing_score` | core → full presented ligand; register-free (terminus-relative) |
 | `mhcmatch.logo` | `motif`, `render` | information-content PWM + length histogram |
@@ -85,7 +85,9 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 - **Two MHC-II registers coexist by design — never merge them.** The *heuristic* register
   (`store._mhc2_register`, allele-agnostic) backs signatures/`decompose`/logos; the *model* register
   (`AnchorModel.best_register`, per-allele) backs scoring and benchmarks. They disagree often.
-- **Anchors are parametrized** via `seqtree.layout` — never hardcode positions.
+- **Anchors are parametrized** — never hardcode positions. MHC-I masking comes from `seqtree.layout`;
+  MHC-II anchors are mhcmatch's own `MHC2_ANCHORS` (`diffusion.py`), since seqtree exposes none — reference
+  the constant, never a literal.
 - **Benchmarks live in a separate repo**: [`2026-mhcmatch-benchmark`](https://github.com/antigenomics/2026-mhcmatch-benchmark). `bench/results/...` resolves there.
 - **`from_records`' `weight` field is inert** in production; a ligand's training weight is its row count
   (publication count). Measured to not matter (ΔAUC −0.001).
