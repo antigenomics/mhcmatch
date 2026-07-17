@@ -42,12 +42,19 @@ for having an opponent score below chance. It is restored, with that fact record
 ## Data sources — one corpus, tuned per task
 
 **Train on the whole corpus; do not filter it to make a benchmark look clean.** The general model is
-fit on everything (EL, BA, in-silico) and beats broadly; per-task behaviour comes from **parameters**,
-not from a smaller training set. Provenance is one such parameter: a peptide from mass spec, from a
-binding assay, or discovered in silico gets the matching **adjusted general model**, not its own
-corpus. See `AnchorModel(source=...)`.
+fit on everything (EL, BA, in-silico) and beats broadly; per-task behaviour comes from **parameters**
+(`background`, `footprint`, `register`, `h`, `tau`), not from a smaller training set. Binding-assay
+peptides do bind — they are valid motif evidence.
 
-Filtering is for **evaluation strata** (what a given number is *about*), never for training.
+Filtering is for **evaluation strata** (what a given number is *about*), never for training. That is
+what `run_compare.py --el-only` is: it chooses which pairs may be positives, and the model behind it
+is still the shipped one.
+
+Provenance as a *model* parameter — an adjusted general model per source — was tested and is **not
+needed**: the corpus-learned core-offset prior beats a uniform one by +0.010 on eluted-ligand queries
+and +0.001 on binding-assay ones, i.e. it helps where boundaries carry information and is harmless
+where they do not. Re-test if provenance ever reaches the pmhc schema; do not build the plumbing on
+spec. See `bench/results/compare_mhc2_human_hard_ligandbg_elonly.md`.
 
 ## Git flow & commits
 
