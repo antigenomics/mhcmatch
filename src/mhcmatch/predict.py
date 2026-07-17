@@ -71,7 +71,9 @@ class Prediction:
     wt_peptide: str = ""                 # the self (wild-type) counterpart k-mer, "" if none spans the mutation
     wt_affinity_nm: float = float("nan") # predicted IC50 (nM) of the WT counterpart
     agretopicity: float = float("nan")   # Kd_MT/Kd_WT (pipeline convention; <1 = mutant binds better)
-    amplitude: float = float("nan")      # Luksza A = Kd_WT/Kd_MT (>1 = mutant binds better)
+    # Luksza A = Kd_WT/Kd_MT * 1/(1+Kd_WT*eps/[L]) (eq. 9). NOT 1/agretopicity: the saturation
+    # correction means A can be <1 even when the mutant binds better, for a weakly-binding WT.
+    amplitude: float = float("nan")
     dai: float = float("nan")            # differential agretopicity index log10(Kd_WT/Kd_MT)
     synth_peptide: str = ""              # peptide to SYNTHESISE (long-peptide vaccine; ~21mer for II)
     model_peptide: str = ""              # peptide to MODEL structurally (TCR:pMHC; ~13mer for II)
@@ -142,7 +144,15 @@ def build_scorer(store, cls, background="proteome", footprint="adaptive", seed=0
     calibrator, and the quantitative IC50 head (:class:`PottsAffinity`), or ``None`` if unavailable.
 
     ``background="proteome"`` puts the presentation score on the presentation axis (ligand-vs-
-    proteome), matching NetMHCpan's %Rank_EL; ``"ligand"`` measures allele-specificity instead."""
+    proteome), matching NetMHCpan's %Rank_EL; ``"ligand"`` measures allele-specificity instead.
+
+    Memoised on ``store``: the result depends only on the panel, never on the query alleles, so
+    scoring many samples against one store reuses a single build (an MHC-II ``AnchorModel`` costs
+    ~10 s, and ``RankCalibrator`` fills its per-allele background lazily)."""
+    key = (cls, background, footprint, seed, n_bg)
+    cache = store.__dict__.setdefault("_scorer_cache", {})
+    if key in cache:
+        return cache[key]
     model = store.anchor_model(cls, footprint=footprint, background=background)
     panel = store._panel[cls]
     pos = defaultdict(list)
@@ -153,7 +163,8 @@ def build_scorer(store, cls, background="proteome", footprint="adaptive", seed=0
         aff = store.affinity_model(cls)
     except Exception:
         aff = None
-    return model, cal, aff
+    cache[key] = (model, cal, aff)
+    return cache[key]
 
 
 def _aligned_wt(var, seq):
@@ -168,18 +179,21 @@ def _aligned_wt(var, seq):
     return wt[base:base + len(seq)] if base >= 0 else None
 
 
-def _windows(store, cls, epitope, protein, allele, epi_start):
+def _windows(cls, epitope, protein, epi_start, register_start):
     """``(synthesise, model)`` peptides for ``epitope`` in its source ``protein`` context.
 
     MHC-I: the peptide *is* the ligand, so both are the epitope (identical, per the class-I convention).
     MHC-II: extend the 9-mer binding core to a 21-mer (:data:`ligand.ASSAY_FLANK`, contains the true
     ligand ~80% of the time -- to synthesise) and a 13-mer (:data:`ligand.STRUCTURE_FLANK`, the median
     resolved crystal -- to model), clipped at the protein termini. Falls back to the epitope on any
-    registration/location failure."""
+    registration/location failure.
+
+    ``register_start`` is the core offset the *scoring* model chose (``None`` for MHC-I, which has no
+    register), so the synthesised span is cut from the same register that was scored."""
     if cls == "mhc1":
         return epitope, epitope
     try:
-        rs, _ = store.anchor_model("mhc2").best_register(epitope, allele)
+        rs = register_start
         core = epitope[rs:rs + 9]
         cs = epi_start + rs
         if len(core) != 9 or protein[cs:cs + 9] != core:
@@ -244,12 +258,16 @@ def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
                     wtk = wt_seq[off:off + len(pep)]
                     if wtk != pep and set(wtk) <= _AA:       # k-mer spans the mutation
                         p.wt_peptide = wtk
-                        p.wt_affinity_nm = _round(aff.predict_ic50(wtk, a))
-                        if nm == nm and p.wt_affinity_nm == p.wt_affinity_nm and p.wt_affinity_nm > 0:
-                            p.agretopicity = _round(nm / p.wt_affinity_nm, 4)
+                        wt_nm = aff.predict_ic50(wtk, a)
+                        p.wt_affinity_nm = _round(wt_nm)
+                        # divide the UNROUNDED pair: wt_affinity_nm is rounded to 1dp for display,
+                        # and dividing by it disagreed with `dai` (which recomputes unrounded) by
+                        # up to ~0.5% -- enough to flip their reported direction near agretopicity 1.
+                        if nm == nm and wt_nm == wt_nm and wt_nm > 0:
+                            p.agretopicity = _round(nm / wt_nm, 4)
                         p.amplitude = _round(aff.amplitude(wtk, pep, a), 3)
                         p.dai = _round(aff.dai(wtk, pep, a), 3)
-            p.synth_peptide, p.model_peptide = _windows(store, cls, pep, protein, a, base + off)
+            p.synth_peptide, p.model_peptide = _windows(cls, pep, protein, base + off, rstart)
             by_window[header].append(p)
     out = []
     for header, preds in by_window.items():
