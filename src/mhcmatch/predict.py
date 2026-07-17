@@ -71,7 +71,9 @@ class Prediction:
     wt_peptide: str = ""                 # the self (wild-type) counterpart k-mer, "" if none spans the mutation
     wt_affinity_nm: float = float("nan") # predicted IC50 (nM) of the WT counterpart
     agretopicity: float = float("nan")   # Kd_MT/Kd_WT (pipeline convention; <1 = mutant binds better)
-    amplitude: float = float("nan")      # Luksza A = Kd_WT/Kd_MT (>1 = mutant binds better)
+    # Luksza A = Kd_WT/Kd_MT * 1/(1+Kd_WT*eps/[L]) (eq. 9). NOT 1/agretopicity: the saturation
+    # correction means A can be <1 even when the mutant binds better, for a weakly-binding WT.
+    amplitude: float = float("nan")
     dai: float = float("nan")            # differential agretopicity index log10(Kd_WT/Kd_MT)
     synth_peptide: str = ""              # peptide to SYNTHESISE (long-peptide vaccine; ~21mer for II)
     model_peptide: str = ""              # peptide to MODEL structurally (TCR:pMHC; ~13mer for II)
@@ -256,9 +258,13 @@ def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
                     wtk = wt_seq[off:off + len(pep)]
                     if wtk != pep and set(wtk) <= _AA:       # k-mer spans the mutation
                         p.wt_peptide = wtk
-                        p.wt_affinity_nm = _round(aff.predict_ic50(wtk, a))
-                        if nm == nm and p.wt_affinity_nm == p.wt_affinity_nm and p.wt_affinity_nm > 0:
-                            p.agretopicity = _round(nm / p.wt_affinity_nm, 4)
+                        wt_nm = aff.predict_ic50(wtk, a)
+                        p.wt_affinity_nm = _round(wt_nm)
+                        # divide the UNROUNDED pair: wt_affinity_nm is rounded to 1dp for display,
+                        # and dividing by it disagreed with `dai` (which recomputes unrounded) by
+                        # up to ~0.5% -- enough to flip their reported direction near agretopicity 1.
+                        if nm == nm and wt_nm == wt_nm and wt_nm > 0:
+                            p.agretopicity = _round(nm / wt_nm, 4)
                         p.amplitude = _round(aff.amplitude(wtk, pep, a), 3)
                         p.dai = _round(aff.dai(wtk, pep, a), 3)
             p.synth_peptide, p.model_peptide = _windows(cls, pep, protein, base + off, rstart)
