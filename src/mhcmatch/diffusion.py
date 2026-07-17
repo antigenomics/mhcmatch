@@ -17,7 +17,7 @@ from functools import lru_cache
 from importlib import resources
 
 from .pseudoseq import (Pseudoseq, blosum62_conditional, learn_anchor_weights, load_pseudo,
-                        load_structural_weights, normalize_allele)
+                        normalize_allele)
 
 # Presentation-scoring footprint: the N-pocket (P1,P2,P3) + C-pocket (PΩ-1,PΩ). P2/PΩ are the
 # primary buried anchors; P1/P3/PΩ-1 are pocket-proximal auxiliary positions that empirically lift
@@ -97,15 +97,12 @@ class AnchorModel:
     """
 
     def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0,
-                 learn_weights=True, prune_dpi=False, weights="learned", blend_alpha=0.5,
+                 learn_weights=True, prune_dpi=False, weights="learned",
                  register_em=2, footprint="anchor", rare_max=30, background="ligand",
                  length_prior="score", length_motifs=True, register="marginal", n_motifs=3,
-                 pseudocount=0.0, pseudo_matrix=None):
-        """``weights``: ``"learned"`` (per-anchor MI over the panel, default), ``"structural"``
-        (contact-frequency weights from pMHC structures, :func:`load_structural_weights`),
-        ``"blend"`` (convex mix ``blend_alpha``*structural + (1-``blend_alpha``)*learned, mean-1
-        renormalized per anchor -- structure as a prior that regularizes the data-starved learned
-        weights, useful for class II), or ``"uniform"``. ``learn_weights=False`` forces uniform.
+                 pseudocount=0.0):
+        """``weights``: ``"learned"`` (per-anchor MI over the panel, default) or ``"uniform"``.
+        ``learn_weights=False`` forces uniform.
 
         ``register_em`` (MHC-II only): number of GibbsCluster-style register EM passes. The anchor
         preferences are first estimated on the one-pass heuristic register; each pass then re-assigns
@@ -198,7 +195,7 @@ class AnchorModel:
         if not learn_weights:
             weights = "uniform"
         self.weights_mode = weights
-        w = self._build_weights(weights, cls, prune_dpi, blend_alpha)
+        w = self._build_weights(weights, cls, prune_dpi)
         self.ps = Pseudoseq(cls, h=h, weights=w)
         self._cache = {}
         self.offset_prefs = {}
@@ -234,9 +231,9 @@ class AnchorModel:
         self._tau = self._fit_tau() if prior_strength == "auto" else None
         if cls == "mhc2" and n_motifs > 1:  # needs the offset prior: the E-step scores the marginal
             self._refit_mixture(store)
-        self._add_pseudocounts(pseudocount, pseudo_matrix)   # last: everything above fits on raw counts
+        self._add_pseudocounts(pseudocount)   # last: everything above fits on raw counts
 
-    def _add_pseudocounts(self, beta, matrix=None):
+    def _add_pseudocounts(self, beta):
         """Mass-preserving BLOSUM substitution pseudocount on every residue counter (Nielsen et al. 2004,
         PMID 14962912). ``beta=0`` (default) returns immediately and the model is bit-identical.
 
@@ -260,13 +257,10 @@ class AnchorModel:
         * **Called last in** ``__init__``. ``self.bg``, the MI weights, the register-EM frames and the
           mixture's component *assignments* are all fit on the raw counters above and stay bit-identical at
           any β; only the scored distributions move.
-
-        ``matrix`` overrides the conditional (``{observed: {r: P(r|observed)}}``) -- the benchmark passes an
-        MJ-derived one to measure BLOSUM-vs-MJ without mhcmatch vendoring MJ data or taking a tcren dep.
         """
         if beta <= 0:
             return
-        cond = matrix or blosum62_conditional()
+        cond = blosum62_conditional()
 
         def smooth(c):
             n = sum(c.values())
@@ -302,28 +296,12 @@ class AnchorModel:
                 for a, cc in self.prefs[j].items() if cc}, prune_dpi=prune_dpi)
                 for j in self.anchors}
 
-    def _build_weights(self, weights, cls, prune_dpi, blend_alpha):
+    def _build_weights(self, weights, cls, prune_dpi):
         if weights == "uniform":
             return None
-        if weights == "structural":
-            sw = load_structural_weights(cls)
-            return {j: sw[j] for j in self.anchors if j in sw} or None
-        learned = self._learned_weights(cls, prune_dpi)
         if weights == "learned":
-            return learned
-        if weights == "blend":  # structural prior + learned data, mean-1 renormalized per anchor
-            sw = load_structural_weights(cls)
-            out = {}
-            for j in self.anchors:
-                lj, sj = learned[j], sw.get(j)
-                if sj is None or len(sj) != len(lj):
-                    out[j] = lj
-                    continue
-                mix = [blend_alpha * sj[p] + (1 - blend_alpha) * lj[p] for p in range(len(lj))]
-                m = sum(mix) / len(mix)
-                out[j] = [x / m for x in mix] if m > 0 else lj
-            return out
-        raise ValueError(f"unknown weights {weights!r} (learned|structural|blend|uniform)")
+            return self._learned_weights(cls, prune_dpi)
+        raise ValueError(f"unknown weights {weights!r} (learned|uniform)")
 
     def _candidates(self, j):
         return list(self.prefs[j].keys())

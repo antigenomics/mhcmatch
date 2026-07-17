@@ -516,7 +516,7 @@ class Store:
     def anchor_model(self, cls="mhc1", h=2.0, prior_strength=10.0, anchors=None, learn_weights=True,
                      prune_dpi=False, weights="learned", register_em=2, footprint="anchor",
                      rare_max=30, background="ligand", length_prior="score", length_motifs=True,
-                     register="marginal", n_motifs=3, pseudocount=0.0, pseudo_matrix=None):
+                     register="marginal", n_motifs=3, pseudocount=0.0):
         """Anchor-factored presentation model with cross-allele kernel-shrinkage diffusion.
 
         See :class:`mhcmatch.diffusion.AnchorModel`. The diffusion rescues rare alleles by borrowing
@@ -545,7 +545,7 @@ class Store:
                            register_em=register_em, footprint=footprint, rare_max=rare_max,
                            background=background, length_prior=length_prior,
                            length_motifs=length_motifs, register=register, n_motifs=n_motifs,
-                           pseudocount=pseudocount, pseudo_matrix=pseudo_matrix)
+                           pseudocount=pseudocount)
 
     def affinity_model(self, cls="mhc1"):
         """Quantitative IC50 (nM) + neoantigen amplitude/DAI head (:class:`mhcmatch.PottsAffinity`).

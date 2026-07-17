@@ -47,7 +47,7 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 | `prior_strength` (τ) | `10.0` | shrinkage strength. **`"auto"`** (v0.7.2) = empirical-Bayes τ per anchor position; largest rare gain measured (+0.041 AUPRC) |
 | `pseudocount` (β) | `0.0` | BLOSUM substitution pseudocount. **A measured negative — leave off** |
 | `h` | `2.0` | kernel bandwidth |
-| `weights` | `"learned"` | groove-position weights: MI-learned / `"structural"` (pMHC crystals) / `"blend"` |
+| `weights` | `"learned"` | groove-position weights: MI-learned, or `"uniform"` (`"structural"`/`"blend"` were removed — measured neutral) |
 | `length_prior`, `length_motifs` | `"score"`, `True` | MHC-I only; class-gated deliberately (measured, `length_prior_mhc2.md`) |
 
 ### v0.7.2 — the per-allele estimators, and when to use them

@@ -286,24 +286,6 @@ def learn_anchor_weights(pseudo_seqs: dict, anchor_residue: dict, prune_dpi: boo
     return [x / mean for x in w] if mean > 0 else [1.0] * _LEN
 
 
-@lru_cache(maxsize=2)
-def load_structural_weights(cls: str) -> dict:
-    """Per-anchor structural pocket weights from the vendored ``structural_pockets_<cls>.tsv``
-    (contact frequency of each groove position with each peptide anchor, over pMHC structures;
-    see ``bench/structural_pockets.py``). Returns ``{anchor:int -> [34 weights]}`` normalized to
-    mean 1, or ``{}`` if the file is absent. A structural alternative/prior to :func:`learn_anchor_weights`."""
-    path = resources.files("mhcmatch.data").joinpath(f"structural_pockets_{cls}.tsv")
-    if not path.is_file():
-        return {}
-    out = {}
-    for line in path.read_text().splitlines()[1:]:  # skip header
-        parts = line.split("\t")
-        w = [float(x) for x in parts[1:]]
-        mean = sum(w) / len(w)
-        out[int(parts[0])] = [x / mean for x in w] if mean > 0 else [1.0] * len(w)
-    return out
-
-
 class Pseudoseq:
     """Allele-similarity kernel and diffusion over groove pseudosequences for one MHC class."""
 

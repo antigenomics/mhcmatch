@@ -335,16 +335,20 @@ groove positions). Worth evaluating against:
   similarity graph — one global smoothing parameter; the appendix's named alternative.
 - **Learned pseudosequence embedding** (NetMHCpan-style): map groove residues → presentation; rare
   alleles interpolate in embedding space. Most powerful, heaviest to fit/validate.
-- **Structural pocket assignment — done (MHC-I + MHC-II)**: `bench/structural_pockets.py` threads
-  the pseudosequence onto 372 pMHC crystals (Canonical2026) with tcren's fast C++ aligner (no mmseqs;
-  ~0.1s/structure) and measures peptide-anchor↔groove-position contacts → vendored
-  `data/structural_pockets_{mhc1,mhc2}.tsv`, loaded by `Pseudoseq` / `AnchorModel(weights="structural")`.
-  Class is assigned by best pseudosequence fit (MHC-I single chain vs MHC-II α1+β1 chain-pair), not a
-  β2m/length heuristic (which fails: TCR V-domains ~110aa and class-II groove domains ~85aa overlap
-  β2m's size, class-II crystals are domain-split) → 279 MHC-I + 93 MHC-II. MHC-I structural recovers
-  learned MI (P2↔7-8, PΩ↔15-17) and matches rare recovery@5 (0.72 vs 0.75 learned, CV); MHC-II
-  structural ≈ learned and both near-neutral (0.464 vs 0.465) — the small class-II gain is intrinsic,
-  not weight-limited. Bench env: `environment.yml` (`mhcmatch-bench`).
+- **Structural pocket assignment — explored (MHC-I + MHC-II), measured neutral, shipped nothing**:
+  `bench/structural_pockets.py` (in the benchmark repo) threads the pseudosequence onto 372 pMHC
+  crystals (Canonical2026) with tcren's fast C++ aligner (no mmseqs; ~0.1s/structure) and measures
+  peptide-anchor↔groove-position contacts. Class is assigned by best pseudosequence fit (MHC-I single
+  chain vs MHC-II α1+β1 chain-pair), not a β2m/length heuristic (which fails: TCR V-domains ~110aa and
+  class-II groove domains ~85aa overlap β2m's size, class-II crystals are domain-split) → 279 MHC-I + 93
+  MHC-II. MHC-I structural recovers learned MI (P2↔7-8, PΩ↔15-17) and matches rare recovery@5 (0.72 vs
+  0.75 learned, CV); MHC-II structural ≈ learned and both near-neutral (0.464 vs 0.465) — the small
+  class-II gain is intrinsic, not weight-limited. **Because it is a measured neutral, the library
+  consumer was removed in cleanup** (`weights="structural"|"blend"` + `blend_alpha` + the vendored
+  `structural_pockets_*.tsv` + `load_structural_weights`): no committed benchmark used it, and
+  `weights="learned"` is the default. The generator and this finding stay in the benchmark repo; re-add
+  the consumer only if a structural prior is ever measured to help. Bench env: `environment.yml`
+  (`mhcmatch-bench`).
 - **Generative Fisher kernel — explored** (`bench/fisher_kernel.py`): a per-position multinomial
   groove model (MI weights = the DPI Bayes-net relevance) gives a Fisher kernel that tracks BLOSUM
   closely (top-5 neighbour Jaccard 0.76) but predicts modal anchors no better (LOO 0.43 vs 0.46
