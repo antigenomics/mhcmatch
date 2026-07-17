@@ -8,6 +8,44 @@ versioning is [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### The binder gate is calibrated instead of a fixed cut (fixes a long-standing bug)
+
+`Store.restriction(..., diffuse=True)` flagged binders on `anchor_score > 0.0`. The score is a
+log-odds comparable across neither peptide length nor allele, so a fixed cut was neither a binding
+test nor a constant error rate. Open since v0.3 (`bench/results/binder_gate_length_bias.md`).
+
+It is now `score > AnchorModel.null_threshold(allele, length, gate_alpha)` — an empirical upper
+quantile of that allele's null at that peptide length, estimated lazily from 500 corpus-AA random
+peptides, cached and seeded. New knob: `Store.restriction(..., gate_alpha=0.05)`.
+
+| allele | random-peptide pass rate, L=9 → L=21 |
+|---|---|
+| DRB1_1501 — old `score > 0` | 16% → **44%** |
+| DRB1_1501 — new gate | 7% → 8% |
+| HLA-DPA1\*02:01-DPB1\*14:01 — old `score > 0` | 29% → **62%** |
+| HLA-DPA1\*02:01-DPB1\*14:01 — new gate | 2% → 8% |
+
+**Both classes are fixed, and the allele offset turned out to be the bigger half.** MHC-I's length
+range is narrow, but its `score > 0` false-positive rate still ranged **1%–29%** across
+(allele, length) — the 9-mer spike is MHC-I's own length prior pushing modal-length peptides over a
+fixed cut. Post-fix both classes sit at the nominal rate (2–8%).
+
+Two things that did **not** fix it, both recorded rather than quietly dropped: `register="marginal"`
+(below) halves the length inflation but leaves a Jensen residual, and no allele-agnostic per-length
+offset table can work — the across-allele spread of the null (1.2–1.4 nats **at every length**) is
+larger than the within-allele length spread, and for some DP alleles the *average random 19-mer*
+already scored above 0.
+
+- **Unchanged:** `is_binder`, `is_presented` and `scan_protein` call `restriction` without `diffuse`,
+  so they never reached the `> 0` clause. The blast radius is callers opting into
+  `diffuse=True` / `calibrated=True`.
+- **Still true on purpose:** `AnchorModel.score` remains length-biased — only the *gate* is fixed.
+  `mhcmatch.ligand` must keep ranking spans by the flank model, and `%rank` remains the
+  cross-allele-comparable reported number. `null_threshold` is a gate, not a score.
+- **Cost:** **0.72s** for a full 149-allele MHC-II panel at one length (4.8 ms/allele), cached
+  thereafter — against the 13.2s the `AnchorModel` build already costs on that tier. A query asks for
+  one length, so a `restriction` call pays one background per allele, not one per (allele, length).
+
 ### MHC-II scores now integrate the binding register out instead of maximising over it
 
 `AnchorModel.score` for MHC-II was `max_r s_r` over every 9-mer core frame, which throws away *where*

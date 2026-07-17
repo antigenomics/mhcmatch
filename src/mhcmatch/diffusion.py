@@ -10,6 +10,7 @@ of ``appendix/mhcmatch.tex`` §4.
 from __future__ import annotations
 
 import math
+import random
 from collections import Counter
 from functools import lru_cache
 from importlib import resources
@@ -39,6 +40,10 @@ MHC2_CORE = (1, 2, 3, 4, 5, 6, 7, 8, 9)
 
 # Laplace pseudo-count per core-offset frame (see AnchorModel._fit_offset_prior).
 _OFFSET_ALPHA = 0.5
+
+# Base seed for the per-length null backgrounds (see AnchorModel._null_peps). Fixed so a binder call
+# is reproducible: the gate is a threshold, and a threshold that moves between runs is not a gate.
+_NULL_SEED = 0
 
 # Human proteome amino-acid frequencies (UniProt UP000005640). The log-odds NULL: with
 # ``background="ligand"`` (default) the denominator is the pooled-ligand anchor marginal, so the
@@ -166,6 +171,13 @@ class AnchorModel:
         self._cache = {}
         self.offset_prefs = {}
         self._off_cache = {}
+        # null background for null_threshold(): the panel's own residue composition, so a "random"
+        # peptide differs from a ligand in its motif rather than in its amino-acid usage.
+        self._null_aa = Counter()
+        for ep in store._panel[cls].epitopes:
+            self._null_aa.update(ep)
+        self._null_cache = {}
+        self._null_pep_cache = {}
         for _ in range(register_em if cls == "mhc2" else 0):
             self._refit_registers(store)
         # after the EM has settled, so the prior describes the frames score() actually reads
@@ -505,6 +517,54 @@ class AnchorModel:
                                        self._offset_logprior(allele, len(peptide)))]
         m = max(terms)
         return m + math.log(sum(math.exp(t - m) for t in terms))
+
+    def null_threshold(self, allele, length, alpha=0.05):
+        """Score a peptide of ``length`` must exceed to be called a binder for ``allele`` at a
+        per-allele false-positive rate of ``alpha`` against random peptides of **that same length**.
+
+        :meth:`score` is not comparable across lengths *or* alleles, so a fixed cut (the pre-v0.6
+        ``score > 0``) is neither a binding test nor a constant error rate. Both offsets are large and
+        neither dominates: on corpus-AA random peptides the mean null score moves ~0.7-1.5 nats from
+        an 11-mer to a 21-mer *within* an allele, while across alleles it spreads ~1.2-1.4 nats *at
+        every length* -- enough that ``HLA-DPA1*02:01-DPB1*14:01``'s average random 19-mer already
+        scores above 0. So the threshold is estimated per (allele, length); there is no
+        allele-agnostic per-length offset table that would do.
+
+        The estimate is an empirical upper quantile of the null, computed lazily per (allele, length,
+        alpha) and cached, from ``self._null_peps`` -- corpus-AA random peptides, matching
+        :func:`mhcmatch.calibrate.random_peptides`' residue composition. A query asks for one length,
+        so a full-panel :meth:`mhcmatch.Store.restriction` call pays one background per allele.
+
+        This is a *gate*, not a reported score: for a cross-allele-comparable number use
+        :class:`mhcmatch.calibrate.RankCalibrator`'s ``%rank``.
+        """
+        key = (allele, length, alpha)
+        if key in self._null_cache:
+            return self._null_cache[key]
+        peps = self._null_peps(length)
+        if not peps:
+            return 0.0
+        bg = sorted(s for s in (self.score(p, allele) for p in peps) if s != float("-inf"))
+        thr = bg[min(int(math.ceil((1.0 - alpha) * len(bg))), len(bg) - 1)] if bg else 0.0
+        self._null_cache[key] = thr
+        return thr
+
+    def _null_peps(self, length, n=500):
+        """``n`` cached corpus-AA random peptides of ``length`` for :meth:`null_threshold`.
+
+        ``n=500`` puts the 95th-percentile estimate within roughly +/-0.1 nat, which is small against
+        the 1.2-1.4 nat spread the threshold exists to remove, and keeps a 149-allele panel call to
+        ~0.8s of background scoring (cached thereafter).
+        """
+        if length in self._null_pep_cache:
+            return self._null_pep_cache[length]
+        if not self._null_aa:
+            return []
+        res, w = zip(*self._null_aa.items())
+        rng = random.Random(_NULL_SEED + length)          # per-length seed: reproducible, independent
+        peps = ["".join(rng.choices(res, w, k=length)) for _ in range(n)]
+        self._null_pep_cache[length] = peps
+        return peps
 
     def anchor_terms(self, peptide, allele, raw=False, eps=1e-3):
         """Per-position log-odds components at the best register, one per ``self.anchors`` position

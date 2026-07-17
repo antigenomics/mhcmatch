@@ -416,6 +416,42 @@ def test_anchor_score_is_length_biased_negative_control():
         assert mean(19) > mean(9), reg
 
 
+def test_binder_gate_hits_its_nominal_fpr_at_every_length():
+    # The score is length-biased on purpose (the negative control above); the GATE must not be. A
+    # fixed `score > 0` inherits the bias -- that was the bug: on the real panel a random 21-mer
+    # cleared it 44% of the time vs 16% for a 9-mer (98% pre-v0.6, see
+    # bench/results/binder_gate_length_bias.md). null_threshold() re-levels per (allele, length).
+    #
+    # Held-out peptides are drawn from the SAME composition as the null and a different seed: this
+    # fixture's panel has ~5 distinct residues, so a uniform-AA peptide is wildly out-of-distribution
+    # for it (it is full of residues the panel never saw, which hit the eps floor and score ~0) and
+    # the composition mismatch would swamp the length effect being tested. So this checks the
+    # quantile estimator holds its nominal rate at every length; the real-data claim -- that the FPR
+    # stops tracking length on actual alleles -- is measured in the results file.
+    store, _ = _mhc2_store()
+    am = store.anchor_model("mhc2")
+    a = "DRB1_1501"
+    res, w = zip(*am._null_aa.items())
+    rng = random.Random(5)
+    for L in (11, 15, 21):
+        thr = am.null_threshold(a, L, alpha=0.05)
+        held = ["".join(rng.choices(res, w, k=L)) for _ in range(400)]
+        fpr = sum(am.score(p, a) > thr for p in held) / len(held)
+        assert 0.01 < fpr < 0.12, (L, fpr, thr)              # nominal 0.05, +/- sampling noise
+
+
+def test_null_threshold_is_per_allele_and_deterministic():
+    # Two reasons the threshold cannot be a vendored per-length constant: it is allele-specific (the
+    # score carries a per-allele offset ~1.2-1.4 nats wide on the real panel), and a gate whose
+    # threshold moved between runs would not be a gate.
+    store, _ = _mhc2_store()
+    am = store.anchor_model("mhc2")
+    assert am.null_threshold("DRB1_1501", 15) == am.null_threshold("DRB1_1501", 15)   # cached
+    fresh = store.anchor_model("mhc2").null_threshold("DRB1_1501", 15)
+    assert fresh == am.null_threshold("DRB1_1501", 15)                                # seeded
+    assert am.null_threshold("DRB1_1501", 15) != am.null_threshold("DRB1_1301", 15)   # per-allele
+
+
 def test_bounds_pad_and_clipping():
     core = "WKVKFWKVK"
     prot = core + "AAAA"                          # core flush against the N-terminus

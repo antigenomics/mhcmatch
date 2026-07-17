@@ -349,11 +349,14 @@ class Store:
         return self._rc[cls]
 
     def restriction(self, peptide, cls=None, alleles="all", top=10, alpha=0.05, diffuse=False,
-                    calibrated=False):
+                    calibrated=False, gate_alpha=0.05):
         """Rank presenting alleles for ``peptide`` (vote fraction), flag binders (enrichment).
 
         ``alleles``: ``"all"``, a single allele, or a list. ``alpha``: per-allele significance for
         the non-binder flag (binder iff binomial-tail p <= alpha and the allele got votes).
+        ``gate_alpha``: false-positive rate of the ``diffuse`` anchor-score rescue against random
+        peptides of the query's own length (see
+        :meth:`mhcmatch.diffusion.AnchorModel.null_threshold`).
 
         ``calibrated=True`` (implies ``diffuse``) additionally fills each result's ``rank`` (per-allele
         %rank vs a random-peptide background, lower = stronger -- NetMHCpan ``%Rank_EL`` analogue),
@@ -363,7 +366,9 @@ class Store:
         With ``diffuse=True`` the diffusion-shrunk anchor log-odds
         (:class:`mhcmatch.diffusion.AnchorModel`) **ranks** and the neighbour vote/enrichment
         **gates**: an allele is a binder if it is vote-significant *or* its anchors are plausible
-        (``anchor_score > 0``). On held-out (novel) peptides the anchor log-odds is the far better
+        (``anchor_score`` beats that allele's own ``gate_alpha`` null at the query's length -- a fixed
+        ``> 0`` cut was a length detector, since the score is comparable across neither length nor
+        allele). On held-out (novel) peptides the anchor log-odds is the far better
         ranker---the vote method relies on same-allele signature neighbours, which are sparse for a
         genuinely new peptide, so vote-first ranking buries the true allele; the diffused anchor
         score scores every allele directly and rescues rare ones. Vote breaks ties. Without
@@ -387,7 +392,7 @@ class Store:
             enr = -math.log10(max(_binom_sf(k, n, panel.freq[a]), 1e-300)) if (k and n) else 0.0
             if diffuse:
                 s = am.score(peptide, a)
-                binder = (enr >= thr and k > 0) or s > 0.0
+                binder = (enr >= thr and k > 0) or s > am.null_threshold(a, len(peptide), gate_alpha)
                 r = Restriction(a, vote, enr, k, binder, round(s, 3))
                 if cal is not None:
                     from .calibrate import band
