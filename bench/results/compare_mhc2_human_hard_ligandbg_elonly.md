@@ -1,23 +1,29 @@
-# mhcmatch vs NetMHCIIpan-4.3i — human MHC-II, **eluted ligands only**
+# mhcmatch vs NetMHCIIpan-4.3i — human MHC-II, **eluted-ligand positives**
 
-The same allele-specificity task as `compare_mhc2_human_hard_ligandbg.md`, restricted to
-(peptide, allele) pairs with at least one mass-spectrometry assay (`--el-only`, see
-`bench/compare/provenance.py`). This is the number a *presentation* predictor should be judged on:
-the panel is EL-dominated but **not** EL-only, and the non-MS share is confounded with allele.
+The same allele-specificity task as `compare_mhc2_human_hard_ligandbg.md`, with positives restricted
+to (peptide, allele) pairs backed by at least one mass-spectrometry assay (`--el-only`, see
+`bench/compare/provenance.py`). It answers *"can it find eluted ligands"* rather than *"can it
+reproduce IEDB"*; the panel is EL-dominated but **not** EL-only, and the non-MS share is confounded
+with allele.
+
+**This is an evaluation stratum, not a training filter.** The model is fit on the whole corpus —
+eluted ligands, binding assays, everything — exactly as it ships; `--el-only` changes only which
+pairs are eligible to be *positives*. Training on the full corpus and tuning per task by parameter is
+the house rule (`CLAUDE.md`), and binding-assay peptides are valid motif evidence: they do bind.
 
 ```
 python bench/compare/run_compare.py --cls mhc2 --species human --benchmark holdout \
     --decoy-mode hard --background ligand --footprint adaptive --el-only
 ```
 
-| stratum | metric | n alleles | mhcmatch | NetMHCIIpan-4.3i | Δ (mm−net) | 95% CI | p |
-|---|---|---|---|---|---|---|---|
-| medium | AUROC | 5 | 0.930 | **0.977** | -0.047 | [-0.074, -0.020] | 0.001 |
-| medium | AUPRC | 5 | 0.638 | **0.751** | -0.113 | [-0.203, -0.024] | 0.000 |
-| medium | PPV@P | 5 | 0.564 | **0.666** | -0.102 | [-0.221, -0.020] | 0.001 |
-| frequent | AUROC | 20 | 0.904 | **0.951** | -0.046 | [-0.083, -0.014] | 0.000 |
-| frequent | AUPRC | 20 | 0.564 | **0.676** | -0.112 | [-0.183, -0.049] | 0.000 |
-| frequent | PPV@P | 20 | 0.534 | **0.650** | -0.116 | [-0.186, -0.059] | 0.000 |
+| stratum | metric | n alleles | mhcmatch | NetMHCIIpan-4.3i | Δ (mm−net) | p |
+|---|---|---|---|---|---|---|
+| medium | AUROC | 5 | 0.906 | **0.977** | -0.071 | 0.000 |
+| medium | AUPRC | 5 | 0.639 | **0.730** | -0.091 | 0.000 |
+| medium | PPV@P | 5 | 0.593 | **0.694** | -0.101 | 0.000 |
+| frequent | AUROC | 20 | 0.901 | **0.952** | -0.050 | 0.000 |
+| frequent | AUPRC | 20 | 0.558 | **0.682** | -0.124 | 0.000 |
+| frequent | PPV@P | 20 | 0.521 | **0.666** | -0.145 | 0.000 |
 
 ## The headline: there is no rare stratum
 
@@ -34,25 +40,42 @@ in the paper, and it is the single most load-bearing thing in this file.
 
 ## Effect on the gap: essentially none
 
-| stratum | metric | all-provenance Δ | EL-only Δ |
+| stratum | metric | Δ, all positives | Δ, EL positives |
 |---|---|---|---|
-| frequent | AUROC | -0.052 | **-0.046** |
-| frequent | AUPRC | -0.125 | **-0.112** |
-| medium | AUROC | -0.016 | **-0.047** |
-| medium | AUPRC | -0.025 | **-0.113** |
+| frequent | AUROC | -0.053 | **-0.050** |
+| frequent | AUPRC | -0.124 | **-0.124** |
+| medium | AUROC | -0.017 | **-0.071** |
+| medium | AUPRC | -0.025 | **-0.091** |
 
-Both tools score *higher* on EL-only positives (mhcmatch frequent AUROC 0.893 → 0.904; NetMHCIIpan
-0.945 → 0.951) — eluted ligands are simply a cleaner label than "bound in a competition assay" — but
-the **gap barely moves** on frequent (-0.052 → -0.046) and *widens* on medium, where the surviving
-alleles are the well-studied ones NetMHCIIpan knows best.
+Both tools score *higher* on eluted-ligand positives (mhcmatch frequent AUROC 0.892 → 0.901;
+NetMHCIIpan 0.945 → 0.952) — an eluted ligand is a cleaner label than "bound in a competition assay"
+— but the **gap barely moves** on frequent and *widens* on medium, where the surviving alleles are the
+well-studied ones NetMHCIIpan knows best.
 
-So provenance filtering is a **correctness fix, not a gap-closer**, exactly as measured during
-planning: it changes which alleles are honestly evaluable and what the number means, not who wins.
-The frequent-allele gap survives it and remains the real one.
+So the provenance stratum changes **what the number is about**, not who wins. The frequent-allele gap
+survives it and remains the real one — that is where the work goes.
 
-(A planning-stage estimate put the EL-only swing at +0.051 AUROC; that came from an ad-hoc harness
-with a different split and decoy set. Measured properly here it is +0.011 for mhcmatch on frequent.
-The smaller number is the right one.)
+(A planning-stage estimate put the EL swing at +0.051 AUROC; that came from an ad-hoc harness with a
+different split and decoy set. Measured properly here it is +0.009 for mhcmatch on frequent. The
+smaller number is the right one.)
+
+## Source-conditioning was tested and is not needed
+
+The natural next move is an *adjusted general model* per provenance — one corpus, a `source`
+parameter. The measured lever would be the core-offset prior, since EL boundaries are biological
+(H/Hmax 0.720, peaked) while binding-assay boundaries are experimenter-chosen (0.990, flat as random
+peptides), which suggests BA/in-silico queries should get a uniform prior. Held out, scoring each
+query type with the corpus-learned prior vs a uniform one:
+
+| query source | learned prior | uniform prior | Δ |
+|---|---|---|---|
+| EL | **0.922** | 0.912 | +0.010 |
+| BA | **0.798** | 0.796 | +0.001 |
+
+The learned prior helps eluted-ligand queries and is **harmless** on binding-assay ones, so a source
+switch buys nothing (-0.001 at best). The general model already serves all three sources; the
+existing tunables (`background`, `footprint`, `register`, `h`, `tau`) remain the per-task knobs. If
+provenance ever enters the pmhc schema, re-test — but do not build the plumbing on spec.
 
 ## Why the join is on `(epitope, PMID)`
 

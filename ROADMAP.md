@@ -170,12 +170,15 @@ shortlist, human):
 - **Allele-specificity** (hard negatives = other alleles' ligands — the restriction task mhcmatch is
   built for): **mhcmatch beats NetMHCpan** on MHC-I medium+frequent (AUROC, AUPRC, PPV@k all p<0.001;
   frequent AUPRC 0.81 vs 0.69); MHC-II **wins the rare stratum on all three metrics since v0.6's
-  register fix** (AUROC 0.836 vs 0.813, AUPRC 0.515 vs 0.473, PPV@P 0.402 vs 0.372; n.s. at n=19) and
-  trails medium/frequent. **Read that rare win with the provenance caveat**: restricted to
-  mass-spec-supported pairs the rare stratum *does not exist* — 15 of 52 human class-II panel alleles
-  have zero eluted ligands and 8 more fall under a 20-ligand floor, so the rare result is a
-  binding-assay benchmark reported as a presentation one. The frequent gap survives EL-only filtering
-  almost unchanged (AUROC −0.052 → −0.046). See `bench/results/compare_mhc2_human_hard_ligandbg_elonly.md`.
+  register fix** (AUROC 0.842 vs 0.813, AUPRC 0.521 vs 0.473, PPV@P 0.402 vs 0.372; n.s. at n=19) and
+  trails medium/frequent. **Mouse MHC-II: mhcmatch wins all nine cells**
+  (`compare_mhc2_mouse_hard_ligandbg.md`) — the only panel where it leads every stratum on every
+  metric. Scope note, not a caveat on the wins: with positives restricted to mass-spec-supported
+  pairs the human rare stratum has nothing left to evaluate (15 of 52 alleles have zero eluted
+  ligands, 8 more are under a 20-ligand floor), so that number answers "reproduce IEDB" rather than
+  "find eluted ligands" — both are real questions and both are reported. The frequent gap is
+  unmoved by the stratum (AUROC −0.053 → −0.050). See
+  `bench/results/compare_mhc2_human_hard_ligandbg_elonly.md`.
 - **Presented-vs-random screening** (NetMHCpan's %rank home turf): NetMHCpan wins on precision;
   training-free tuning can't close a 0.06–0.16 AUPRC gap → a learned reranker is the lever (Phase 3b).
 - **Speed:** mhcmatch ~68× faster (195k vs 2.9k peptide-allele scores/s), pure Python.
@@ -225,16 +228,24 @@ needing fetched neoantigen/self/pathogen sets are flagged.
   NetMHCIIpan-4.3i: **every stratum × metric improves, none regresses**; the rare stratum flips to
   winning all three metrics (n.s. at n=19) and the frequent AUPRC gap closes -0.174→-0.125 (hard) /
   -0.308→-0.250 (screening). See `bench/results/register_em_mhc2.md` and `compare_mhc2_human_*.md`.
-- ~~**Mouse MHC-II head-to-head** (never run)~~ **done, and it is three alleles** —
-  `bench/results/compare_mhc2_mouse_random_proteomebg.md`. mhcmatch ties NetMHCIIpan on AUROC for the
-  one well-sampled allele (H-2-IAb, 7,990 EL ligands: 0.830 vs 0.832) and trails AUPRC (0.341 vs
-  0.490); it leads on the two thin ones (H-2-IAd, H-2-IEk: AUPRC +0.179). Same shape as human, but at
-  n=1/n=2 it corroborates rather than demonstrates. **`--el-only` is mandatory for mouse**: the panel's
-  provenance is confounded with allele (H-2-IAb 96% EL vs H-2-IEd/IAs/IAq 0%), so the hard-decoy task
-  pits binding-assay positives against real-ligand decoys and drives NetMHCIIpan **below chance**
-  (AUROC 0.464) — that run was made, recognised as an artifact, and deleted rather than published.
-  This also **refutes the premise that mouse is the uncontaminated axis**: the problem is not
-  NetMHCIIpan's thin mouse training, it is the panel's provenance imbalance.
+- ~~**Mouse MHC-II head-to-head** (never run)~~ **done — two tables, two questions, both reported.**
+  *Reproduce IEDB's mouse annotation* (`compare_mhc2_mouse_hard_ligandbg.md`): **mhcmatch wins all
+  nine cells**, medium AUROC +0.422 / AUPRC +0.424 (p<0.001) — recorded observation, NetMHCIIpan's
+  medium AUROC is 0.464, below chance. *Find eluted ligands* (`compare_mhc2_mouse_random_proteomebg.md`,
+  `--el-only` + proteome decoys): NetMHCIIpan above chance everywhere and nothing separates the tools
+  — AUROC 0.793 vs 0.789 (p=0.94), NetMHCIIpan's AUPRC lead inside its interval (0.256 vs 0.320,
+  p=0.49), over H-2-IAb / IAd / IEk. `n` = 1/4/3 and 3 alleles of 13, so the pair corroborates the
+  human shape rather than demonstrating anything alone. The mechanism behind the two tables diverging is
+  provenance confounded with allele (H-2-IAb 96% EL vs H-2-IEd/IAs/IAq 0%). This **refutes the premise
+  that mouse is the uncontaminated axis**: the obstacle is not NetMHCIIpan's thin mouse training, it
+  is the panel's provenance imbalance.
+- **Source-conditioned model: tested, not needed.** One corpus + a `source` (EL/BA/in-silico)
+  parameter is the natural refinement, and the offset prior is the lever that would carry it (EL
+  boundaries are biological, H/Hmax 0.720; binding-assay boundaries are experimenter-chosen, 0.990 —
+  flat as random peptides). Held out, the corpus-learned prior beats a uniform one by **+0.010** on EL
+  queries and **+0.001** on BA queries: it helps where boundaries inform and is harmless where they do
+  not. The general model already serves all three sources; `background` / `footprint` / `register` /
+  `h` / `tau` stay the per-task knobs. Re-test if provenance ever enters the pmhc schema.
 - **Species hardcodes**: `run_compare.py`'s decoy proteome was hardcoded to `human.fasta.gz`
   regardless of `--species` — **fixed**. `PROTEOME_AA_FREQ` and `proteome_markov1.tsv` remain human;
   measured, that is a documented approximation and not a blocker (KL(mouse‖human) over proteome AA

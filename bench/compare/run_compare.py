@@ -94,20 +94,28 @@ def aggregate(data, rng):
     return rows
 
 
-def gen_examples(rc, ev, cls, benchmark, prot, forb, rng, frac, cap, n_decoys, decoy_mode, hard):
+def gen_examples(rc, ev, cls, benchmark, prot, forb, rng, frac, cap, n_decoys, decoy_mode, hard,
+                 rc_eval=None):
     """Positives + decoys only (no scoring): the example set is independent of the mhcmatch model,
-    so every variant in a sweep is compared on identical examples."""
+    so every variant in a sweep is compared on identical examples.
+
+    ``rc_eval`` (default ``rc``) selects which pairs may become **positives**; ``rc`` still supplies
+    rarity and the decoy pool. They differ under ``--el-only``, which restricts what a number is
+    *about* without restricting what the model is trained on -- the general model is fit on the whole
+    corpus and tuned per task by parameter, never by a smaller training set (`CLAUDE.md`).
+    """
     rmap = task.rarity(rc)
+    rc_eval = rc_eval if rc_eval is not None else rc
 
     def bt(test, rm):
         return task.build_task(test, rm, prot, forb, rng, n_decoys, decoy_mode, hard)
 
     if benchmark == "holdout":
-        test, _ = splits.holdout_split(rc, ev, cls, rng, frac, cap)
+        test, _ = splits.holdout_split(rc_eval, ev, cls, rng, frac, cap)
         return bt(test, rmap)
     examples = []
     for a in sorted(a for a in ev if rmap.get(a) == "rare"):  # zero-shot: all of each rare allele
-        examples += bt({a: set(rc[a])}, {a: "zeroshot"})
+        examples += bt({a: set(rc_eval[a])}, {a: "zeroshot"})
     return examples
 
 
@@ -154,12 +162,13 @@ def main():
                     help="random = proteome+shuffle (presented-vs-random); hard = other-allele "
                          "ligands (allele-specificity)")
     ap.add_argument("--el-only", action="store_true",
-                    help="restrict the whole panel to mass-spec-supported (peptide, allele) pairs. "
-                         "The pmhc tables are EL-dominated but NOT EL-only, and the non-MS share is "
-                         "confounded with allele (human: 25.7%% of frequent alleles' peptides vs "
-                         "83.1%% of thin ones; mouse: H-2-IAb 96%% EL vs H-2-IEd 0%%), so a "
-                         "hard-decoy task can pit one allele's binding-assay peptides against "
-                         "another's real ligands. See compare/provenance.py.")
+                    help="EVALUATION stratum: only mass-spec-supported (peptide, allele) pairs may "
+                         "be positives. Training still uses the whole corpus. The pmhc tables are "
+                         "EL-dominated but NOT EL-only, and the non-MS share is confounded with "
+                         "allele (human: 25.7%% of frequent alleles' peptides vs 83.1%% of thin "
+                         "ones; mouse: H-2-IAb 96%% EL vs H-2-IEd 0%%), so this changes what a "
+                         "number is *about* -- 'can it find eluted ligands' rather than 'can it "
+                         "reproduce IEDB'. See compare/provenance.py.")
     ap.add_argument("--register", default="marginal", choices=("marginal", "max"),
                     help="MHC-II register handling: marginalize under the learned core-offset prior "
                          "(default) or max over frames (pre-v0.6). Ignored for MHC-I.")
@@ -180,12 +189,16 @@ def main():
     rng = random.Random(args.seed)
 
     rc = splits.load_canonical(args.pmhc_dir, args.cls, args.species, args.tier)
+    # --el-only is an EVALUATION stratum, not a training filter: rc_eval decides which pairs may be
+    # positives, rc still trains the model and stocks the decoy pool. Training on the whole corpus
+    # and tuning per task by parameter is the house rule (CLAUDE.md).
+    rc_eval = rc
     if args.el_only:
-        n0, a0 = sum(len(v) for v in rc.values()), len(rc)
-        rc = provenance.el_only(rc, args.pmhc_dir, args.cls, args.species, args.tier)
-        print(f"# el-only: {sum(len(v) for v in rc.values())}/{n0} peptides, {len(rc)}/{a0} alleles "
-              f"kept (mass-spec-supported)")
-    ev = splits.select_eval_alleles(rc, args.cls, rng, args.n_sample)
+        rc_eval = provenance.el_only(rc, args.pmhc_dir, args.cls, args.species, args.tier)
+        print(f"# el-only positives: {sum(len(v) for v in rc_eval.values())}/"
+              f"{sum(len(v) for v in rc.values())} peptides, {len(rc_eval)}/{len(rc)} alleles "
+              f"eligible (mass-spec-supported); training still uses the full corpus")
+    ev = splits.select_eval_alleles(rc_eval, args.cls, rng, args.n_sample)
     if args.limit_alleles and len(ev) > args.limit_alleles:  # keep a rare+frequent mix
         rmap = task.rarity(rc)
         rare = [a for a in ev if rmap[a] == "rare"]
