@@ -10,6 +10,7 @@ of ``appendix/mhcmatch.tex`` §4.
 from __future__ import annotations
 
 import math
+import zlib
 from collections import Counter
 from functools import lru_cache
 from importlib import resources
@@ -40,6 +41,11 @@ MHC2_CORE = (1, 2, 3, 4, 5, 6, 7, 8, 9)
 # Laplace pseudo-count per core-offset frame (see AnchorModel._fit_offset_prior).
 _OFFSET_ALPHA = 0.5
 
+# Dirichlet pseudo-count per motif component, and the number of mixture-EM passes
+# (see AnchorModel._refit_mixture). ponytail: fixed until n_motifs>1 is measured to be worth a knob.
+_MIX_ALPHA = 1.0
+_MIX_PASSES = 3
+
 # Human proteome amino-acid frequencies (UniProt UP000005640). The log-odds NULL: with
 # ``background="ligand"`` (default) the denominator is the pooled-ligand anchor marginal, so the
 # score measures allele *specificity* (this allele vs the average presented ligand) -- best for the
@@ -57,8 +63,11 @@ PROTEOME_AA_FREQ = {"A": 0.07129, "C": 0.02080, "D": 0.04936, "E": 0.07306, "F":
 def load_markov1():
     """Order-1 human-proteome transition matrix ``{prev_residue: {residue: P(residue|prev)}}`` for
     ``background="markov"`` -- a context-conditional presentation null. Vendored from UP000005640
-    (``data/proteome_markov1.tsv``). Measured to lift MHC-I *rare*-allele screening AUPRC (~+0.02
-    over the order-0 proteome null); neutral for medium/frequent, so it is opt-in."""
+    (``data/proteome_markov1.tsv``). Opt-in and **not** the default: measured against the order-0
+    proteome null it is slightly *worse* on MHC-I rare-allele screening (AUPRC 0.820 vs 0.839, −0.019;
+    AUROC −0.006; PPV −0.020 -- `compare_mhc1_human_random_{markov,proteome}bg.md`) and neutral on
+    medium/frequent. Kept for the adjacent-position covariance it injects, which may help elsewhere;
+    it is not a win on the axis measured so far."""
     text = resources.files("mhcmatch.data").joinpath("proteome_markov1.tsv").read_text()
     lines = text.strip().splitlines()
     cols = lines[0].split("\t")[1:]
@@ -77,7 +86,7 @@ class AnchorModel:
     def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0,
                  learn_weights=True, prune_dpi=False, weights="learned", blend_alpha=0.5,
                  register_em=2, footprint="anchor", rare_max=30, background="ligand",
-                 length_prior="score", length_motifs=True, register="marginal"):
+                 length_prior="score", length_motifs=True, register="marginal", n_motifs=3):
         """``weights``: ``"learned"`` (per-anchor MI over the panel, default), ``"structural"``
         (contact-frequency weights from pMHC structures, :func:`load_structural_weights`),
         ``"blend"`` (convex mix ``blend_alpha``*structural + (1-``blend_alpha``)*learned, mean-1
@@ -103,7 +112,13 @@ class AnchorModel:
 
         ``register`` (MHC-II only) decides how the unobserved binding register enters :meth:`score`:
         ``"marginal"`` (default) integrates it out under a learned core-offset prior; ``"max"`` is the
-        pre-v0.6 max-over-frames. See :meth:`score`."""
+        pre-v0.6 max-over-frames. See :meth:`score`.
+
+        ``n_motifs`` (MHC-II only) fits that many motif components per allele by EM and scores their
+        mixture -- see :meth:`_refit_mixture`. ``3`` (default, human MHC-II) closes ~40% of the
+        frequent-stratum AUPRC gap to NetMHCIIpan-4.3i; ``1`` is the single-PWM model (bit-identical to
+        the pre-mixture code -- it never enters the mixture path). Measured on human MHC-II only; thin
+        alleles back off to the single PWM regardless of ``K``."""
         self.cls = cls
         self.background = background
         self.length_prior = length_prior
@@ -170,12 +185,20 @@ class AnchorModel:
         self._cache = {}
         self.offset_prefs = {}
         self._off_cache = {}
+        # Motif mixture (MHC-II). ``prefs_mix`` stays None for n_motifs=1 and for MHC-I, and every
+        # mixture branch keys off that -- so the default path is the pre-mixture code, untouched.
+        self.n_motifs = n_motifs
+        self.prefs_mix = None
+        self.log_pi = None
+        self._cache_mix = {}
         for _ in range(register_em if cls == "mhc2" else 0):
             self._refit_registers(store)   # also tallies self.offset_prefs, free (same sweep)
         if cls == "mhc2":
             if not register_em:            # no EM sweep to piggyback on -- pay for one
                 self._fit_offset_prior(store)
             self._smooth_offset_prior()
+            if n_motifs > 1:               # needs the offset prior: the E-step scores the marginal
+                self._refit_mixture(store)
 
     def _learned_weights(self, cls, prune_dpi):
         seqs = load_pseudo(cls)
@@ -209,9 +232,25 @@ class AnchorModel:
     def _candidates(self, j):
         return list(self.prefs[j].keys())
 
-    def _dist(self, j, allele, raw):
+    def _dist(self, j, allele, raw, k=None):
+        """Residue distribution at anchor ``j`` for ``allele``; ``k`` selects a motif component.
+
+        ``k=None`` (or no mixture) is the pooled single-PWM estimate: the allele's own counter shrunk
+        over groove-similar alleles. With ``k`` given, component ``k``'s own counts are backed off to
+        that pooled estimate, ``θ_k = (n_k·π_k + τ·pooled) / (n_k + τ)`` -- the same second stage as
+        :meth:`_dist_len`, and ``n_k = 0`` returns ``pooled`` **identically**.
+
+        Components deliberately do *not* borrow across alleles the way the pooled estimate does.
+        Component indices are not aligned between alleles (EM is free to label-switch), so shrinking
+        ``prefs_mix[k]`` over groove neighbours would average one allele's motif against an arbitrary
+        component of another's. Backing off to the allele's *own* shrunk pooled motif needs no such
+        correspondence -- and it makes the capacity self-adapting: an allele too thin to fill K
+        components has every component collapse to ``pooled``, i.e. back to today's model, with no
+        ligand-count threshold to pick.
+        """
         if raw:
-            own = self.prefs[j].get(allele, Counter())
+            src = self.prefs_mix[k][j] if (k is not None and self.prefs_mix) else self.prefs[j]
+            own = src.get(allele, Counter())
             total = sum(own.values())
             return {r: c / total for r, c in own.items()} if total else {}
         key = (j, allele)
@@ -219,7 +258,23 @@ class AnchorModel:
             self._cache[key] = self.ps.shrink(self.prefs[j], allele, anchor=j,
                                               candidates=self._candidates(j),
                                               prior_strength=self.prior_strength)
-        return self._cache[key]
+        pooled = self._cache[key]
+        if k is None or self.prefs_mix is None:
+            return pooled
+        mkey = (j, allele, k)
+        hit = self._cache_mix.get(mkey)
+        if hit is not None:
+            return hit
+        own = self.prefs_mix[k][j].get(allele)
+        n = float(sum(own.values())) if own else 0.0
+        if n <= 0:                                   # backoff identity: the pooled single-PWM motif
+            self._cache_mix[mkey] = pooled
+            return pooled
+        tau = self.prior_strength
+        out = {r: (own.get(r, 0.0) + tau * pooled.get(r, 0.0)) / (n + tau)
+               for r in set(own) | set(pooled)}
+        self._cache_mix[mkey] = out
+        return out
 
     def _dist_len(self, j, allele, raw, length):
         """Length-specific residue distribution at anchor ``j`` -- a two-stage backoff.
@@ -298,6 +353,99 @@ class AnchorModel:
         self._nbg = {j: (sum(self.bg[j].values()) or 1) for j in self.anchors}
         self._cache = {}
 
+    def _best_frame(self, peptide, allele, k):
+        """Frame start that motif component ``k`` scores best. Falls back to the pooled model's frame
+        before the first M-step has produced any components."""
+        if self.prefs_mix is None:
+            return self.best_register(peptide, allele)[0]
+        fs = self._frame_scores(peptide, allele, k=k)
+        return fs.index(max(fs))
+
+    def _mix_term(self, peptide, allele, k=None, raw=False, eps=1e-3):
+        """``log Σ_r P(r | L, allele) · exp(s_r)`` -- the register marginal under component ``k``.
+
+        ``k=None`` is the pooled single-PWM marginal, i.e. exactly what :meth:`score` computed before
+        motif mixtures existed."""
+        terms = [f + p for f, p in zip(self._frame_scores(peptide, allele, raw, eps, k),
+                                       self._offset_logprior(allele, len(peptide)))]
+        m = max(terms)
+        return m + math.log(sum(math.exp(t - m) for t in terms))
+
+    def _responsibilities(self, peptide, allele):
+        """``P(component k | peptide, allele)`` -- the mixture E-step.
+
+        Computed from the log-**odds** rather than the log-likelihood, which is equivalent here and
+        saves a second estimator: every component shares the one background (:meth:`_bg_prob` reads
+        ``self.bg``, which the mixture never re-tallies), so ``P_bg(peptide)`` is a common factor and
+        cancels in the normalization.
+        """
+        K = self.n_motifs
+        lp = self.log_pi.get(allele) if self.log_pi else None
+        lp = lp or [-math.log(K)] * K
+        t = [lp[k] + self._mix_term(peptide, allele, k) for k in range(K)]
+        m = max(t)
+        if m == float("-inf"):
+            return [1.0 / K] * K
+        e = [math.exp(x - m) for x in t]
+        tot = sum(e)
+        return [x / tot for x in e]
+
+    def _m_step(self, rows, resp):
+        """Re-tally per-component anchor counters and mixing weights from responsibilities ``resp``.
+
+        Each peptide contributes ``responsibility × weight`` to every component, at *that component's*
+        own best frame -- component and register are fit jointly, as in GibbsCluster. Assignment reads
+        the pre-update ``self.prefs_mix``, which is replaced only once every peptide is counted, so
+        this is a proper EM step.
+
+        The background (``self.bg``) is deliberately not re-tallied per component: it is the null the
+        log-odds divides by, shared across components. Splitting it per component would make each
+        component its own null and cancel the very contrast the mixture exists to express.
+        """
+        K = self.n_motifs
+        core_pos = [j - 1 for j in self.anchors]
+        mix = [{j: {} for j in self.anchors} for _ in range(K)]
+        mass = {}
+        for (ep, a, wt), rs in zip(rows, resp):
+            tot = mass.setdefault(a, [0.0] * K)
+            for k, r in enumerate(rs):
+                tot[k] += r * wt
+                if r <= 1e-6:                        # contributes nothing; skip the frame search
+                    continue
+                w9 = ep[self._best_frame(ep, a, k):][:9]
+                for j, c in zip(self.anchors, core_pos):
+                    mix[k][j].setdefault(a, Counter())[w9[c]] += r * wt
+        self.prefs_mix = mix
+        self.log_pi = {a: [math.log((v + _MIX_ALPHA) / (sum(t) + K * _MIX_ALPHA)) for v in t]
+                       for a, t in mass.items()}
+        self._cache_mix = {}
+
+    def _refit_mixture(self, store, passes=_MIX_PASSES):
+        """Fit ``n_motifs`` motif components per allele by EM over the whole corpus (MHC-II).
+
+        The register EM (:meth:`_refit_registers`) already answers *which frame*; this answers *which
+        motif*, the other half of GibbsCluster-style deconvolution, which the register work left out.
+        An open class-II groove admits more than one binding mode per allele, and a single PWM
+        averages them into a blur that fits neither.
+
+        Fit on the whole corpus, exactly as it ships -- no filtering, no external predictor's opinion.
+        "Which ligands does the current model get wrong" is the E-step, and it answers itself from the
+        model's own likelihood (soft, and per allele) rather than from any held-out label.
+
+        Symmetry has to be broken by hand: identical components yield identical responsibilities and
+        EM never separates them. The initial partition is ``crc32(peptide) % K`` -- deterministic and
+        seed-free, where ``hash()`` is salted per process and would make the model unreproducible.
+        """
+        panel = store._panel[self.cls]
+        K = self.n_motifs
+        rows = [(ep, a, wt) for ep, a, wt in zip(panel.epitopes, panel.alleles, panel.weights)
+                if len(ep) >= 9]
+        resp = [[float(zlib.crc32(ep.encode()) % K == k) for k in range(K)] for ep, _, _ in rows]
+        self._m_step(rows, resp)                     # prefs_mix was None -> pooled frames, once
+        for _ in range(passes):
+            resp = [self._responsibilities(ep, a) for ep, a, _ in rows]
+            self._m_step(rows, resp)
+
     def _bg_prob(self, j, r, prev=None):
         """Null probability of residue ``r`` at anchor ``j``: pooled-ligand marginal (specificity),
         order-0 proteome marginal (presentation), or the order-1 Markov proteome conditional given the
@@ -311,7 +459,8 @@ class AnchorModel:
             return PROTEOME_AA_FREQ.get(r, 1e-4)
         return self.bg[j].get(r, 0) / self._nbg[j]
 
-    def _anchor_logodds(self, residues, allele, raw, eps, mask=None, contexts=None, length=None):
+    def _anchor_logodds(self, residues, allele, raw, eps, mask=None, contexts=None, length=None,
+                        k=None):
         """Sum of per-anchor log-odds for ``residues`` (one residue per ``self.anchors`` position).
 
         ``mask`` (indices into ``self.anchors``) restricts the sum to those positions -- used by the
@@ -320,7 +469,8 @@ class AnchorModel:
         ``background="markov"``. A ``None`` residue is a signed-anchor collision already counted by an
         earlier position (see :func:`mhcmatch.store.mhc1_positions`) and contributes nothing.
         ``length`` (MHC-I, with ``length_motifs``) selects the length-specific motif via
-        :meth:`_dist_len`."""
+        :meth:`_dist_len`. ``k`` (MHC-II, with ``n_motifs>1``) selects a motif component via
+        :meth:`_dist`; the two are mutually exclusive by class, so they never compose."""
         s = 0.0
         idxs = range(len(self.anchors)) if mask is None else mask
         use_len = length is not None and self.prefs_len is not None
@@ -328,7 +478,7 @@ class AnchorModel:
             j, r = self.anchors[i], residues[i]
             if r is None:
                 continue
-            th = self._dist_len(j, allele, raw, length) if use_len else self._dist(j, allele, raw)
+            th = self._dist_len(j, allele, raw, length) if use_len else self._dist(j, allele, raw, k)
             p_a = th.get(r, 0.0)
             p_bg = self._bg_prob(j, r, contexts[i] if contexts else None)
             s += math.log((p_a + eps) / (p_bg + eps))
@@ -369,11 +519,11 @@ class AnchorModel:
             return self._rare_mask
         return None
 
-    def _frame_scores(self, peptide, allele, raw=False, eps=1e-3):
+    def _frame_scores(self, peptide, allele, raw=False, eps=1e-3, k=None):
         """Anchor log-odds of every 9-mer core frame of ``peptide`` (MHC-II), indexed by frame start.
 
         ``peptide`` must already be stripped/upper-cased. MHC-I is end-anchored, so there is no frame
-        list to build and this is class-II only.
+        list to build and this is class-II only. ``k`` scores under motif component ``k``.
         """
         core_pos = [j - 1 for j in self.anchors]
         mask = self._score_mask(allele)
@@ -382,7 +532,8 @@ class AnchorModel:
         for st in range(len(peptide) - 8):
             w = peptide[st:st + 9]
             ctx = [peptide[st + c - 1] if st + c > 0 else "" for c in core_pos] if markov else None
-            out.append(self._anchor_logodds([w[c] for c in core_pos], allele, raw, eps, mask, ctx))
+            out.append(self._anchor_logodds([w[c] for c in core_pos], allele, raw, eps, mask, ctx,
+                                            k=k))
         return out
 
     def _smooth_offset_prior(self):
@@ -511,6 +662,11 @@ class AnchorModel:
         ``"max"`` is the pre-v0.6 behaviour, ``max_r s_r`` -- a max over ``L-8`` frames, which grows
         with peptide length even under the null (`bench/results/binder_gate_length_bias.md`).
 
+        With ``n_motifs > 1`` the motif mixture wraps that marginal --
+        ``log Σ_k π_k Σ_r P(r | L, allele) · exp(s_{k,r})`` -- one ``log Σ exp`` per latent, register
+        inside, component outside (:meth:`_refit_mixture`). The two compose because the background is
+        common to every component and every frame, so it factors out of both sums.
+
         **Neither mode is comparable across peptide lengths.** ``"marginal"`` normalizes the frame
         count away and roughly halves the inflation, but a Jensen residual remains (measured on
         random peptides, DRB1_1501, 9mer -> 21mer: +4.44 nats under ``"max"``, +2.28 under
@@ -524,10 +680,13 @@ class AnchorModel:
             return self.best_register(peptide, allele, raw, eps)[1]
         if len(peptide) < 9:
             return float("-inf")
-        terms = [f + p for f, p in zip(self._frame_scores(peptide, allele, raw, eps),
-                                       self._offset_logprior(allele, len(peptide)))]
-        m = max(terms)
-        return m + math.log(sum(math.exp(t - m) for t in terms))
+        if self.prefs_mix is None:
+            return self._mix_term(peptide, allele, None, raw, eps)
+        K = self.n_motifs
+        lp = self.log_pi.get(allele) or [-math.log(K)] * K
+        t = [lp[k] + self._mix_term(peptide, allele, k, raw, eps) for k in range(K)]
+        m = max(t)
+        return m + math.log(sum(math.exp(x - m) for x in t))
 
     def anchor_terms(self, peptide, allele, raw=False, eps=1e-3):
         """Per-position log-odds components at the best register, one per ``self.anchors`` position

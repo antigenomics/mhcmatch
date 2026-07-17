@@ -185,8 +185,14 @@ shortlist, human):
   "find eluted ligands" — both are real questions and both are reported. The frequent gap is
   unmoved by the stratum (AUROC −0.053 → −0.050). See
   `bench/results/compare_mhc2_human_hard_ligandbg_elonly.md`.
-- **Presented-vs-random screening** (NetMHCpan's %rank home turf): NetMHCpan wins on precision;
-  training-free tuning can't close a 0.06–0.16 AUPRC gap → a learned reranker is the lever (Phase 3b).
+- **Presented-vs-random screening** (NetMHCpan's %rank home turf): NetMHCpan wins on precision —
+  **class II only.** MHC-I frequent/medium now go to mhcmatch (AUPRC +0.036 / +0.025,
+  `compare_mhc1_human_random_proteomebg.md`), so the blanket claim is retired. ~~training-free tuning
+  can't close a 0.06–0.16 AUPRC gap → a learned reranker is the lever (Phase 3b)~~ — **half-refuted**:
+  `AnchorModel(n_motifs=3)` is training-free in the sense that matters (EM on the shipped corpus, no
+  external labels) and closes **0.104** of the class-II frequent screening AUPRC gap
+  (0.521→0.625 vs 0.775; −0.254 → −0.149). A reranker may still be worth building, but it is not the
+  only lever. See `bench/results/motif_mixture_mhc2.md`.
 - **Speed:** mhcmatch ~68× faster (195k vs 2.9k peptide-allele scores/s), pure Python.
 
 Model upgrades landed here: full-core PWM + **rarity-adaptive footprint** (`AnchorModel(footprint=
@@ -234,6 +240,19 @@ needing fetched neoantigen/self/pathogen sets are flagged.
   NetMHCIIpan-4.3i: **every stratum × metric improves, none regresses**; the rare stratum flips to
   winning all three metrics (n.s. at n=19) and the frequent AUPRC gap closes -0.174→-0.125 (hard) /
   -0.308→-0.250 (screening). See `bench/results/register_em_mhc2.md` and `compare_mhc2_human_*.md`.
+- **Class-II motif mixture: `AnchorModel(n_motifs=K)` — measured, default-off, awaiting a sign-off on
+  the default.** The register EM answered *which frame* and left *which motif* unbuilt. K components
+  per allele, fit by EM on the whole corpus (no external labels), scored as
+  `log Σ_k π_k Σ_r P(r|L,a)·exp(s_{k,r})`. **K=3 is the optimum** (monotone to 3, flat-to-down at 4):
+  frequent AUPRC **0.558→0.614** hard (gap −0.124→−0.068) and **0.521→0.625** screening
+  (−0.254→−0.149); nothing regresses beyond noise and rare still wins. **The gap was largely a DP
+  gap** — mean per-allele ΔAUPRC is DP +0.108 vs DR +0.037, and DP scored 0.113–0.42 under a single
+  PWM against DR's 0.6–0.94. Capacity self-adapts with no ligand-count threshold: an empty component
+  returns the pooled motif *identically*. Caution on record: the components are 90–98% the *same*
+  motif (per-anchor JS 0.02–0.05 of 1.0), so the gain is **not** "two binding motifs" — each component
+  takes its own best frame, so it is plausibly a richer *register* model. Untested; pin components to
+  the pooled frame and re-run to find out. Build 2.1s→18.8s (K=3, opt-in). Untested: mouse, MHC-I,
+  `%rank`/calibration. See `bench/results/motif_mixture_mhc2.md`.
 - ~~**Mouse MHC-II head-to-head** (never run)~~ **done — two tables, two questions, both reported.**
   *Reproduce IEDB's mouse annotation* (`compare_mhc2_mouse_hard_ligandbg.md`): **mhcmatch wins all
   nine cells**, medium AUROC +0.422 / AUPRC +0.424 (p<0.001) — recorded observation, NetMHCIIpan's
