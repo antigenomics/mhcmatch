@@ -41,6 +41,10 @@ MHC2_CORE = (1, 2, 3, 4, 5, 6, 7, 8, 9)
 # Laplace pseudo-count per core-offset frame (see AnchorModel._fit_offset_prior).
 _OFFSET_ALPHA = 0.5
 
+# Runaway backstop for register_em="converge" -- not a tuned value: the panel converges far below it
+# (measured: every human MHC-II allele is frozen by pass ~30, most by pass 2).
+_EM_CAP = 64
+
 # Dirichlet pseudo-count per motif component, and the number of mixture-EM passes
 # (see AnchorModel._refit_mixture). ponytail: fixed until n_motifs>1 is measured to be worth a knob.
 _MIX_ALPHA = 1.0
@@ -100,6 +104,10 @@ class AnchorModel:
         preferences, so training and scoring use the same (best-frame) register. The default ``2``
         lifts held-out binder-vs-decoy AUC across rare/medium/frequent MHC-II alleles (frequent
         +0.10); ``0`` keeps the one-pass heuristic register. Ignored for MHC-I (end-anchored).
+        ``"converge"`` runs each allele to its *own* fixed point instead of a shared count -- see
+        :meth:`_converge_registers`. No global pass count is right for every allele: HLA-DP is still
+        improving at 32 passes while the rare stratum is done by 8, so ``2`` is an early stop that
+        flatters rare rather than a correct value.
 
         ``length_prior`` (MHC-I only) adds the per-allele ligand-length factor the anchor log-odds is
         structurally blind to -- see :meth:`length_logodds`. ``"score"`` folds it into
@@ -192,8 +200,14 @@ class AnchorModel:
         self.prefs_mix = None
         self.log_pi = None
         self._cache_mix = {}
-        for _ in range(register_em if cls == "mhc2" else 0):
-            self._refit_registers(store)   # also tallies self.offset_prefs, free (same sweep)
+        self._frames = {}
+        self._em_passes = 0
+        if cls == "mhc2":
+            if register_em == "converge":
+                self._converge_registers(store)
+            else:
+                for _ in range(register_em):
+                    self._refit_registers(store)   # also tallies offset_prefs, free (same sweep)
         if cls == "mhc2":
             if not register_em:            # no EM sweep to piggyback on -- pay for one
                 self._fit_offset_prior(store)
@@ -379,7 +393,42 @@ class AnchorModel:
         self._cache_len[key] = out
         return out
 
-    def _refit_registers(self, store):
+    def _converge_registers(self, store, cap=_EM_CAP):
+        """Run the register EM to convergence **per allele** (MHC-II) instead of a fixed global count.
+
+        A fixed ``register_em=N`` gives a 6,800-ligand DP allele and a 5-ligand DRB the same N passes,
+        and no N is right for both: measured on the head-to-head, HLA-DP is still improving at N=32
+        (frequent screening AUPRC 0.625 -> 0.667) while the rare stratum reaches its fixed point by
+        N=8 and never moves again. So N=2 is not "correct" for rare, it is an early stop that happens
+        to land well. The number of passes an allele deserves is a property of *its own* data, so let
+        each allele say when it is done: freeze it once its frame assignments stop changing.
+
+        This is the same self-adapting-backoff law the rest of the model already obeys -- ``_dist``'s
+        ``n_k=0 -> pooled``, ``_dist_len``'s ``n_{a,L}=0 -> pooled``, ``shrink``'s ``(nπ+τm)/(n+τ)``
+        -- applied to the one knob that was still a global constant. No ligand-count threshold and no
+        allele family is named: DP earns its passes by still moving, and an allele that converged on
+        pass 1 is left exactly where it was (measured: HLA-DPA1*01:03/DPB1*04:01, whose prior is
+        already peaked at H/Hmax 0.635, moves +0.000 AUPRC under extra passes).
+
+        Cheaper than the equivalent global count, not dearer: frozen alleles skip the frame search, and
+        the alleles that iterate longest are a minority of the panel.
+
+        ponytail: an allele is frozen for good on its first stable pass. It could in principle
+        un-converge when a groove neighbour moves, since ``_dist`` mixes in the neighbour mean -- but
+        that term is ``τ/(n+τ)``, i.e. 0.15% for the n=6,768 DP alleles that iterate longest, and the
+        thin alleles where it is large converge in one or two passes anyway. Re-check every pass if a
+        panel ever shows an allele oscillating.
+        """
+        frozen, passes = set(), 0
+        alleles = set(store._panel[self.cls].alleles)
+        for passes in range(1, cap + 1):
+            changed = self._refit_registers(store, frozen=frozen)
+            frozen = alleles - changed
+            if not changed:
+                break
+        self._em_passes = passes
+
+    def _refit_registers(self, store, frozen=None):
         """One register-EM pass (MHC-II): re-assign each training peptide to the frame its current
         model scores best, then re-estimate the per-anchor preferences and background from that frame.
         Uses the current (pre-pass) distributions for assignment; ``self.prefs`` is replaced only after
@@ -388,15 +437,26 @@ class AnchorModel:
         Frames are assigned by :meth:`best_register`, so the register the EM fits is the same one
         :meth:`score` reads off. (For MHC-II the adaptive-footprint mask is always ``None``, so this
         is identical to the previous hand-rolled loop; under ``background="markov"`` the assignment
-        now uses the same Markov null it is scored with, which it previously did not.)"""
+        now uses the same Markov null it is scored with, which it previously did not.)
+
+        ``frozen``: alleles that have already converged -- their peptides reuse the stored frame rather
+        than re-searching it, which is what makes :meth:`_converge_registers` cheap. Returns the set of
+        alleles whose assignment changed this pass (every allele, on the first pass)."""
         panel = store._panel[self.cls]
         core_pos = [j - 1 for j in self.anchors]
         prefs = {j: {} for j in self.anchors}
         offsets = {}
-        for ep, a, wt in zip(panel.epitopes, panel.alleles, panel.weights):
+        changed, frames = set(), {}
+        for i, (ep, a, wt) in enumerate(zip(panel.epitopes, panel.alleles, panel.weights)):
             if len(ep) < 9:
                 continue
-            best_st, _ = self.best_register(ep, a)
+            if frozen and a in frozen:
+                best_st = self._frames[i]                # converged: reuse, skip the frame search
+            else:
+                best_st, _ = self.best_register(ep, a)
+                if self._frames.get(i) != best_st:
+                    changed.add(a)
+            frames[i] = best_st
             w9 = ep[best_st:best_st + 9]
             for j, c in zip(self.anchors, core_pos):
                 prefs[j].setdefault(a, Counter())[w9[c]] += wt
@@ -406,6 +466,7 @@ class AnchorModel:
             offsets.setdefault(len(ep), {}).setdefault(a, Counter())[best_st] += wt
         self.prefs = prefs
         self.offset_prefs = offsets
+        self._frames = frames
         for j in self.anchors:
             cc = Counter()
             for cnt in prefs[j].values():
@@ -413,6 +474,7 @@ class AnchorModel:
             self.bg[j] = cc
         self._nbg = {j: (sum(self.bg[j].values()) or 1) for j in self.anchors}
         self._cache = {}
+        return changed
 
     def _best_frame(self, peptide, allele, k):
         """Frame start that motif component ``k`` scores best. Falls back to the pooled model's frame
