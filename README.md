@@ -40,8 +40,8 @@ development plan is in [`ROADMAP.md`](ROADMAP.md).
 5. **Motif logos** — per-allele information-content logos with length distributions.
 6. **Pseudosequence diffusion** — allele similarity, clustering, and kernel-shrinkage pooling over
    34-mer groove pseudosequences (rare-allele rescue).
-7. **Quantitative affinity (IC50 nM)** — a pan-allele Potts / direct-coupling model (peptide×pocket
-   couplings, fit on measured IEDB IC50) predicts nM affinity and the neoantigen-fitness differentials
+7. **Quantitative affinity (IC50 nM)** — a pan-allele Potts-style model (single-site fields + peptide×pocket
+   coupling features, ridge-fit on measured IEDB IC50) predicts nM affinity and the neoantigen-fitness differentials
    — Łuksza amplitude `A = Kd_WT/Kd_MT` and the differential agretopicity index — for MHC-I and MHC-II,
    human and mouse. Optional structure-based MJ ΔΔG via the `[structure]` extra (`tcren`).
 
@@ -94,9 +94,12 @@ store.anchor_model("mhc1", prior_strength="auto")            # empirical-Bayes t
 store.anchor_model("mhc2", pseudocount=50)                   # BLOSUM substitution pseudocount (a measured
                                                              # negative; off by default — see CHANGELOG)
 
-# calibrated, cross-allele-comparable output (NetMHCpan %Rank_EL analogue + P(present) + band)
+# calibrated, cross-allele-comparable output on the ALLELE-SPECIFICITY axis (which allele, not
+# how presentable): %rank vs a random-peptide background + P(present) + band. NLVPMVATV is
+# unambiguously A*02:01-restricted (it tops the list) but bands mid-pack against A*02:01's own
+# ligands. For the presentation axis (NetMHCpan %Rank_EL: is it presented at all?) use `predict`.
 for r in store.restriction("NLVPMVATV", cls="mhc1", calibrated=True):
-    print(r.allele, r.rank, r.p_present, r.band)             # e.g. HLA-A*02:01  1.6  0.98  weak
+    print(r.allele, r.rank, r.p_present, r.band)             # HLA-A*02:01 ranks first
 
 mhcmatch.logo.motif(store, "HLA-A*02:01", "mhc1")
 
@@ -119,7 +122,14 @@ mhcmatch scan my_protein.fasta --correction bh                # presented window
 mhcmatch source MKTAYIAKW --proteome human                    # HF name auto-fetched (or a FASTA path)
 mhcmatch logo 'HLA-A*02:01'
 mhcmatch affinity NLVPMVATV --allele 'A*02:01' --wt NLVPMVATL   # IC50 nM + amplitude A=Kd_WT/Kd_MT + DAI
+mhcmatch predict neoantigens.fasta --cls mhc1                   # score a FASTA -> native + .scored.csv
+mhcmatch span PKYVKQNTLKLAT --allele 'DRB1*15:01'              # MHC-II core -> full presented ligand
 ```
+
+**"I have a FASTA of neoantigens — which are presented, by which allele?"** → `mhcmatch predict
+peptides.fasta --cls mhc1`. A plain one-peptide-per-record FASTA works; the pipeline schema (WT
+counterpart, agretopicity) only *adds* variant annotation. It carries the task-correct presentation
+defaults (`background="proteome"`), so this — not `restriction` — is the presentation-axis entry point.
 
 ## Data
 

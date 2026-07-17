@@ -232,7 +232,7 @@ calibrated=True)` and the CLI `--calibrated`).
      clips decoys asymmetrically (13.7% of MHC-I frequent decoy lookups vs 0.3% of positives). But the
      metric is **flat from eps=0 to 1e-3** (degrading only at ≥1e-2): clipping shifts decoys roughly
      uniformly, and uniform shifts do not move a ranking. It sits in a flat basin. Not the lever, and not
-     removable cheaply — 3 arithmetic sites (`diffusion.py:484,514,724`), and deleting it needs a
+     removable cheaply — 3 arithmetic sites (`diffusion.py:673,703,913`), and deleting it needs a
      `_bg_prob` floor under `background="ligand"` (ZeroDivisionError on X/B/U/Z) and a length floor
      (`length_logodds` math-domain error on a 12-mer).
   3. ~~Peptide-flanking regions (PFRs)~~ — **refuted.** MHC-II scores only the 9-mer core
