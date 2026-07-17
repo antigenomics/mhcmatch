@@ -6,6 +6,26 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.6.1] — 2026-07-17
+
+### Fixed: the Potts affinity model's 8-mer encoding collision (code; weights deferred)
+
+`PottsAffinity` encoded an MHC-I peptide as `core[:5] + core[-4:]`. For an 8-mer that puts index 4 in
+two slots (`+5` and `−4` both land there), so the residue contributed two perfectly-correlated field
+terms and a double-weighted coupling — the same defect v0.5.0 fixed for `AnchorModel` and never
+propagated to the affinity head. Both the scorer and the trainer (`train_potts.py`) now route MHC-I
+through `store.mhc1_positions`, the de-duplicated mapping. The two encodings agree for every L ≥ 9, so
+only 8-mers were affected.
+
+**The shipped weights are unchanged and 8-mer scores are unchanged** (bit-exact no-op, verified over
+400 random 8–11mers). The encoding is bound to the weights by a version field in the `.npz` meta:
+`PottsAffinity` uses the legacy slice for the shipped v0.6.0 weights and switches to the de-duplicated
+mapping only for weights refit with it, so training and inference can never disagree about an 8-mer.
+The numeric refit is deferred — the shipped `.npz` cannot currently be reproduced from the (gitignored,
+regenerable) training data even with the legacy encoding, so a fresh fit would change every MHC-I
+score for reasons unrelated to this defect. Tracked in the benchmark repo's
+`results/potts_mhc1_encoding_defects.md`, which also documents the still-open length-blindness (defect 1).
+
 ## [0.6.0] — 2026-07-17
 
 **MHC-II scoring changes by default**, and two gates that were measuring the wrong thing are fixed.
