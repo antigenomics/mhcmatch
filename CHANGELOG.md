@@ -24,6 +24,12 @@ versioning is [SemVer](https://semver.org).
 - **`build_scorer` is now memoised on the store.** It depends only on the panel, never on the query
   alleles, so scoring many samples against one store reuses a single build instead of paying the
   MHC-II model and calibrator per call. Measured on a real sample: 39.6 s cold → 0.0 s warm.
+- **`agretopicity` was computed from the rounded WT nM.** It divided the unrounded mutant IC50 by
+  `wt_affinity_nm`, which is rounded to 1dp for display, while `dai` recomputes both unrounded — so
+  the two disagreed by up to ~0.5% and could report opposite directions for the same peptide near
+  agretopicity 1. Now divides the unrounded pair (the displayed field keeps its rounding). The
+  `amplitude` field comment also claimed `A = Kd_WT/Kd_MT`, omitting the saturation correction
+  `affinity.py` applies — which reads as "amplitude == 1/agretopicity", and it is not.
 - **`bench/compare/sample_concordance.py` read the class-II pipeline column with the sign flipped.**
   The pipeline renames TLimmuno2's `Rank` to `affinity`, so it is a rank fraction (lower = stronger,
   gated at 0.1), not TLimmuno2's `prediction` (higher = stronger). It negates like class I.
