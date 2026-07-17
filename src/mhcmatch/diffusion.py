@@ -167,10 +167,11 @@ class AnchorModel:
         self.offset_prefs = {}
         self._off_cache = {}
         for _ in range(register_em if cls == "mhc2" else 0):
-            self._refit_registers(store)
-        # after the EM has settled, so the prior describes the frames score() actually reads
+            self._refit_registers(store)   # also tallies self.offset_prefs, free (same sweep)
         if cls == "mhc2":
-            self._fit_offset_prior(store)
+            if not register_em:            # no EM sweep to piggyback on -- pay for one
+                self._fit_offset_prior(store)
+            self._smooth_offset_prior()
 
     def _learned_weights(self, cls, prune_dpi):
         seqs = load_pseudo(cls)
@@ -271,6 +272,7 @@ class AnchorModel:
         panel = store._panel[self.cls]
         core_pos = [j - 1 for j in self.anchors]
         prefs = {j: {} for j in self.anchors}
+        offsets = {}
         for ep, a, wt in zip(panel.epitopes, panel.alleles, panel.weights):
             if len(ep) < 9:
                 continue
@@ -278,7 +280,12 @@ class AnchorModel:
             w9 = ep[best_st:best_st + 9]
             for j, c in zip(self.anchors, core_pos):
                 prefs[j].setdefault(a, Counter())[w9[c]] += wt
+            # tally the core offset in the same sweep -- this loop already has the frame, and a
+            # separate pass over the panel to re-derive it cost +35% on model build (see
+            # _fit_offset_prior).
+            offsets.setdefault(len(ep), {}).setdefault(a, Counter())[best_st] += wt
         self.prefs = prefs
+        self.offset_prefs = offsets
         for j in self.anchors:
             cc = Counter()
             for cnt in prefs[j].values():
@@ -374,36 +381,48 @@ class AnchorModel:
             out.append(self._anchor_logodds([w[c] for c in core_pos], allele, raw, eps, mask, ctx))
         return out
 
+    def _smooth_offset_prior(self):
+        """Add the Laplace pseudo-count to every frame of every (length, allele) offset counter.
+
+        Long peptides are rare (the panel has ~1.4k 25mers against ~84k 15mers) but offer the most
+        frames, so without this an offset that merely went unobserved at some length would score as
+        near-impossible on a handful of peptides. It self-adapts: negligible against a frequent
+        allele's thousands of ligands, dominant where there are five. Run once, after the counts are
+        final -- applying it per EM pass would compound it.
+        """
+        for length, by_allele in self.offset_prefs.items():
+            for cnt in by_allele.values():
+                for i in range(length - 8):
+                    cnt[i] += _OFFSET_ALPHA
+        self._off_cache = {}
+
     def _fit_offset_prior(self, store):
-        """Estimate ``P(frame start | length, allele)`` from the register-EM's final assignments.
+        """Standalone core-offset tally, for ``register_em=0`` only.
+
+        With the EM on (the default) :meth:`_refit_registers` tallies offsets in the sweep it already
+        makes over the panel, so this costs nothing. With the EM off there is no such sweep, and this
+        pays for its own -- ~3.5s on the full human class-II panel, a 35% model-build regression that
+        is not worth paying on the default path.
+
+        Estimate ``P(frame start | length, allele)`` from the model's frame assignments.
 
         Real class-II cores sit ~3 residues from the peptide's N-terminus -- the groove protects the
         core while exopeptidases erode the flanks to a steady state -- so the offset is sharply peaked
         on real ligands (measured H/Hmax 0.67 for DRB1_0101 15mers) while the *same* model lands
         uniformly on random peptides (0.998). :meth:`score`'s max-over-frames discards that signal.
         Counts are kept per length and shrunk over groove-similar alleles at score time, so an allele
-        with no ligands of a given length borrows its neighbours' offset shape.
-
-        A Laplace pseudo-count is added per frame before shrinkage. Long peptides are rare (the panel
-        has ~1.4k 25mers against ~84k 15mers) but offer the most frames, so without it an offset that
-        merely went unobserved at some length would score as near-impossible on a handful of peptides.
-        The pseudo-count self-adapts: negligible against a frequent allele's thousands of ligands,
-        dominant where there are five.
+        with no ligands of a given length borrows its neighbours' offset shape. Smoothing is
+        :meth:`_smooth_offset_prior`, applied once by the caller.
         """
-        panel = store._panel[self.cls]
         prefs = {}
+        panel = store._panel[self.cls]
         for ep, a, wt in zip(panel.epitopes, panel.alleles, panel.weights):
             if len(ep) < 9:
                 continue
             st, _ = self.best_register(ep, a)
             if st >= 0:
                 prefs.setdefault(len(ep), {}).setdefault(a, Counter())[st] += wt
-        for length, by_allele in prefs.items():
-            for cnt in by_allele.values():
-                for i in range(length - 8):
-                    cnt[i] += _OFFSET_ALPHA
         self.offset_prefs = prefs
-        self._off_cache = {}
 
     def _offset_logprior(self, allele, length):
         """``log P(frame start | length, allele)`` per frame, kernel-shrunk over groove neighbours.
