@@ -194,10 +194,15 @@ def test_mhc2_register_max_and_em():
         recs.append({"epitope": "S" * pad + coreY + "S" * (4 - pad),
                      "mhc_a": "DRA*01:01", "mhc_b": "DRB1*13:01", "mhc_class": "MHCII"})
     store = Store.from_records(recs * 4)
+    # n_motifs=1: this pins REGISTER behaviour, and the K=3 default (v0.7) would confound it here --
+    # a 2-allele toy panel gives cross-allele shrinkage no real neighbourhood, so K=3 EM on 20
+    # near-identical ligands per allele is noisy enough to flip a toy ordering. On a realistic panel
+    # (neighbours to borrow from) K=3 preserves and sharpens the specificity; the mixture itself is
+    # tested in test_mixture_recovers_two_planted_binding_modes.
     for reg in ("max", "marginal"):                          # register_em=2 by default
-        am = store.anchor_model("mhc2", register=reg)
+        am = store.anchor_model("mhc2", register=reg, n_motifs=1)
         assert am.score("GG" + coreX + "GG", "DRB1_1501") > am.score("GG" + coreX + "GG", "DRB1_1301")
-    mx = store.anchor_model("mhc2", register="max")
+    mx = store.anchor_model("mhc2", register="max", n_motifs=1)
     assert mx.score("G" + coreX + "GGG", "DRB1_1501") == mx.score("GGG" + coreX + "G", "DRB1_1501")
 
 
@@ -610,6 +615,97 @@ def test_length_motifs_backoff_is_exact_when_the_length_is_unseen():
     for p in ("SIINFEHL", "AAAAAAAAAAA"):                     # A*02:01 has no 8- or 11-mers here
         assert on.score(p, "HLA-A02:01") == off.score(p, "HLA-A02:01")
     assert on.score("GILGFVFTL", "HLA-A02:01") != off.score("GILGFVFTL", "HLA-A02:01")
+
+
+# Class-II binding modes. Every core residue is drawn from outside _FLANK, so the core is locatable
+# and the register EM settles on the planted offset -- fill the core from the flank alphabet instead
+# and the frame search lands elsewhere, putting the planted positions outside MHC2_ANCHORS (1,4,6,9)
+# where nothing can see them. Same reason test_mhc2_offset_prior_learns_where_the_cores_sit does it.
+_FLANK = "AGILPRSTV"
+_MODE_A = "WKFWKFWKF"                                     # DRB1*15:01, mode 1
+_MODE_B = "DEQDEQDEQ"                                     # DRB1*15:01, mode 2 -- disjoint from A
+_MODE_C = "YNMYNMYNM"                                     # DRB1*13:01
+
+
+def _mhc2_bimodal_store(n=400, seed=0):
+    """One class-II allele whose ligands come from TWO planted binding modes, plus a unimodal one.
+
+    The modes share no residue at any core position, so a single PWM can only represent them as their
+    average -- exactly the blur a mixture is supposed to resolve.
+    """
+    rng = random.Random(seed)
+
+    def pep(core, off=3):
+        return ("".join(rng.choice(_FLANK) for _ in range(off)) + core
+                + "".join(rng.choice(_FLANK) for _ in range(6 - off)))
+
+    recs = []
+    for core in (_MODE_A, _MODE_B):
+        for _ in range(n):
+            recs.append({"epitope": pep(core), "mhc_a": "DRA*01:01", "mhc_b": "DRB1*15:01",
+                         "mhc_class": "MHCII"})
+    for _ in range(n):                                    # a second allele: the ligand null needs one
+        recs.append({"epitope": pep(_MODE_C), "mhc_a": "DRA*01:01", "mhc_b": "DRB1*13:01",
+                     "mhc_class": "MHCII"})
+    return Store.from_records(recs), pep
+
+
+def test_n_motifs_semantics_and_mhc1_is_inert():
+    # The safety property the mixture rests on: n_motifs=1 must not ENTER the mixture path
+    # (prefs_mix is None), so scoring is the exact pre-mixture single-PWM code -- turning the knob on
+    # cannot regress anything until it is deliberately set past 1. Asserted structurally rather than
+    # against the default, so the shipped default (K=3, see below) can move without breaking this.
+    store, pep = _mhc2_bimodal_store()
+    assert store.anchor_model("mhc2", n_motifs=1).prefs_mix is None, "K=1 must stay the single-PWM path"
+    assert store.anchor_model("mhc2", n_motifs=2).prefs_mix is not None, "K=2 must build a mixture"
+    assert _mhc1_store().anchor_model("mhc1", n_motifs=3).prefs_mix is None, "MHC-I: inert at any K"
+
+
+def test_mhc2_ships_the_mixture_by_default():
+    # The v0.7 default: human MHC-II scores the K=3 mixture unless n_motifs is overridden. A separate
+    # test from the semantics above so a future default change touches exactly one assertion.
+    store, pep = _mhc2_bimodal_store()
+    default = store.anchor_model("mhc2")
+    assert default.n_motifs == 3 and default.prefs_mix is not None
+    probes = [pep(_MODE_A) for _ in range(5)] + [pep(_MODE_B) for _ in range(5)]
+    single = store.anchor_model("mhc2", n_motifs=1)
+    assert any(default.score(p, "DRB1_1501") != single.score(p, "DRB1_1501") for p in probes), \
+        "the default mixture must actually change scores vs the single PWM"
+
+
+def test_mixture_recovers_two_planted_binding_modes():
+    # The claim the mixture exists to make: an allele with two binding modes gets one component per
+    # mode, fit from its own ligands by EM -- no external predictor's labels involved.
+    #
+    # Component INDICES are arbitrary (EM label-switches freely, and the crc32 init decides which way),
+    # so the assertion is on separation, never on "component 0 == mode A". That is also why components
+    # must not be shrunk across alleles -- see AnchorModel._dist.
+    store, pep = _mhc2_bimodal_store()
+    m = store.anchor_model("mhc2", n_motifs=2)
+    ra = [m._responsibilities(pep(_MODE_A), "DRB1_1501")[0] for _ in range(100)]
+    rb = [m._responsibilities(pep(_MODE_B), "DRB1_1501")[0] for _ in range(100)]
+    mean = lambda v: sum(v) / len(v)                                          # noqa: E731
+    assert abs(mean(ra) - mean(rb)) > 0.5, "EM did not separate the two planted modes"
+    # held-out peptides of each mode land on opposite components (modulo the label swap)
+    flip = mean(ra) < mean(rb)
+    acc = (sum(1 for x in ra if (x < 0.5) == flip) + sum(1 for x in rb if (x > 0.5) == flip)) / 200
+    assert acc > 0.8, f"planted-mode recovery {acc:.2f}"
+    # both modes are actually used -- a collapsed mixture (one dead component) would also "separate"
+    assert min(math.exp(x) for x in m.log_pi["DRB1_1501"]) > 0.2, "a component collapsed"
+
+
+def test_mixture_component_backs_off_to_the_pooled_motif_when_empty():
+    # The backoff identity that makes capacity self-adapting: a component with no counts for an allele
+    # returns that allele's pooled (shrunk) motif *identically*, so an allele too thin to fill K
+    # components degrades to today's single PWM with no ligand-count threshold to choose.
+    store, _ = _mhc2_bimodal_store()
+    m = store.anchor_model("mhc2", n_motifs=2)
+    j = m.anchors[0]
+    assert m._dist(j, "DRB1_1501", False, 0) is not m._dist(j, "DRB1_1501", False, None), \
+        "a populated component must not be the pooled dict"
+    m.prefs_mix[0][j].pop("DRB1_1501", None)              # simulate an empty component
+    m._cache_mix.clear()
+    assert m._dist(j, "DRB1_1501", False, 0) == m._dist(j, "DRB1_1501", False, None)
 
 
 def test_length_bg_uniform_flattens_the_null_length_mix():
