@@ -83,6 +83,58 @@ remains neutral-to-negative for MHC-II; this work does not change that.
   pass a raw-score gate two thirds of the time. The gate is fixed separately and orthogonally by the
   length-conditional `%rank` above.
 
+### Assay provenance: the panel is not what SOURCES said, and the benchmark can now say so
+
+`bench/affinity/SOURCES.md` claimed the presentation tables "keep eluted-ligand positives only".
+**False** — **36,881** class-II (epitope, allele) pairs have no mass-spectrometry assay at all
+(14,969 competitive-radioactivity, 13,416 high-throughput multiplexed, 8,343
+competitive-fluorescence, 237 Edman degradation). What the tables drop is the quantitative
+*measurement*, not the binding-assay *rows*. Both SOURCES files are corrected.
+
+New: `bench/compare/provenance.py` + `run_compare.py --el-only`, restricting the panel to
+mass-spec-supported pairs. Assay type is absent from the pmhc schema, so it is joined from the raw
+IEDB dump on `(epitope, reference_id)` — present in both tables, so no restriction-name parsing —
+and cached (3.19M pairs, ~90s to build).
+
+**The share is confounded with allele, which is what makes it matter:**
+
+| panel | frequent alleles | thin alleles | alleles with zero EL |
+|---|---|---|---|
+| human class II | 25.7% non-MS | 83.1% non-MS | **15 of 52** |
+| mouse class II | H-2-IAb 4% non-MS | H-2-IEd/IAs/IAq ~100% | **6 of 13** |
+
+- **The human `rare` stratum does not survive EL-only filtering** — 15 of 52 alleles have zero eluted
+  ligands, 8 more are under a 20-ligand floor. So mhcmatch's rare-stratum win is a binding-assay
+  result reported as a presentation one. Now stated in `ROADMAP.md` §6 and
+  `bench/results/compare_mhc2_human_hard_ligandbg_elonly.md`.
+- **It is not a gap-closer.** Both tools score higher on EL-only positives, and the frequent gap
+  barely moves (AUROC -0.052 → -0.046, AUPRC -0.125 → -0.112). Correctness fix, not a win.
+- Binding-assay rows stay in training — those peptides do bind, so they are valid *motif* evidence.
+  What they are not is evidence about *boundaries* (`bench/results/length_prior_mhc2.md`).
+
+### First mouse MHC-II presentation benchmark — and it is three alleles
+
+`bench/results/compare_mhc2_mouse_random_proteomebg.md`. mhcmatch ties NetMHCIIpan on AUROC for the
+one well-sampled allele (H-2-IAb, 7,990 EL: 0.830 vs 0.832), trails its AUPRC (0.341 vs 0.490), and
+leads on the two thin ones (H-2-IAd/H-2-IEk: AUROC +0.040, AUPRC +0.179). Same shape as human —
+competitive where data is thin, behind where it is rich — but n=1/n=2 corroborates, it does not
+demonstrate.
+
+**`--el-only` is mandatory for mouse.** Without it the hard-decoy task scores NetMHCIIpan **below
+chance** (medium AUROC 0.464): for an allele like H-2-IEd the positives are old radioactivity-assay
+peptides while the decoys are H-2-IAb's ~10k real eluted ligands, so an EL-trained tool ranks the
+decoys higher. That run was made, recognised as an artifact, and deleted rather than published. This
+refutes the idea that mouse is the "uncontaminated axis" — the problem was never NetMHCIIpan's thin
+mouse training, it is the panel's provenance imbalance.
+
+- **Fixed:** `run_compare.py` hardcoded `human.fasta.gz` as the decoy proteome regardless of
+  `--species`. Measured impact was small (KL(mouse‖human) over proteome AA frequencies = 0.00043
+  nats), but the flag was being ignored. `PROTEOME_AA_FREQ` / `proteome_markov1.tsv` stay human as a
+  documented approximation.
+- `provenance.el_only(min_peptides=20)` drops alleles too thin to support a metric, and **logs** what
+  it dropped. Without the floor the mouse "rare" stratum is three alleles with 2, 3 and 11 ligands,
+  where mhcmatch "wins" AUROC by +0.248 and the opponent's PPV@P is a coin flip.
+
 ## [0.5.0] — 2026-07-16
 
 **Allele coverage was broken: 68% of MHC-I and 80% of MHC-II alleles could not be resolved at all.**

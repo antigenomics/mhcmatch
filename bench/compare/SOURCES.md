@@ -18,6 +18,17 @@ Fetch: this is the Hugging Face `isalgo/pmhc_data` LFS repo, cloned at `~/hf/pmh
 **Caveat (positives-only):** no measured nM, no true negatives. Decoys are *presumed* negatives
 (proteome/shuffle for screening; other-allele ligands for allele-specificity) — see the plan.
 
+**Caveat (provenance):** the tables above are labelled "MHC eluted ligands" but are EL-**dominated**,
+not EL-only — **36,881** class-II (epitope, allele) pairs have no mass-spec assay (competitive
+radioactivity/fluorescence, high-throughput multiplexed, even Edman degradation). The share is
+confounded with allele: human frequent alleles are 25.7% non-MS but thin ones 83.1%, and 15 of 52
+have **zero** eluted ligands; mouse H-2-IAb is 96% EL while H-2-IEd/IAs/IAq are 0%. Assay type is not
+in the pmhc schema — `compare/provenance.py` joins it from `dump/mhc_ligand_full.tsv.gz` on
+`(epitope, reference_id)` and caches it, and `run_compare.py --el-only` restricts the panel to
+mass-spec-supported pairs. **Use `--el-only` for any presentation claim, and mandatorily for mouse**
+(without it the mouse hard-decoy task scores NetMHCIIpan below chance by pitting binding-assay
+positives against real-ligand decoys). Full correction: `bench/affinity/SOURCES.md`.
+
 ## Competing predictors
 
 | tool | version | path | key files |
@@ -65,3 +76,6 @@ class II = TLimmuno2 `affinity` prediction (higher=stronger; its `affinity_perce
 - `bench/results/private/concordance_alekseech_*.md` — **computed**, **PRIVATE** (gitignored). Regenerate:
   `python bench/compare/sample_concordance.py --sample Alekseech --cls both` (local only).
 - `bench/compare/_cache/*.pkl` — **computed** cached (examples, NetMHC scores); gitignored; delete to force a fresh NetMHC sweep.
+- `bench/compare/_cache/ms_pairs.pkl` — **computed** `{(epitope, PMID)}` with a mass-spec assay (3,185,084 pairs), derived from `dump/mhc_ligand_full.tsv.gz`; gitignored, ~90s to rebuild. Regenerate: `python bench/compare/provenance.py [--refresh]`.
+- `bench/results/compare_mhc2_human_hard_ligandbg_elonly.md` — **computed** EL-only human stratum. Regenerate: add `--el-only` to the `--cls mhc2 --decoy-mode hard` command above.
+- `bench/results/compare_mhc2_mouse_random_proteomebg.md` — **computed**, the first mouse MHC-II presentation benchmark (3 evaluable alleles). Regenerate: `python bench/compare/run_compare.py --cls mhc2 --species mouse --benchmark holdout --decoy-mode random --background proteome --footprint adaptive --tier full --el-only`.

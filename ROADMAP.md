@@ -169,7 +169,13 @@ shortlist, human):
 
 - **Allele-specificity** (hard negatives = other alleles' ligands — the restriction task mhcmatch is
   built for): **mhcmatch beats NetMHCpan** on MHC-I medium+frequent (AUROC, AUPRC, PPV@k all p<0.001;
-  frequent AUPRC 0.81 vs 0.69); MHC-II wins rare AUROC, trails AUPRC (data-limited class).
+  frequent AUPRC 0.81 vs 0.69); MHC-II **wins the rare stratum on all three metrics since v0.6's
+  register fix** (AUROC 0.836 vs 0.813, AUPRC 0.515 vs 0.473, PPV@P 0.402 vs 0.372; n.s. at n=19) and
+  trails medium/frequent. **Read that rare win with the provenance caveat**: restricted to
+  mass-spec-supported pairs the rare stratum *does not exist* — 15 of 52 human class-II panel alleles
+  have zero eluted ligands and 8 more fall under a 20-ligand floor, so the rare result is a
+  binding-assay benchmark reported as a presentation one. The frequent gap survives EL-only filtering
+  almost unchanged (AUROC −0.052 → −0.046). See `bench/results/compare_mhc2_human_hard_ligandbg_elonly.md`.
 - **Presented-vs-random screening** (NetMHCpan's %rank home turf): NetMHCpan wins on precision;
   training-free tuning can't close a 0.06–0.16 AUPRC gap → a learned reranker is the lever (Phase 3b).
 - **Speed:** mhcmatch ~68× faster (195k vs 2.9k peptide-allele scores/s), pure Python.
@@ -219,6 +225,20 @@ needing fetched neoantigen/self/pathogen sets are flagged.
   NetMHCIIpan-4.3i: **every stratum × metric improves, none regresses**; the rare stratum flips to
   winning all three metrics (n.s. at n=19) and the frequent AUPRC gap closes -0.174→-0.125 (hard) /
   -0.308→-0.250 (screening). See `bench/results/register_em_mhc2.md` and `compare_mhc2_human_*.md`.
+- ~~**Mouse MHC-II head-to-head** (never run)~~ **done, and it is three alleles** —
+  `bench/results/compare_mhc2_mouse_random_proteomebg.md`. mhcmatch ties NetMHCIIpan on AUROC for the
+  one well-sampled allele (H-2-IAb, 7,990 EL ligands: 0.830 vs 0.832) and trails AUPRC (0.341 vs
+  0.490); it leads on the two thin ones (H-2-IAd, H-2-IEk: AUPRC +0.179). Same shape as human, but at
+  n=1/n=2 it corroborates rather than demonstrates. **`--el-only` is mandatory for mouse**: the panel's
+  provenance is confounded with allele (H-2-IAb 96% EL vs H-2-IEd/IAs/IAq 0%), so the hard-decoy task
+  pits binding-assay positives against real-ligand decoys and drives NetMHCIIpan **below chance**
+  (AUROC 0.464) — that run was made, recognised as an artifact, and deleted rather than published.
+  This also **refutes the premise that mouse is the uncontaminated axis**: the problem is not
+  NetMHCIIpan's thin mouse training, it is the panel's provenance imbalance.
+- **Species hardcodes**: `run_compare.py`'s decoy proteome was hardcoded to `human.fasta.gz`
+  regardless of `--species` — **fixed**. `PROTEOME_AA_FREQ` and `proteome_markov1.tsv` remain human;
+  measured, that is a documented approximation and not a blocker (KL(mouse‖human) over proteome AA
+  frequencies = **0.00043 nats**, max 8.4% relative on any residue).
 - **Class-II / mouse calibration**: pool nulls over kernel clusters for thin mouse panels; a
   per-allele %rank vs a random-peptide background for cross-allele-comparable scores.
 - ~~Feed the shrunk null into `restriction`~~ **done** (diffuse gate/rescue, vote still ranks).

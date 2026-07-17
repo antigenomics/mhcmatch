@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 import alleles as al  # noqa: E402
 import metrics  # noqa: E402
 import predictors  # noqa: E402
+import provenance  # noqa: E402
 import report  # noqa: E402
 import splits  # noqa: E402
 import task  # noqa: E402
@@ -152,6 +153,13 @@ def main():
     ap.add_argument("--decoy-mode", default="random", choices=("random", "hard"),
                     help="random = proteome+shuffle (presented-vs-random); hard = other-allele "
                          "ligands (allele-specificity)")
+    ap.add_argument("--el-only", action="store_true",
+                    help="restrict the whole panel to mass-spec-supported (peptide, allele) pairs. "
+                         "The pmhc tables are EL-dominated but NOT EL-only, and the non-MS share is "
+                         "confounded with allele (human: 25.7%% of frequent alleles' peptides vs "
+                         "83.1%% of thin ones; mouse: H-2-IAb 96%% EL vs H-2-IEd 0%%), so a "
+                         "hard-decoy task can pit one allele's binding-assay peptides against "
+                         "another's real ligands. See compare/provenance.py.")
     ap.add_argument("--register", default="marginal", choices=("marginal", "max"),
                     help="MHC-II register handling: marginalize under the learned core-offset prior "
                          "(default) or max over frames (pre-v0.6). Ignored for MHC-I.")
@@ -172,6 +180,11 @@ def main():
     rng = random.Random(args.seed)
 
     rc = splits.load_canonical(args.pmhc_dir, args.cls, args.species, args.tier)
+    if args.el_only:
+        n0, a0 = sum(len(v) for v in rc.values()), len(rc)
+        rc = provenance.el_only(rc, args.pmhc_dir, args.cls, args.species, args.tier)
+        print(f"# el-only: {sum(len(v) for v in rc.values())}/{n0} peptides, {len(rc)}/{a0} alleles "
+              f"kept (mass-spec-supported)")
     ev = splits.select_eval_alleles(rc, args.cls, rng, args.n_sample)
     if args.limit_alleles and len(ev) > args.limit_alleles:  # keep a rare+frequent mix
         rmap = task.rarity(rc)
@@ -191,10 +204,16 @@ def main():
     # v0.5.0 pseudosequence fix silently changed which alleles are eligible while the key did not.
     # The harness then served examples built from a stale eval set (rare n=21 vs the committed 24).
     # Regenerating every run costs a 35-70s NetMHC sweep and is always consistent with the model.
-    prot = task.ProteomeSampler(os.path.join(args.pmhc_dir, "proteome", "human.fasta.gz"))
+    #
+    # Decoys come from the evaluated species' own proteome. This was hardcoded to human, so a
+    # `--species mouse --decoy-mode random` run silently scored mouse ligands against human decoys.
+    # (Measured impact is small -- KL(mouse||human) over proteome AA frequencies is 0.00043 nats --
+    # but the flag was being ignored, which is the kind of thing that is only harmless until it isn't.)
+    prot = task.ProteomeSampler(os.path.join(args.pmhc_dir, "proteome", f"{args.species}.fasta.gz"))
     hard = task.HardNegativeSampler(rc) if args.decoy_mode == "hard" else None
     examples = gen_examples(rc, ev, args.cls, args.benchmark, prot, forb, rng,
-                            args.frac, args.cap, args.n_decoys, args.decoy_mode, hard)
+                            args.frac, args.cap, args.n_decoys, args.decoy_mode, hard,
+                            rc_eval=rc_eval)
     print(f"# scoring {len(examples)} examples with NetMHC ...", file=sys.stderr)
     nm = predictors.netmhc_scores(examples, args.cls)
     mm = score_mhcmatch(rc, examples, args.cls, args.benchmark, args.footprint,
