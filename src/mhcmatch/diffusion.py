@@ -15,8 +15,8 @@ from collections import Counter
 from functools import lru_cache
 from importlib import resources
 
-from .pseudoseq import (Pseudoseq, learn_anchor_weights, load_pseudo, load_structural_weights,
-                        normalize_allele)
+from .pseudoseq import (Pseudoseq, blosum62_conditional, learn_anchor_weights, load_pseudo,
+                        load_structural_weights, normalize_allele)
 
 # Presentation-scoring footprint: the N-pocket (P1,P2,P3) + C-pocket (PΩ-1,PΩ). P2/PΩ are the
 # primary buried anchors; P1/P3/PΩ-1 are pocket-proximal auxiliary positions that empirically lift
@@ -86,7 +86,8 @@ class AnchorModel:
     def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0,
                  learn_weights=True, prune_dpi=False, weights="learned", blend_alpha=0.5,
                  register_em=2, footprint="anchor", rare_max=30, background="ligand",
-                 length_prior="score", length_motifs=True, register="marginal", n_motifs=3):
+                 length_prior="score", length_motifs=True, register="marginal", n_motifs=3,
+                 pseudocount=0.0, pseudo_matrix=None):
         """``weights``: ``"learned"`` (per-anchor MI over the panel, default), ``"structural"``
         (contact-frequency weights from pMHC structures, :func:`load_structural_weights`),
         ``"blend"`` (convex mix ``blend_alpha``*structural + (1-``blend_alpha``)*learned, mean-1
@@ -199,6 +200,66 @@ class AnchorModel:
             self._smooth_offset_prior()
             if n_motifs > 1:               # needs the offset prior: the E-step scores the marginal
                 self._refit_mixture(store)
+        self._add_pseudocounts(pseudocount, pseudo_matrix)   # last: everything above fits on raw counts
+
+    def _add_pseudocounts(self, beta, matrix=None):
+        """Mass-preserving BLOSUM substitution pseudocount on every residue counter (Nielsen et al. 2004,
+        PMID 14962912). ``beta=0`` (default) returns immediately and the model is bit-identical.
+
+            ``w = β / (n + β)``;   ``ĉ(r) = (1-w)·c(r) + w·Σ_r' c(r')·P(r|r')``
+
+        Nothing else in the model grades an *unobserved* residue by its chemistry. At a well-sampled anchor
+        that makes the count-0/count-1 boundary a cliff -- HLA-A*30:01 P2 (n=734) scores a residue seen once
+        at -1.0 nats and one seen zero times at -4.6, a 3.8-nat assertion resting on a ~1σ Poisson
+        difference. Neither the τ prior nor ``eps`` can fix it: τ carries ~1% of the mass at a frequent
+        allele, and ``eps`` is a constant, so it cannot say *which* unobserved residue is plausible.
+
+        Three properties, each load-bearing:
+
+        * **Mass-preserving** (``Σ_r ĉ = n``, since ``Σ_r P(r|r') = 1``). :meth:`Pseudoseq.shrink` reads
+          both ``n_own`` and ``m``, so leaving the mass alone keeps its ``τ/(n+τ)`` balance exactly as it
+          was at every allele -- β is orthogonal to τ. The additive form ``c(r) + β·g(r)`` instead crushes
+          the kernel prior that wins the rare stratum (at n=5, β=50: τ's share 67% → 15%).
+        * **Count-adaptive** ``w``. A fixed blur commutes with ``shrink`` and so smooths a 5-ligand allele
+          and a 23k-ligand allele by exactly the same amount -- pure bias at the saturated end. ``w`` → 0
+          as n → ∞, so the estimator stays consistent and A*02:01 is left alone (0.2% at β=50).
+        * **Called last in** ``__init__``. ``self.bg``, the MI weights, the register-EM frames and the
+          mixture's component *assignments* are all fit on the raw counters above and stay bit-identical at
+          any β; only the scored distributions move.
+
+        ``matrix`` overrides the conditional (``{observed: {r: P(r|observed)}}``) -- the benchmark passes an
+        MJ-derived one to measure BLOSUM-vs-MJ without mhcmatch vendoring MJ data or taking a tcren dep.
+        """
+        if beta <= 0:
+            return
+        cond = matrix or blosum62_conditional()
+
+        def smooth(c):
+            n = sum(c.values())
+            if n <= 0:                     # LOAO/zero-shot: no own counts, w would be 1 and g undefined
+                return c
+            w = beta / (n + beta)
+            g = Counter()
+            for obs, cnt in c.items():
+                pr = cond.get(obs)
+                if pr is None:             # X/B/Z/U: no substitution model -- leave its mass in place
+                    g[obs] += cnt
+                    continue
+                for r, p in pr.items():
+                    g[r] += cnt * p
+            return Counter({r: (1 - w) * c.get(r, 0.0) + w * g.get(r, 0.0) for r in set(c) | set(g)})
+
+        for j in self.anchors:
+            for a in list(self.prefs[j]):
+                self.prefs[j][a] = smooth(self.prefs[j][a])
+        for d in (self.prefs_len or {}).values():
+            for a in list(d):
+                d[a] = smooth(d[a])
+        for mix in (self.prefs_mix or []):
+            for d in mix.values():
+                for a in list(d):
+                    d[a] = smooth(d[a])
+        self._cache, self._cache_len, self._cache_mix = {}, {}, {}
 
     def _learned_weights(self, cls, prune_dpi):
         seqs = load_pseudo(cls)
