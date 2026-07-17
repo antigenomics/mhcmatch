@@ -509,7 +509,7 @@ class Store:
     def anchor_model(self, cls="mhc1", h=2.0, prior_strength=10.0, anchors=None, learn_weights=True,
                      prune_dpi=False, weights="learned", register_em=2, footprint="anchor",
                      rare_max=30, background="ligand", length_prior="score", length_motifs=True,
-                     register="marginal", n_motifs=1):
+                     register="marginal", n_motifs=3):
         """Anchor-factored presentation model with cross-allele kernel-shrinkage diffusion.
 
         See :class:`mhcmatch.diffusion.AnchorModel`. The diffusion rescues rare alleles by borrowing
@@ -526,7 +526,8 @@ class Store:
         default) integrates the unobserved binding register out under a learned core-offset prior;
         ``"max"`` restores the pre-v0.6 max-over-frames -- see
         :meth:`mhcmatch.diffusion.AnchorModel.score`. ``n_motifs`` (MHC-II) fits that many motif
-        components per allele and scores their mixture; ``1`` (default) is the single-PWM model --
+        components per allele and scores their mixture; ``3`` (default) closes ~40% of the
+        frequent-stratum gap to NetMHCIIpan, ``1`` is the single-PWM model --
         see :meth:`mhcmatch.diffusion.AnchorModel._refit_mixture`.
         """
         from .diffusion import AnchorModel

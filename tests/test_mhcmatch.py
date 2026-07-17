@@ -194,10 +194,15 @@ def test_mhc2_register_max_and_em():
         recs.append({"epitope": "S" * pad + coreY + "S" * (4 - pad),
                      "mhc_a": "DRA*01:01", "mhc_b": "DRB1*13:01", "mhc_class": "MHCII"})
     store = Store.from_records(recs * 4)
+    # n_motifs=1: this pins REGISTER behaviour, and the K=3 default (v0.7) would confound it here --
+    # a 2-allele toy panel gives cross-allele shrinkage no real neighbourhood, so K=3 EM on 20
+    # near-identical ligands per allele is noisy enough to flip a toy ordering. On a realistic panel
+    # (neighbours to borrow from) K=3 preserves and sharpens the specificity; the mixture itself is
+    # tested in test_mixture_recovers_two_planted_binding_modes.
     for reg in ("max", "marginal"):                          # register_em=2 by default
-        am = store.anchor_model("mhc2", register=reg)
+        am = store.anchor_model("mhc2", register=reg, n_motifs=1)
         assert am.score("GG" + coreX + "GG", "DRB1_1501") > am.score("GG" + coreX + "GG", "DRB1_1301")
-    mx = store.anchor_model("mhc2", register="max")
+    mx = store.anchor_model("mhc2", register="max", n_motifs=1)
     assert mx.score("G" + coreX + "GGG", "DRB1_1501") == mx.score("GGG" + coreX + "G", "DRB1_1501")
 
 
@@ -645,19 +650,27 @@ def _mhc2_bimodal_store(n=400, seed=0):
     return Store.from_records(recs), pep
 
 
-def test_n_motifs_1_is_bit_identical_and_mhc1_is_inert():
-    # The safety property the mixture rests on, same shape as the length-motif backoff above: K=1 must
-    # reproduce the single-PWM model BIT-FOR-BIT, so turning the knob on cannot regress anything until
-    # it is deliberately turned past 1. MHC-I ignores n_motifs entirely (the mixture is class-II only).
+def test_n_motifs_semantics_and_mhc1_is_inert():
+    # The safety property the mixture rests on: n_motifs=1 must not ENTER the mixture path
+    # (prefs_mix is None), so scoring is the exact pre-mixture single-PWM code -- turning the knob on
+    # cannot regress anything until it is deliberately set past 1. Asserted structurally rather than
+    # against the default, so the shipped default (K=3, see below) can move without breaking this.
     store, pep = _mhc2_bimodal_store()
-    base = store.anchor_model("mhc2")                      # no n_motifs argument at all
-    k1 = store.anchor_model("mhc2", n_motifs=1)
-    assert k1.prefs_mix is None and base.prefs_mix is None
+    assert store.anchor_model("mhc2", n_motifs=1).prefs_mix is None, "K=1 must stay the single-PWM path"
+    assert store.anchor_model("mhc2", n_motifs=2).prefs_mix is not None, "K=2 must build a mixture"
+    assert _mhc1_store().anchor_model("mhc1", n_motifs=3).prefs_mix is None, "MHC-I: inert at any K"
+
+
+def test_mhc2_ships_the_mixture_by_default():
+    # The v0.7 default: human MHC-II scores the K=3 mixture unless n_motifs is overridden. A separate
+    # test from the semantics above so a future default change touches exactly one assertion.
+    store, pep = _mhc2_bimodal_store()
+    default = store.anchor_model("mhc2")
+    assert default.n_motifs == 3 and default.prefs_mix is not None
     probes = [pep(_MODE_A) for _ in range(5)] + [pep(_MODE_B) for _ in range(5)]
-    for p in probes:
-        assert k1.score(p, "DRB1_1501") == base.score(p, "DRB1_1501")
-    assert store.anchor_model("mhc2", n_motifs=2).prefs_mix is not None, "K=2 must actually build"
-    assert _mhc1_store().anchor_model("mhc1", n_motifs=3).prefs_mix is None, "MHC-I: inert"
+    single = store.anchor_model("mhc2", n_motifs=1)
+    assert any(default.score(p, "DRB1_1501") != single.score(p, "DRB1_1501") for p in probes), \
+        "the default mixture must actually change scores vs the single PWM"
 
 
 def test_mixture_recovers_two_planted_binding_modes():

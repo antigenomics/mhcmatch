@@ -63,8 +63,11 @@ PROTEOME_AA_FREQ = {"A": 0.07129, "C": 0.02080, "D": 0.04936, "E": 0.07306, "F":
 def load_markov1():
     """Order-1 human-proteome transition matrix ``{prev_residue: {residue: P(residue|prev)}}`` for
     ``background="markov"`` -- a context-conditional presentation null. Vendored from UP000005640
-    (``data/proteome_markov1.tsv``). Measured to lift MHC-I *rare*-allele screening AUPRC (~+0.02
-    over the order-0 proteome null); neutral for medium/frequent, so it is opt-in."""
+    (``data/proteome_markov1.tsv``). Opt-in and **not** the default: measured against the order-0
+    proteome null it is slightly *worse* on MHC-I rare-allele screening (AUPRC 0.820 vs 0.839, −0.019;
+    AUROC −0.006; PPV −0.020 -- `compare_mhc1_human_random_{markov,proteome}bg.md`) and neutral on
+    medium/frequent. Kept for the adjacent-position covariance it injects, which may help elsewhere;
+    it is not a win on the axis measured so far."""
     text = resources.files("mhcmatch.data").joinpath("proteome_markov1.tsv").read_text()
     lines = text.strip().splitlines()
     cols = lines[0].split("\t")[1:]
@@ -83,7 +86,7 @@ class AnchorModel:
     def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0,
                  learn_weights=True, prune_dpi=False, weights="learned", blend_alpha=0.5,
                  register_em=2, footprint="anchor", rare_max=30, background="ligand",
-                 length_prior="score", length_motifs=True, register="marginal", n_motifs=1):
+                 length_prior="score", length_motifs=True, register="marginal", n_motifs=3):
         """``weights``: ``"learned"`` (per-anchor MI over the panel, default), ``"structural"``
         (contact-frequency weights from pMHC structures, :func:`load_structural_weights`),
         ``"blend"`` (convex mix ``blend_alpha``*structural + (1-``blend_alpha``)*learned, mean-1
@@ -112,8 +115,10 @@ class AnchorModel:
         pre-v0.6 max-over-frames. See :meth:`score`.
 
         ``n_motifs`` (MHC-II only) fits that many motif components per allele by EM and scores their
-        mixture -- see :meth:`_refit_mixture`. ``1`` (default) is bit-identical to the single-PWM
-        model; it is the only value that has been measured, so treat >1 as experimental."""
+        mixture -- see :meth:`_refit_mixture`. ``3`` (default, human MHC-II) closes ~40% of the
+        frequent-stratum AUPRC gap to NetMHCIIpan-4.3i; ``1`` is the single-PWM model (bit-identical to
+        the pre-mixture code -- it never enters the mixture path). Measured on human MHC-II only; thin
+        alleles back off to the single PWM regardless of ``K``."""
         self.cls = cls
         self.background = background
         self.length_prior = length_prior
