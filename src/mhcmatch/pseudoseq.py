@@ -202,6 +202,44 @@ def _weighted_blosum(s: str, t: str, w) -> float:
                if s[i] != "X" and t[i] != "X")
 
 
+#: BLOSUM62's own background -- the Blocks pair marginals ``p(i,*)`` of Henikoff & Henikoff's
+#: ``blosum62.qij`` (PMID 8743679). The matrix's lambda and this background are jointly determined:
+#: ``s_ab = nint(2·log2(q_ab / (p_a·p_b)))`` holds only with *these* frequencies. Deliberately **not**
+#: :data:`mhcmatch.diffusion.PROTEOME_AA_FREQ`, which answers a different question (the scoring null).
+BLOSUM62_BG = {
+    "A": .0742, "R": .0516, "N": .0446, "D": .0536, "C": .0247, "Q": .0343, "E": .0543,
+    "G": .0741, "H": .0262, "I": .0679, "L": .0989, "K": .0582, "M": .0250, "F": .0474,
+    "P": .0385, "S": .0572, "T": .0509, "W": .0130, "Y": .0323, "V": .0729,
+}
+
+
+@lru_cache(maxsize=1)
+def blosum62_conditional() -> dict:
+    """``{observed: {r: P(r | observed)}}`` -- the BLOSUM62 substitution conditional.
+
+    The ``q(a|b)`` of Nielsen et al. 2004 (PMID 14962912), used to spread an anchor's observed residue
+    counts onto chemically similar residues (see :meth:`mhcmatch.diffusion.AnchorModel._add_pseudocounts`).
+
+    No ``q_ij`` table and no new dependency are needed. BLOSUM half-bits are
+    ``s_ab = 2·log2(q_ab / (p_a·p_b))``, so ``q_ab = p_a·p_b·2^(s_ab/2)`` and
+
+        ``P(a|b) = q_ab / p_b = p_a · 2^(s_ab/2)``   (normalized over ``a``)
+
+    -- only the 20 background frequencies survive. Reads ``.similarity()`` (the raw signed half-bits);
+    ``.penalty()`` is the Gram form ``s_aa + s_bb - 2·s_ab``, which forces the diagonal to zero and so
+    cannot recover the log-odds.
+    """
+    import seqtree
+
+    m = seqtree.SubstitutionMatrix.blosum62()
+    out = {}
+    for b in _AAU:
+        col = {a: BLOSUM62_BG[a] * 2 ** (m.similarity(a, b) / 2) for a in _AAU}
+        z = sum(col.values())
+        out[b] = {a: v / z for a, v in col.items()}
+    return out
+
+
 def mutual_information(xs, ys) -> float:
     """MI(X;Y) in bits for two aligned categorical sequences."""
     n = len(xs)

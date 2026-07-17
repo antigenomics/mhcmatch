@@ -694,6 +694,40 @@ def test_mixture_recovers_two_planted_binding_modes():
     assert min(math.exp(x) for x in m.log_pi["DRB1_1501"]) > 0.2, "a component collapsed"
 
 
+def test_pseudocount_is_inert_at_zero_and_mass_preserving_above():
+    # The two properties the pseudocount rests on, asserted structurally.
+    #
+    # (1) beta=0 must leave every counter untouched, so the committed bench tables re-run bit-for-bit
+    #     and the knob can land without re-baselining anything.
+    # (2) beta>0 must preserve each counter's MASS. Pseudoseq.shrink reads both n_own and m, so mass is
+    #     what sets the tau/(n+tau) balance -- if the pseudocount moved it, beta would silently crowd out
+    #     the kernel prior that carries the rare stratum (n=5, beta=50 would take tau's share 67% -> 15%).
+    store = _mhc1_store()
+    base = store.anchor_model("mhc1", pseudocount=0.0)
+    off = store.anchor_model("mhc1", pseudocount=0.0)
+    on = store.anchor_model("mhc1", pseudocount=50.0)
+    for j in base.anchors:
+        for a in base.prefs[j]:
+            assert dict(base.prefs[j][a]) == dict(off.prefs[j][a]), "beta=0 must be inert"
+            n0 = sum(base.prefs[j][a].values())
+            assert math.isclose(sum(on.prefs[j][a].values()), n0, rel_tol=1e-9), "mass must be preserved"
+    # and it does what it exists for: every residue gets chemically-graded mass, not a flat floor
+    j, a = base.anchors[0], next(iter(base.prefs[base.anchors[0]]))
+    assert len(base.prefs[j][a]) < 20 < len(on.prefs[j][a]) + 1, "beta>0 must fill the unobserved tail"
+
+
+def test_pseudocount_leaves_the_fitted_latents_alone():
+    # Why it is the LAST statement of __init__: the background null, the register-EM frames and the
+    # mixture's component assignments are all fit on the raw counters, so they must not move with beta.
+    # This is what protects the shipped K=3 gain structurally rather than by sweeping for a safe beta.
+    store, _ = _mhc2_bimodal_store()
+    a = store.anchor_model("mhc2", pseudocount=0.0)
+    b = store.anchor_model("mhc2", pseudocount=100.0)
+    assert {j: dict(c) for j, c in a.bg.items()} == {j: dict(c) for j, c in b.bg.items()}, \
+        "the log-odds null must be fit on raw counts"
+    assert a.log_pi == b.log_pi, "mixture component assignments must not move with beta"
+
+
 def test_mixture_component_backs_off_to_the_pooled_motif_when_empty():
     # The backoff identity that makes capacity self-adapting: a component with no counts for an allele
     # returns that allele's pooled (shrunk) motif *identically*, so an allele too thin to fill K
