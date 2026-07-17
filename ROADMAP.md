@@ -202,16 +202,50 @@ calibrated=True)` and the CLI `--calibrated`).
 
 ### 6b. Open items
 
-- **Presentation background / null (highest-value, training-free)** — the screening-task gap is a
-  *null-choice* problem, not a negative-set problem: the anchor log-odds denominator is the
-  pooled-**ligand** marginal, so the score measures allele-**specificity** (allele vs average ligand)
-  and is blind to ligand-vs-proteome "presentability". Add a proteome/random (or Markov) background so
-  the score becomes `log(θ_A / p_proteome)` = a presentation log-odds; expose `background=
-  "ligand"|"proteome"|"blend"`. A Markov (order-k) proteome model also injects the adjacent-position
-  covariance the independent-PWM misses. See appendix §4.
+- ~~**Presentation background / null (highest-value, training-free)**~~ — **mostly shipped; stop
+  calling it open.** The diagnosis was right and the fix landed: `background="proteome"` makes the score
+  `log(θ_A / p_proteome)`, a presentation log-odds, and `background="markov"` adds the order-1
+  adjacent-position covariance. Both are in `AnchorModel`; the CLI defaults to `proteome`; **the
+  screening benchmark has been running `--background proteome` all along.** It delivered on MHC-I
+  (frequent screening AUPRC 0.77 → 0.86) and is what the MHC-I frequent/medium screening wins rest on.
+  Order-1 Markov was measured and is marginally *worse* (frequent AUPRC 0.879 vs 0.881), so it stays
+  opt-in. **The residue is `background="blend"`** (a convex ligand/proteome mix) — a knob, not an
+  insight, and unmeasured. What remains genuinely open is the **MHC-II** frequent screening gap
+  (−0.149 AUPRC), which persists *with* the proteome null applied — so it is not a null-choice problem
+  any more. Three hypotheses for it are now measured and dead (see below).
+- **What the MHC-II frequent screening gap is NOT** — three mechanisms measured and refuted, so no
+  future session re-chases them:
+  1. ~~Estimator variance / a missing PWM prior~~ — **refuted.** mhcmatch had *no* amino-acid
+     pseudocount at all, and the regime looked ideal for one (only 28.0% of MHC-II *frequent*
+     (allele, anchor) cells observe all 20 residues; median min count 2; the count-0/count-1 boundary is
+     a 3.8-nat cliff resting on a ~1σ Poisson difference; τ carries just 0.9% of the mass at a frequent
+     allele; and `_m_step` gives each K=3 component ~n/K counts with no prior). Adding the field-standard
+     BLOSUM pseudocount (Nielsen 2004) makes frequent screening AUPRC **monotonically worse**
+     (0.625→0.602 over β=0→200; gap −0.149→−0.173). Mechanism: it grades the never-seen penalty, which
+     helps bulk ordering (rare/medium AUROC +0.006/+0.009 at β=25) but lifts the *chemically plausible
+     near-miss* decoys that sit at the top of the ranking — and AUPRC/PPV are the top of the ranking. The
+     model's overconfidence about never-seen residues was doing useful work. Ships inert at
+     `pseudocount=0`. `bench/results/blosum_pseudocount.md`.
+  2. ~~The `eps=1e-3` floor~~ — **refuted.** It does extinguish the τ prior at frequent alleles (the
+     prior delivers median p=1.25e-05, ~80× below eps, so sub-eps residues all score identically) and it
+     clips decoys asymmetrically (13.7% of MHC-I frequent decoy lookups vs 0.3% of positives). But the
+     metric is **flat from eps=0 to 1e-3** (degrading only at ≥1e-2): clipping shifts decoys roughly
+     uniformly, and uniform shifts do not move a ranking. It sits in a flat basin. Not the lever, and not
+     removable cheaply — 3 arithmetic sites (`diffusion.py:484,514,724`), and deleting it needs a
+     `_bg_prob` floor under `background="ligand"` (ZeroDivisionError on X/B/U/Z) and a length floor
+     (`length_logodds` math-domain error on a 12-mer).
+  3. ~~Peptide-flanking regions (PFRs)~~ — **refuted.** MHC-II scores only the 9-mer core
+     (`MHC2_CORE`), discarding ~6 of a 15-mer's residues, while NetMHCIIpan-4.x encodes PFR composition
+     and length — a real, fair, within-peptide feature gap needing no `-context`. But measured against
+     random-sampled ligands and length-matched real proteome windows, the PFR carries **less** signal
+     than the core already scored once the mass-spec artifacts are removed: KL(PFR‖decoy PFR) vs
+     KL(core‖decoy core) = 0.051 vs 0.049 raw, but **0.023 vs 0.028 after dropping C/M/W**. Cysteine
+     alone is ~39% of both KLs and is depleted **0.04× in the core and 0.03× in the PFR** — a
+     whole-peptide MS sample-prep artifact the core score already exploits, not PFR biology.
 - **Learned reranker for screening (aldan3 GPU)** — *deferred: GPU-limited.* Logistic/GBM head over
-  frozen training-free features (per-position log-odds + %rank + pseudoseq embedding); only if the
-  presentation-background fix leaves a residual gap.
+  frozen training-free features (per-position log-odds + %rank + pseudoseq embedding). With the
+  presentation-background fix shipped and the three mechanisms above refuted, the residual MHC-II gap has
+  no cheap training-free explanation left on the table — this moves up the queue by elimination.
 - Full-tier + temporal-split cluster sweep; affinity band on the measured-nM allowlist (TESLA/Gfeller
   only); MixMHCpred/MixMHC2pred; the LaTeX paper (methodology = appendix §8).
 
