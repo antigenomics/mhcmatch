@@ -240,8 +240,8 @@ needing fetched neoantigen/self/pathogen sets are flagged.
   NetMHCIIpan-4.3i: **every stratum × metric improves, none regresses**; the rare stratum flips to
   winning all three metrics (n.s. at n=19) and the frequent AUPRC gap closes -0.174→-0.125 (hard) /
   -0.308→-0.250 (screening). See `bench/results/register_em_mhc2.md` and `compare_mhc2_human_*.md`.
-- **Class-II motif mixture: `AnchorModel(n_motifs=K)` — measured, default-off, awaiting a sign-off on
-  the default.** The register EM answered *which frame* and left *which motif* unbuilt. K components
+- ~~**Class-II motif mixture: `AnchorModel(n_motifs=K)`**~~ **shipped v0.7.0 — K=3 is the MHC-II
+  default.** The register EM answered *which frame* and left *which motif* unbuilt. K components
   per allele, fit by EM on the whole corpus (no external labels), scored as
   `log Σ_k π_k Σ_r P(r|L,a)·exp(s_{k,r})`. **K=3 is the optimum** (monotone to 3, flat-to-down at 4):
   frequent AUPRC **0.558→0.614** hard (gap −0.124→−0.068) and **0.521→0.625** screening
@@ -250,9 +250,12 @@ needing fetched neoantigen/self/pathogen sets are flagged.
   PWM against DR's 0.6–0.94. Capacity self-adapts with no ligand-count threshold: an empty component
   returns the pooled motif *identically*. Caution on record: the components are 90–98% the *same*
   motif (per-anchor JS 0.02–0.05 of 1.0), so the gain is **not** "two binding motifs" — each component
-  takes its own best frame, so it is plausibly a richer *register* model. Untested; pin components to
-  the pooled frame and re-run to find out. Build 2.1s→18.8s (K=3, opt-in). Untested: mouse, MHC-I,
-  `%rank`/calibration. See `bench/results/motif_mixture_mhc2.md`.
+  takes its own best frame, so it is plausibly a richer *register* model. **Open loop:** pin
+  components to the pooled frame and re-run to confirm the gain is register, not motif. Cost lands on
+  the calibrated paths only — `restriction(calibrated=True)`/`predict` ~3× slower (MHC-II build
+  2.1s→~19s); the vote and span-ranking paths are untouched. **Still unmeasured: mouse MHC-II, and the
+  `n_motifs`×`%rank`-calibration interaction** — the escape hatch is `n_motifs=1`. See
+  `bench/results/motif_mixture_mhc2.md`.
 - ~~**Mouse MHC-II head-to-head** (never run)~~ **done — two tables, two questions, both reported.**
   *Reproduce IEDB's mouse annotation* (`compare_mhc2_mouse_hard_ligandbg.md`): **mhcmatch wins all
   nine cells**, medium AUROC +0.422 / AUPRC +0.424 (p<0.001) — recorded observation, NetMHCIIpan's
