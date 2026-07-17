@@ -83,8 +83,20 @@ def test_write_scored_csv(tmp_path):
 
 def test_windows_class1_identity():
     # MHC-I: the peptide IS the ligand -> synthesise and model peptides are both the epitope.
-    synth, model = P._windows(None, "mhc1", "GILGFVFTL", "XXGILGFVFTLXX", "HLA-A02:01", 2)
+    synth, model = P._windows("mhc1", "GILGFVFTL", "XXGILGFVFTLXX", 2, None)
     assert synth == "GILGFVFTL" and model == "GILGFVFTL"
+
+
+def test_windows_class2_uses_the_scored_register():
+    # MHC-II: the span is cut from the register the caller scored, not a re-derived one.
+    core, protein = "FVKQNAQAL", "MMMMKKFVKQNAQALPPPPP"
+    epitope = protein[4:19]                                  # 15-mer, core at offset 2 within it
+    assert epitope[2:11] == core
+    synth, model = P._windows("mhc2", epitope, protein, 4, 2)
+    assert core in synth and core in model
+    # a different register yields a different span -- which is exactly why it must be passed in
+    other, _ = P._windows("mhc2", epitope, protein, 4, 0)
+    assert other != synth
 
 
 def test_aligned_wt():
