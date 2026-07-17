@@ -554,7 +554,8 @@ def test_recommended_flanks_are_the_measured_ones():
 
 
 # -- MHC-I length awareness -------------------------------------------------------------------
-from mhcmatch.diffusion import MHC1_ANCHORS, MHC1_CORE                  # noqa: E402
+from mhcmatch.diffusion import (MHC1_ANCHORS, MHC1_CORE, _EM_CAP,        # noqa: E402
+                                    _TAU_DEFAULT, _TAU_MIN)
 from mhcmatch.store import mhc1_positions                               # noqa: E402
 
 
@@ -726,6 +727,50 @@ def test_pseudocount_leaves_the_fitted_latents_alone():
     assert {j: dict(c) for j, c in a.bg.items()} == {j: dict(c) for j, c in b.bg.items()}, \
         "the log-odds null must be fit on raw counts"
     assert a.log_pi == b.log_pi, "mixture component assignments must not move with beta"
+
+
+def test_register_em_converge_reaches_a_real_fixed_point():
+    # v0.7.2 HEADLINE, previously untested: register_em="converge" runs the best-frame EM to each
+    # allele's OWN fixed point. Mutation-tested -- freezing every allele after pass 1 (which deletes the
+    # entire DP gain, frequent AUPRC 0.667->0.625) left all tests green until this one existed.
+    # The defining property is exactly a fixed point: one more UNFROZEN pass must change nothing.
+    store, _ = _mhc2_bimodal_store()
+    am = store.anchor_model("mhc2", register_em="converge", n_motifs=1)
+    assert 0 < am._em_passes < _EM_CAP, "must terminate by convergence, not the runaway cap"
+    assert am._refit_registers(store, frozen=None) == set(), \
+        "at the fixed point a full unfrozen pass reassigns no allele's frames"
+
+
+def test_footprint_adaptive_masks_rare_and_not_frequent():
+    # The mode EVERY committed MHC-I benchmark number is generated under, previously untested: adaptive
+    # scores rare alleles on the primary anchors only and frequent ones on the full core. Mutation-tested
+    # -- making _score_mask always return None (never mask) left all tests green until this one existed.
+    store = _mhc1_store()                                    # A02:01 n=12 (frequent), B07:02 n=3 (rare)
+    am = store.anchor_model("mhc1", footprint="adaptive", rare_max=5)
+    assert am._score_mask("HLA-A02:01") is None, "well-sampled allele scores the full core"
+    assert am._score_mask("HLA-B07:02") is not None, "rare allele is masked to the anchors"
+    assert len(am._score_mask("HLA-B07:02")) < len(am.anchors), "the mask actually drops positions"
+
+
+def test_prior_strength_auto_fits_lower_tau_where_alleles_differ():
+    # v0.7.2, previously untested: empirical-Bayes tau per position -- small where alleles genuinely
+    # differ (trust own data), large where they agree (shrink to the pool). Tested on _fit_tau directly
+    # since it reads only self.prefs/self.anchors. Anchor 1: four alleles each peak on their OWN residue
+    # (max between-allele variance -> tau at the floor). Anchor 2: all four share one flat mix
+    # (zero variance -> tau at the ceiling).
+    am = _mhc1_store().anchor_model("mhc1")
+    am.anchors = (1, 2)
+    peaks = {"a": "L", "b": "K", "c": "W", "d": "D"}
+    flat = collections.Counter({"W": 75, "D": 75, "K": 75, "F": 75})
+    am.prefs = {1: {al: collections.Counter({r: 300}) for al, r in peaks.items()},
+                2: {al: collections.Counter(flat) for al in peaks}}
+    t = am._fit_tau(min_n=200, min_alleles=3)
+    assert t[1] < t[2], "tau must be smaller at the allele-discriminating position"
+    assert t[1] <= _TAU_MIN + 1e-9, "a maximally-specific anchor pins tau at the floor"
+    # and it never invents a tau it cannot support: below min_n every position falls back to the default
+    small = _mhc1_store().anchor_model("mhc1", prior_strength="auto")   # n=12/3, both under min_n=200
+    assert all(v == _TAU_DEFAULT for v in small._tau.values()), \
+        "too few well-sampled alleles -> scalar default, not a fabricated per-position tau"
 
 
 def test_mixture_component_backs_off_to_the_pooled_motif_when_empty():
