@@ -250,6 +250,16 @@ needing fetched neoantigen/self/pathogen sets are flagged.
   regardless of `--species` — **fixed**. `PROTEOME_AA_FREQ` and `proteome_markov1.tsv` remain human;
   measured, that is a documented approximation and not a blocker (KL(mouse‖human) over proteome AA
   frequencies = **0.00043 nats**, max 8.4% relative on any residue).
+- ~~Un-gate the per-allele length prior for MHC-II (it is class-gated to MHC-I, and MHC-II is the
+  class with 12–25mer variation)~~ **measured and rejected** — `bench/results/length_prior_mhc2.md`,
+  reproduce with `bench/length_prior_mhc2.py`. The class gate is deliberate, not an oversight. MHC-II
+  *looks* more length-differentiated than MHC-I on the raw panel (15mer share range 0.991 vs MHC-I's
+  0.642) but every allele at the extremes has **zero mass-spec ligands** — DRB1\*14:05 is 100% 15mers
+  on 334 binding-assay peptides. Among the 12 best-sampled alleles MHC-II is *less* length-specific
+  than MHC-I (mean pairwise JSD 0.0231 vs 0.0343): the open groove does not gate length, trimming
+  does, and trimming is allele-agnostic (`spans_mhc2_human.md`, per-allele context JSD 0.003–0.010).
+  It also cannot move `bench/compare` at all — a per-length term cancels against length-matched
+  decoys. The real, allele-agnostic length signal already ships EL-only in `mhcmatch.ligand`.
 - **Class-II / mouse calibration**: pool nulls over kernel clusters for thin mouse panels; a
   per-allele %rank vs a random-peptide background for cross-allele-comparable scores.
 - ~~Feed the shrunk null into `restriction`~~ **done** (diffuse gate/rescue, vote still ranks).

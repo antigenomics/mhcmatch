@@ -131,7 +131,11 @@ class AnchorModel:
         # ``anchors`` lets the estimator resolve signed-anchor collisions the same way the scorer does.
         self.prefs = {j: store.anchor_preferences(cls, j, anchors=self.anchors)
                       for j in self.anchors}
-        # per-allele ligand-length distribution (MHC-I): the factor the anchor log-odds cannot see
+        # per-allele ligand-length distribution (MHC-I): the factor the anchor log-odds cannot see.
+        # The MHC-I gate is deliberate and was measured -- do not un-gate for MHC-II. Its open groove
+        # does not gate length (trimming does, and trimming is allele-agnostic), and the panel's
+        # apparent class-II length spread is binding-assay study design: the alleles at the extremes
+        # have zero mass-spec ligands. See bench/results/length_prior_mhc2.md.
         if length_prior and cls == "mhc1":
             from .store import _DEFAULT_LENGTHS
             self.len_prefs = store.length_preferences(cls)
