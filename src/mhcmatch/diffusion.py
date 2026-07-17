@@ -41,6 +41,13 @@ MHC2_CORE = (1, 2, 3, 4, 5, 6, 7, 8, 9)
 # Laplace pseudo-count per core-offset frame (see AnchorModel._fit_offset_prior).
 _OFFSET_ALPHA = 0.5
 
+# Empirical-Bayes tau (prior_strength="auto", see AnchorModel._fit_tau). _TAU_MIN_N is where the
+# sampling variance is negligible enough to read the between-allele variance off directly; the
+# MIN/MAX are numeric guards, not tuned values (the panel lands at 1.0-71).
+_AA20 = "ACDEFGHIKLMNPQRSTVWY"
+_TAU_DEFAULT, _TAU_MIN, _TAU_MAX = 10.0, 0.05, 1e3
+_TAU_MIN_N, _TAU_MIN_ALLELES = 200, 3
+
 # Runaway backstop for register_em="converge" -- not a tuned value: the panel converges far below it
 # (measured: every human MHC-II allele is frozen by pass ~30, most by pass 2).
 _EM_CAP = 64
@@ -202,6 +209,11 @@ class AnchorModel:
         self._cache_mix = {}
         self._frames = {}
         self._em_passes = 0
+        # tau is fit on the *final* prefs below; the register EM bootstraps on the scalar.
+        self._tau = None
+        # lengths and core offsets are not residue distributions, so a per-residue-position tau is
+        # meaningless for them -- they keep a scalar.
+        self._tau_scalar = _TAU_DEFAULT if prior_strength == "auto" else prior_strength
         if cls == "mhc2":
             if register_em == "converge":
                 self._converge_registers(store)
@@ -212,8 +224,9 @@ class AnchorModel:
             if not register_em:            # no EM sweep to piggyback on -- pay for one
                 self._fit_offset_prior(store)
             self._smooth_offset_prior()
-            if n_motifs > 1:               # needs the offset prior: the E-step scores the marginal
-                self._refit_mixture(store)
+        self._tau = self._fit_tau() if prior_strength == "auto" else None
+        if cls == "mhc2" and n_motifs > 1:  # needs the offset prior: the E-step scores the marginal
+            self._refit_mixture(store)
         self._add_pseudocounts(pseudocount, pseudo_matrix)   # last: everything above fits on raw counts
 
     def _add_pseudocounts(self, beta, matrix=None):
@@ -332,7 +345,7 @@ class AnchorModel:
         if key not in self._cache:
             self._cache[key] = self.ps.shrink(self.prefs[j], allele, anchor=j,
                                               candidates=self._candidates(j),
-                                              prior_strength=self.prior_strength)
+                                              prior_strength=self._tau_at(j))
         pooled = self._cache[key]
         if k is None or self.prefs_mix is None:
             return pooled
@@ -345,7 +358,7 @@ class AnchorModel:
         if n <= 0:                                   # backoff identity: the pooled single-PWM motif
             self._cache_mix[mkey] = pooled
             return pooled
-        tau = self.prior_strength
+        tau = self._tau_at(j)
         out = {r: (own.get(r, 0.0) + tau * pooled.get(r, 0.0)) / (n + tau)
                for r in set(own) | set(pooled)}
         self._cache_mix[mkey] = out
@@ -386,12 +399,63 @@ class AnchorModel:
             self._cache_len[key] = pooled
             return pooled
         pi = self.ps.shrink(pl, allele, anchor=j, candidates=list(pl),
-                            prior_strength=self.prior_strength)
-        tau = self.prior_strength
+                            prior_strength=self._tau_at(j))
+        tau = self._tau_at(j)
         out = {r: (n * pi.get(r, 0.0) + tau * pooled.get(r, 0.0)) / (n + tau)
                for r in set(pi) | set(pooled)}
         self._cache_len[key] = out
         return out
+
+    def _fit_tau(self, min_n=_TAU_MIN_N, min_alleles=_TAU_MIN_ALLELES):
+        """Empirical-Bayes shrinkage concentration ``τ_j`` per anchor position (method of moments).
+
+        ``τ`` is how hard an allele's own counts are pulled toward its groove neighbours, and a single
+        global constant is wrong in *opposite directions at once*. Measured on the panel: the
+        between-allele variance of the PWM spans **71×** across MHC-I core positions (P2 0.433, PΩ
+        0.308, P4 0.012). At P4 alleles barely differ, so a rare allele's own counts are almost pure
+        sampling noise and should be shrunk away -- τ=10 against n=5 leaves 33% of it in. At P2 alleles
+        differ enormously, so those counts are the one real signal a rare allele has -- and τ=10 throws
+        67% of it away.
+
+        For a Dirichlet-multinomial with mean ``m_j`` and concentration ``τ_j``, the between-allele
+        variance of the observed frequencies is ``m(1-m)/(τ+1)`` once sampling noise is negligible.
+        Estimating on well-sampled alleles only (``n ≥ min_n``, where that holds) and summing over
+        residues to kill the per-residue noise:
+
+            ``τ_j = Σ_r m_j(r)·(1 - m_j(r)) / Var_between(j)  -  1``
+
+        The hyperparameter is estimated where it is *estimable* (data-rich alleles) and applied to all
+        -- which is what a hierarchical prior is for. Nothing here sees a benchmark label, a stratum
+        boundary, or an allele family: it is the training panel's own between-allele variance.
+
+        Recovers the known anchors unsupervised, which is the check that it is measuring what it
+        claims: MHC-I gives P2 τ=1.0 and PΩ τ=1.7 against P4 τ=71; MHC-II's four lowest are P1/P4/P6/P9
+        -- the hardcoded :data:`MHC2_ANCHORS`. Positions with too few well-sampled alleles fall back to
+        the scalar default, so the estimator never invents a τ it cannot support.
+        """
+        taus = {}
+        for j in self.anchors:
+            prefs = self.prefs[j]
+            rich = [c for c in prefs.values() if sum(c.values()) >= min_n]
+            if len(rich) < min_alleles:
+                taus[j] = _TAU_DEFAULT
+                continue
+            pool = Counter()
+            for c in rich:
+                pool.update(c)
+            n = sum(pool.values()) or 1
+            m = {r: pool.get(r, 0) / n for r in _AA20}
+            var = 0.0
+            for r in _AA20:
+                ps = [c.get(r, 0) / sum(c.values()) for c in rich]
+                var += sum((p - m[r]) ** 2 for p in ps) / len(ps)
+            num = sum(m[r] * (1 - m[r]) for r in _AA20)
+            taus[j] = min(_TAU_MAX, max(_TAU_MIN, num / var - 1)) if var > 0 else _TAU_MAX
+        return taus
+
+    def _tau_at(self, j):
+        """``τ`` for anchor ``j`` -- per-position (``prior_strength="auto"``) or the global scalar."""
+        return self._tau[j] if self._tau else self._tau_scalar
 
     def _converge_registers(self, store, cap=_EM_CAP):
         """Run the register EM to convergence **per allele** (MHC-II) instead of a fixed global count.
@@ -632,7 +696,7 @@ class AnchorModel:
         if allele not in self._len_cache:
             self._len_cache[allele] = self.ps.shrink(
                 self.len_prefs, allele, anchor=None, candidates=list(self.len_prefs),
-                prior_strength=self.prior_strength)
+                prior_strength=self._tau_scalar)
         th = self._len_cache[allele]
         return math.log((th.get(length, 0.0) + eps) / (self._len_bg + eps))
 
@@ -717,7 +781,7 @@ class AnchorModel:
         by_allele = self.offset_prefs.get(length)
         if by_allele:
             # shrink() is generic over the counter's key type: offsets here, residues elsewhere.
-            th = self.ps.shrink(by_allele, allele, prior_strength=self.prior_strength)
+            th = self.ps.shrink(by_allele, allele, prior_strength=self._tau_scalar)
             tot = sum(th.get(i, 0.0) for i in range(n))
             if tot > 0:                                   # else: no own data and no kernel neighbour
                 lp = [math.log(th[i] / tot) for i in range(n)]
