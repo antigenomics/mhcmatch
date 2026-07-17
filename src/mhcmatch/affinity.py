@@ -75,7 +75,13 @@ class PottsAffinity:
         from .pseudoseq import load_pseudo
         d = np.load(str(resources.files("mhcmatch.data").joinpath(f"affinity_potts_{cls_name}.npz")))
         self.w, self.b = d["w"], float(d["b"])
-        self.PEPP, self.PSP, self.Q, _ = (int(x) for x in d["meta"])
+        meta = [int(x) for x in d["meta"]]
+        self.PEPP, self.PSP, self.Q = meta[:3]
+        # meta[4] is the peptide-encoding version, bound to the weights: 0 (or absent) is the pre-v0.6.1
+        # ``core[:5] + core[-4:]`` slice the shipped weights were fit with; 1 is the de-duplicated
+        # ``mhc1_positions`` mapping (see _pep_idx). The scorer follows the weights so the two cannot
+        # disagree about an 8-mer -- switching the runtime encoding without a refit would desync them.
+        self.enc = meta[4] if len(meta) > 4 else 0
         self.NF_PEP = self.PEPP * self.Q
         self.NF_FIELD = self.NF_PEP + self.PSP * self.Q
         self.cls = cls_name
@@ -90,9 +96,37 @@ class PottsAffinity:
 
     def _core(self, pep, key):
         if self.cls == "mhc1" or self.am is None:
-            return pep                              # end-anchored: N5+C4 covers the 9-mer core
+            return pep                              # end-anchored: mapped by _pep_idx below
         start, _ = self.am.best_register(pep, key)  # open groove: locate the 9-mer core register
         return pep[start:start + 9]
+
+    def _pep_idx(self, core):
+        """Residue index per peptide slot; ``-1`` marks a slot no residue fills.
+
+        Two encodings, selected by :attr:`enc` so the scorer always matches the weights it loaded:
+
+        - ``enc == 0`` (shipped weights, pre-v0.6.1): ``core[:5] + core[-4:]``. On an 8-mer ``+5`` and
+          ``-4`` both land on index 4, so that residue contributes two perfectly-correlated field
+          terms and a double-weighted coupling -- an inflated, mis-normalised likelihood ratio, the
+          same defect v0.5.0 fixed for ``AnchorModel`` and never propagated here.
+        - ``enc == 1``: the signed :data:`mhcmatch.diffusion.MHC1_CORE` anchors resolved by
+          :func:`mhcmatch.store.mhc1_positions`, the de-duplicated mapping the anchor scorer already
+          shares with its estimator. The two encodings agree for every ``L >= 9``, so **only 8-mer
+          scores differ** -- and only after the weights are refit with the matching encoding.
+
+        The encoding is bound to the weights, not chosen at call time: switching it without a refit
+        would score 8-mers against fields the model no longer has. ``train_potts.py`` encodes through
+        the same logic and stamps ``enc`` into the ``.npz``. MHC-II arrives as an exact 9-mer core,
+        which cannot collide, so both encodings coincide there.
+        """
+        if self.cls != "mhc1" or self.enc == 0:
+            return [self._AAI.get(c, -1) for c in list(core[:5]) + list(core[-4:])]
+        from .diffusion import MHC1_CORE           # local: store/diffusion/affinity would cycle
+        from .store import mhc1_positions
+        idxs = mhc1_positions(len(core), MHC1_CORE)
+        if idxs is None:                            # shorter than the footprint can map
+            return None
+        return [-1 if i is None else self._AAI.get(core[i], -1) for i in idxs]
 
     def predict_y(self, peptide, allele) -> float:
         """log50k score (higher = stronger binder), or ``nan`` if the allele can't be resolved."""
@@ -101,7 +135,9 @@ class PottsAffinity:
         if ps is None:
             return float("nan")
         core = self._core(peptide, key)
-        pidx = [self._AAI.get(c, -1) for c in list(core[:5]) + list(core[-4:])]
+        pidx = self._pep_idx(core)
+        if pidx is None:
+            return float("nan")
         w, Q, NF_PEP, NF_FIELD, PSP = self.w, self.Q, self.NF_PEP, self.NF_FIELD, self.PSP
         s = self.b
         for p, r in enumerate(pidx):
