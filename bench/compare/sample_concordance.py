@@ -270,7 +270,14 @@ def pipeline_calls(sample, cls):
     """The pipeline's own called epitopes: ``[(epitope, canonical_allele, strength)]``.
 
     strength is orientation-normalized (higher = stronger): class I ``-affinity_percentile``
-    (MHCflurry), class II ``+affinity`` (TLimmuno2 prediction; its percentile column is empty)."""
+    (MHCflurry), class II ``-affinity``.
+
+    Class II's ``affinity`` is **not** an affinity and **not** TLimmuno2's ``prediction``: the pipeline
+    renames TLimmuno2's ``Rank`` to ``affinity`` (``mhcii_binding_subworkflow/prefilter_csv/main.nf``),
+    so it is a rank *fraction* -- lower = stronger, hard-gated at 0.1 (= 10% rank), near-uniform on
+    [0, 0.1]. It therefore negates like class I. ``score_epitopes.py`` has it right
+    (``score_affinity = -affinity``); this reader had the sign flipped, which is part of why
+    ``bench/results/concordance_tesla1_mhc2.md`` reported mhcmatch~pipeline = -0.034."""
     scored, delim = _scored_file(sample, cls)
     out = []
     with open(scored) as fh:
@@ -285,7 +292,7 @@ def pipeline_calls(sample, cls):
                 fv = float(v)
             except (TypeError, ValueError):
                 fv = None
-            strength = None if fv is None else (-fv if cls == "mhc1" else fv)
+            strength = None if fv is None else -fv          # both classes: lower value = stronger
             out.append((ep, to_canonical(a, cls), strength))
     return out
 

@@ -142,7 +142,15 @@ def build_scorer(store, cls, background="proteome", footprint="adaptive", seed=0
     calibrator, and the quantitative IC50 head (:class:`PottsAffinity`), or ``None`` if unavailable.
 
     ``background="proteome"`` puts the presentation score on the presentation axis (ligand-vs-
-    proteome), matching NetMHCpan's %Rank_EL; ``"ligand"`` measures allele-specificity instead."""
+    proteome), matching NetMHCpan's %Rank_EL; ``"ligand"`` measures allele-specificity instead.
+
+    Memoised on ``store``: the result depends only on the panel, never on the query alleles, so
+    scoring many samples against one store reuses a single build (an MHC-II ``AnchorModel`` costs
+    ~10 s, and ``RankCalibrator`` fills its per-allele background lazily)."""
+    key = (cls, background, footprint, seed, n_bg)
+    cache = store.__dict__.setdefault("_scorer_cache", {})
+    if key in cache:
+        return cache[key]
     model = store.anchor_model(cls, footprint=footprint, background=background)
     panel = store._panel[cls]
     pos = defaultdict(list)
@@ -153,7 +161,8 @@ def build_scorer(store, cls, background="proteome", footprint="adaptive", seed=0
         aff = store.affinity_model(cls)
     except Exception:
         aff = None
-    return model, cal, aff
+    cache[key] = (model, cal, aff)
+    return cache[key]
 
 
 def _aligned_wt(var, seq):
@@ -168,18 +177,21 @@ def _aligned_wt(var, seq):
     return wt[base:base + len(seq)] if base >= 0 else None
 
 
-def _windows(store, cls, epitope, protein, allele, epi_start):
+def _windows(cls, epitope, protein, epi_start, register_start):
     """``(synthesise, model)`` peptides for ``epitope`` in its source ``protein`` context.
 
     MHC-I: the peptide *is* the ligand, so both are the epitope (identical, per the class-I convention).
     MHC-II: extend the 9-mer binding core to a 21-mer (:data:`ligand.ASSAY_FLANK`, contains the true
     ligand ~80% of the time -- to synthesise) and a 13-mer (:data:`ligand.STRUCTURE_FLANK`, the median
     resolved crystal -- to model), clipped at the protein termini. Falls back to the epitope on any
-    registration/location failure."""
+    registration/location failure.
+
+    ``register_start`` is the core offset the *scoring* model chose (``None`` for MHC-I, which has no
+    register), so the synthesised span is cut from the same register that was scored."""
     if cls == "mhc1":
         return epitope, epitope
     try:
-        rs, _ = store.anchor_model("mhc2").best_register(epitope, allele)
+        rs = register_start
         core = epitope[rs:rs + 9]
         cs = epi_start + rs
         if len(core) != 9 or protein[cs:cs + 9] != core:
@@ -249,7 +261,7 @@ def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
                             p.agretopicity = _round(nm / p.wt_affinity_nm, 4)
                         p.amplitude = _round(aff.amplitude(wtk, pep, a), 3)
                         p.dai = _round(aff.dai(wtk, pep, a), 3)
-            p.synth_peptide, p.model_peptide = _windows(store, cls, pep, protein, a, base + off)
+            p.synth_peptide, p.model_peptide = _windows(cls, pep, protein, base + off, rstart)
             by_window[header].append(p)
     out = []
     for header, preds in by_window.items():

@@ -6,6 +6,30 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [Unreleased]
+
+### Fixed
+
+- **`predict_windows` synthesised the wrong register (MHC-II).** `_windows()` called
+  `store.anchor_model("mhc2")` with the *defaults* (`footprint="anchor"`, `background="ligand"`) — a
+  different model from the `adaptive`/`proteome` one that had just scored the peptide — and re-derived
+  the binding register from it. So `synth_peptide` / `model_peptide` could be cut from a different
+  register than the one `anchors` / `tcr_facing` / `agretopicity` were reported for, breaking the
+  invariant asserted in the comment directly above the call. The scored register was already in scope
+  and is now passed in. `synth_peptide` is what gets ordered as a peptide, so this was a correctness
+  bug, not a cosmetic one.
+- **The same call rebuilt an `AnchorModel` per binder.** An MHC-II `AnchorModel` costs ~10 s to build
+  and `_windows()` ran once per kept binder — ~20 h of rebuilds over a 7,460-binder cohort. Passing
+  the register in removes the call entirely.
+- **`build_scorer` is now memoised on the store.** It depends only on the panel, never on the query
+  alleles, so scoring many samples against one store reuses a single build instead of paying the
+  MHC-II model and calibrator per call. Measured on a real sample: 39.6 s cold → 0.0 s warm.
+- **`bench/compare/sample_concordance.py` read the class-II pipeline column with the sign flipped.**
+  The pipeline renames TLimmuno2's `Rank` to `affinity`, so it is a rank fraction (lower = stronger,
+  gated at 0.1), not TLimmuno2's `prediction` (higher = stronger). It negates like class I.
+  `score_epitopes.py` had it right; the bench reader did not. Part of why
+  `bench/results/concordance_tesla1_mhc2.md` reports mhcmatch~pipeline = −0.034.
+
 ## [0.5.0] — 2026-07-16
 
 **Allele coverage was broken: 68% of MHC-I and 80% of MHC-II alleles could not be resolved at all.**
