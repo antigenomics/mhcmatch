@@ -302,6 +302,10 @@ class Store:
         if path is None:
             base = os.environ.get("MHCMATCH_PMHC")
             path = os.path.join(base, f"pmhc_{tier}.tsv.gz") if base else fetch_pmhc(tier)
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"pmhc table not found: {path!r}. Pass tier='shortlist'|'full' (auto-fetched "
+                "from HF, cached) or set $MHCMATCH_PMHC to a dir holding pmhc_<tier>.tsv.gz.")
         sp = _SPECIES.get(species) if species else None
         keep = {_CLASS[c] for c in classes}
         csv.field_size_limit(10 ** 7)

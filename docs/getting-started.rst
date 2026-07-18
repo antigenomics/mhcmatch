@@ -6,9 +6,9 @@ Install
 
 .. code-block:: fish
 
-   bash setup.sh            # repo-local .venv + editable install (uses sibling ../seqtree if present)
-   bash setup.sh --tests    # + pytest
-   bash setup.sh --logo     # + logomaker/matplotlib for rendering logos
+   fish setup.sh            # repo-local .venv + editable install (uses sibling ../seqtree if present)
+   fish setup.sh --tests    # + pytest
+   fish setup.sh --logo     # + logomaker/matplotlib for rendering logos
 
 Quickstart
 ----------
@@ -17,8 +17,8 @@ Quickstart
 
    import mhcmatch
 
-   # build from the isalgo/pmhc_data table (full or shortlist tier)
-   store = mhcmatch.Store.from_pmhc("pmhc_full.tsv.gz", species="human")
+   # build from the isalgo/pmhc_data table (full or shortlist tier; auto-fetched from HF, cached)
+   store = mhcmatch.Store.from_pmhc(tier="shortlist", species="human")
 
    store.restriction("NLVPMVATV")                 # ranked presenting alleles + binder flags
    store.is_binder("NLVPMVATV", "HLA-A*02:01")
