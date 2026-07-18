@@ -6,6 +6,28 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [Unreleased]
+
+Gamaleya/ISPRAS beta-test feedback (170726).
+
+### Fixed
+
+- **Install docs ran the wrong interpreter.** `README.md` and `docs/getting-started.rst` said
+  `bash setup.sh`, but `setup.sh` is a **fish** script — now `fish setup.sh`.
+- **Quickstart referenced a non-shipped file.** `Store.from_pmhc("pmhc_full.tsv.gz", …)` →
+  `Store.from_pmhc(tier="shortlist", …)` (auto-fetched from HF). `from_pmhc` now raises an actionable
+  `FileNotFoundError` (pointing at `tier=` / `$MHCMATCH_PMHC`) instead of a bare `open()` error.
+- **`StructureScorer` hard-coded a personal template path.** The default template dir was a fixed
+  `~/vcs/code/tcren-ms/data/Canonical2026`, so a missing `1oga.pdb.gz` broke it. It now resolves via
+  `tcren`'s own `data_dir()` (`$TCREN_DATA_DIR` or an editable checkout), keeps the
+  `$MHCMATCH_STRUCTURES` override, and raises a clear error when a template PDB is absent.
+- **MHC-II `predict` on a large input "never finished."** The register + K=3 motif EM (~200 s on the
+  full corpus, paid twice per run) is now shipped **pre-fit** in `mhcmatch.data` and loaded read-only
+  by `Store.anchor_model`, guarded by version + panel hash + build params. Loaded models are
+  bit-identical to a fresh build (no benchmark number changes); a 1034-window MHC-II sample now runs
+  in ~27 s instead of never. Read-only vendoring avoids any cache race under concurrent (nextflow/
+  SLURM) execution. Regenerate on version bump / panel change with `tools/build_anchor_models.py`.
+
 ## [0.7.2] — 2026-07-17
 
 **Three global constants were wrong on a heterogeneous panel; two now have per-allele/per-position
