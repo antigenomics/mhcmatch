@@ -135,6 +135,44 @@ def test_predict_windows_end_to_end():
     assert kl.synth_peptide == "KLINSQINL"                  # class I: synth == epitope
 
 
+# ---- vendored pre-fit MHC-II models (Store.anchor_model) --------------------
+def _load_vendored_meta(name):
+    import gzip
+    import pickle
+    from importlib import resources
+    res = resources.files("mhcmatch.data").joinpath(name)
+    if not res.is_file():
+        pytest.skip(f"{name} not built (run tools/build_anchor_models.py)")
+    return pickle.loads(gzip.decompress(res.read_bytes()))
+
+
+def test_vendored_mhc2_model_loads_and_is_current():
+    # Loads with a monkeypatched panel hash, scores finitely, AND is not stale for this version --
+    # this last assert fails a release that bumps mhcmatch.__version__ without regenerating the models.
+    from mhcmatch import __version__, diffusion as D
+    meta, _ = _load_vendored_meta("anchor_model_mhc2_proteome_adaptive.pkl.gz")
+    assert meta["version"] == __version__, \
+        "vendored MHC-II model is stale for this version; rerun tools/build_anchor_models.py"
+    orig = D.panel_sha
+    D.panel_sha = lambda store, cls: meta["panel_sha"]      # pretend the live panel matches
+    try:
+        m = D.load_vendored_anchor_model(object(), "mhc2", meta["params"])
+    finally:
+        D.panel_sha = orig
+    assert m is not None
+    s = m.score("PGCCSGAPALGLTQV", "DRB1_1101")
+    assert s == s and s != float("-inf")                    # a finite score
+
+
+def test_vendored_guard_rejects_mismatch():
+    from mhcmatch import diffusion as D
+    meta, _ = _load_vendored_meta("anchor_model_mhc2_proteome_adaptive.pkl.gz")
+    off_spec = {**meta["params"], "n_motifs": 1}            # a non-shipped param combination
+    assert D.load_vendored_anchor_model(object(), "mhc2", off_spec) is None
+    # a config with no shipped artifact (mhc1 builds in ~4 s, not vendored) returns None immediately
+    assert D.load_vendored_anchor_model(object(), "mhc1", meta["params"]) is None
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))

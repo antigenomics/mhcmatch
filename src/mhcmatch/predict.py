@@ -147,8 +147,11 @@ def build_scorer(store, cls, background="proteome", footprint="adaptive", seed=0
     proteome), matching NetMHCpan's %Rank_EL; ``"ligand"`` measures allele-specificity instead.
 
     Memoised on ``store``: the result depends only on the panel, never on the query alleles, so
-    scoring many samples against one store reuses a single build (an MHC-II ``AnchorModel`` costs
-    ~10 s, and ``RankCalibrator`` fills its per-allele background lazily)."""
+    scoring many samples against one store reuses a single build. The two costly MHC-II
+    ``AnchorModel`` EM builds (this scorer + the affinity register oracle) are served from the
+    vendored pre-fit models when the panel matches (see :meth:`Store.anchor_model`), so the pipeline's
+    one-process-per-sample pattern pays no rebuild; ``RankCalibrator`` fills its per-allele background
+    lazily."""
     key = (cls, background, footprint, seed, n_bg)
     cache = store.__dict__.setdefault("_scorer_cache", {})
     if key in cache:

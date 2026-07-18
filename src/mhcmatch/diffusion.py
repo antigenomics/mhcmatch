@@ -10,7 +10,10 @@ of ``appendix/mhcmatch.tex`` §4.
 """
 from __future__ import annotations
 
+import gzip
+import hashlib
 import math
+import pickle
 import zlib
 from collections import Counter
 from functools import lru_cache
@@ -904,3 +907,61 @@ class AnchorModel:
             th = self._dist(j, allele, raw)
             terms.append(math.log((th.get(r, 0.0) + eps) / (self._bg_prob(j, r, ctx[i] if ctx else None) + eps)))
         return terms
+
+
+# --------------------------------------------------- vendored pre-fit models ---
+# The MHC-II register + K=3 motif EM costs 1-5 min to fit on the full corpus, and a `mhcmatch predict`
+# run triggers it twice (the presentation scorer + the affinity register oracle). These configs are
+# shipped pre-fit in ``mhcmatch.data`` and loaded READ-ONLY -- no runtime writes, so concurrent
+# pipeline tasks (e.g. nextflow/SLURM on a cluster) never race or stampede on a cache. MHC-I fits in
+# ~4 s and is not shipped. A vendored model is used only when the mhcmatch version, the panel hash and
+# the full build params all match; a custom ``--pmhc`` / tier / param set safely falls back to building.
+_VENDORED_MODELS = {
+    ("mhc2", "adaptive", "proteome"): "anchor_model_mhc2_proteome_adaptive.pkl.gz",
+    ("mhc2", "core", "proteome"): "anchor_model_mhc2_proteome_core.pkl.gz",
+}
+
+
+def panel_sha(store, cls) -> str:
+    """Content hash of the ``cls`` panel rows (epitope + allele, stored/build order). Cached on the
+    store so the vendored-model guard is a one-off ~50 ms, not a per-call cost."""
+    cache = store.__dict__.setdefault("_panel_sha", {})
+    if cls not in cache:
+        h = hashlib.blake2b(digest_size=16)
+        panel = store._panel[cls]
+        for ep, a in zip(panel.epitopes, panel.alleles):
+            h.update(ep.encode()); h.update(b"\t"); h.update(a.encode()); h.update(b"\n")
+        cache[cls] = h.hexdigest()
+    return cache[cls]
+
+
+def load_vendored_anchor_model(store, cls, params):
+    """The pre-fit :class:`AnchorModel` for ``(cls, footprint, background)`` when one is shipped and
+    the mhcmatch version, panel hash and full ``params`` all match; else ``None`` (caller builds)."""
+    name = _VENDORED_MODELS.get((cls, params.get("footprint"), params.get("background")))
+    if name is None:
+        return None
+    try:
+        res = resources.files("mhcmatch.data").joinpath(name)
+        if not res.is_file():
+            return None
+        from . import __version__
+        meta, model = pickle.loads(gzip.decompress(res.read_bytes()))
+        if (meta.get("version") == __version__ and meta.get("params") == params
+                and meta.get("panel_sha") == panel_sha(store, cls)):
+            return model
+    except Exception:                       # missing / corrupt / version-incompatible -> rebuild
+        pass
+    return None
+
+
+def save_vendored_anchor_model(store, cls, path, **kw):
+    """Build the ``cls`` model (``kw`` overrides, e.g. ``footprint=`` / ``background=``; the rest are
+    :meth:`Store.anchor_model` defaults) and serialize it, gzipped, with a version / panel / params
+    guard, to ``path``. The release-time regenerator (``tools/build_anchor_models.py``)."""
+    from . import __version__
+    model, params = store.anchor_model(cls, _vendored=False, _return_params=True, **kw)
+    meta = {"version": __version__, "panel_sha": panel_sha(store, cls), "params": params}
+    with open(path, "wb") as fh:
+        fh.write(gzip.compress(pickle.dumps((meta, model), protocol=pickle.HIGHEST_PROTOCOL), 6))
+    return path
