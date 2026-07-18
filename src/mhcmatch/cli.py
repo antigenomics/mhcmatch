@@ -102,6 +102,20 @@ def cmd_affinity(a):
             print(f"  (structure scoring unavailable: {e})")
 
 
+def cmd_binder(a):
+    store = _store(a)
+    res = store.binder_score(a.peptide, alleles=(a.alleles or "all"), cls=a.cls)
+    if not res:
+        print("# no scorable allele (unknown groove / no background)")
+        return
+    print(f"# {a.peptide}: generalized binder score = geo-mean(presentation %rank, affinity %rank); "
+          "lower = stronger")
+    print(f"{'allele':14s}{'binder%rank':>12s}{'band':>13s}{'pres%rank':>11s}{'aff_nM':>11s}{'aff%rank':>10s}")
+    for b in res[:(a.top or 10)]:
+        print(f"{b.allele:14s}{b.binder_rank:12.3f}{b.band:>13s}{b.presentation_rank:11.3f}"
+              f"{b.affinity_nm:11.0f}{b.affinity_rank:10.3f}")
+
+
 def cmd_scan(a):
     hits = _store(a).scan_protein(_read_seq(a.protein), cls=a.cls or "mhc1",
                                   alleles=[a.allele] if a.allele else "all", top=a.top,
@@ -211,6 +225,15 @@ def main(argv=None):
                     help="also compute the tcren MJ contact energy / ΔΔG (needs the [structure] extra)")
     _add_store_opts(af)
     af.set_defaults(fn=cmd_affinity)
+
+    bd = sub.add_parser("binder",
+                        help="generalized binder score (presentation x affinity) ranked over alleles")
+    bd.add_argument("peptide")
+    bd.add_argument("--alleles", help="comma-separated alleles (default: the whole panel)")
+    bd.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
+    bd.add_argument("--top", type=int, default=10)
+    _add_store_opts(bd)
+    bd.set_defaults(fn=cmd_binder)
 
     s = sub.add_parser("scan", help="find presented peptides in a protein (sequence or FASTA path)")
     s.add_argument("protein")

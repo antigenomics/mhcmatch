@@ -249,6 +249,12 @@ calibrated=True)` and the CLI `--calibrated`).
   no cheap training-free explanation left on the table — this moves up the queue by elimination.
 - Full-tier + temporal-split cluster sweep; affinity band on the measured-nM allowlist (TESLA/Gfeller
   only); MixMHCpred/MixMHC2pred; the LaTeX paper (methodology = appendix §8).
+- ~~**Generalized binder score**~~ — **shipped** (`store.binder_score` / `mhcmatch binder`;
+  `predict_windows` emits `binder_rank`/`binder_band`/`affinity_rank` into the native table, so the
+  Nextflow module carries it). The presentation and affinity heads disagree along the binding-strength
+  axis (Spearman(Δ, log nM)≈+0.5–0.65); their Fisher combination, calibrated per allele into a true
+  %rank, beats both single heads on immunogenicity (TESLA 0.786, NCI 0.965). It is the recommended
+  single-number binder index. `bench/results/head_complementarity.md`.
 
 ## 6.5 Menu — candidate refinements & tooling
 

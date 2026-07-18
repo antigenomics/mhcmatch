@@ -20,7 +20,7 @@ process MHCMATCH_PREDICT {
     //   -profile docker  -> build the image from the Dockerfile beside this module and push it to
     //                       your registry, then point `container` at it (or override in a config).
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.4.1"
+    container "mhcmatch:0.8.0"
 
     input:
     tuple val(meta), path(fasta), val(alleles), val(cls)

@@ -14,8 +14,10 @@ Needs the ``[structure]`` extra::
 
     pip install 'mhcmatch[structure]'      # pulls tcren
 
-Template structures are **not vendored** (they live in ``tcren``'s Canonical2026 set); point
-``structure_dir`` at them (default: ``$MHCMATCH_STRUCTURES`` or the sibling ``tcren-ms`` checkout).
+Template structures are **not vendored** (they live in ``tcren``'s Canonical2026 set, which the
+tcren wheel deliberately does not ship). Resolution order for the templates: the ``structure_dir``
+argument, then ``$MHCMATCH_STRUCTURES``, then ``tcren``'s own data dir (``$TCREN_DATA_DIR``, or an
+editable ``tcren`` checkout's ``data/``) under ``Canonical2026``.
 """
 from __future__ import annotations
 
@@ -25,9 +27,15 @@ from importlib import resources
 
 # normalized allele -> template. ``chains`` maps PDB chain id -> role (canonical Canonical2026:
 # C=peptide, D=MHCα, E=β2m). Curated + extensible; see data/structure_templates.json.
-_DEFAULT_DIR = os.environ.get(
-    "MHCMATCH_STRUCTURES",
-    os.path.expanduser("~/vcs/code/tcren-ms/data/Canonical2026"))
+def _default_structure_dir() -> str:
+    """Where the Canonical2026 template PDBs live: ``$MHCMATCH_STRUCTURES`` if set, else ``tcren``'s
+    own data dir (``$TCREN_DATA_DIR`` or an editable checkout's ``data/``) / ``Canonical2026``. Call
+    only after :func:`_require_tcren` (may import ``tcren``)."""
+    env = os.environ.get("MHCMATCH_STRUCTURES")
+    if env:
+        return env
+    from tcren.paths import data_dir
+    return str(data_dir() / "Canonical2026")
 
 
 def _require_tcren():
@@ -54,7 +62,7 @@ class StructureScorer:
     def __init__(self, structure_dir=None, templates=None, pseudoseq=None, cutoff=5.0):
         _require_tcren()
         from .pseudoseq import normalize_allele
-        self._dir = structure_dir or _DEFAULT_DIR
+        self._dir = structure_dir or _default_structure_dir()
         self._tpl = {normalize_allele(a): v for a, v in (templates or _load_templates()).items()}
         self._ps = pseudoseq
         self._cutoff = cutoff
@@ -81,7 +89,13 @@ class StructureScorer:
             from tcren.structure.io import import_structure
             from tcren.contactmap import ContactMap
             from tcren.annotation.chains import _tag_peptide
-            s = import_structure(os.path.join(self._dir, f"{pdb}.pdb.gz"))
+            path = os.path.join(self._dir, f"{pdb}.pdb.gz")
+            if not os.path.exists(path):
+                raise FileNotFoundError(
+                    f"pMHC template {pdb}.pdb.gz not found in {self._dir!r}. Point structure_dir= "
+                    "or $MHCMATCH_STRUCTURES at a Canonical2026 dir, or populate tcren's data/ "
+                    "(set $TCREN_DATA_DIR).")
+            s = import_structure(path)
             roles = chains or {"C": "peptide", "D": "MHCa", "E": "B2M"}
             for c in s.chains:
                 role = roles.get(c.chain_id)

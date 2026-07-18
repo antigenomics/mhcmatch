@@ -24,6 +24,7 @@ alleles (e.g. ``HLA-B*15:07``) are still scored zero-shot.
 from __future__ import annotations
 
 import csv
+import math
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -49,6 +50,7 @@ SCORED_COLUMNS = (
 
 NATIVE_COLUMNS = ("source", "type", "gene_name", "chrom", "pos", "ref", "alt", "peptide", "offset",
                   "best_allele", "cls", "percent_rank", "p_present", "band", "affinity_nm",
+                  "affinity_rank", "binder_rank", "binder_band",
                   "wt_peptide", "wt_affinity_nm", "agretopicity", "amplitude", "dai",
                   "synth_peptide", "model_peptide", "anchors", "tcr_facing")
 
@@ -75,6 +77,9 @@ class Prediction:
     # correction means A can be <1 even when the mutant binds better, for a weakly-binding WT.
     amplitude: float = float("nan")
     dai: float = float("nan")            # differential agretopicity index log10(Kd_WT/Kd_MT)
+    affinity_rank: float = float("nan")  # Potts affinity %rank for this allele (lower = stronger)
+    binder_rank: float = float("nan")    # calibrated combined %rank (presentation x affinity, Fisher)
+    binder_band: str = ""                # strong / weak / non-binder, banded on binder_rank
     synth_peptide: str = ""              # peptide to SYNTHESISE (long-peptide vaccine; ~21mer for II)
     model_peptide: str = ""              # peptide to MODEL structurally (TCR:pMHC; ~13mer for II)
     var: dict = field(default_factory=dict)   # parsed variant header
@@ -147,8 +152,11 @@ def build_scorer(store, cls, background="proteome", footprint="adaptive", seed=0
     proteome), matching NetMHCpan's %Rank_EL; ``"ligand"`` measures allele-specificity instead.
 
     Memoised on ``store``: the result depends only on the panel, never on the query alleles, so
-    scoring many samples against one store reuses a single build (an MHC-II ``AnchorModel`` costs
-    ~10 s, and ``RankCalibrator`` fills its per-allele background lazily)."""
+    scoring many samples against one store reuses a single build. The two costly MHC-II
+    ``AnchorModel`` EM builds (this scorer + the affinity register oracle) are served from the
+    vendored pre-fit models when the panel matches (see :meth:`Store.anchor_model`), so the pipeline's
+    one-process-per-sample pattern pays no rebuild; ``RankCalibrator`` fills its per-allele background
+    lazily."""
     key = (cls, background, footprint, seed, n_bg)
     cache = store.__dict__.setdefault("_scorer_cache", {})
     if key in cache:
@@ -165,6 +173,125 @@ def build_scorer(store, cls, background="proteome", footprint="adaptive", seed=0
         aff = None
     cache[key] = (model, cal, aff)
     return cache[key]
+
+
+# ------------------------------------------------- generalized binder score ---
+class _AffinityAsScore:
+    """Adapt :class:`mhcmatch.PottsAffinity` to the ``.score(pep, allele)`` interface
+    :class:`RankCalibrator` expects, so the affinity log50k score gets a per-allele %rank."""
+
+    def __init__(self, aff):
+        self._aff = aff
+
+    def score(self, pep, allele):
+        y = self._aff.predict_y(pep, allele)
+        return y if y == y else float("-inf")
+
+
+def _affinity_calibrator(store, cls, aff, seed=0, n_bg=10000):
+    """Per-allele %rank calibrator over the Potts affinity score (cached on ``store``)."""
+    cache = store.__dict__.setdefault("_aff_cal_cache", {})
+    if cls not in cache:
+        panel = store._panel[cls]
+        pos = defaultdict(list)
+        for ep, a in zip(panel.epitopes, panel.alleles):
+            pos[a].append(ep)
+        cache[cls] = RankCalibrator(_AffinityAsScore(aff), list(pos), panel.epitopes,
+                                    n=n_bg, seed=seed, positives=pos)
+    return cache[cls]
+
+
+class _CombinedScore:
+    """Fisher-style combined binder statistic for :class:`RankCalibrator` (higher = stronger).
+
+    Combines the presentation and affinity %ranks as ``-(ln p_pres + ln p_aff)`` -- Fisher's method
+    for combining the two p-value-like %ranks (``-2·Σ ln p``, up to a constant), which is monotone
+    with their geometric mean, so it induces the **same ranking**. Calibrating *this* statistic against
+    random peptides turns it into a true combined %rank, and because the calibration is empirical it
+    absorbs the presentation<->affinity correlation that a raw Fisher χ² p-value would mis-handle."""
+
+    def __init__(self, model, aff, pcal, acal):
+        self._model, self._aff, self._pcal, self._acal = model, aff, pcal, acal
+
+    def score(self, pep, allele):
+        pr = self._pcal.percent_rank(allele, self._model.score(pep, allele))
+        ar = self._acal.percent_rank(allele, self._aff.predict_y(pep, allele))
+        if pr != pr or ar != ar:
+            return float("-inf")
+        return -(math.log(max(pr, 1e-9)) + math.log(max(ar, 1e-9)))
+
+
+def _binder_calibrator(store, cls, model, aff, pcal, acal, seed=0, n_bg=10000):
+    """Per-allele %rank calibrator over the combined (Fisher) statistic (cached on ``store``)."""
+    cache = store.__dict__.setdefault("_binder_cal_cache", {})
+    if cls not in cache:
+        panel = store._panel[cls]
+        pos = defaultdict(list)
+        for ep, a in zip(panel.epitopes, panel.alleles):
+            pos[a].append(ep)
+        cache[cls] = RankCalibrator(_CombinedScore(model, aff, pcal, acal), list(pos),
+                                    panel.epitopes, n=n_bg, seed=seed, positives=pos)
+    return cache[cls]
+
+
+@dataclass
+class BinderScore:
+    """Generalized binder score for one (peptide, allele): a **calibrated combined %rank** that fuses
+    presentation and affinity -- a soft-AND scoring well only when the peptide is *both* presented and
+    binds. It is the per-allele %rank of Fisher's combined statistic ``-(ln p_pres + ln p_aff)`` against
+    a random-peptide background, so ``binder_rank`` is itself a true %rank (lower = stronger, correctly
+    banded) and is cross-allele comparable with no candidate pool. (Fisher's statistic is monotone with
+    the geometric mean of the two %ranks, so it induces the same ranking; calibration is what makes it a
+    proper %rank and absorbs the presentation<->affinity correlation.)"""
+
+    peptide: str
+    allele: str
+    cls: str
+    presentation_rank: float      # AnchorModel %rank (presentation null), lower = stronger
+    affinity_nm: float            # Potts IC50 (nM)
+    affinity_rank: float          # Potts %rank, lower = stronger
+    binder_rank: float            # calibrated combined %rank (Fisher of the two %ranks), lower = stronger
+    band: str                     # strong / weak / non-binder (banded on binder_rank)
+
+
+def binder_score(store, peptide, alleles="all", cls=None, background="proteome",
+                 footprint="adaptive", seed=0):
+    """Rank ``alleles`` for ``peptide`` by the generalized binder score (presentation x affinity).
+
+    Motivation: the presentation head (:class:`AnchorModel` %rank) and the affinity head
+    (:class:`PottsAffinity`) disagree along the binding-strength axis -- presentation rescues
+    weak-but-well-presented ligands, affinity rescues strong-but-atypical binders -- so their
+    geometric-mean %rank is a more robust binder index than either alone (measured: on the diverse
+    NCI-423k neoantigen set the combined immunogenicity AUROC 0.965 beats presentation 0.945 and
+    affinity 0.925; on affinity-labelled TESLA the affinity head alone is marginally better).
+
+    Returns ``list[BinderScore]`` sorted by ``binder_rank`` ascending (best first).
+    """
+    peptide = peptide.strip().upper()
+    if cls is None:
+        from .store import infer_class
+        cls = infer_class(peptide)
+    model, pcal, aff = build_scorer(store, cls, background, footprint, seed)
+    if aff is None:
+        raise RuntimeError(f"no affinity model available for {cls}")
+    acal = _affinity_calibrator(store, cls, aff, seed)
+    ccal = _binder_calibrator(store, cls, model, aff, pcal, acal, seed)
+    if alleles == "all":
+        alleles = store.alleles(cls)
+    elif isinstance(alleles, str):
+        alleles = [a.strip() for a in alleles.split(",") if a.strip()]
+    out = []
+    for a in alleles:
+        pr = pcal.percent_rank(a, model.score(peptide, a))
+        ar = acal.percent_rank(a, aff.predict_y(peptide, a))
+        if pr != pr or ar != ar:                       # allele has no background (unknown groove)
+            continue
+        cstat = -(math.log(max(pr, 1e-9)) + math.log(max(ar, 1e-9)))   # Fisher combined statistic
+        br = ccal.percent_rank(a, cstat)               # calibrated -> a true combined %rank
+        out.append(BinderScore(peptide, a, cls, round(pr, 3), _round(aff.predict_ic50(peptide, a)),
+                               round(ar, 3), round(br, 3), band_of(br)))
+    out.sort(key=lambda b: b.binder_rank)
+    return out
 
 
 def _aligned_wt(var, seq):
@@ -220,6 +347,10 @@ def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
     per window (strongest first). Returns ``list[Prediction]``.
     """
     model, cal, aff = build_scorer(store, cls, background, footprint, seed)
+    # the calibrated combined %rank (presentation x affinity) needs the affinity + Fisher calibrators;
+    # both are cached on the store and only fill their per-allele background lazily.
+    acal = _affinity_calibrator(store, cls, aff, seed) if aff is not None else None
+    ccal = _binder_calibrator(store, cls, model, aff, cal, acal, seed) if aff is not None else None
     lengths = KMER_LENS[cls]
     by_window = defaultdict(list)
     for header, seq in records:
@@ -254,6 +385,15 @@ def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
             if aff is not None:
                 nm = aff.predict_ic50(pep, a)
                 p.affinity_nm = _round(nm)
+                # combined binder %rank for the chosen allele: calibrate Fisher's -(ln p_pres + ln p_aff)
+                ar = acal.percent_rank(a, aff.predict_y(pep, a))
+                if ar == ar:
+                    p.affinity_rank = round(ar, 3)
+                    cstat = -(math.log(max(pr, 1e-9)) + math.log(max(ar, 1e-9)))
+                    br = ccal.percent_rank(a, cstat)
+                    if br == br:
+                        p.binder_rank = round(br, 3)
+                        p.binder_band = band_of(br)
                 if wt_seq is not None:
                     wtk = wt_seq[off:off + len(pep)]
                     if wtk != pep and set(wtk) <= _AA:       # k-mer spans the mutation
@@ -305,6 +445,7 @@ def write_native(preds, path: str) -> None:
             w.writerow([p.source, v.get("type", ""), v.get("gene_name", ""), v.get("chrom", ""),
                         v.get("pos", ""), v.get("ref", ""), v.get("alt", ""), p.peptide, p.offset,
                         p.allele, p.cls, p.percent_rank, p.p_present, p.band, p.affinity_nm,
+                        _blank_nan(p.affinity_rank), _blank_nan(p.binder_rank), p.binder_band,
                         p.wt_peptide, p.wt_affinity_nm, p.agretopicity, p.amplitude, p.dai,
                         p.synth_peptide, p.model_peptide,
                         ";".join(str(i) for i in p.anchors), p.tcr_facing])
