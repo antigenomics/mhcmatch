@@ -178,15 +178,13 @@ def test_vendored_guard_rejects_mismatch():
 
 @pytest.mark.skipif(not _HAS_PMHC, reason="needs ~/hf/pmhc_data panel")
 def test_binder_score():
-    import math
     from mhcmatch import Store
     store = Store.from_pmhc(_PMHC, tier="shortlist", species="human", classes=("mhc1",))
     res = store.binder_score("NLVPMVATV", alleles="HLA-A*02:01,HLA-B*07:02", cls="mhc1")
     assert res and res[0].allele == "HLA-A*02:01"          # the canonical A*02:01 epitope ranks first
     top = res[0]
-    assert top.band == "strong" and top.binder_rank < 1.0
-    # binder_rank is the geometric mean of the two %ranks (both rounded to 3dp)
-    assert abs(top.binder_rank - math.sqrt(top.presentation_rank * top.affinity_rank)) < 1e-2
+    assert top.band == "strong"                            # binder_rank is a calibrated combined %rank
+    assert 0.0 <= top.binder_rank <= 100.0                 # ... so it lives on a proper %rank scale
     assert all(res[i].binder_rank <= res[i + 1].binder_rank for i in range(len(res) - 1))  # best-first
     assert res[-1].band == "non-binder"                    # B*07:02 does not present NLVPMVATV
 

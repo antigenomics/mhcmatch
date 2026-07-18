@@ -197,12 +197,48 @@ def _affinity_calibrator(store, cls, aff, seed=0, n_bg=10000):
     return cache[cls]
 
 
+class _CombinedScore:
+    """Fisher-style combined binder statistic for :class:`RankCalibrator` (higher = stronger).
+
+    Combines the presentation and affinity %ranks as ``-(ln p_pres + ln p_aff)`` -- Fisher's method
+    for combining the two p-value-like %ranks (``-2·Σ ln p``, up to a constant), which is monotone
+    with their geometric mean, so it induces the **same ranking**. Calibrating *this* statistic against
+    random peptides turns it into a true combined %rank, and because the calibration is empirical it
+    absorbs the presentation<->affinity correlation that a raw Fisher χ² p-value would mis-handle."""
+
+    def __init__(self, model, aff, pcal, acal):
+        self._model, self._aff, self._pcal, self._acal = model, aff, pcal, acal
+
+    def score(self, pep, allele):
+        pr = self._pcal.percent_rank(allele, self._model.score(pep, allele))
+        ar = self._acal.percent_rank(allele, self._aff.predict_y(pep, allele))
+        if pr != pr or ar != ar:
+            return float("-inf")
+        return -(math.log(max(pr, 1e-9)) + math.log(max(ar, 1e-9)))
+
+
+def _binder_calibrator(store, cls, model, aff, pcal, acal, seed=0, n_bg=10000):
+    """Per-allele %rank calibrator over the combined (Fisher) statistic (cached on ``store``)."""
+    cache = store.__dict__.setdefault("_binder_cal_cache", {})
+    if cls not in cache:
+        panel = store._panel[cls]
+        pos = defaultdict(list)
+        for ep, a in zip(panel.epitopes, panel.alleles):
+            pos[a].append(ep)
+        cache[cls] = RankCalibrator(_CombinedScore(model, aff, pcal, acal), list(pos),
+                                    panel.epitopes, n=n_bg, seed=seed, positives=pos)
+    return cache[cls]
+
+
 @dataclass
 class BinderScore:
-    """Generalized binder score for one (peptide, allele): the geometric mean of the presentation and
-    affinity **%ranks** -- a soft-AND that scores well only when the peptide is *both* presented and
-    binds. Both %ranks are per-allele calibrated against a random-peptide background (lower = stronger),
-    so the score is cross-allele comparable and needs no candidate pool."""
+    """Generalized binder score for one (peptide, allele): a **calibrated combined %rank** that fuses
+    presentation and affinity -- a soft-AND scoring well only when the peptide is *both* presented and
+    binds. It is the per-allele %rank of Fisher's combined statistic ``-(ln p_pres + ln p_aff)`` against
+    a random-peptide background, so ``binder_rank`` is itself a true %rank (lower = stronger, correctly
+    banded) and is cross-allele comparable with no candidate pool. (Fisher's statistic is monotone with
+    the geometric mean of the two %ranks, so it induces the same ranking; calibration is what makes it a
+    proper %rank and absorbs the presentation<->affinity correlation.)"""
 
     peptide: str
     allele: str
@@ -210,7 +246,7 @@ class BinderScore:
     presentation_rank: float      # AnchorModel %rank (presentation null), lower = stronger
     affinity_nm: float            # Potts IC50 (nM)
     affinity_rank: float          # Potts %rank, lower = stronger
-    binder_rank: float            # sqrt(presentation_rank * affinity_rank) -- the generalized %rank
+    binder_rank: float            # calibrated combined %rank (Fisher of the two %ranks), lower = stronger
     band: str                     # strong / weak / non-binder (banded on binder_rank)
 
 
@@ -235,6 +271,7 @@ def binder_score(store, peptide, alleles="all", cls=None, background="proteome",
     if aff is None:
         raise RuntimeError(f"no affinity model available for {cls}")
     acal = _affinity_calibrator(store, cls, aff, seed)
+    ccal = _binder_calibrator(store, cls, model, aff, pcal, acal, seed)
     if alleles == "all":
         alleles = store.alleles(cls)
     elif isinstance(alleles, str):
@@ -245,7 +282,8 @@ def binder_score(store, peptide, alleles="all", cls=None, background="proteome",
         ar = acal.percent_rank(a, aff.predict_y(peptide, a))
         if pr != pr or ar != ar:                       # allele has no background (unknown groove)
             continue
-        br = math.sqrt(max(pr, 0.0) * max(ar, 0.0))    # geometric mean of the two %ranks
+        cstat = -(math.log(max(pr, 1e-9)) + math.log(max(ar, 1e-9)))   # Fisher combined statistic
+        br = ccal.percent_rank(a, cstat)               # calibrated -> a true combined %rank
         out.append(BinderScore(peptide, a, cls, round(pr, 3), _round(aff.predict_ic50(peptide, a)),
                                round(ar, 3), round(br, 3), band_of(br)))
     out.sort(key=lambda b: b.binder_rank)

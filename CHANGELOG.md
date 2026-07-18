@@ -12,13 +12,14 @@ Gamaleya/ISPRAS beta-test feedback (170726).
 
 ### Added
 
-- **Generalized binder score** (`store.binder_score` / `mhcmatch binder` / `predict.binder_score`) —
-  the geometric mean of the presentation %rank (`AnchorModel`) and the affinity %rank (`PottsAffinity`),
-  a soft-AND that scores well only when a peptide is *both* presented and binds. The two heads disagree
-  along the binding-strength axis (presentation rescues weak-but-presented ligands, affinity rescues
-  strong-but-atypical binders; Spearman(Δ, log nM)≈+0.5–0.65 on TESLA/NCI), so the blend is more robust
-  than either alone — on the diverse NCI-423k neoantigen set the combined immunogenicity AUROC 0.965
-  beats presentation 0.945 and affinity 0.925.
+- **Generalized binder score** (`store.binder_score` / `mhcmatch binder` / `predict.binder_score`) — a
+  **calibrated combined %rank** fusing the presentation %rank (`AnchorModel`) and the affinity %rank
+  (`PottsAffinity`): Fisher's combined statistic `-(ln p_pres + ln p_aff)`, itself calibrated per allele
+  against a random-peptide background so `binder_rank` is a true %rank (correctly banded, cross-allele
+  comparable). A soft-AND — scores well only when a peptide is *both* presented and binds. The two heads
+  disagree along the binding-strength axis (presentation rescues weak-but-presented ligands, affinity
+  rescues strong-but-atypical binders; Spearman(Δ, log nM)≈+0.5–0.65 on TESLA/NCI), so the blend is more
+  robust than either alone — combined immunogenicity AUROC beats both single heads (TESLA 0.786, NCI 0.965).
 
 ### Fixed
 
