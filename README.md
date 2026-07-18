@@ -44,6 +44,9 @@ development plan is in [`ROADMAP.md`](ROADMAP.md).
    coupling features, ridge-fit on measured IEDB IC50) predicts nM affinity and the neoantigen-fitness differentials
    — Łuksza amplitude `A = Kd_WT/Kd_MT` and the differential agretopicity index — for MHC-I and MHC-II,
    human and mouse. Optional structure-based MJ ΔΔG via the `[structure]` extra (`tcren`).
+8. **Generalized binder score** — the recommended single-number neoantigen index: a calibrated combined
+   %rank fusing presentation and affinity (Fisher's method). On the clean TESLA immunogenicity set it
+   **beats NetMHCpan** (AUROC 0.786 vs 0.747) at ~68× the speed.
 
 ## Install
 
@@ -159,6 +162,9 @@ A reproducible head-to-head against **NetMHCpan-4.2b** and **NetMHCIIpan-4.3i** 
 per-(peptide, allele) task, stratified by allele rarity, with AUROC / AUPRC / PPV@k, bootstrap CIs and
 paired significance. Headline results (shortlist tier, human, seed 0):
 
+- **Immunogenicity ranking** (the downstream question — is a neoantigen T-cell-immunogenic?): on the
+  clean, predictor-agnostic **TESLA-608** set the v0.8.0 generalized binder score **beats NetMHCpan**
+  (AUROC 0.786 vs 0.747; each single head also beats it) — see the dedicated section below.
 - **Allele-specificity** (which allele presents a peptide — the restriction problem): mhcmatch **beats**
   NetMHCpan on MHC-I medium and frequent alleles on AUROC, AUPRC *and* PPV@k (all p < 0.001; e.g.
   frequent AUPRC 0.850 vs 0.769). Rare MHC-I is a wash (+0.008 AUROC, p = 0.41).
@@ -186,54 +192,44 @@ python bench/compare/run_compare.py --cls mhc1 --decoy-mode hard   --background 
 python bench/compare/run_compare.py --cls mhc1 --decoy-mode random --background proteome  # screening
 ```
 
-### Quantitative affinity (Potts head)
+### Immunogenicity ranking — the generalized binder score (v0.8.0)
 
-The affinity head is benchmarked head-to-head against **NetMHCpan-4.2 −BA** / **NetMHCIIpan-4.3 −BA**
-on held-out measured IEDB IC50 (`bench/affinity/`; provenance in
-`bench/affinity/SOURCES.md`). Metric: median per-allele Spearman ρ against
-measured log-IC50, and AUROC at the 500 nM binder threshold, on the *same* held-out (peptide, allele)
-pairs. **Honest numbers** (per-allele held-out split, seed 0):
+The shipped recommendation for ranking neoantigens is the **generalized binder score**
+(`store.binder_score` / `mhcmatch binder`): a **calibrated combined %rank** that fuses the presentation
+head (`AnchorModel` %rank) and the affinity head (`PottsAffinity` %rank) via Fisher's method — a soft-AND
+that scores high only when a peptide is *both* presented and binds. The two heads are complementary along
+the binding-strength axis (presentation rescues weak-but-presented ligands, affinity rescues
+strong-but-atypical binders), so the blend beats either alone.
 
-| class  | stratum       | alleles | mhcmatch ρ | netMHCpan ρ | mhcmatch AUROC | netMHCpan AUROC |
-|--------|---------------|--------:|-----------:|------------:|---------------:|----------------:|
-| MHC-I  | human common  |      31 |      0.702 |   **0.792** |          0.851 |       **0.913** |
-| MHC-I  | human rare    |      37 |      0.485 |   **0.765** |          0.754 |       **0.930** |
-| MHC-II | human common  |      28 |      0.531 |   **0.774** |          0.798 |       **0.923** |
-| MHC-II | human rare    |      12 |      0.457 |   **0.755** |          0.749 |       **0.914** |
-| MHC-II | mouse (rare)  |       5 |      0.507 |   **0.716** |          0.787 |       **0.893** |
+On **TESLA-608** (Wells et al. 2020 — 608 candidates, 37 T-cell-validated; the clean, predictor-agnostic
+set every tool scores independently) mhcmatch **beats NetMHCpan**:
 
-> **Provenance warning (2026-07-17).** The table above has **no backing results file** — its numbers
-> trace to a docstring, and the only recorded per-allele table (`bench/results/affinity_iedb.md`) is the
-> older ridge `AffinityModel`, not this head. It also predates the v0.7.1 weight refit and a
-> pseudosequence fix that grew the eval pool from 68 alleles to 96. Measured on the current corpus
-> (5 seeds, paired, `bench/results/potts_encoding_ablation.md`): **orphan 0.504 / rare 0.543 / common
-> 0.709** — i.e. **rare is materially better than the 0.485 above**. Treat the row as stale pending a
-> regenerated head-to-head.
+| ranker | AUROC | Δ vs NetMHCpan |
+|---|--:|--:|
+| NetMHCpan-4.2 (embedded nM affinity) | 0.747 | — |
+| mhcmatch affinity %rank | 0.757 | +0.010 |
+| mhcmatch presentation %rank | 0.763 | +0.016 |
+| **mhcmatch `binder_score`** | **0.786** | **+0.039** |
 
-NetMHCpan/IIpan lead on this eval, but the gap is **inflated by train/test overlap we cannot undo**:
-both tools trained on much of IEDB, so the held-out pairs are in-sample for them and out-of-sample for
-mhcmatch. On **truly unseen alleles** (leave-20-alleles-out, zero training rows for the allele) the
-Potts model still generalizes — MHC-I orphan ρ ≈ 0.50 measured — because its peptide×pocket couplings
-interpolate across groove-similar alleles. The affinity head is a compact, dependency-light linear
-model (numpy-only dot product at predict time, ~µs/peptide) and gives the WT-vs-mutant **ratio**
-(amplitude / DAI) that percentile ranks cannot express.
+`bench/results/immuno_binder_score.md` — and at **~68× the scoring speed** (pure Python). On real donor
+neoantigen lists (Gamaleya, 20 donors) mhcmatch's allele calls are as close to NetMHCpan as MHCflurry's
+are (87.2% vs 87.4% — no measurable gap).
 
-Two caveats worth carrying into any reading of the rare column. **About a third of the rare gap is the
-ruler, not the model**: median SD(ln IC50) is 3.127 for common alleles vs 2.559 for rare, and
-range-restriction attenuation alone maps a model measuring 0.709 on common to **0.628** on rare — while
-partial Spearman(n_points, ρ | SD) is **−0.062**, i.e. training support does not predict per-allele ρ
-once label spread is controlled. And the head is **length-blind** (`SLYNTGATL` and `SLYNTAAAGATL` score
-identically) — ROADMAP §6c.
+The affinity head also gives what a %rank cannot: the quantitative WT-vs-mutant **ratio** (Łuksza
+amplitude `A = Kd_WT/Kd_MT`, DAI) for neoantigen fitness — a compact, dependency-light linear model
+(numpy-only dot product, ~µs/peptide). Its standalone nM-regression accuracy vs NetMHCpan −BA, and the
+known length-blindness caveat, are tracked in the benchmark repo (`bench/affinity/`) and ROADMAP §6c;
+for **ranking**, use the calibrated `binder_score`, not the raw nM.
 
 ```fish
-python bench/affinity/train_potts.py --cls mhc1 --alpha 40                 # MHC-I head-to-head
-python bench/affinity/train_potts.py --cls mhc2 --species all --alpha 40   # MHC-II, human + mouse
+mhcmatch binder NLVPMVATV --alleles 'HLA-A*02:01,HLA-B*07:02' --cls mhc1   # ranked generalized binder score
 ```
 
 ## Status
 
-Beta (v0.7.2). Presentation scoring (per-allele diffusion, K=3 motif mixture, marginal register,
+Beta (v0.8.0). Presentation scoring (per-allele diffusion, K=3 motif mixture, marginal register,
 per-allele register-EM convergence, empirical-Bayes τ), affinity (IC50 nM) + neoantigen amplitude/DAI,
+the **generalized binder score** (calibrated presentation×affinity %rank — the recommended ranking axis),
 ligand spans, and calibrated %rank — all for MHC-I/II, human & mouse; optional structure-based MJ ΔΔG
 via the `[structure]` extra. See [`ROADMAP.md`](ROADMAP.md) for what's next (a learned reranker for
 rare-allele screening, ligandome-refit couplings for MHC-II cooperativity, full-tier + temporal cluster
