@@ -6,9 +6,9 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
-## [Unreleased]
+## [0.8.0] - 2026-07-18
 
-Gamaleya/ISPRAS beta-test feedback (170726).
+Gamaleya/ISPRAS beta-test feedback (170726), plus the generalized binder score.
 
 ### Added
 
