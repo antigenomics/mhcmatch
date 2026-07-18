@@ -133,6 +133,63 @@ def test_predict_windows_end_to_end():
     assert kl.wt_peptide == "KLINSQISL"                     # the self counterpart (S instead of N)
     assert kl.wt_affinity_nm == kl.wt_affinity_nm and kl.agretopicity == kl.agretopicity
     assert kl.synth_peptide == "KLINSQINL"                  # class I: synth == epitope
+    # Phase 4: the calibrated combined binder %rank rides along, on a proper %rank scale + banded
+    assert kl.affinity_rank == kl.affinity_rank and kl.binder_rank == kl.binder_rank   # both finite
+    assert 0.0 <= kl.binder_rank <= 100.0 and kl.binder_band == "strong"
+
+
+# ---- vendored pre-fit MHC-II models (Store.anchor_model) --------------------
+def _load_vendored_meta(name):
+    import gzip
+    import pickle
+    from importlib import resources
+    res = resources.files("mhcmatch.data").joinpath(name)
+    if not res.is_file():
+        pytest.skip(f"{name} not built (run tools/build_anchor_models.py)")
+    return pickle.loads(gzip.decompress(res.read_bytes()))
+
+
+def test_vendored_models_load_and_are_current():
+    # Every shipped model loads (monkeypatched panel hash), scores finitely, AND is not stale for this
+    # version -- the last assert fails a release that bumps __version__ without regenerating the models.
+    from mhcmatch import __version__, diffusion as D
+    for (cls, _fp, _bg), name in D._VENDORED_MODELS.items():
+        meta, _ = _load_vendored_meta(name)
+        assert meta["version"] == __version__, \
+            f"vendored {name} is stale for this version; rerun tools/build_anchor_models.py"
+        orig = D.panel_sha
+        D.panel_sha = lambda store, c: meta["panel_sha"]    # pretend the live panel matches
+        try:
+            m = D.load_vendored_anchor_model(object(), cls, meta["params"])
+        finally:
+            D.panel_sha = orig
+        assert m is not None, name
+        pep, al = ("PGCCSGAPALGLTQV", "DRB1_1101") if cls == "mhc2" else ("NLVPMVATV", "HLA-A*02:01")
+        s = m.score(pep, al)
+        assert s == s and s != float("-inf"), name          # a finite score
+
+
+def test_vendored_guard_rejects_mismatch():
+    from mhcmatch import diffusion as D
+    (cls, _fp, _bg), name = next(iter(D._VENDORED_MODELS.items()))
+    meta, _ = _load_vendored_meta(name)
+    # a shipped (cls,footprint,background) but a non-shipped param value -> params differ -> None
+    assert D.load_vendored_anchor_model(object(), cls, {**meta["params"], "n_motifs": 99}) is None
+    # a config with no shipped artifact (ligand background is the specificity default) -> None
+    assert D.load_vendored_anchor_model(object(), cls, {**meta["params"], "background": "ligand"}) is None
+
+
+@pytest.mark.skipif(not _HAS_PMHC, reason="needs ~/hf/pmhc_data panel")
+def test_binder_score():
+    from mhcmatch import Store
+    store = Store.from_pmhc(_PMHC, tier="shortlist", species="human", classes=("mhc1",))
+    res = store.binder_score("NLVPMVATV", alleles="HLA-A*02:01,HLA-B*07:02", cls="mhc1")
+    assert res and res[0].allele == "HLA-A*02:01"          # the canonical A*02:01 epitope ranks first
+    top = res[0]
+    assert top.band == "strong"                            # binder_rank is a calibrated combined %rank
+    assert 0.0 <= top.binder_rank <= 100.0                 # ... so it lives on a proper %rank scale
+    assert all(res[i].binder_rank <= res[i + 1].binder_rank for i in range(len(res) - 1))  # best-first
+    assert res[-1].band == "non-binder"                    # B*07:02 does not present NLVPMVATV
 
 
 if __name__ == "__main__":

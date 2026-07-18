@@ -15,6 +15,7 @@ import csv
 import gzip
 import math
 import os
+import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from functools import lru_cache
@@ -302,6 +303,10 @@ class Store:
         if path is None:
             base = os.environ.get("MHCMATCH_PMHC")
             path = os.path.join(base, f"pmhc_{tier}.tsv.gz") if base else fetch_pmhc(tier)
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"pmhc table not found: {path!r}. Pass tier='shortlist'|'full' (auto-fetched "
+                "from HF, cached) or set $MHCMATCH_PMHC to a dir holding pmhc_<tier>.tsv.gz.")
         sp = _SPECIES.get(species) if species else None
         keep = {_CLASS[c] for c in classes}
         csv.field_size_limit(10 ** 7)
@@ -516,7 +521,8 @@ class Store:
     def anchor_model(self, cls="mhc1", h=2.0, prior_strength=10.0, anchors=None, learn_weights=True,
                      prune_dpi=False, weights="learned", register_em=2, footprint="anchor",
                      rare_max=30, background="ligand", length_prior="score", length_motifs=True,
-                     register="marginal", n_motifs=3, pseudocount=0.0):
+                     register="marginal", n_motifs=3, pseudocount=0.0, _vendored=True,
+                     _return_params=False):
         """Anchor-factored presentation model with cross-allele kernel-shrinkage diffusion.
 
         See :class:`mhcmatch.diffusion.AnchorModel`. The diffusion rescues rare alleles by borrowing
@@ -539,13 +545,21 @@ class Store:
         anchor's observed counts onto chemically similar residues with weight ``β/(n+β)``; ``0``
         (default) is off -- see :meth:`mhcmatch.diffusion.AnchorModel._add_pseudocounts`.
         """
-        from .diffusion import AnchorModel
-        return AnchorModel(self, cls=cls, anchors=anchors, h=h, prior_strength=prior_strength,
-                           learn_weights=learn_weights, prune_dpi=prune_dpi, weights=weights,
-                           register_em=register_em, footprint=footprint, rare_max=rare_max,
-                           background=background, length_prior=length_prior,
-                           length_motifs=length_motifs, register=register, n_motifs=n_motifs,
-                           pseudocount=pseudocount)
+        from .diffusion import AnchorModel, load_vendored_anchor_model
+        params = dict(anchors=anchors, h=h, prior_strength=prior_strength, learn_weights=learn_weights,
+                      prune_dpi=prune_dpi, weights=weights, register_em=register_em,
+                      footprint=footprint, rare_max=rare_max, background=background,
+                      length_prior=length_prior, length_motifs=length_motifs, register=register,
+                      n_motifs=n_motifs, pseudocount=pseudocount)
+        if _vendored:
+            m = load_vendored_anchor_model(self, cls, params)
+            if m is not None:
+                return m
+        if cls == "mhc2" and "MHCMATCH_QUIET" not in os.environ:      # the slow build; keep the user informed
+            print(f"mhcmatch: fitting the MHC-II presentation model "
+                  f"({footprint}/{background}); this takes a few minutes...", file=sys.stderr, flush=True)
+        model = AnchorModel(self, cls=cls, **params)
+        return (model, params) if _return_params else model
 
     def affinity_model(self, cls="mhc1"):
         """Quantitative IC50 (nM) + neoantigen amplitude/DAI head (:class:`mhcmatch.PottsAffinity`).
@@ -563,6 +577,14 @@ class Store:
                 if cls == "mhc2" else None
             cache[cls] = PottsAffinity(cls, anchor_model=am)
         return cache[cls]
+
+    def binder_score(self, peptide, alleles="all", cls=None, **kw):
+        """Rank ``alleles`` for ``peptide`` by the generalized binder score -- the geometric mean of
+        the presentation (:class:`AnchorModel` %rank) and affinity (:class:`PottsAffinity` %rank), a
+        soft-AND that scores well only when the peptide is *both* presented and binds. See
+        :func:`mhcmatch.predict.binder_score`. Returns ``list[BinderScore]`` best-first."""
+        from .predict import binder_score
+        return binder_score(self, peptide, alleles=alleles, cls=cls, **kw)
 
     # -- per-allele anchor preferences (feeds pseudoseq diffusion) ------------
     def anchor_preferences(self, cls, anchor, anchors=None, by_length=False):

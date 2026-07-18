@@ -121,6 +121,13 @@ def test_class2_allele_resolution(name, key):
     assert resolve_allele(name, "mhc2") == (key, True)
 
 
+def test_structure_default_dir_env(monkeypatch):
+    # $MHCMATCH_STRUCTURES overrides without needing tcren (the env branch returns first).
+    from mhcmatch import structure
+    monkeypatch.setenv("MHCMATCH_STRUCTURES", "/some/where/Canonical2026")
+    assert structure._default_structure_dir() == "/some/where/Canonical2026"
+
+
 def test_structure_mj_optional():
     pytest.importorskip("tcren")
     from mhcmatch.structure import StructureScorer

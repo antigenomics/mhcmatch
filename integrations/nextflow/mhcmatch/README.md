@@ -25,6 +25,12 @@ the somatic mutation — **`agretopicity`** (Kd_MT/Kd_WT vs the position-aligned
 native table also carries the Łuksza amplitude and DAI). It leaves expression, `CDR3`/`TCR-score`, and
 the composite `score` columns to their own pipeline modules.
 
+The **native** table additionally carries the **generalized binder score** — `affinity_rank` (Potts
+%rank), `binder_rank` (the calibrated combined %rank fusing presentation × affinity via Fisher's
+method), and `binder_band`. These are mhcmatch-specific columns, so they ride in the native table only;
+the `.scored.csv` keeps the fixed 57-column pipeline schema untouched. `binder_rank` is the recommended
+single-number binder index (a soft-AND: strong only when a peptide is both presented and binds).
+
 Concordance with NetMHCpan on TESLA1/Alekseech (the trust check for this swap) is in
 `bench/results/concordance_tesla1_*.md`: class I pooled Spearman ρ ≈ 0.73–0.76, best-allele agreement
 71–82%; class II good for DRB, weaker for DP/DQ heterodimers.
@@ -50,16 +56,16 @@ No data staging needed — the build runs `mhcmatch bootstrap`, which fetches th
 `huggingface_hub` cache, so the container resolves the panel offline at runtime.
 
 ```zsh
-docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.4.1 \
-    --build-arg MHCMATCH_VERSION=0.4.1 \
+docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.8.0 \
+    --build-arg MHCMATCH_VERSION=0.8.0 \
     integrations/nextflow/mhcmatch/
-docker push <ISPRAS_REGISTRY>/mhcmatch:0.4.1
+docker push <ISPRAS_REGISTRY>/mhcmatch:0.8.0
 ```
 
 Point `container` at it (in `main.nf` or, better, an override in `conf/containers.config`):
 
 ```groovy
-withName: MHCMATCH_PREDICT { container = '<ISPRAS_REGISTRY>/mhcmatch:0.4.1' }
+withName: MHCMATCH_PREDICT { container = '<ISPRAS_REGISTRY>/mhcmatch:0.8.0' }
 ```
 
 (`-profile conda` needs none of this — it builds the env from `environment.yml`.)
