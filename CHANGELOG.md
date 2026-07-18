@@ -20,6 +20,11 @@ Gamaleya/ISPRAS beta-test feedback (170726).
   disagree along the binding-strength axis (presentation rescues weak-but-presented ligands, affinity
   rescues strong-but-atypical binders; Spearman(Δ, log nM)≈+0.5–0.65 on TESLA/NCI), so the blend is more
   robust than either alone — combined immunogenicity AUROC beats both single heads (TESLA 0.786, NCI 0.965).
+- **Binder score flows through the pipeline.** `predict_windows` now annotates every predicted binder
+  with `affinity_rank`, `binder_rank`, and `binder_band`, and `write_native` emits them — so the
+  Nextflow module's `.mhcmatch.native.tsv` carries the generalized binder score with no extra call
+  (fixed ~10 s one-time calibrator fill, cached per store). The `.scored.csv` keeps its fixed 57-column
+  pipeline schema untouched.
 
 ### Fixed
 

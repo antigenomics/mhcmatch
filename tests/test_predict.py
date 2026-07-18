@@ -133,6 +133,9 @@ def test_predict_windows_end_to_end():
     assert kl.wt_peptide == "KLINSQISL"                     # the self counterpart (S instead of N)
     assert kl.wt_affinity_nm == kl.wt_affinity_nm and kl.agretopicity == kl.agretopicity
     assert kl.synth_peptide == "KLINSQINL"                  # class I: synth == epitope
+    # Phase 4: the calibrated combined binder %rank rides along, on a proper %rank scale + banded
+    assert kl.affinity_rank == kl.affinity_rank and kl.binder_rank == kl.binder_rank   # both finite
+    assert 0.0 <= kl.binder_rank <= 100.0 and kl.binder_band == "strong"
 
 
 # ---- vendored pre-fit MHC-II models (Store.anchor_model) --------------------

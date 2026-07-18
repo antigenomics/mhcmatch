@@ -44,7 +44,8 @@ Quickstart
    aff = store.affinity_model("mhc1")
    aff.predict_ic50("NLVPMVATV", "HLA-A*02:01")
 
-   # generalized binder score: geo-mean of presentation %rank and affinity %rank, ranked over alleles
+   # generalized binder score: calibrated combined %rank (Fisher of presentation %rank x affinity
+   # %rank), ranked over alleles -- a soft-AND, strong only when a peptide is both presented and binds
    store.binder_score("NLVPMVATV", alleles="HLA-A*02:01,HLA-B*07:02", cls="mhc1")
    aff.amplitude("NLVPMVATL", "NLVPMVATV", "HLA-A*02:01")     # (wild-type, mutant, allele)
 
@@ -52,7 +53,10 @@ Pipeline integration
 --------------------
 
 Score a variant peptide-window FASTA (the neoantigen-pipeline schema) into the pipeline's
-``.scored.csv`` plus mhcmatch's richer native table:
+``.scored.csv`` plus mhcmatch's richer native table. The native table carries, per predicted binder,
+the presentation ``percent_rank`` / ``p_present`` / ``band``, the Potts ``affinity_nm`` / ``affinity_rank``,
+the WT counterpart + agretopicity / amplitude / DAI, and the **generalized binder score**
+(``binder_rank`` = calibrated combined %rank, plus ``binder_band``):
 
 .. code-block:: fish
 

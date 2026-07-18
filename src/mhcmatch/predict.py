@@ -50,6 +50,7 @@ SCORED_COLUMNS = (
 
 NATIVE_COLUMNS = ("source", "type", "gene_name", "chrom", "pos", "ref", "alt", "peptide", "offset",
                   "best_allele", "cls", "percent_rank", "p_present", "band", "affinity_nm",
+                  "affinity_rank", "binder_rank", "binder_band",
                   "wt_peptide", "wt_affinity_nm", "agretopicity", "amplitude", "dai",
                   "synth_peptide", "model_peptide", "anchors", "tcr_facing")
 
@@ -76,6 +77,9 @@ class Prediction:
     # correction means A can be <1 even when the mutant binds better, for a weakly-binding WT.
     amplitude: float = float("nan")
     dai: float = float("nan")            # differential agretopicity index log10(Kd_WT/Kd_MT)
+    affinity_rank: float = float("nan")  # Potts affinity %rank for this allele (lower = stronger)
+    binder_rank: float = float("nan")    # calibrated combined %rank (presentation x affinity, Fisher)
+    binder_band: str = ""                # strong / weak / non-binder, banded on binder_rank
     synth_peptide: str = ""              # peptide to SYNTHESISE (long-peptide vaccine; ~21mer for II)
     model_peptide: str = ""              # peptide to MODEL structurally (TCR:pMHC; ~13mer for II)
     var: dict = field(default_factory=dict)   # parsed variant header
@@ -343,6 +347,10 @@ def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
     per window (strongest first). Returns ``list[Prediction]``.
     """
     model, cal, aff = build_scorer(store, cls, background, footprint, seed)
+    # the calibrated combined %rank (presentation x affinity) needs the affinity + Fisher calibrators;
+    # both are cached on the store and only fill their per-allele background lazily.
+    acal = _affinity_calibrator(store, cls, aff, seed) if aff is not None else None
+    ccal = _binder_calibrator(store, cls, model, aff, cal, acal, seed) if aff is not None else None
     lengths = KMER_LENS[cls]
     by_window = defaultdict(list)
     for header, seq in records:
@@ -377,6 +385,15 @@ def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
             if aff is not None:
                 nm = aff.predict_ic50(pep, a)
                 p.affinity_nm = _round(nm)
+                # combined binder %rank for the chosen allele: calibrate Fisher's -(ln p_pres + ln p_aff)
+                ar = acal.percent_rank(a, aff.predict_y(pep, a))
+                if ar == ar:
+                    p.affinity_rank = round(ar, 3)
+                    cstat = -(math.log(max(pr, 1e-9)) + math.log(max(ar, 1e-9)))
+                    br = ccal.percent_rank(a, cstat)
+                    if br == br:
+                        p.binder_rank = round(br, 3)
+                        p.binder_band = band_of(br)
                 if wt_seq is not None:
                     wtk = wt_seq[off:off + len(pep)]
                     if wtk != pep and set(wtk) <= _AA:       # k-mer spans the mutation
@@ -428,6 +445,7 @@ def write_native(preds, path: str) -> None:
             w.writerow([p.source, v.get("type", ""), v.get("gene_name", ""), v.get("chrom", ""),
                         v.get("pos", ""), v.get("ref", ""), v.get("alt", ""), p.peptide, p.offset,
                         p.allele, p.cls, p.percent_rank, p.p_present, p.band, p.affinity_nm,
+                        _blank_nan(p.affinity_rank), _blank_nan(p.binder_rank), p.binder_band,
                         p.wt_peptide, p.wt_affinity_nm, p.agretopicity, p.amplitude, p.dai,
                         p.synth_peptide, p.model_peptide,
                         ";".join(str(i) for i in p.anchors), p.tcr_facing])

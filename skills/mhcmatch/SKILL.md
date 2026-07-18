@@ -27,7 +27,7 @@ store = mhcmatch.Store.from_pmhc("~/hf/pmhc_data/pmhc/pmhc_shortlist.tsv.gz")   
 | `store.decompose(peptide)` | anchor / TCR-facing split with `X` masks |
 | `store.anchor_model(cls, ...)` | the forward scorer — see below |
 | `store.affinity_model` | `PottsAffinity`; IC50 (nM) + Łuksza amplitude / DAI |
-| `store.binder_score(peptide, alleles=, cls=)` | **generalized binder score** = geo-mean(presentation %rank, affinity %rank); ranks alleles best-first (`BinderScore`) |
+| `store.binder_score(peptide, alleles=, cls=)` | **generalized binder score** = calibrated combined %rank (Fisher of presentation %rank × affinity %rank); a soft-AND, ranks alleles best-first (`BinderScore`) |
 | `store.alleles(cls)`, `store.anchor_preferences(cls, j)` | panel introspection |
 
 ## `AnchorModel` — the presentation scorer (`store.anchor_model(cls, ...)`)
@@ -74,7 +74,7 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 | `mhcmatch.ligand` | `SpanModel`, `presented_span`, `processing_score` | core → full presented ligand; register-free (terminus-relative) |
 | `mhcmatch.logo` | `motif`, `render` | information-content PWM + length histogram |
 | `mhcmatch.calibrate` | `RankCalibrator` | per-allele `%rank` / `P(present)` / band |
-| `mhcmatch.predict` | `predict_fasta`, `predict_windows` | variant-window scoring |
+| `mhcmatch.predict` | `predict_fasta`, `predict_windows` | variant-window scoring; native table carries `binder_rank`/`binder_band`/`affinity_rank` (the generalized binder score) alongside %rank/IC50/agretopicity. `.scored.csv` keeps the fixed 57-col pipeline schema |
 | `mhcmatch.structure` | `StructureScorer` | MJ ΔΔG; **optional `[structure]` extra** (needs `tcren`) |
 
 ## CLI
