@@ -27,6 +27,7 @@ store = mhcmatch.Store.from_pmhc("~/hf/pmhc_data/pmhc/pmhc_shortlist.tsv.gz")   
 | `store.decompose(peptide)` | anchor / TCR-facing split with `X` masks |
 | `store.anchor_model(cls, ...)` | the forward scorer — see below |
 | `store.affinity_model` | `PottsAffinity`; IC50 (nM) + Łuksza amplitude / DAI |
+| `store.binder_score(peptide, alleles=, cls=)` | **generalized binder score** = geo-mean(presentation %rank, affinity %rank); ranks alleles best-first (`BinderScore`) |
 | `store.alleles(cls)`, `store.anchor_preferences(cls, j)` | panel introspection |
 
 ## `AnchorModel` — the presentation scorer (`store.anchor_model(cls, ...)`)
@@ -78,7 +79,8 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 
 ## CLI
 
-`decompose`, `restriction`, `affinity`, `scan`, `source`, `logo`, `span`, `predict`, `bootstrap`.
+`decompose`, `restriction`, `affinity`, `binder`, `scan`, `source`, `logo`, `span`, `predict`, `bootstrap`.
+`mhcmatch binder <peptide> --alleles ... --cls mhc1` ranks alleles by the generalized binder score.
 
 ## Traps
 

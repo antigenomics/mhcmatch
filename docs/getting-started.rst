@@ -43,6 +43,9 @@ Quickstart
    # quantitative affinity: IC50 (nM) + neoantigen amplitude / DAI vs the wild-type peptide (Potts head)
    aff = store.affinity_model("mhc1")
    aff.predict_ic50("NLVPMVATV", "HLA-A*02:01")
+
+   # generalized binder score: geo-mean of presentation %rank and affinity %rank, ranked over alleles
+   store.binder_score("NLVPMVATV", alleles="HLA-A*02:01,HLA-B*07:02", cls="mhc1")
    aff.amplitude("NLVPMVATL", "NLVPMVATV", "HLA-A*02:01")     # (wild-type, mutant, allele)
 
 Pipeline integration

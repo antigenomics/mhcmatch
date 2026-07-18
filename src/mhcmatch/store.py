@@ -578,6 +578,14 @@ class Store:
             cache[cls] = PottsAffinity(cls, anchor_model=am)
         return cache[cls]
 
+    def binder_score(self, peptide, alleles="all", cls=None, **kw):
+        """Rank ``alleles`` for ``peptide`` by the generalized binder score -- the geometric mean of
+        the presentation (:class:`AnchorModel` %rank) and affinity (:class:`PottsAffinity` %rank), a
+        soft-AND that scores well only when the peptide is *both* presented and binds. See
+        :func:`mhcmatch.predict.binder_score`. Returns ``list[BinderScore]`` best-first."""
+        from .predict import binder_score
+        return binder_score(self, peptide, alleles=alleles, cls=cls, **kw)
+
     # -- per-allele anchor preferences (feeds pseudoseq diffusion) ------------
     def anchor_preferences(self, cls, anchor, anchors=None, by_length=False):
         """{allele: Counter(residue)} at a 1-based ``anchor`` position (negative from C-term).
