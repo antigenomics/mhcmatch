@@ -22,7 +22,8 @@ DATA = os.path.join(os.path.dirname(mhcmatch.__file__), "data")
 
 
 def main():
-    store = mhcmatch.Store.from_pmhc(tier="full", species="human", classes=("mhc2",))
+    classes = tuple(dict.fromkeys(cls for cls, _, _ in _VENDORED_MODELS))   # e.g. ("mhc1", "mhc2")
+    store = mhcmatch.Store.from_pmhc(tier="full", species="human", classes=classes)
     for (cls, footprint, background), name in _VENDORED_MODELS.items():
         path = os.path.join(DATA, name)
         save_vendored_anchor_model(store, cls, path, footprint=footprint, background=background)

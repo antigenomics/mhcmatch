@@ -914,9 +914,12 @@ class AnchorModel:
 # run triggers it twice (the presentation scorer + the affinity register oracle). These configs are
 # shipped pre-fit in ``mhcmatch.data`` and loaded READ-ONLY -- no runtime writes, so concurrent
 # pipeline tasks (e.g. nextflow/SLURM on a cluster) never race or stampede on a cache. MHC-I fits in
-# ~4 s and is not shipped. A vendored model is used only when the mhcmatch version, the panel hash and
-# the full build params all match; a custom ``--pmhc`` / tier / param set safely falls back to building.
+# ~4 s but is shipped too, so the vendored/version/panel-hash guarantee is uniform across classes and a
+# model only ever changes on an explicit rebuild. A vendored model is used only when the mhcmatch
+# version, the panel hash and the full build params all match; a custom ``--pmhc`` / tier / param set
+# safely falls back to building. Regenerate all of these with ``tools/build_anchor_models.py``.
 _VENDORED_MODELS = {
+    ("mhc1", "adaptive", "proteome"): "anchor_model_mhc1_proteome_adaptive.pkl.gz",
     ("mhc2", "adaptive", "proteome"): "anchor_model_mhc2_proteome_adaptive.pkl.gz",
     ("mhc2", "core", "proteome"): "anchor_model_mhc2_proteome_core.pkl.gz",
 }

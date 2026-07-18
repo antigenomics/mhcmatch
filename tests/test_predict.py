@@ -146,31 +146,34 @@ def _load_vendored_meta(name):
     return pickle.loads(gzip.decompress(res.read_bytes()))
 
 
-def test_vendored_mhc2_model_loads_and_is_current():
-    # Loads with a monkeypatched panel hash, scores finitely, AND is not stale for this version --
-    # this last assert fails a release that bumps mhcmatch.__version__ without regenerating the models.
+def test_vendored_models_load_and_are_current():
+    # Every shipped model loads (monkeypatched panel hash), scores finitely, AND is not stale for this
+    # version -- the last assert fails a release that bumps __version__ without regenerating the models.
     from mhcmatch import __version__, diffusion as D
-    meta, _ = _load_vendored_meta("anchor_model_mhc2_proteome_adaptive.pkl.gz")
-    assert meta["version"] == __version__, \
-        "vendored MHC-II model is stale for this version; rerun tools/build_anchor_models.py"
-    orig = D.panel_sha
-    D.panel_sha = lambda store, cls: meta["panel_sha"]      # pretend the live panel matches
-    try:
-        m = D.load_vendored_anchor_model(object(), "mhc2", meta["params"])
-    finally:
-        D.panel_sha = orig
-    assert m is not None
-    s = m.score("PGCCSGAPALGLTQV", "DRB1_1101")
-    assert s == s and s != float("-inf")                    # a finite score
+    for (cls, _fp, _bg), name in D._VENDORED_MODELS.items():
+        meta, _ = _load_vendored_meta(name)
+        assert meta["version"] == __version__, \
+            f"vendored {name} is stale for this version; rerun tools/build_anchor_models.py"
+        orig = D.panel_sha
+        D.panel_sha = lambda store, c: meta["panel_sha"]    # pretend the live panel matches
+        try:
+            m = D.load_vendored_anchor_model(object(), cls, meta["params"])
+        finally:
+            D.panel_sha = orig
+        assert m is not None, name
+        pep, al = ("PGCCSGAPALGLTQV", "DRB1_1101") if cls == "mhc2" else ("NLVPMVATV", "HLA-A*02:01")
+        s = m.score(pep, al)
+        assert s == s and s != float("-inf"), name          # a finite score
 
 
 def test_vendored_guard_rejects_mismatch():
     from mhcmatch import diffusion as D
-    meta, _ = _load_vendored_meta("anchor_model_mhc2_proteome_adaptive.pkl.gz")
-    off_spec = {**meta["params"], "n_motifs": 1}            # a non-shipped param combination
-    assert D.load_vendored_anchor_model(object(), "mhc2", off_spec) is None
-    # a config with no shipped artifact (mhc1 builds in ~4 s, not vendored) returns None immediately
-    assert D.load_vendored_anchor_model(object(), "mhc1", meta["params"]) is None
+    (cls, _fp, _bg), name = next(iter(D._VENDORED_MODELS.items()))
+    meta, _ = _load_vendored_meta(name)
+    # a shipped (cls,footprint,background) but a non-shipped param value -> params differ -> None
+    assert D.load_vendored_anchor_model(object(), cls, {**meta["params"], "n_motifs": 99}) is None
+    # a config with no shipped artifact (ligand background is the specificity default) -> None
+    assert D.load_vendored_anchor_model(object(), cls, {**meta["params"], "background": "ligand"}) is None
 
 
 if __name__ == "__main__":
