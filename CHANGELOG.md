@@ -26,7 +26,10 @@ Gamaleya/ISPRAS beta-test feedback (170726).
   by `Store.anchor_model`, guarded by version + panel hash + build params. Loaded models are
   bit-identical to a fresh build (no benchmark number changes); a 1034-window MHC-II sample now runs
   in ~27 s instead of never. Read-only vendoring avoids any cache race under concurrent (nextflow/
-  SLURM) execution. Regenerate on version bump / panel change with `tools/build_anchor_models.py`.
+  SLURM) execution. Both classes are shipped so the version/panel-hash guarantee is uniform. The
+  release workflow (`publish.yml`) **regenerates the models before building the wheel**, so a published
+  release can never ship stale models; `ci.yml`'s staleness test is the earlier (data-free) guard.
+  Regenerate manually with `python tools/build_anchor_models.py`.
 
 ## [0.7.2] — 2026-07-17
 

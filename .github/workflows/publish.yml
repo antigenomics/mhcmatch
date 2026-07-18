@@ -20,6 +20,17 @@ jobs:
           python-version: "3.12"
       - name: Install build tooling
         run: python -m pip install --upgrade pip build twine
+      - name: Regenerate vendored MHC models for this release
+        # The vendored AnchorModels are version-guarded (a model built under an older version is
+        # ignored at runtime and rebuilt, ~200 s). Rebuild them here so the PUBLISHED wheel can never
+        # ship stale models: install the package (editable, so the regen writes into src/mhcmatch/data
+        # that `build` then packages), then fit on the public isalgo/pmhc_data full-tier panel
+        # (auto-fetched from HF). ~5 min. A build hook cannot do this -- `python -m build` runs in an
+        # isolated env without numpy/seqtree/the panel. ci.yml's staleness test is the earlier guard.
+        run: |
+          pip install -e ".[test]"
+          python tools/build_anchor_models.py
+          git diff --stat -- src/mhcmatch/data/ || true
       - name: Build sdist + wheel
         run: python -m build
       - name: Check distributions
