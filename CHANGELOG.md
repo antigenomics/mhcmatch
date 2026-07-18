@@ -28,8 +28,9 @@ Gamaleya/ISPRAS beta-test feedback (170726), plus the generalized binder score.
 
 ### Fixed
 
-- **Install docs ran the wrong interpreter.** `README.md` and `docs/getting-started.rst` said
-  `bash setup.sh`, but `setup.sh` is a **fish** script — now `fish setup.sh`.
+- **`setup.sh` was fish-only.** Rewritten in POSIX shell so it runs under **bash, zsh, or sh**
+  (calls `.venv/bin/pip` directly; no `source …activate`); `README.md` and `docs/getting-started.rst`
+  invoke it as `bash setup.sh` again.
 - **Quickstart referenced a non-shipped file.** `Store.from_pmhc("pmhc_full.tsv.gz", …)` →
   `Store.from_pmhc(tier="shortlist", …)` (auto-fetched from HF). `from_pmhc` now raises an actionable
   `FileNotFoundError` (pointing at `tier=` / `$MHCMATCH_PMHC`) instead of a bare `open()` error.

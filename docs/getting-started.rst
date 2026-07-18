@@ -4,11 +4,11 @@ Getting started
 Install
 -------
 
-.. code-block:: fish
+.. code-block:: bash
 
-   fish setup.sh            # repo-local .venv + editable install (uses sibling ../seqtree if present)
-   fish setup.sh --tests    # + pytest
-   fish setup.sh --logo     # + logomaker/matplotlib for rendering logos
+   bash setup.sh            # repo-local .venv + editable install (uses sibling ../seqtree if present)
+   bash setup.sh --tests    # + pytest
+   bash setup.sh --logo     # + logomaker/matplotlib for rendering logos
 
 Quickstart
 ----------

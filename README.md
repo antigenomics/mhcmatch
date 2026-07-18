@@ -50,10 +50,10 @@ development plan is in [`ROADMAP.md`](ROADMAP.md).
 
 ## Install
 
-```fish
-fish setup.sh            # repo-local .venv + editable install (uses sibling ../seqtree if present)
-fish setup.sh --tests    # + pytest
-fish setup.sh --logo     # + logomaker/matplotlib for rendering logos
+```bash
+bash setup.sh            # repo-local .venv + editable install (uses sibling ../seqtree if present)
+bash setup.sh --tests    # + pytest
+bash setup.sh --logo     # + logomaker/matplotlib for rendering logos
 ```
 
 ## Quickstart
