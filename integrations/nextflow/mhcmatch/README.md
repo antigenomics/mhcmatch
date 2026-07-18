@@ -31,7 +31,7 @@ method), and `binder_band`. These are mhcmatch-specific columns, so they ride in
 the `.scored.csv` keeps the fixed 57-column pipeline schema untouched. `binder_rank` is the recommended
 single-number binder index (a soft-AND: strong only when a peptide is both presented and binds).
 
-Concordance with NetMHCpan on TESLA1/Alekseech (the trust check for this swap) is in
+Concordance with NetMHCpan on the public TESLA1 sample (the trust check for this swap) is in
 `bench/results/concordance_tesla1_*.md`: class I pooled Spearman ρ ≈ 0.73–0.76, best-allele agreement
 71–82%; class II good for DRB, weaker for DP/DQ heterodimers.
 

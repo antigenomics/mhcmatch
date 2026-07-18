@@ -30,7 +30,7 @@ appendix/*.fdb_latexmk
 
 # head-to-head benchmark cache (examples + NetMHC scores)
 
-# private-sample concordance outputs (e.g. Alekseech patient data — never commit or share)
+# private-sample concordance outputs (private donor data — never commit or share in this PUBLIC repo)
 bench/results/private/
 
 # Obsidian memory-sync marker (machine-local absolute paths + sync hashes)
