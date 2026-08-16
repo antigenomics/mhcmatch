@@ -17,6 +17,10 @@ The mathematical and statistical theory lives in the technical appendix
        <h3>Getting Started</h3>
        <p>Install, build a store, predict restriction, scan a protein.</p>
      </a>
+     <a class="proj-card" href="immunogenicity.html">
+       <h3>Immunogenicity features</h3>
+       <p>Physicochemical featurization of an epitope, offline, in one second.</p>
+     </a>
      <a class="proj-card" href="api.html">
        <h3>API Reference</h3>
        <p>Store, search, proteome, pseudoseq diffusion, logos.</p>
@@ -35,10 +39,16 @@ Capabilities
 - **Motif logos** — per-allele information-content logos with length distributions.
 - **Pseudosequence diffusion** — allele similarity, clustering, and kernel-shrinkage pooling that
   rescues rare alleles (anchor-factored, with learned per-pocket groove weights).
+- **Physicochemical immunogenicity** — 141 features per peptide over selectable TCR-facing position
+  schemes (:doc:`immunogenicity`), plus a shipped 13-parameter calibrated ``P(immunogenic)``.
+- **TCR precursor frequency** — six estimators of how much of a repertoire can recognise an epitope
+  (optional ``[precursor]`` extra).
 
 .. toctree::
    :maxdepth: 2
    :hidden:
 
    getting-started
+   immunogenicity
+   property_basis
    api

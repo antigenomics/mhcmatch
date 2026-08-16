@@ -6,6 +6,61 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.9.0] - 2026-08-16
+
+Three new public modules on the recognition side of the problem — physicochemical featurization, a
+frozen immunogenicity model, and TCR precursor frequency — plus a calibrated probability on the
+binder score. Nothing on the presentation path changes behaviour; the vendored anchor models are
+regenerated only so their version stamp matches this release (panel unchanged).
+
+### Added
+
+- **`mhcmatch.immuno`** — physicochemical featurization of an epitope: 141 features per peptide
+  (20 amino-acid scales × 7 statistics, plus `length`), with the two contested choices exposed as
+  arguments rather than baked in. `ANCHOR_SCHEMES` keeps all three class-I anchor definitions in the
+  toolchain selectable, and the `sum`/`mean`/`min`/`max` descriptors are joined by
+  `run_max`/`run_n`/`run_frac`, which express *contiguity* — a property no composition statistic can
+  represent. Needs no reference panel and no download. Self-check: `python -m mhcmatch.immuno`.
+- **`mhcmatch.ipred`** — the fitted physicochemical immunogenicity model over that basis: two
+  principal components of the property matrix plus length, thirteen parameters, returning a
+  calibrated `log P(immunogenic)` (`ipred.p_immunogenic`). Parameters are vendored in
+  `mhcmatch/data/ipred_mhc1.json` and never refitted at import time.
+- **`mhcmatch.precursor`** — TCR precursor frequency `F(e)` for an epitope: six independent
+  estimators (`observed_mass`, `coverage_corrected_mass`, `ball_mass`, `shell_profile`,
+  `event_ratio`, `motif_mass`) plus `cross_check`, which is the point — they bound the answer from
+  different directions instead of agreeing by construction. Optional extra,
+  `pip install 'mhcmatch[precursor]'` (needs `vdjtools`); `check_junctions` guards the
+  CDR3-vs-junction trap before any Pgen is computed.
+- **`BinderScore.p_binder`** — a calibrated `P(binder)` alongside `binder_rank`. The %rank is what
+  you sort by; `p_binder` is what you threshold or hand to a downstream model, because it means the
+  same thing outside the candidate list it was computed in. Isotonic-fit from the allele's own
+  ligands against the random-peptide background when the calibrator is built with `positives=`.
+- **Structure-derived contact profile** (`mhcmatch.data.contact_profile`, reached as
+  `immuno.contact_profile` / `scheme="contact"`) — continuous per-position TCR-facing weights from
+  8,062 TCR↔peptide residue contacts over 370 crystal structures, with both derived steps (zeroing
+  below half the uniform-footprint expectation, rescaling survivors to mean 1) fixed by the profile
+  rather than tuned. On class-I 9-mers it recovers P1/P2/P3/PΩ as anchors unsupervised — which is
+  neither shipped anchor scheme.
+- **Four marimo notebooks** (`notebooks/`, `pip install 'mhcmatch[notebooks]'`) — presentation and
+  the binder score, immunogenicity features, precursor frequency, mimicry and self. Clone-only (the
+  wheel ships `src/mhcmatch` alone), but each bootstraps its data from HuggingFace or from the
+  vendored tables, so none needs a local file.
+
+### Documentation
+
+- **Immunogenicity features** ([`docs/immunogenicity.rst`](docs/immunogenicity.rst)) — install to
+  feature matrix, with the four position schemes side by side. The featurizer previously appeared
+  nowhere on the docs site.
+- **The amino-acid property basis** ([`docs/property_basis.rst`](docs/property_basis.rst)) — two
+  properties of the vendored tables in `mhcmatch.data.aa_tables`, each pinned by a regression test:
+  the dominant eigenvector of the 20 × 142 residue-by-scale matrix is a hydropathy axis (32.79 % of
+  the variance; median |ρ| 0.894 against 39 named hydrophobicity scales), and the Kidera factors are
+  already orthogonal (largest off-diagonal correlation 0.0026, participation ratio 10.00 of 10), so
+  PCA over the alphabet returns an arbitrary rotation and reduces nothing. Scoped deliberately: that
+  degeneracy holds under the uniform measure over residue types and breaks under any other.
+- `docs/api.rst` gained the five modules it was missing — `immuno`, `ipred`, `precursor`,
+  `data.aa_tables`, `data.contact_profile`.
+
 ## [0.8.0] - 2026-07-18
 
 Gamaleya/ISPRAS beta-test feedback (170726), plus the generalized binder score.

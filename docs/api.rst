@@ -97,6 +97,14 @@ mhcmatch.mimics module
    :undoc-members:
    :show-inheritance:
 
+mhcmatch.immuno module
+----------------------
+
+.. automodule:: mhcmatch.immuno
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 mhcmatch.ipred module
 ---------------------
 
@@ -104,3 +112,26 @@ mhcmatch.ipred module
    :members:
    :undoc-members:
    :show-inheritance:
+
+mhcmatch.precursor module
+-------------------------
+
+Optional extra: ``pip install 'mhcmatch[precursor]'`` (needs ``vdjtools``).
+
+.. automodule:: mhcmatch.precursor
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+mhcmatch.data.aa_tables module
+------------------------------
+
+The vendored amino-acid property tables. Their values are not reproduced here — they are plain
+``dict[str, float]`` and large; :doc:`property_basis` states what their principal components are.
+
+.. automodule:: mhcmatch.data.aa_tables
+
+mhcmatch.data.contact_profile module
+------------------------------------
+
+.. automodule:: mhcmatch.data.contact_profile

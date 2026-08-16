@@ -49,6 +49,11 @@ Quickstart
    store.binder_score("NLVPMVATV", alleles="HLA-A*02:01,HLA-B*07:02", cls="mhc1")
    aff.amplitude("NLVPMVATL", "NLVPMVATV", "HLA-A*02:01")     # (wild-type, mutant, allele)
 
+   # physicochemical immunogenicity -- no store, no download (see "Immunogenicity features")
+   from mhcmatch import immuno, ipred
+   immuno.features("GILGFVFTL")                    # 141 features = 20 scales x 7 statistics + length
+   ipred.p_immunogenic("GILGFVFTL")                # shipped 13-parameter calibrated P(immunogenic)
+
 Pipeline integration
 --------------------
 

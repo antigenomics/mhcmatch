@@ -1024,6 +1024,113 @@ def test_contact_profile_handles_unseen_lengths():
         immuno.contact_profile("mhc3")
 
 
+# -- the amino-acid property basis (docs/property_basis.rst) -------------------
+
+def _complete_scales():
+    """Every vendored scale that is defined and non-constant over the standard 20 residues."""
+    from mhcmatch.data import aa_tables as t
+    tabs = [tab for fam in t.DESCRIPTORS.values() for tab in fam.values()]
+    tabs += list(t.HYDROPHOBICITY.values()) + [t.MJ_PARTITION]
+    return [s for s in tabs if all(a in s for a in t.AA20) and len(set(s.values())) > 1]
+
+
+def _spearman(x, y):
+    """Spearman rho with mid-ranks for ties (Kyte-Doolittle has four residues at -3.5)."""
+    import numpy as np
+
+    def rank(v):
+        v = np.asarray(v, float)
+        out = np.empty(len(v))
+        order = np.argsort(v, kind="stable")
+        i = 0
+        while i < len(v):
+            j = i
+            while j + 1 < len(v) and v[order[j + 1]] == v[order[i]]:
+                j += 1
+            out[order[i:j + 1]] = (i + j) / 2.0
+            i = j + 1
+        return out
+
+    a, b = rank(x), rank(y)
+    a, b = a - a.mean(), b - b.mean()
+    return float(a @ b / math.sqrt((a @ a) * (b @ b)))
+
+
+def test_property_matrix_pc1_is_a_hydropathy_axis():
+    """PC1 of the 20 x 142 residue-by-scale matrix is hydropathy, and PC2 is not.
+
+    Stated in docs/property_basis.rst and relied on by mhcmatch.ipred, whose shipped basis is this
+    eigenvector. A property of the vendored tables only -- no labels, no peptide set.
+    """
+    import numpy as np
+    from mhcmatch.data import aa_tables as t
+
+    scales = _complete_scales()
+    assert len(scales) == 142
+    A = np.array([[s[a] for s in scales] for a in t.AA20])
+    Z = (A - A.mean(0)) / A.std(0, ddof=0)
+    _, S, Vt = np.linalg.svd(Z / math.sqrt(len(t.AA20)), full_matrices=False)
+    var = S ** 2 / (S ** 2).sum()
+    assert var[0] == pytest.approx(0.3279, abs=5e-4)
+    assert var[1] == pytest.approx(0.1843, abs=5e-4)
+
+    pc1 = Z @ Vt[0]
+    pc1 = pc1 if pc1[t.AA20.index("I")] > 0 else -pc1   # component sign is arbitrary
+    order = "".join(np.array(list(t.AA20))[np.argsort(-pc1)])
+    assert order == "IFLWVMCYAPGTHSQNEKDR", order
+
+    kd = [t.HYDROPHOBICITY["KyteDoolittle"][a] for a in t.AA20]
+    assert _spearman(pc1, kd) == pytest.approx(0.8943, abs=5e-4)
+    pc2 = Z @ Vt[1]
+    assert abs(_spearman(pc2, kd)) < 0.6, "PC2 must not be a second reading of the same axis"
+
+
+def test_kidera_table_is_orthogonal_so_pca_on_it_is_degenerate():
+    """The 10 Kidera factors are orthogonal factor scores, so their correlation matrix is the
+    identity to 3 decimals and PCA over the alphabet returns an arbitrary rotation.
+
+    The consequence, also asserted: hydropathy sits in KF4 alone, and the rotation destroys it.
+    """
+    import numpy as np
+    from mhcmatch.data import aa_tables as t
+
+    kidera = [t.DESCRIPTORS["KIDERA"][f"KF{i}"] for i in range(1, 11)]
+    A = np.array([[tab[a] for tab in kidera] for a in t.AA20])
+    Z = (A - A.mean(0)) / A.std(0, ddof=0)
+    C = Z.T @ Z / len(t.AA20)
+    assert np.abs(C - np.diag(np.diag(C))).max() < 0.01
+    ev = np.linalg.eigvalsh(C)[::-1]
+    assert ev[0] / ev[-1] < 1.05, "eigenvalues must be flat -- a sphere has no principal direction"
+    assert ev.sum() ** 2 / (ev ** 2).sum() == pytest.approx(10.0, abs=1e-3)
+
+    kd = [t.HYDROPHOBICITY["KyteDoolittle"][a] for a in t.AA20]
+    rhos = [abs(_spearman([tab[a] for a in t.AA20], kd)) for tab in kidera]
+    assert rhos.index(max(rhos)) == 3 and max(rhos) > 0.7, "KF4 carries hydropathy"
+    assert sorted(rhos)[-2] < 0.5, "and no second factor does"
+    _, _, Vt = np.linalg.svd(Z / math.sqrt(len(t.AA20)), full_matrices=False)
+    assert abs(_spearman(Z @ Vt[0], kd)) < 0.5, "the rotation scrambles the axis rather than finding it"
+
+
+def test_kidera_degeneracy_is_specific_to_the_uniform_alphabet_measure():
+    """The no-op holds for the 20 x 10 table weighted one-per-residue-type and nowhere else.
+
+    Reweighting by residue frequency already breaks it, so "PCA on Kidera is degenerate" must not be
+    read as covering a peptide-level summed-Kidera matrix.
+    """
+    import numpy as np
+    from mhcmatch.data import aa_tables as t
+    from mhcmatch.diffusion import PROTEOME_AA_FREQ
+
+    kidera = [t.DESCRIPTORS["KIDERA"][f"KF{i}"] for i in range(1, 11)]
+    A = np.array([[tab[a] for tab in kidera] for a in t.AA20])
+    w = np.array([PROTEOME_AA_FREQ[a] for a in t.AA20])
+    w = w / w.sum()
+    Z = (A - w @ A) / np.sqrt(w @ (A - w @ A) ** 2)
+    ev = np.linalg.eigvalsh((Z * w[:, None]).T @ Z)[::-1]
+    assert ev[0] / ev[-1] > 2.0, "under a non-uniform measure the spectrum is not flat"
+    assert ev.sum() ** 2 / (ev ** 2).sum() < 9.5
+
+
 def test_precursor_self_check():
     """Run mhcmatch.precursor's demo() when the optional vdjtools extra is present.
 
