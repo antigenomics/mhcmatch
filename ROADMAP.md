@@ -210,6 +210,17 @@ The bar is now **`predict.binder_score` at TESLA AUROC 0.786**, not the 0.752 in
   `F(e) = Σ_{C_e} π(τ)`, plus the cross-check that turns two of them into a missing-mass measurement.
   Nothing reimplements Pgen: the DP, the closed Hamming-1 ball and the degenerate/masked DP are
   vdjtools', the deduplicated neighbourhood enumeration is seqtree's.
+  - `event_ratio` + `RecombinationEvent` — **`F(e)` counted off repertoire data, no Pgen at all**:
+    distinct `(donor, V, J, junction_nt)` matching the cognate set within one substitution, over
+    distinct `(donor, V, J, junction_nt)` in the whole dataset. The same nucleotide junction in two
+    donors is *two* events — they converged — so donors are never pooled on either side. Numerator
+    and denominator share a key and a sample, so **sampling depth divides out and there is nothing
+    to coverage-correct**. This is the estimand itself, not a proxy, so it adjudicates the Pgen
+    route from outside the model. `RecombinationEvent` validates the key on construction (ACGTN
+    only, exactly 3× the aa length, non-empty donor) because both ways of getting it wrong are
+    silent. Measured (`bench/results/precursor_event_ratio.md`, 151,015,350 events over 786 HIP
+    donors): rank agreement with the Pgen route is ρ = **0.920** against the r=1 ball, and once
+    like is compared with like the magnitude offset is a near-constant **14.8×** (IQR 12.5–17.5).
   - `observed_mass` — the strict lower bound; `pgen` exposes the per-junction vector behind it.
   - `coverage_corrected_mass` — the bound with the size-bias deficit put back. Capture probability
     is fitted as `p_i = 1 − exp(−θ·π_i)` (increasing in Pgen, which *is* the size-biasing), by
@@ -293,10 +304,18 @@ clears its replication gate (Pogorelyy 2018 ρ = 0.71) in the benchmark repo fir
 it ships.** Measured in `2026-mhcmatch-benchmark` `bench/results/precursor_pogorelyy.md`: **ρ = 0.802
 over 259 epitopes** (p = 1e-69), against the published 0.71.
 
-> **The mismatch setting is the whole gate.** With *exact* Pgen the same correlation is only
-> ρ = 0.51–0.61; with the closed Hamming-1 ball (`mismatches=1`, the frequency proxy the paper
-> actually used, and the same ≤1-substitution rule it used to annotate repertoires) it is 0.76–0.86.
-> Anyone re-running this with `mismatches=0` will conclude the Pgen path is broken when it is not.
+> **The one-substitution ball is part of the estimator definition, not a tuning knob.** With
+> *exact* Pgen the same correlation is only ρ = 0.51–0.61; with the closed Hamming-1 ball
+> (`mismatches=1`, the frequency proxy the paper actually used, and the same ≤1-substitution rule it
+> used to annotate repertoires) it is 0.76–0.86. Anyone re-running this with `mismatches=0` will
+> conclude the Pgen path is broken when it is not. Measured on the event ratio, the ball's value is
+> **depth-dependent and largest where real studies sit**: at one donor it buys 31× more events, 6
+> fewer dead epitopes and +0.07 ρ; by 786 donors it buys nothing (ρ 0.868 vs 0.873), because depth
+> has already bought it. Two mechanisms are conjectured for this in
+> `bench/results/precursor_event_ratio.md` — convergent recombination making the recurring object a
+> neighbourhood rather than a point, and the generation distribution's mass sitting in the ~19L
+> shoulder rather than at the mode — and both are labelled conjecture, with the test that settles
+> them stated.
 
 The estimators are measured on real specificity groups in
 `bench/results/precursor_estimators.md` (138 epitopes): the **union correction is a no-op on most
@@ -306,6 +325,14 @@ inflation of the observed mass that the α = 0.1 retention collapses to **4.3×*
 cross-check puts the observed sample **a factor of 2.0 short** (missing fraction 0.49) on the 319
 wildcard-free cluster PWMs. The coverage correction is estimable on only 56–60 of 138 epitopes; the
 rest hit the singleton wall and are flagged, which is the intended behaviour.
+
+**Ready for Appendix B, not yet written into it.** `N_eff` in `λ(e) = N_eff · Q̄ · F(e)` was scoped
+as a count of *independent recombination events* rather than cells, and was assumed. It is now
+measured: **151,015,350 distinct `(donor, V, J, junction_nt)` rearrangements** over 786 donors
+(192,131 per donor), in `bench/results/precursor_event_ratio.md`. It is a sampled count at that
+sequencing depth, so it enters as a depth-dependent lower bound with the depth stated. Appendix B
+lives in `~/vcs/manuscripts/2026-mhcmatch/appendix/` and currently has only the `ρ_TCR` placeholder
+at `mhcmatch.tex:806`; the number flows there from the benchmark, not from here.
 
 ### Dependency pins — as they stand at HEAD
 
