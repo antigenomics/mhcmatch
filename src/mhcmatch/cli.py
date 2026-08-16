@@ -7,7 +7,9 @@ table via ``--pmhc`` or ``$MHCMATCH_PMHC``), ``source`` (needs a proteome FASTA)
 from __future__ import annotations
 
 import argparse
+import gzip
 import os
+import sys
 
 from . import Proteome, Store
 
@@ -187,6 +189,122 @@ def cmd_logo(a):
         print(f"  pos {i:>2}  {bits:4.2f} bits  " + " ".join(f"{aa}:{p:.2f}" for aa, p in top))
 
 
+def _read_alleles(arg):
+    """``--alleles`` accepts a comma-separated list or a path to a file holding one (pipeline form)."""
+    if arg and os.path.exists(arg):
+        arg = open(arg).read().strip()
+    return [x.strip() for x in (arg or "").replace("\n", ",").split(",") if x.strip()]
+
+
+def _load_refs(spec):
+    """``name=path[,name=path]`` -> ``{name: {peptides}}`` for the exact-match known-epitope flag.
+
+    Each file is read one peptide per line, or as a TSV whose first column is the peptide."""
+    refs = {}
+    for part in (x.strip() for x in (spec or "").split(",") if x.strip()):
+        name, _, path = part.partition("=")
+        if not path:
+            name, path = os.path.splitext(os.path.basename(name))[0], name
+        peps = set()
+        opener = gzip.open if path.endswith(".gz") else open
+        with opener(path, "rt") as fh:
+            for line in fh:
+                p = line.split("\t")[0].strip().upper()
+                if p and p.isalpha():
+                    peps.add(p)
+        refs[name] = peps
+    return refs
+
+
+def cmd_rank(a):
+    """Rank neoantigen candidates from a window FASTA or an already-scored table."""
+    from . import rank as R
+    refs = _load_refs(getattr(a, "refs", None))
+    if a.mode == "fasta":
+        store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
+        rows = R.rank_fasta(store, a.input, _read_alleles(a.alleles), cls=a.cls,
+                            tissue=a.tissue, tumor=a.tumor, refs=refs,
+                            rank_threshold=a.rank_threshold)
+    else:
+        store = None
+        if a.recompute_presentation:
+            store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
+        rows = R.rank_table(a.input, tissue=a.tissue, tumor=a.tumor, refs=refs,
+                            store=store, cls=a.cls)
+    rows = rows[:a.top] if a.top else rows
+    cols = ["rank", "peptide", "allele", "gene", "score", "presentation", "agretopicity",
+            "physchem", "expression", "expr_imputed", "wt_peptide", "known_epitope"]
+    out = open(a.out, "w") if a.out else sys.stdout
+    try:
+        print("\t".join(cols), file=out)
+        for i, r in enumerate(rows, 1):
+            print("\t".join([str(i), r.peptide, r.allele, r.gene, f"{r.score:.6g}",
+                             f"{r.presentation:.4g}", f"{r.agretopicity:.4g}",
+                             f"{r.physchem:.4g}", f"{r.expression:.4g}",
+                             "1" if r.expression_imputed else "0", r.wt_peptide,
+                             r.known_epitope]), file=out)
+    finally:
+        if a.out:
+            out.close()
+            print(f"# wrote {a.out}: {len(rows)} candidate(s)")
+    n_known = sum(1 for r in rows if r.known_epitope)
+    if n_known:
+        print(f"# {n_known} candidate(s) matched a known-epitope reference exactly "
+              "(sorted into the top tier)", file=sys.stderr)
+
+
+def cmd_explain(a):
+    """Print every component of the aggregate for one (peptide, allele), so a rank is auditable."""
+    from . import ipred, rank as R
+    store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
+    from . import predict as P
+    bs = P.binder_score(store, a.peptide, alleles=[a.allele], cls=a.cls)
+    pres = R._neglog10(bs[0].binder_rank) if bs else float("nan")
+    phys = ipred.log_p(a.peptide)
+    print(f"# {a.peptide}  {a.allele}  ({a.cls})")
+    if bs:
+        b = bs[0]
+        print(f"  presentation %rank   {b.presentation_rank:.4g}")
+        print(f"  affinity   IC50 nM   {b.affinity_nm:.4g}   (%rank {b.affinity_rank:.4g})")
+        print(f"  binder     %rank     {b.binder_rank:.4g}   -> presentation term {pres:+.4f}")
+    print(f"  physchem   log P      {phys:+.4f}   (P = {ipred.p_immunogenic(a.peptide):.4f})")
+    if a.wt:
+        from .affinity import AffinityModel
+        am = AffinityModel.load(store.anchor_model(a.cls), store.corpus(a.cls), a.cls)
+        print(f"  agretopicity  DAI    {am.dai(a.wt, a.peptide, a.allele):+.4f}  vs WT {a.wt}")
+    if a.gene and (a.tissue or a.tumor):
+        from . import expression as EX
+        rec = EX.lookup(a.peptide if a.tumor else a.gene, tissue=a.tissue, tumor=a.tumor)
+        print(f"  expression           {rec['median_tpm']:.4g} TPM "
+              f"({'TCGA ' + a.tumor if a.tumor else 'GTEx ' + a.tissue}, n={rec['n']})"
+              if rec else "  expression           (no reference row)")
+    print(f"  AGGREGATE  P         {R.gate_probability(pres, phys):.6f}")
+
+
+def cmd_expression(a):
+    """Reference expression for a gene in a normal tissue, or a peptide in a tumour type."""
+    from . import expression as EX
+    if a.list_contexts:
+        print("# GTEx tissues:")
+        for t in EX.tissues():
+            print(f"  {t}")
+        print("# TCGA tumour types:")
+        print("  " + ", ".join(EX.tumor_types()))
+        return
+    rec = EX.lookup(a.key, tissue=a.tissue, tumor=a.tumor)
+    if not rec:
+        print(f"# no reference row for {a.key!r} in "
+              f"{a.tumor or a.tissue!r}")
+    else:
+        print(f"{a.key}\t{a.tumor or a.tissue}\t{rec['source']}\t"
+              f"median {rec['median_tpm']:.4g}\tIQR {rec['q25_tpm']:.4g}-{rec['q75_tpm']:.4g}"
+              f"\tn={rec['n']}")
+    if a.safety:
+        print(f"# {a.key} across normal tissues (highest first):")
+        for t, v in EX.safety_profile(a.key, top=a.top or 10):
+            print(f"  {v:10.4g}  {t}")
+
+
 def cmd_bootstrap(a):
     from .store import PMHC_REPO, fetch_pmhc, fetch_proteome
     tiers = ("full", "shortlist") if a.tier == "all" else (a.tier,)
@@ -288,6 +406,52 @@ def main(argv=None):
     bs.add_argument("--proteome", help="also fetch these reference proteomes "
                                        "(comma-separated: human,mouse,<pathogen stem>)")
     bs.set_defaults(fn=cmd_bootstrap)
+
+    rk = sub.add_parser("rank", help="rank neoantigen candidates (FASTA of windows, or a scored table)")
+    rk.add_argument("mode", choices=("fasta", "table"),
+                    help="fasta: mutation-spanning window FASTA + donor alleles. "
+                         "table: a .scored.csv already produced by another tool")
+    rk.add_argument("input", help="the .peptide.fasta or the .scored.csv")
+    rk.add_argument("--alleles", help="comma-separated HLA alleles, or a file holding them "
+                                      "(required for mode=fasta)")
+    rk.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
+    rk.add_argument("--tissue", help="GTEx tissue for reference expression, e.g. 'Skin - Sun "
+                                     "Exposed (Lower leg)' (the safety read)")
+    rk.add_argument("--tumor", help="TCGA cancer_type for tumour expression, e.g. SKCM (melanoma)")
+    rk.add_argument("--refs", help="known-epitope sets for the exact-match flag: "
+                                   "name=path[,name=path]; one peptide per line or TSV col 1")
+    rk.add_argument("--rank-threshold", type=float, default=2.0,
+                    help="keep binders with presentation %%rank <= this (mode=fasta)")
+    rk.add_argument("--recompute-presentation", action="store_true",
+                    help="mode=table: rescore presentation with mhcmatch instead of trusting the "
+                         "table's own columns")
+    rk.add_argument("--top", type=int, help="print only the top N candidates")
+    rk.add_argument("--out", help="write TSV here instead of stdout")
+    _add_store_opts(rk)
+    rk.set_defaults(fn=cmd_rank)
+
+    ex = sub.add_parser("explain", help="every component of the aggregate for one (peptide, allele)")
+    ex.add_argument("peptide")
+    ex.add_argument("--allele", required=True)
+    ex.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
+    ex.add_argument("--wt", help="wild-type counterpart -> also report agretopicity (DAI)")
+    ex.add_argument("--gene", help="source gene symbol, for the expression lookup")
+    ex.add_argument("--tissue", help="GTEx tissue")
+    ex.add_argument("--tumor", help="TCGA cancer_type, e.g. SKCM")
+    _add_store_opts(ex)
+    ex.set_defaults(fn=cmd_explain)
+
+    xp = sub.add_parser("expression", help="reference expression by normal tissue or tumour type")
+    xp.add_argument("key", nargs="?", default="", help="gene symbol (with --tissue) or peptide "
+                                                       "(with --tumor)")
+    xp.add_argument("--tissue", help="GTEx tissue (gene-keyed, normal)")
+    xp.add_argument("--tumor", help="TCGA cancer_type (peptide-keyed, tumour); SKCM = melanoma")
+    xp.add_argument("--safety", action="store_true",
+                    help="also print the gene across normal tissues, highest first")
+    xp.add_argument("--top", type=int, help="rows for --safety (default 10)")
+    xp.add_argument("--list-contexts", action="store_true",
+                    help="list every GTEx tissue and TCGA tumour type available")
+    xp.set_defaults(fn=cmd_expression)
 
     a = ap.parse_args(argv)
     a.fn(a)
