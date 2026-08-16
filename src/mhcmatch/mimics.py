@@ -98,7 +98,8 @@ def _hamming(a: str, b: str) -> int:
     return sum(x != y for x, y in zip(a, b)) if len(a) == len(b) else 1 << 30
 
 
-def scan(binders, self_set, foreign_sets, cls="mhc1", max_subs=2, near_subs=2, self_name="thymus"):
+def scan(binders, self_set, foreign_sets, cls="mhc1", max_subs=2, near_subs=2, self_name="thymus",
+         exclude_query=False):
     """Mimic-scan an iterable of ``(peptide, allele)`` binders. Returns ``list[MimicResult]`` (one
     per binder × category with >=1 same-length reference peptide within ``near_subs`` substitutions).
 
@@ -107,7 +108,19 @@ def scan(binders, self_set, foreign_sets, cls="mhc1", max_subs=2, near_subs=2, s
     exact query (a neoantigen's identical peptide is its *source*, not a mimic), so ``n_exact`` is a
     direct set-membership check and ``n_near`` counts same-length reference peptides 1..``near_subs``
     substitutions away (from the fuzzy hits, by exact Hamming distance). One :func:`find_mimics` call
-    per binder scores every category at once."""
+    per binder scores every category at once.
+
+    **``exclude_query=True`` is required whenever the output becomes a model feature.** By default
+    ``n_exact`` answers *is this peptide in the reference set*, which is the right question for a
+    lookup ("is this a known viral ligand?") and the wrong one for a feature: a reference assembled
+    from the same deposit as the labels will contain the positives, so a known epitope scores
+    ``n_exact = 1`` for free and the model reads self-identity as foreignness.
+
+    Not hypothetical. 45% of the Gfeller cohort's immunogenic peptides are exact matches to the viral
+    IEDB ligand set, and a foreignness term built that way scored 0.714 AUROC there against **0.554**
+    once self-matches were excluded (``bench/results/gfeller_contamination.md``). With
+    ``exclude_query=True`` a peptide is never its own mimic and only genuine neighbours at
+    1..``near_subs`` substitutions contribute."""
     self_exact = set(self_set)
     foreign_exact = {k: set(v) for k, v in foreign_sets.items()}
     out = []
@@ -116,7 +129,7 @@ def scan(binders, self_set, foreign_sets, cls="mhc1", max_subs=2, near_subs=2, s
         for cat, d in res.items():
             name = self_name if cat == "self" else cat
             exact_set = self_exact if cat == "self" else foreign_exact.get(cat, set())
-            n_exact = 1 if pep in exact_set else 0
+            n_exact = 0 if exclude_query else (1 if pep in exact_set else 0)
             near = sorted((dd, h.epitope) for h in d.get("hits", [])
                           for dd in (_hamming(pep, h.epitope),) if 1 <= dd <= near_subs)
             if n_exact == 0 and not near:

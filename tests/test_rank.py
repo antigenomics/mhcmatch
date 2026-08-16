@@ -160,3 +160,35 @@ def test_rank_table_skips_blank_rows(tmp_path):
     p = tmp_path / "y.scored.csv"
     p.write_text("epitope,best_allele\n,\nAAAAAAAAA,HLA-A*02:01\n")
     assert len(R.rank_table(str(p))) == 1
+
+
+# ----------------------------------------------------------------- mimics: the circularity guard
+
+def test_scan_exclude_query_stops_a_peptide_being_its_own_mimic():
+    """A known epitope scored against a reference containing it must not report `n_exact = 1`.
+
+    This is the defect that made a foreignness term score 0.714 AUROC on Gfeller against 0.554 once
+    self-matches were removed -- 45% of that cohort's positives are exact viral-ligand matches, so
+    the term was reading self-identity as foreignness."""
+    from mhcmatch import mimics
+    pep = "GILGFVFTL"
+    binders = [(pep, "HLA-A*02:01")]
+    refs = {"viral": [pep, "GILGFVFTV"]}      # the reference CONTAINS the query
+
+    leaky = mimics.scan(binders, self_set=[], foreign_sets=refs, exclude_query=False)
+    guarded = mimics.scan(binders, self_set=[], foreign_sets=refs, exclude_query=True)
+
+    assert any(r.n_exact == 1 for r in leaky), "default behaviour should still report membership"
+    assert all(r.n_exact == 0 for r in guarded), "exclude_query must stop self-matching"
+    # the genuine 1-substitution neighbour survives the guard -- only self-identity is removed
+    assert any(r.n_near >= 1 for r in guarded)
+
+
+def test_scan_exclude_query_keeps_real_neighbours_only():
+    """With no exact self-match present, the two modes must agree exactly."""
+    from mhcmatch import mimics
+    binders = [("GILGFVFTL", "HLA-A*02:01")]
+    refs = {"viral": ["GILGFVFTV", "GILGFVFTA"]}
+    a = mimics.scan(binders, self_set=[], foreign_sets=refs, exclude_query=False)
+    b = mimics.scan(binders, self_set=[], foreign_sets=refs, exclude_query=True)
+    assert [(r.n_exact, r.n_near) for r in a] == [(r.n_exact, r.n_near) for r in b]
