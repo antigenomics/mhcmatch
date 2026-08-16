@@ -210,6 +210,30 @@ multiplier on precursor availability rather than as another additive score.
 > `find_mimics` already excludes the exact query inside the fuzzy search; the `n_exact`
 > set-membership check in `scan` does not.
 
+### Pool species, split class — measured, not assumed
+
+Tested directly (2026-08-16, `2026-tcren-benchmark` branch `species-split`,
+`results/notes/species_split.md`) rather than inherited from the manuscript's claim of
+generalisation "across class and species". Cross-scoring on the cognate-rank oracle:
+
+| transfer | AUC | own-LOO baseline | paired p |
+|---|--:|--:|--:|
+| human → mouse | 0.711 | 0.706 | **0.904** — free |
+| MHC-I → MHC-II | 0.649 | 0.743 | **0.021** — costs 0.094, on 2.3× more data |
+
+Paired matrix agreement at a common 859-contact budget puts the class effect at **2.9–4.6× the
+species effect** (species Δ 0.030; class within human Δ 0.101). With species held constant, class-I
+vs class-II weighted agreement is **−0.013**.
+
+**So: pool species, model MHC-I and MHC-II separately.** The species half of the manuscript claim
+survives; the class half does not.
+
+> **The control is the result.** Raw human-vs-mouse Pearson is 0.170 — which reads as a species
+> difference until you notice that two *disjoint halves of the human data* at the same budget
+> correlate at r = 0.19. Against the disjoint size-matched null, human-vs-mouse is p = 0.085, not
+> significant. A 20×20 contact matrix is **not identified** at ~1–2k contacts. Any future
+> contact-derived parameter table must carry a size-matched null or its differences are unreadable.
+
 ### Two design commitments
 
 **Anchor definition is a parameter, not a constant.** Three incompatible class-I definitions
