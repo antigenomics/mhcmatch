@@ -135,6 +135,14 @@ peptides.fasta --cls mhc1`. A plain one-peptide-per-record FASTA works; the pipe
 counterpart, agretopicity) only *adds* variant annotation. It carries the task-correct presentation
 defaults (`background="proteome"`), so this — not `restriction` — is the presentation-axis entry point.
 
+## Worked examples
+
+[`notebooks/`](notebooks/README.md) holds four [marimo](https://marimo.io) notebooks — plain Python
+files, so they diff like source — covering the core workflow and `binder_score`, the `mhcmatch.immuno`
+feature set, TCR precursor frequency (`mhcmatch.precursor`), and mimicry scanning
+(`mhcmatch.mimics`). Each bootstraps its own data from the public HF datasets, so `pip install
+'mhcmatch[notebooks]'` is enough to run them.
+
 ## Data
 
 - **Reference ligands:** the public HF dataset [`isalgo/pmhc_data`](https://huggingface.co/datasets/isalgo/pmhc_data)
