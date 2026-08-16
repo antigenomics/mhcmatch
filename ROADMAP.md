@@ -51,7 +51,10 @@ diffusion model, and the downstream predictors.
 | Tuned ROC/PR thresholds; FDR over proteome scans | — | Phase 1 |
 | Core → full presented ligand span (observed / modeled / fixed) | `mhcmatch.ligand` | **v0.3** (validated, `bench/bench_spans.py`) |
 | Binding affinity (IC50 nM) + neoantigen amplitude/DAI; structure MJ ΔΔG | `mhcmatch.PottsAffinity`, `mhcmatch.structure` | **v0.4**, weights refit v0.7.1 (`bench/affinity/`; open issues in §6c) |
-| Stability / expression / immunogenicity | — | Phase 2 |
+| Physicochemical epitope featurization (Kidera/VHSE/MJ + run structure) | `mhcmatch.immuno` | **v0.9-dev** (§5a) |
+| Vendored AA property tables (17 families, 102 components, 45 hydrophobicity scales) | `mhcmatch.data.aa_tables` | **v0.9-dev** (§5a) |
+| Immunogenicity classifier; TCR precursor frequency | — | Phase 2 (§5a) |
+| Stability / expression | — | Phase 2 |
 | NetMHCpan / MixMHCpred head-to-head benchmark + paper | separate repo | Phase 3 |
 
 ## 2. Data
@@ -159,8 +162,63 @@ data. Each is a milestone whose spec is its appendix subsection:
   deliberately not wired into the immunogenicity path.
 - **Expression / translation** scores and **variant frequency** (population genetics priors).
 - **Immunogenicity**: physicochemical TCR-facing features + **TCR precursor frequency** estimates
-  (cross-reactivity distance à la Łuksza et al. *Nature* 2022, Q = R×D). The precursor-frequency /
-  Pgen estimation may live in its own repo and be consumed here.
+  (cross-reactivity distance à la Łuksza et al. *Nature* 2022, Q = R×D). See §5a — in progress.
+
+## 5a. Immunogenicity (v0.9-dev, branch `immuno`)
+
+Analysis, benchmarks and the full milestone list live in
+[`2026-mhcmatch-benchmark`](https://github.com/antigenomics/2026-mhcmatch-benchmark) branch `immuno`,
+`ROADMAP_immuno.md`. This section records only what lands **in the library**.
+
+### What this is trying to overturn
+
+`bench/results/` §4 is a recorded negative: a composite of [binding %rank, DAI, **one**
+TCR-contact hydrophobicity scalar], fit on CEDAR and frozen, scored **0.680** AUROC on TESLA-608 vs
+**0.752** for binding %rank alone — the frozen weight on the hydrophobicity term was **−0.154**, i.e.
+it subtracted. The manuscript's stated revisit condition is a foreignness/mimics term and a richer
+feature set. `mhcmatch.immuno` is the richer feature set: 141 features where there was 1.
+
+The bar is now **`predict.binder_score` at TESLA AUROC 0.786**, not the 0.752 in the older table.
+
+### Shipped
+
+- **`mhcmatch.data.aa_tables`** — vendored, *generated not transcribed* (regenerate with
+  `bench/immuno/vendor_aa_tables.py` in the benchmark repo). 17 descriptor families / 102 components
+  + 45 hydrophobicity scales from `peptides` 0.5.0, plus Miyazawa–Jernigan partition energy
+  (AAindex MIYS850101) from `tcren`. **No runtime dependency** — the tables are copied, the packages
+  are not imported. Both are GPL-3.0-or-later, as is mhcmatch, so this is licence-clean.
+- **`mhcmatch.immuno`** — `features()` returns 141 values (length + 20 scales × 7 statistics).
+  `python -m mhcmatch.immuno` self-checks against published constants.
+
+### Two design commitments
+
+**Anchor definition is a parameter, not a constant.** Three incompatible class-I definitions
+coexist in this toolchain — `store.anchor_indices`/`seqtree.DEFAULTS` mask P2+PΩ, while
+`layout.presentation_features` and `diffusion.MHC1_ANCHORS` mask P1–P3+PΩ-1,PΩ. `ANCHOR_SCHEMES`
+keeps all of them selectable, plus a continuous `"contact"` weighting derived from observed
+TCR–peptide contact frequency that needs no anchor call at all. Which one wins is an ablation with a
+reported number. MHC-II is not affected — P1/P4/P6/P9 is agreed everywhere.
+
+**Aggregation is not just summation.** Summed/averaged descriptors stay primary because they are the
+field's positive result (Chowell 2015; Pogorelyy 2018 associates epitope length and summed Kidera
+factors 6 and 10 with precursor frequency). But a *contiguous* hydrophobic stretch is a different
+object from the same residues scattered, and no sum expresses it — hence `run_max`/`run_n`/
+`run_frac`. A masked anchor **breaks** a run rather than bridging it: a buried residue between two
+exposed hydrophobics does not make them contiguous from the TCR's point of view.
+
+`length` is emitted as a feature deliberately — ligand length distribution is allele-specific and is
+part of what defines a real ligand set, not a nuisance to regress out.
+
+### Not yet in the library
+
+The classifier itself, the contact-frequency profile, and precursor frequency. Precursor frequency
+depends on `vdjtools` (Pgen) — it ships here only if it clears its replication gate
+(Pogorelyy 2018 ρ = 0.71) in the benchmark repo first.
+
+### Dependency pins to bump when this lands
+
+`seqtree>=0.4.0` → `>=0.6.1` (current 0.6.1), `tcren>=2.2` → `>=2.8.0` (current 2.8.0). Add
+`vdjtools>=3.8.0` and `arda>=2.20.0` **only if** the precursor-frequency path ships in-library.
 
 ## 6. Phase 3 — benchmark & paper
 
