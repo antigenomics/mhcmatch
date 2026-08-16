@@ -201,6 +201,23 @@ def _affinity_calibrator(store, cls, aff, seed=0, n_bg=10000):
     return cache[cls]
 
 
+def _fisher_combine(*ranks):
+    """Fisher's combined statistic over p-value-like %ranks: ``-Σ ln p`` (higher = stronger).
+
+    One definition, three call sites (:class:`_CombinedScore`, :func:`binder_score`,
+    :func:`predict_windows`) -- it used to be written out at each of them, so the ``1e-9`` floor and
+    the nan short-circuit had to be kept in step by hand. Any nan (an allele with no background)
+    short-circuits to ``-inf`` so the caller can drop it; the floor keeps a 0 %rank from becoming
+    ``inf``. Variadic so a third component score composes without touching the callers.
+    """
+    total = 0.0
+    for p in ranks:
+        if p != p:                                   # nan -- unknown groove, not a weak binder
+            return float("-inf")
+        total -= math.log(max(p, 1e-9))
+    return total
+
+
 class _CombinedScore:
     """Fisher-style combined binder statistic for :class:`RankCalibrator` (higher = stronger).
 
@@ -214,11 +231,8 @@ class _CombinedScore:
         self._model, self._aff, self._pcal, self._acal = model, aff, pcal, acal
 
     def score(self, pep, allele):
-        pr = self._pcal.percent_rank(allele, self._model.score(pep, allele))
-        ar = self._acal.percent_rank(allele, self._aff.predict_y(pep, allele))
-        if pr != pr or ar != ar:
-            return float("-inf")
-        return -(math.log(max(pr, 1e-9)) + math.log(max(ar, 1e-9)))
+        return _fisher_combine(self._pcal.percent_rank(allele, self._model.score(pep, allele)),
+                               self._acal.percent_rank(allele, self._aff.predict_y(pep, allele)))
 
 
 def _binder_calibrator(store, cls, model, aff, pcal, acal, seed=0, n_bg=10000):
@@ -252,6 +266,7 @@ class BinderScore:
     affinity_rank: float          # Potts %rank, lower = stronger
     binder_rank: float            # calibrated combined %rank (Fisher of the two %ranks), lower = stronger
     band: str                     # strong / weak / non-binder (banded on binder_rank)
+    p_binder: float = float("nan")  # isotonic-calibrated P(binder) over the same statistic
 
 
 def binder_score(store, peptide, alleles="all", cls=None, background="proteome",
@@ -284,12 +299,13 @@ def binder_score(store, peptide, alleles="all", cls=None, background="proteome",
     for a in alleles:
         pr = pcal.percent_rank(a, model.score(peptide, a))
         ar = acal.percent_rank(a, aff.predict_y(peptide, a))
-        if pr != pr or ar != ar:                       # allele has no background (unknown groove)
+        cstat = _fisher_combine(pr, ar)                 # -inf iff either %rank is nan
+        if cstat == float("-inf"):                     # allele has no background (unknown groove)
             continue
-        cstat = -(math.log(max(pr, 1e-9)) + math.log(max(ar, 1e-9)))   # Fisher combined statistic
         br = ccal.percent_rank(a, cstat)               # calibrated -> a true combined %rank
         out.append(BinderScore(peptide, a, cls, round(pr, 3), _round(aff.predict_ic50(peptide, a)),
-                               round(ar, 3), round(br, 3), band_of(br)))
+                               round(ar, 3), round(br, 3), band_of(br),
+                               round(ccal.p_present(a, cstat), 4)))
     out.sort(key=lambda b: b.binder_rank)
     return out
 
@@ -389,7 +405,7 @@ def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
                 ar = acal.percent_rank(a, aff.predict_y(pep, a))
                 if ar == ar:
                     p.affinity_rank = round(ar, 3)
-                    cstat = -(math.log(max(pr, 1e-9)) + math.log(max(ar, 1e-9)))
+                    cstat = _fisher_combine(pr, ar)
                     br = ccal.percent_rank(a, cstat)
                     if br == br:
                         p.binder_rank = round(br, 3)

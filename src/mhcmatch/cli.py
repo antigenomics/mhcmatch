@@ -110,10 +110,11 @@ def cmd_binder(a):
         return
     print(f"# {a.peptide}: generalized binder score = geo-mean(presentation %rank, affinity %rank); "
           "lower = stronger")
-    print(f"{'allele':14s}{'binder%rank':>12s}{'band':>13s}{'pres%rank':>11s}{'aff_nM':>11s}{'aff%rank':>10s}")
+    print(f"{'allele':14s}{'binder%rank':>12s}{'band':>13s}{'P(binder)':>11s}"
+          f"{'pres%rank':>11s}{'aff_nM':>11s}{'aff%rank':>10s}")
     for b in res[:(a.top or 10)]:
-        print(f"{b.allele:14s}{b.binder_rank:12.3f}{b.band:>13s}{b.presentation_rank:11.3f}"
-              f"{b.affinity_nm:11.0f}{b.affinity_rank:10.3f}")
+        print(f"{b.allele:14s}{b.binder_rank:12.3f}{b.band:>13s}{b.p_binder:11.4f}"
+              f"{b.presentation_rank:11.3f}{b.affinity_nm:11.0f}{b.affinity_rank:10.3f}")
 
 
 def cmd_scan(a):

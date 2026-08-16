@@ -201,6 +201,11 @@ that scores high only when a peptide is *both* presented and binds. The two head
 the binding-strength axis (presentation rescues weak-but-presented ligands, affinity rescues
 strong-but-atypical binders), so the blend beats either alone.
 
+Each result also carries **`p_binder`** — the isotonic-calibrated `P(binder)` over the same combined
+statistic. Use `binder_rank` to *rank* candidates and `p_binder` when a downstream model needs a
+probability on an absolute scale: unlike a %rank re-normalised per candidate pool, it does not move
+when the pool changes.
+
 On **TESLA-608** (Wells et al. 2020 — 608 candidates, 37 T-cell-validated; the clean, predictor-agnostic
 set every tool scores independently) mhcmatch **beats NetMHCpan**:
 

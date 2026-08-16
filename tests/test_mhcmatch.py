@@ -926,3 +926,56 @@ def test_store_panel_is_unchanged_by_default_alpha_imputation_is_lookup_only():
     assert off.alleles == [], "a beta-only record must be dropped by default"
     on = Store.from_records(recs, impute_alpha=True)._panel["mhc2"]
     assert on.alleles == ["HLA-DPA10201-DPB11101"], "impute_alpha=True must admit it, alpha filled"
+
+
+# -- binder score: Fisher combination + calibrated probability ----------------
+
+def test_binder_score_is_pinned():
+    """Characterization pin for the Fisher-combined binder statistic.
+
+    The combination ``-(ln p_pres + ln p_aff)`` was written out three times (predict.py, twice
+    inline and once in ``_CombinedScore``); this pins the observable output so extracting it into a
+    single function is provably behaviour-preserving. Values recorded on the synthetic class-I
+    panel at seed 0 -- if a modelling change moves them, update deliberately, never reflexively.
+    """
+    from mhcmatch import predict
+    out = predict.binder_score(_make_store(), "ALACVQWER", alleles="all", cls="mhc1")
+    got = {b.allele: (b.presentation_rank, b.affinity_rank, b.binder_rank, b.band) for b in out}
+    assert got == {
+        "HLA-A*02:01": (0.12, 4.94, 0.27, "strong"),
+        "HLA-A*01:01": (0.2, 20.04, 1.08, "weak"),
+        "HLA-B*07:02": (0.97, 55.29, 4.83, "non-binder"),
+    }, got
+    # sorted ascending by the combined rank -- the contract callers rely on
+    assert [b.binder_rank for b in out] == sorted(b.binder_rank for b in out)
+
+
+def test_fisher_combine_matches_the_inline_expression():
+    """The extracted helper must reproduce the literal expression it replaced, including the
+    1e-9 floor and the nan short-circuit."""
+    from mhcmatch.predict import _fisher_combine
+    assert _fisher_combine(0.5, 0.5) == pytest.approx(-(math.log(0.5) + math.log(0.5)))
+    # the floor: a 0 %rank must not blow up to inf
+    assert _fisher_combine(0.0, 0.5) == pytest.approx(-(math.log(1e-9) + math.log(0.5)))
+    # nan in either argument short-circuits to -inf (allele with no background)
+    assert _fisher_combine(float("nan"), 0.5) == float("-inf")
+    assert _fisher_combine(0.5, float("nan")) == float("-inf")
+    # monotone: stronger (smaller) %ranks give a larger statistic
+    assert _fisher_combine(0.1, 0.1) > _fisher_combine(0.5, 0.5) > _fisher_combine(50.0, 50.0)
+
+
+def test_binder_score_exposes_a_calibrated_probability():
+    """``p_binder`` is the isotonic-calibrated P(binder) over the combined statistic.
+
+    The calibrator was already built with ``positives=``, so this probability existed and was
+    simply never read. It must be a genuine probability and must order the same way as the %rank
+    (which runs the other way: lower %rank = stronger).
+    """
+    from mhcmatch import predict
+    out = predict.binder_score(_make_store(), "ALACVQWER", alleles="all", cls="mhc1")
+    for b in out:
+        assert 0.0 <= b.p_binder <= 1.0, b
+    ranks = [b.binder_rank for b in out]
+    probs = [b.p_binder for b in out]
+    assert ranks == sorted(ranks)
+    assert probs == sorted(probs, reverse=True), "p_binder must be antitone in binder_rank"
