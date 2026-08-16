@@ -29,10 +29,10 @@ from __future__ import annotations
 from statistics import median
 
 from . import store
-from .data import aa_tables
+from .data import aa_tables, contact_profile as _cp
 
 __all__ = ["ANCHOR_SCHEMES", "DEFAULT_SCALES", "scales", "position_weights", "features",
-           "feature_names"]
+           "feature_names", "contact_profile"]
 
 #: Class-I anchor position sets, 1-based (negatives count from the C-terminus), matching the three
 #: definitions that coexist in the toolchain. ``full`` masks nothing (whole-peptide baseline);
@@ -68,6 +68,58 @@ def scales(names=DEFAULT_SCALES) -> dict[str, dict[str, float]]:
                 f"unknown scale {n!r} (expected a descriptor family in "
                 f"{sorted(aa_tables.DESCRIPTORS)}, a hydrophobicity scale, or 'MJ')")
     return out
+
+
+def contact_profile(cls: str = "mhc1"):
+    """Structure-derived per-position weights: ``(length) -> list[float]``, for ``scheme="contact"``.
+
+    Backed by :mod:`mhcmatch.data.contact_profile` -- 8,062 TCR<->peptide residue contacts over 370
+    crystal structures. Two derived steps turn a contact *frequency* into a *weight*:
+
+    **Zeroing.** A position contacted less than half as often as a uniform footprint would predict
+    (``frac < 1/(2L)``) is treated as not TCR-facing. The threshold is derived from the profile's own
+    uniform expectation, not tuned. On class-I 9-mers this zeroes exactly P1, P2, P3 and PΩ -- the
+    anchor set the contact data supports, recovered without being told anchors exist.
+
+    **Rescaling.** Surviving positions are scaled to mean 1, so the weighted statistics in
+    :func:`features` are on the same scale as the binary schemes (where a kept position weighs 1)
+    and the two are directly comparable.
+
+    Lengths with fewer than ``MIN_STRUCTURES`` observed structures fall back to the class's pooled
+    *relative*-position profile, interpolated onto the requested length -- the TCR footprint scales
+    with the peptide, so relative position transfers where absolute position does not.
+    """
+    key = {"mhc1": "MHCI", "mhc2": "MHCII"}.get(cls)
+    if key is None:
+        raise ValueError(f"unknown class {cls!r} (expected 'mhc1' or 'mhc2')")
+
+    def profile(length: int) -> list[float]:
+        if length <= 0:
+            return []
+        entry = _cp.PROFILE.get((key, length))
+        if entry is not None and entry[1] >= _cp.MIN_STRUCTURES:
+            frac = list(entry[0])
+        else:                                    # thin or unseen -- interpolate the pooled shape
+            pooled = _cp.POOLED_RELATIVE[key]
+            n = len(pooled)
+            frac = []
+            for i in range(length):
+                x = (i + 0.5) / length * n - 0.5
+                lo = max(0, min(n - 1, int(x // 1)))
+                hi = max(0, min(n - 1, lo + 1))
+                t = x - lo
+                frac.append(pooled[lo] * (1 - t) + pooled[hi] * t)
+            tot = sum(frac) or 1.0
+            frac = [f / tot for f in frac]
+        floor = 1.0 / (2 * length)               # half the uniform-footprint expectation
+        kept = [f if f >= floor else 0.0 for f in frac]
+        nz = [f for f in kept if f > 0]
+        if not nz:                               # degenerate; fall back to flat rather than all-zero
+            return [1.0] * length
+        m = sum(nz) / len(nz)
+        return [f / m for f in kept]
+
+    return profile
 
 
 def position_weights(peptide: str, cls: str = "mhc1", scheme: str = "p2_pomega",
@@ -218,7 +270,23 @@ def demo() -> None:
     assert features("GILGFVFTL", scheme="full")["MJ_sum"] == \
         features("GILGFVFTLX", scheme="full")["MJ_sum"]
 
-    print(f"ok - {len(f)} features, {len(scales())} scales, schemes {sorted(ANCHOR_SCHEMES)}+contact")
+    # The contact profile recovers the anchor set unsupervised: on class-I 9-mers the derived
+    # floor zeroes exactly P1, P2, P3, PΩ -- which is NEITHER shipped scheme. p2_pomega misses
+    # P1/P3; pockets wrongly masks P8, the 4th most-contacted position.
+    w = contact_profile("mhc1")(9)
+    assert [i for i, x in enumerate(w) if x == 0.0] == [0, 1, 2, 8], w
+    nz = [x for x in w if x > 0]
+    assert abs(sum(nz) / len(nz) - 1.0) < 1e-9, "surviving weights must have mean 1"
+    assert all(x >= 0 for x in w)
+    # An unseen length still returns one weight per position, via the pooled relative shape.
+    assert len(contact_profile("mhc1")(12)) == 12
+    assert len(contact_profile("mhc2")(18)) == 18
+    # The contact scheme is a genuinely different readout from the binary ones.
+    assert features(gil, scheme="contact", contact_profile=contact_profile("mhc1")) != \
+        features(gil, scheme="p2_pomega")
+
+    print(f"ok - {len(f)} features, {len(scales())} scales, "
+          f"schemes {sorted(ANCHOR_SCHEMES)}+contact")
 
 
 if __name__ == "__main__":

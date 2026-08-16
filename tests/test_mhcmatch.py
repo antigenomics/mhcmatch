@@ -979,3 +979,46 @@ def test_binder_score_exposes_a_calibrated_probability():
     probs = [b.p_binder for b in out]
     assert ranks == sorted(ranks)
     assert probs == sorted(probs, reverse=True), "p_binder must be antitone in binder_rank"
+
+
+# -- immunogenicity featurizer ------------------------------------------------
+
+def test_immuno_self_check():
+    """Run the module's own demo() under pytest so CI covers the featurizer invariants.
+
+    demo() asserts the vendored tables against published constants, the three anchor schemes
+    against store.anchor_indices, run-vs-sum contiguity semantics, and that the contact profile
+    recovers the class-I anchor set unsupervised.
+    """
+    from mhcmatch import immuno
+    immuno.demo()
+
+
+def test_contact_profile_recovers_the_anchor_set_unsupervised():
+    """The structure-derived floor zeroes exactly the positions the contact data calls anchors --
+    and that set matches NEITHER shipped scheme.
+
+    Class-I 9-mers: P1, P2, P3, PΩ are zeroed. ``p2_pomega`` masks only P2+PΩ (missing P1/P3);
+    ``pockets`` masks P1-P3 + PΩ-1 + PΩ, and PΩ-1 (P8) is the 4th *most*-contacted position, so
+    that scheme discards real TCR-facing signal. This is the empirical resolution of the
+    three-way anchor disagreement documented in ROADMAP §5a.
+    """
+    from mhcmatch import immuno
+    w = immuno.contact_profile("mhc1")(9)
+    zeroed = {i for i, x in enumerate(w) if x == 0.0}
+    assert zeroed == {0, 1, 2, 8}
+    p2 = {i for i, x in enumerate(immuno.position_weights("A" * 9, "mhc1", "p2_pomega")) if x == 0}
+    pk = {i for i, x in enumerate(immuno.position_weights("A" * 9, "mhc1", "pockets")) if x == 0}
+    assert zeroed != p2 and zeroed != pk, "if this passes trivially the schemes have converged"
+    assert 7 in pk and 7 not in zeroed, "pockets masks P8; the contact data says P8 is TCR-facing"
+
+
+def test_contact_profile_handles_unseen_lengths():
+    """A length with no (or too thin) a stratum still yields one weight per position, via the
+    class's pooled relative-position shape."""
+    from mhcmatch import immuno
+    for cls, L in (("mhc1", 12), ("mhc1", 25), ("mhc2", 18), ("mhc2", 9)):
+        w = immuno.contact_profile(cls)(L)
+        assert len(w) == L and all(x >= 0 for x in w) and any(x > 0 for x in w)
+    with pytest.raises(ValueError):
+        immuno.contact_profile("mhc3")
