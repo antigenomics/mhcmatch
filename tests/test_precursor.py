@@ -8,6 +8,7 @@ has a cognate set small enough to enumerate exhaustively, so `F` is known by con
 estimator can be checked against the truth rather than against another estimator.
 """
 import itertools
+import statistics
 import math
 
 import pytest
@@ -225,6 +226,27 @@ def test_event_ratio_rejects_a_pooled_event():
     with pytest.raises(ValueError, match="donor"):
         P.RecombinationEvent(donor="", v="V", j="J", junction_nt=to_nt("CASSLF"),
                              junction_aa="CASSLF")
+
+
+def test_event_ratio_per_junction_median_is_size_invariant():
+    """The documented size-invariant recipe: a mapping of singletons, then the median.
+
+    The set total grows when VDJdb happens to hold more cognate junctions; the per-junction median
+    does not. That is the whole reason the recipe exists, so it is pinned here.
+    """
+    j1, j2 = "CASSLF", "CAGGGF"
+    events = ([ev(f"a{i}", "V", "J", to_nt(j1), j1) for i in range(4)]
+              + [ev(f"b{i}", "V", "J", to_nt(j2), j2) for i in range(4)])
+    small = P.event_ratio([j1], events, r=0)
+    big = P.event_ratio([j1, j2], events, r=0)
+    assert big["f_hat"] > small["f_hat"]                      # the set total grows with set size
+
+    def median_rate(cog):
+        per = P.event_ratio({t: [t] for t in cog}, events, r=0, denominator=len(events))
+        return statistics.median(v["f_hat"] for v in per["epitopes"].values())
+
+    assert median_rate([j1]) == pytest.approx(median_rate([j1, j2]))
+    assert median_rate([j1]) == pytest.approx(4 / 8)
 
 
 def test_event_ratio_is_a_probability():

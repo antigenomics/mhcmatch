@@ -16,9 +16,11 @@ recombination model, in increasing order of commitment.
     to independent recombination events — no `Pgen`, no model. The unit is
     ``(donor, V, J, junction_nt)``: the same nucleotide junction in two donors is *two* events, two
     rearrangements that converged. Because numerator and denominator are counted with the same key
-    over the same samples, sampling depth divides out and **no coverage correction is needed**. This
-    is the estimand itself rather than a proxy for it, which makes it the direct empirical check on
-    everything below.
+    over the same donors, **repertoire depth divides out** and there is no coverage correction to
+    make. This is the estimand itself rather than a proxy for it, which makes it the direct
+    empirical check on everything below. Its own weak point is the *other* sampling — the size of
+    the cognate set VDJdb holds — which it shares with every set total here; the per-junction median
+    form removes it, see the function's docstring.
 
 ``observed_mass``
     Sum of `Pgen` over the junctions actually recorded for the epitope. A **strict lower bound**,
@@ -506,10 +508,28 @@ def event_ratio(cognate, events, r: int = 1, denominator: int | None = None,
 
     This **is** the estimand — the probability that a random naive-repertoire rearrangement
     recognises `e` — not a proxy for it, so it is a direct empirical check on the `Pgen` route
-    rather than a correlate of it. It also needs **no coverage correction**: numerator and
-    denominator are counted with the same key over the same samples, so sampling depth divides out.
-    That is its advantage over :func:`coverage_corrected_mass`, which needs recaptures and is
-    undefined when every junction is a singleton.
+    rather than a correlate of it.
+
+    **Two samplings, and only one of them divides out.** *Repertoire* depth does: numerator and
+    denominator are counted with the same key over the same donors, so sequencing more deeply
+    changes both and nothing needs coverage-correcting. That is the advantage over
+    :func:`coverage_corrected_mass`, which needs recaptures and is undefined when every junction is
+    a singleton. *Database* depth does **not**: ``cognate`` is whatever VDJdb happens to hold for
+    the epitope, and a bigger set mechanically matches more events. Measured on 138 epitopes, the
+    set total ``f_hat`` is predicted at out-of-fold R² ~0.5 by log cognate-set size alone —
+    :func:`observed_mass` and :func:`ball_mass` carry exactly the same defect, for exactly the same
+    reason, since all three are set totals.
+
+    **The size-invariant form is a median over junctions, and it needs no new function**: pass a
+    mapping of singletons, ``event_ratio({tau: [tau] for tau in cognate}, events)``, and take the
+    median of the per-junction ``f_hat``. That estimates the per-junction event rate, which is a
+    property of the epitope rather than of how many of its TCRs were catalogued, keeps the
+    events-over-events property exactly, and throws away no data. It is also the empirical
+    counterpart of the *median* rearrangement probability that Pogorelyy et al. correlated — the
+    quantity the replication gate is built on — which is why the two agree. Prefer it to dividing
+    the set total by ``len(cognate)``: cognate junctions are near-duplicates, their one-substitution
+    balls overlap, and dividing a union by a count under-corrects tight groups and over-corrects
+    diverse ones.
 
     ``cognate`` is either one epitope's junction list or a ``{epitope: junctions}`` mapping; the
     mapping form streams ``events`` once and shares the denominator across epitopes. ``events`` is
