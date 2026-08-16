@@ -340,12 +340,10 @@ Already bumped in `pyproject.toml`, not pending: `seqtree>=0.7.0` (hard; `precur
 `neighbourhood_union(..., shell=)`), `tcren>=2.8` in the `structure` extra, `vdjtools>=3.9` in the
 `precursor` extra (it needs `pgen_aa_degenerate`). `arda>=2.20.0` is still not required.
 
-> **Both new floors are unreleased.** PyPI's latest are `seqtree` 0.6.1 and `vdjtools` 3.8.0; the
-> 0.7.0 / 3.9 bumps live on the unmerged branches `immuno-hooks-memo` and `pgen-motif-memo`, and the
-> local venv resolves them only because both are editable installs of those checkouts. `seqtree` is
-> a **hard** dependency, so `pip install .` from a clean environment fails at resolution — the whole
-> branch, not just an extra. Tag and release both upstreams before merging `immuno`, or hold the
-> floors at `>=0.6.1` / `>=3.8.0` until they land.
+**Resolved 2026-08-16 — every floor is published.** `seqtree` **0.7.0**, `vdjtools` **3.9.2** and
+`tcren` **2.8.0** are all on PyPI, so `pip install .` resolves from a clean environment. Until that
+day it did not, and the failure mode was worse than it looks: `seqtree` is a **hard** dependency, so
+an unreleased floor broke the whole install rather than just an extra.
 
 ## 6. Phase 3 — benchmark & paper
 
