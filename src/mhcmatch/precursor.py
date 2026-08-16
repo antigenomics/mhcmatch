@@ -96,7 +96,7 @@ ALPHA_PER_EDIT = 0.1
 #: motif. Criterion: the largest round threshold at which a motif still matches **>= 95% of its own
 #: cluster's member junctions**. Measured on the 2026-06 release (1,791 clusters, 53,757 members in
 #: ``cluster_members.txt``) — member recall 0.9999 at 0.000, 0.996 at 0.002, 0.984 at 0.004, 0.960
-#: at 0.008, 0.948 at 0.010, 0.267 at 0.10, 0.089 at 0.15. Recall falls off a cliff because a member
+#: at 0.008, 0.948 at 0.010, 0.267 at 0.10, 0.177 at 0.15. Recall falls off a cliff because a member
 #: must clear the cut at *every* one of ~15 positions, so per-position losses compound; anything
 #: above ~0.01 keeps only the consensus. Raise it for a tighter, lower-mass motif; set it to 0 for
 #: exactly the residue alphabet the cluster was observed to use.

@@ -286,6 +286,15 @@ over 259 epitopes** (p = 1e-69), against the published 0.71.
 > actually used, and the same ≤1-substitution rule it used to annotate repertoires) it is 0.76–0.86.
 > Anyone re-running this with `mismatches=0` will conclude the Pgen path is broken when it is not.
 
+The estimators are measured on real specificity groups in
+`bench/results/precursor_estimators.md` (138 epitopes): the **union correction is a no-op on most
+epitopes and large on the convergent ones** (median overlap 1.4%, but 18 of 138 above 10% and a
+maximum of 38%, matching seqtree's synthetic spread-1 island at 41.7%), the r=1 ball is a 34×
+inflation of the observed mass that the α = 0.1 retention collapses to **4.3×**, and the A-vs-B
+cross-check puts the observed sample **a factor of 2.0 short** (missing fraction 0.49) on the 319
+wildcard-free cluster PWMs. The coverage correction is estimable on only 56–60 of 138 epitopes; the
+rest hit the singleton wall and are flagged, which is the intended behaviour.
+
 ### Dependency pins to bump when this lands
 
 `seqtree>=0.4.0` → `>=0.7.0` (current 0.7.0; `precursor` needs `neighbourhood_union(..., shell=)`),
