@@ -8,7 +8,17 @@ The estimand is
 continuous quantity behind "immunogenic": recognition is a spectrum, and `F(e)` is where on it a
 given epitope sits.
 
-Five estimators of the same `F(e)`, in increasing order of model commitment:
+Six estimators of the same `F(e)`. One is empirical and needs no model at all; the rest ride on the
+recombination model, in increasing order of commitment.
+
+``event_ratio``
+    `F(e)` counted **directly off repertoire data**, as a ratio of independent recombination events
+    to independent recombination events — no `Pgen`, no model. The unit is
+    ``(donor, V, J, junction_nt)``: the same nucleotide junction in two donors is *two* events, two
+    rearrangements that converged. Because numerator and denominator are counted with the same key
+    over the same samples, sampling depth divides out and **no coverage correction is needed**. This
+    is the estimand itself rather than a proxy for it, which makes it the direct empirical check on
+    everything below.
 
 ``observed_mass``
     Sum of `Pgen` over the junctions actually recorded for the epitope. A **strict lower bound**,
@@ -46,6 +56,8 @@ Which one to use
 ============================================  =======================================
 question                                      estimator
 ============================================  =======================================
+"what is `F(e)`, measured?"                   ``event_ratio`` (needs donor-resolved
+                                              nucleotide repertoires)
 "what can I defend without any assumption?"   ``observed_mass`` (report it as a bound)
 "how much did the sampling miss?"             ``coverage_corrected_mass`` (needs >= 2
                                               capture units and some recaptures)
@@ -57,7 +69,31 @@ question                                      estimator
 
 :func:`cross_check` is the scientifically load-bearing one. ``motif_mass`` and the observed-sample
 estimators measure the same `F(e)` by independent routes with *different* biases, so **their
-disagreement is an estimate of the missing mass**.
+disagreement is an estimate of the missing mass**. :func:`event_ratio` then adjudicates from
+outside the model entirely.
+
+Two objects, easily confused
+----------------------------
+
+``coverage_corrected_mass`` and ``event_ratio`` both take per-junction donor counts, and they mean
+**opposite things**:
+
+- in ``coverage_corrected_mass`` the count is a ``multiplicity`` — how many independent units
+  *re*-reported the **same** object, i.e. recaptures, from which what was never captured is
+  inferred;
+- in ``event_ratio`` distinct donors are **distinct objects**, each one its own recombination event.
+
+Feeding the same donor counts to both is silently wrong in one of them. "Seen again" is not
+"happened again".
+
+One-substitution matching is part of the estimator
+--------------------------------------------------
+
+Everything here defaults to a closed **one**-substitution ball — ``pgen(..., mismatches=1)``,
+``ball_mass(r=1)``, ``event_ratio(r=1)`` — and that is a definition, not a tuned parameter. At
+radius 0 the repertoire is too sparse for either route to be estimable, and the measured
+consequence is large: the Pogorelyy replication scores 0.51–0.61 at radius 0 against 0.76–0.86 at
+radius 1. Use radius 0 only to demonstrate that sparsity.
 
 Requires the optional ``vdjtools`` dependency (the recombination model). Nothing here reimplements
 `Pgen` — the DP, the closed Hamming-1 ball and the degenerate/masked DP all live in vdjtools, and
@@ -76,6 +112,7 @@ __all__ = [
     "load_model", "check_junctions", "pgen",
     "observed_mass", "coverage_corrected_mass",
     "ball_mass", "shell_profile",
+    "RecombinationEvent", "event_ratio",
     "ClusterMotif", "load_cluster_motifs", "motif_mass",
     "cross_check",
     "ALPHA_PER_EDIT", "MOTIF_FREQ_THRESHOLD", "MAX_BALL_MEMBERS",
@@ -219,10 +256,20 @@ def coverage_corrected_mass(model, junctions, multiplicity, n_units: int | None 
     """`F(e)` with the size-biased sampling deficit put back — the estimator, not the bound.
 
     ``multiplicity[i]`` is the number of **independent capture units** (donors, or failing that
-    studies) that reported ``junctions[i]`` for this epitope. Take it from donor/study counts, never
-    from VDJdb record counts: rows duplicate the same donor's TCR across curation passes, so a
-    record count is not a recapture and inflating it collapses the correction. ``n_units`` is the
-    total number of capture units for the epitope (defaults to ``max(multiplicity)``).
+    studies) that **re-reported** ``junctions[i]`` for this epitope. Take it from donor/study
+    counts, never from VDJdb record counts: rows duplicate the same donor's TCR across curation
+    passes, so a record count is not a recapture and inflating it collapses the correction.
+    ``n_units`` is the total number of capture units for the epitope (defaults to
+    ``max(multiplicity)``).
+
+    .. warning::
+
+       ``multiplicity`` counts **recaptures of one object**, not objects. :func:`event_ratio` uses
+       the opposite convention on the same-looking numbers: there each donor carrying a junction is
+       a **separate recombination event**, a distinct object. Both are coherent, they are not the
+       same quantity, and passing one function's counts to the other is silently wrong rather than
+       an error. If you are counting how many independent rearrangements exist, you want
+       :func:`event_ratio`; if you are inferring what the sampling never saw, you want this.
 
     **Model.** Each cognate junction is captured by one unit with probability
     ``p_i = 1 - exp(-theta * pi_i)`` — Poisson sampling at a rate proportional to `Pgen`, which is
@@ -395,6 +442,142 @@ def shell_profile(model, junctions, r: int = 1, alpha: float = ALPHA_PER_EDIT,
     return {"shells": shells, "retained": retained,
             "union": float(sum(s["mass"] for s in shells)),
             "n_union": n_union, "n_seqs": len(seqs), "alpha": alpha}
+
+
+# --------------------------------------------------------------------------- event ratio
+_NT = frozenset("ACGTNacgtn")
+
+
+@dataclass(frozen=True)
+class RecombinationEvent:
+    """One **independent recombination event**: the key is ``(donor, v, j, junction_nt)``.
+
+    Not a sequence, not a clonotype, not a person. The same ``junction_nt`` observed in two donors
+    is **two** events — two rearrangements that happened to converge on the same nucleotide string —
+    and must never be deduplicated across donors. The same nucleotide junction rearranged onto a
+    different V is likewise a separate event.
+
+    ``junction_aa`` is carried only for *matching* against a cognate set; it is deliberately not
+    part of the key, because convergent recombination reaches one amino-acid junction by many
+    nucleotide paths and collapsing them would undercount exactly the events this estimator exists
+    to count.
+
+    Construction validates the pair so a mis-typed call fails loudly: ``junction_nt`` must be
+    ACGTN-only and exactly ``3x`` the length of ``junction_aa``, and ``donor`` must be non-empty.
+    Passing an amino-acid junction as the nucleotide key, or pooling donors by leaving ``donor``
+    blank, are the two mistakes that silently produce a wrong answer rather than an error.
+    """
+    donor: str
+    v: str
+    j: str
+    junction_nt: str
+    junction_aa: str
+
+    def __post_init__(self):
+        if not str(self.donor).strip():
+            raise ValueError(
+                "RecombinationEvent needs a non-empty donor: two donors carrying the same "
+                "junction are two independent events, so pooling them undercounts the numerator "
+                "and the denominator alike")
+        if not self.junction_nt or not set(self.junction_nt) <= _NT:
+            raise ValueError(
+                f"junction_nt must be a nucleotide string (ACGTN), got {self.junction_nt!r} -- "
+                "the event key is nucleotide-level; an amino-acid junction here collapses "
+                "convergent rearrangements into one event")
+        if len(self.junction_nt) != 3 * len(self.junction_aa):
+            raise ValueError(
+                f"junction_nt must be exactly 3x junction_aa in length, got "
+                f"{len(self.junction_nt)} vs 3x{len(self.junction_aa)}")
+
+    @property
+    def key(self) -> tuple[str, str, str, str]:
+        return (self.donor, self.v, self.j, self.junction_nt)
+
+
+def event_ratio(cognate, events, r: int = 1, denominator: int | None = None,
+                max_members: int = MAX_BALL_MEMBERS) -> dict:
+    """`F(e)` counted directly off repertoire data — events over events, no `Pgen` at all.
+
+    ::
+
+        F_hat(e) = #{distinct (donor, V, J, junction_nt) matching C_e within r mismatches}
+                   ----------------------------------------------------------------------
+                   #{distinct (donor, V, J, junction_nt) in the whole dataset}
+
+    This **is** the estimand — the probability that a random naive-repertoire rearrangement
+    recognises `e` — not a proxy for it, so it is a direct empirical check on the `Pgen` route
+    rather than a correlate of it. It also needs **no coverage correction**: numerator and
+    denominator are counted with the same key over the same samples, so sampling depth divides out.
+    That is its advantage over :func:`coverage_corrected_mass`, which needs recaptures and is
+    undefined when every junction is a singleton.
+
+    ``cognate`` is either one epitope's junction list or a ``{epitope: junctions}`` mapping; the
+    mapping form streams ``events`` once and shares the denominator across epitopes. ``events`` is
+    an iterable of :class:`RecombinationEvent`. ``r`` is the match radius in **amino-acid**
+    substitutions. ``denominator`` overrides the counted total, for callers that pre-filtered the
+    event stream; it must have been counted with the same key.
+
+    Returns ``{"denominator", "matched", "f_hat", "epitopes": {e: {"matched", "f_hat"}},
+    "n_cognate", "r"}``.
+
+    **`r = 1` is part of the estimator, not a tuning knob.** At `r = 0` the repertoire is far too
+    sparse for this ratio to be estimable: a cognate set of a few hundred exact junctions matches
+    almost nothing in a bulk repertoire, and the counts are then dominated by whether one public
+    clonotype happened to be sequenced. Measured on the Pogorelyy replication
+    (`bench/results/precursor_pogorelyy.md` in the benchmark repo) the same correlation is 0.51–0.61
+    at `r = 0` and 0.76–0.86 at `r = 1`. Both this estimator and the `Pgen` route
+    (``pgen(..., mismatches=1)``) therefore take the closed one-substitution ball as their unit.
+
+    **Counting objects, not recaptures.** :func:`coverage_corrected_mass` takes a ``multiplicity``
+    that means "how many independent units *re*-reported this same junction" — recaptures of one
+    object, used to estimate what was missed. Here distinct donors are **distinct objects**, each
+    contributing its own event. The two are not the same quantity and the same donor counts must
+    not be fed to both: a donor count passed as ``multiplicity`` says "seen again", while the same
+    number here says "happened again".
+    """
+    from seqtree.distance import neighbourhood_union, union_size
+
+    single = not isinstance(cognate, dict)
+    groups = {"": list(cognate)} if single else {k: list(v) for k, v in cognate.items()}
+    groups = {k: [s for s in v if s] for k, v in groups.items()}
+
+    total = sum(union_size(v, r=r) for v in groups.values() if v)
+    if total > max_members:
+        raise MemoryError(
+            f"the radius-{r} neighbourhood of {sum(len(v) for v in groups.values()):,} cognate "
+            f"junctions holds {total:,} sequences, above max_members={max_members:,}. Split the "
+            "epitopes into batches over the same event stream and combine the counts -- the "
+            "denominator is shared, so that is exact.")
+
+    index: dict[str, set[str]] = {}
+    for name, seqs in groups.items():
+        if not seqs:
+            continue
+        for nb in neighbourhood_union(seqs, r=r):
+            index.setdefault(nb, set()).add(name)
+
+    seen: set[tuple[str, str, str, str]] = set()
+    hits: dict[str, set[tuple[str, str, str, str]]] = {k: set() for k in groups}
+    for e in events:
+        k = e.key
+        if k in seen:
+            continue
+        seen.add(k)
+        for name in index.get(e.junction_aa, ()):
+            hits[name].add(k)
+
+    n = int(denominator) if denominator is not None else len(seen)
+    per = {name: {"matched": len(v), "f_hat": (len(v) / n) if n else 0.0}
+           for name, v in hits.items()}
+    out = {"denominator": n, "epitopes": per, "r": r,
+           "n_cognate": sum(len(v) for v in groups.values())}
+    if single:
+        out["matched"] = per[""]["matched"]
+        out["f_hat"] = per[""]["f_hat"]
+    else:
+        out["matched"] = len(set().union(*hits.values())) if hits else 0
+        out["f_hat"] = (out["matched"] / n) if n else 0.0
+    return out
 
 
 # --------------------------------------------------------------------------- cluster PWM motifs

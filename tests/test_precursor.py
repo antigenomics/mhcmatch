@@ -147,6 +147,92 @@ def test_coverage_correction_rejects_bad_multiplicity(model):
         P.coverage_corrected_mass(model, ["CASSLAPGATNEKLFF"], [1, 1], n_units=4)
 
 
+# --------------------------------------------------------------------------- event ratio
+def ev(donor, v, j, nt, aa):
+    return P.RecombinationEvent(donor=donor, v=v, j=j, junction_nt=nt, junction_aa=aa)
+
+
+def to_nt(aa, synonym=False):
+    """A nucleotide junction encoding ``aa``; ``synonym=True`` gives a different one."""
+    main = {"C": "TGT", "A": "GCC", "S": "AGC", "L": "CTG", "F": "TTT", "M": "ATG", "G": "GGC"}
+    alt = {"C": "TGC", "A": "GCA", "S": "TCA", "L": "TTA", "F": "TTC", "M": "ATG", "G": "GGA"}
+    tab = alt if synonym else main
+    return "".join(tab[c] for c in aa)
+
+
+def test_event_ratio_counts_events_not_sequences():
+    """The unit is the recombination event: (donor, V, J, junction_nt). Nothing else."""
+    cog = ["CASSLF"]
+    events = [
+        ev("d1", "TRBV1", "TRBJ1", to_nt("CASSLF"), "CASSLF"),                 # match
+        ev("d2", "TRBV1", "TRBJ1", to_nt("CASSLF"), "CASSLF"),                 # SAME nt, other donor
+        ev("d1", "TRBV1", "TRBJ1", to_nt("CASSLF"), "CASSLF"),                 # exact duplicate
+        ev("d1", "TRBV1", "TRBJ1", to_nt("CASSLF", True), "CASSLF"),           # convergent nt
+        ev("d1", "TRBV2", "TRBJ1", to_nt("CASSLF"), "CASSLF"),                 # other V
+        ev("d1", "TRBV1", "TRBJ1", to_nt("CAGGGF"), "CAGGGF"),                 # far, no match
+    ]
+    res = P.event_ratio(cog, events, r=1)
+    # 5 distinct keys survive the duplicate; 4 of them are cognate
+    assert res["denominator"] == 5
+    assert res["matched"] == 4
+    assert res["f_hat"] == pytest.approx(4 / 5)
+
+
+def test_event_ratio_two_donors_are_two_events_not_one():
+    cog = ["CASSLF"]
+    one = P.event_ratio(cog, [ev("d1", "V", "J", to_nt("CASSLF"), "CASSLF")])
+    two = P.event_ratio(cog, [ev("d1", "V", "J", to_nt("CASSLF"), "CASSLF"),
+                              ev("d2", "V", "J", to_nt("CASSLF"), "CASSLF")])
+    assert one["matched"] == 1 and two["matched"] == 2
+
+
+def test_event_ratio_mismatch_radius_widens_the_numerator():
+    cog = ["CASSLF"]
+    events = [ev("d1", "V", "J", to_nt("CASSLF"), "CASSLF"),
+              ev("d2", "V", "J", to_nt("CASSMF"), "CASSMF")]          # Hamming 1 from the cognate
+    assert P.event_ratio(cog, events, r=0)["matched"] == 1
+    assert P.event_ratio(cog, events, r=1)["matched"] == 2
+
+
+def test_event_ratio_per_epitope_mapping_shares_one_denominator():
+    events = [ev("d1", "V", "J", to_nt("CASSLF"), "CASSLF"),
+              ev("d2", "V", "J", to_nt("CAGGGF"), "CAGGGF"),
+              ev("d3", "V", "J", to_nt("CAMMMF"), "CAMMMF")]
+    res = P.event_ratio({"E1": ["CASSLF"], "E2": ["CAGGGF"]}, events, r=0)
+    assert res["denominator"] == 3
+    assert res["epitopes"]["E1"]["matched"] == 1
+    assert res["epitopes"]["E1"]["f_hat"] == pytest.approx(1 / 3)
+    assert res["epitopes"]["E2"]["matched"] == 1
+
+
+def test_event_ratio_accepts_an_external_denominator():
+    res = P.event_ratio(["CASSLF"], [ev("d1", "V", "J", to_nt("CASSLF"), "CASSLF")],
+                        r=0, denominator=1000)
+    assert res["denominator"] == 1000 and res["f_hat"] == pytest.approx(1e-3)
+
+
+def test_event_ratio_rejects_an_amino_acid_key():
+    with pytest.raises(ValueError, match="nucleotide"):
+        P.RecombinationEvent(donor="d1", v="V", j="J", junction_nt="CASSLF", junction_aa="CASSLF")
+
+
+def test_event_ratio_rejects_a_frame_shifted_key():
+    with pytest.raises(ValueError, match="3x"):
+        P.RecombinationEvent(donor="d1", v="V", j="J", junction_nt="TGTGCC", junction_aa="CASSLF")
+
+
+def test_event_ratio_rejects_a_pooled_event():
+    with pytest.raises(ValueError, match="donor"):
+        P.RecombinationEvent(donor="", v="V", j="J", junction_nt=to_nt("CASSLF"),
+                             junction_aa="CASSLF")
+
+
+def test_event_ratio_is_a_probability():
+    events = [ev(f"d{i}", "V", "J", to_nt("CASSLF"), "CASSLF") for i in range(4)]
+    res = P.event_ratio(["CASSLF"], events)
+    assert 0.0 <= res["f_hat"] <= 1.0 and res["f_hat"] == pytest.approx(1.0)
+
+
 # --------------------------------------------------------------------------- cluster PWM motifs
 PWM_HEADER = ("species\tantigen.epitope\tgene\taa\tpos\tlen\tv.segm.repr\tj.segm.repr\tcid\tcsz\t"
               "count\tfreq\tI\tI.norm\n")
