@@ -187,6 +187,18 @@ The bar is now **`predict.binder_score` at TESLA AUROC 0.786**, not the 0.752 in
   + 45 hydrophobicity scales from `peptides` 0.5.0, plus Miyazawa–Jernigan partition energy
   (AAindex MIYS850101) from `tcren`. **No runtime dependency** — the tables are copied, the packages
   are not imported. Both are GPL-3.0-or-later, as is mhcmatch, so this is licence-clean.
+- **`mhcmatch.data.contact_profile`** — vendored, generated (regenerate with
+  `bench/immuno/build_contact_profile.py`). Per-position TCR↔peptide contact frequency by (MHC
+  class, peptide length) from 8,062 contacts over 370 crystals, backing `immuno`'s continuous
+  `"contact"` weighting. Gate: Spearman ρ = **0.943** against Calis 2013 Table 2's label-derived KL
+  importances (P3–P8, n = 6) — geometry and labels, no shared data. Provenance and the regeneration
+  command are in `src/mhcmatch/data/PROVENANCE.md`.
+  **Two independent lines, not three.** The PΩ-1 result rests on crystal contacts versus everything
+  else: the empirical-Bayes τ and the affinity leave-one-anchor-out drop-cost are two readouts of
+  the *same* class-I ligandome PWM (`pmhc_full.tsv.gz`), so their rank agreement is substantially
+  mechanical. The load-bearing independent number is **Spearman(contact, drop-cost) = −1.0000**
+  (n = 5); Spearman(τ, contact) = +0.9667 (n = 9) and Spearman(τ, drop-cost) = −0.9000 (n = 5) are
+  corroborating, not additional evidence. See `bench/results/anchor_footprint.md`.
 - **`mhcmatch.immuno`** — `features()` returns 141 values (length + 20 scales × 7 statistics).
   `python -m mhcmatch.immuno` self-checks against published constants.
 - **`predict._fisher_combine`** — one definition of the combined statistic, replacing three
@@ -295,11 +307,18 @@ cross-check puts the observed sample **a factor of 2.0 short** (missing fraction
 wildcard-free cluster PWMs. The coverage correction is estimable on only 56–60 of 138 epitopes; the
 rest hit the singleton wall and are flagged, which is the intended behaviour.
 
-### Dependency pins to bump when this lands
+### Dependency pins — as they stand at HEAD
 
-`seqtree>=0.4.0` → `>=0.7.0` (current 0.7.0; `precursor` needs `neighbourhood_union(..., shell=)`),
-`tcren>=2.2` → `>=2.8.0` (current 2.8.0). `vdjtools>=3.9` is pinned in the `precursor` extra (it
-needs `pgen_aa_degenerate`); `arda>=2.20.0` is still not required.
+Already bumped in `pyproject.toml`, not pending: `seqtree>=0.7.0` (hard; `precursor` needs
+`neighbourhood_union(..., shell=)`), `tcren>=2.8` in the `structure` extra, `vdjtools>=3.9` in the
+`precursor` extra (it needs `pgen_aa_degenerate`). `arda>=2.20.0` is still not required.
+
+> **Both new floors are unreleased.** PyPI's latest are `seqtree` 0.6.1 and `vdjtools` 3.8.0; the
+> 0.7.0 / 3.9 bumps live on the unmerged branches `immuno-hooks-memo` and `pgen-motif-memo`, and the
+> local venv resolves them only because both are editable installs of those checkouts. `seqtree` is
+> a **hard** dependency, so `pip install .` from a clean environment fails at resolution — the whole
+> branch, not just an extra. Tag and release both upstreams before merging `immuno`, or hold the
+> floors at `>=0.6.1` / `>=3.8.0` until they land.
 
 ## 6. Phase 3 — benchmark & paper
 
