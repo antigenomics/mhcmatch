@@ -88,15 +88,18 @@ def _neglog10(rank: float) -> float:
         return float("nan")
 
 
-def _recognition(peptide: str) -> float:
-    """The recognition axis. Currently the calibrated physicochemical term.
+def _recognition(peptide: str, species: str = "human") -> float:
+    """The recognition axis: the position-role log-likelihood ratio from :mod:`mhcmatch.posbayes`.
 
-    ``bench/results/neoag_positions.md`` measures a **141-feature** unmasked physicochemical set at
-    cv AUROC 0.761 against this pooled 13-parameter score's 0.733 on the presentation-matched corpus
-    -- a real and reproducible gain that is not vendored yet because it needs a fitted coefficient
-    vector shipped alongside it. When it is, only this function changes."""
-    from . import ipred
-    return ipred.log_p(peptide)
+    Chosen over ``ipred.log_p`` because it separates anchor from TCR-facing residues, which carry
+    opposite-sign contributions for several amino acids that a pooled score averages away. On the
+    IEDB assayed-vs-eluted corpus under peptide-grouped 5-fold CV it reaches **0.712** (human) /
+    **0.758** (mouse) against ``ipred``'s 0.607 / 0.668 -- and ``ipred``'s figures there are
+    *in-sample*, since that corpus is its training set.
+
+    Both are log-scale and larger-is-more-immunogenic, so the gate coefficients transfer unchanged."""
+    from . import posbayes
+    return posbayes.llr(peptide, species)
 
 
 def _expression_for(gene: str, observed, tissue: str | None, tumor: str | None,
