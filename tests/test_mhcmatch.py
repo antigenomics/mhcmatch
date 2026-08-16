@@ -1022,3 +1022,24 @@ def test_contact_profile_handles_unseen_lengths():
         assert len(w) == L and all(x >= 0 for x in w) and any(x > 0 for x in w)
     with pytest.raises(ValueError):
         immuno.contact_profile("mhc3")
+
+
+def test_precursor_self_check():
+    """Run mhcmatch.precursor's demo() when the optional vdjtools extra is present.
+
+    Skipped rather than failed without it: precursor is an optional extra ([precursor]), so a
+    plain install must not be red because the recombination model is absent.
+    """
+    pytest.importorskip("vdjtools", reason="mhcmatch[precursor] not installed")
+    from mhcmatch import precursor
+    precursor.demo()
+
+
+def test_precursor_rejects_cdr3_that_is_not_a_junction():
+    """CDR3 != junction, and the failure is silent: an anchor-stripped IMGT CDR3 scores exactly
+    0.0 with no error, so a mis-typed input reports a precursor frequency of zero. check_junctions
+    is the trust boundary that catches it before scoring."""
+    from mhcmatch.precursor import check_junctions
+    ok, bad = check_junctions(["CASSLAPGATNEKLFF", "ASSLAPGATNEKL", "CASSQDRDTQYW", ""])
+    assert ok == ["CASSLAPGATNEKLFF", "CASSQDRDTQYW"]
+    assert bad == ["ASSLAPGATNEKL", ""]
