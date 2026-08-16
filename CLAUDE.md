@@ -2,7 +2,7 @@
 
 **Authoritative context lives elsewhere — read it first:**
 - [`ROADMAP.md`](ROADMAP.md) — the agent contract: what mhcmatch is, phase status, open loops.
-- [`appendix/mhcmatch.tex`](appendix/mhcmatch.tex) — the method/statistics spec.
+- `../../manuscripts/2026-mhcmatch/appendix/mhcmatch.tex` — the method/statistics spec (manuscript repo).
 
 This file captures only *how we work in the repo*.
 
@@ -22,10 +22,26 @@ git worktree remove .claude/worktrees/<name>            # when the branch is con
 - Consolidate finished results back and remove the worktree; merging `<name>` into `master` is a
   separate, deliberate step — `master` is never modified while parallel work is in flight.
 
-> **Benchmarks live in a separate repo.** `bench/` moved to
-> [`2026-mhcmatch-benchmark`](https://github.com/antigenomics/2026-mhcmatch-benchmark) — the head-to-head harness, the `bench/results/*.md`
-> tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
-> below resolve there, not here.
+## Three repos, three roles — never mix them
+
+| repo | holds | never holds |
+|---|---|---|
+| `~/vcs/code/mhcmatch` — **this one** | library source, unit tests, sphinx docs, marimo notebooks, a handful of example images | benchmark harnesses, result tables, head-to-head comparisons, manuscript prose, publication figures |
+| `~/vcs/projects/2026-mhcmatch-benchmark` | every analysis script (`bench/`), every result table (`bench/results/*.md`), figure **generators**, `SOURCES.md` | library code, manuscript prose |
+| `~/vcs/manuscripts/2026-mhcmatch` | manuscript, the **theory appendix** (`appendix/mhcmatch.tex`), every publication figure and generated LaTeX table | code that computes anything |
+
+Numbers flow one way: **benchmark → manuscript.** The manuscript never recomputes a number; it cites
+one the benchmark repo produced and recorded. `bench/results/...` paths anywhere in this repo resolve
+in the benchmark repo, not here.
+
+**Everything in *this* repo bootstraps its data from HuggingFace.** Docs, notebooks and examples fetch
+through `mhcmatch.bootstrap` / `Store` from `isalgo/pmhc_data` and friends — never from a hard-coded
+`~/hf/...` or `~/vcs/projects/...` path, so a `pip install mhcmatch` user can run every example. Local
+mirrors are for the benchmark repo, where the data is large and the analysis is one-off.
+
+A test that asserts a *benchmark* number (an AUC, a head-to-head win) is research and belongs in the
+benchmark repo. A test that asserts an *API contract* (a probability is in [0,1], a refactor is
+score-identical) is a unit test and belongs here.
 
 ## Benchmarks — record the result, and scrutinise asymmetrically *on purpose*
 
@@ -65,7 +81,7 @@ spec. See `bench/results/compare_mhc2_human_hard_ligandbg_elonly.md`.
 
 - Branch flow: **feature → `dev` → `master`** (`ROADMAP.md` §7).
 - End commit messages with the `Co-Authored-By` trailer. No PyPI release without explicit sign-off.
-- Never fabricate citations — verify every DOI via a tool before adding it to `appendix/refs.bib`.
+- Never fabricate citations — verify every DOI via a tool before adding it to `../../manuscripts/2026-mhcmatch/appendix/refs.bib`.
 
 ## Environment
 

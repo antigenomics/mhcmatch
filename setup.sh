@@ -28,4 +28,4 @@ esac
 
 echo ""
 echo "Done. Tests: pytest -s tests/"
-echo "      Docs:  ROADMAP.md and appendix/mhcmatch.pdf (env -C appendix make)"
+echo "      Docs:  ROADMAP.md, docs/ (sphinx), notebooks/ (marimo examples)"

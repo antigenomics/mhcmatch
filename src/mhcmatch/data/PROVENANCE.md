@@ -31,7 +31,7 @@ Two sources, built by the sibling `antigenomics/tcren` repo's `scripts/build_pse
    existing 34-mer group — new HLA alleles usually differ outside the groove.
 
 Used by `mhcmatch.pseudoseq` as the allele-similarity alphabet for the cross-allele diffusion model
-(see `appendix/mhcmatch.tex` §4). Regenerate with:
+(see `../../manuscripts/2026-mhcmatch/appendix/mhcmatch.tex` §4). Regenerate with:
 
     for g in A B C E F G; do
       curl -sSo ~/vcs/tmp/imgt/${g}_prot.txt \

@@ -9,7 +9,7 @@
 - :func:`logo.motif` -- per-allele motif logos + length distributions.
 - :mod:`predict` -- score a variant peptide-window FASTA into native + pipeline-``.scored.csv`` output.
 
-Theory: ``appendix/mhcmatch.tex``. Roadmap: ``ROADMAP.md``.
+Theory: the theory appendix. Roadmap: ``ROADMAP.md``.
 """
 from importlib.metadata import PackageNotFoundError, version as _version
 

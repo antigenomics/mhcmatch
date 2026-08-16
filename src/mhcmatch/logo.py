@@ -3,7 +3,7 @@
 :func:`motif` returns the numeric logo (PWM, per-position bits, length histogram) -- pure-Python,
 always available. :func:`render` draws it with ``logomaker`` (optional ``[logo]`` extra). MHC-I
 logos use peptides of a fixed length (default the modal length); MHC-II uses register-anchored
-9-mer cores. See ``appendix/mhcmatch.tex`` §6.
+9-mer cores. See the theory appendix §6.
 """
 from __future__ import annotations
 

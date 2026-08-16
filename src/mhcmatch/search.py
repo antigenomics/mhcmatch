@@ -7,7 +7,7 @@ Two notions of "similar", both via the seqtree C++ ``KmerIndex`` seed-and-gather
 - ``mode="mhc"`` -- anchored **presentation** signature: likely presented by the *same MHC*.
 
 For neoantigen mimicry with per-allele presentation-aware E-values, use :func:`find_mimics`
-(re-exported from seqtree). See ``appendix/mhcmatch.tex`` §5.
+(re-exported from seqtree). See the theory appendix §5.
 """
 from __future__ import annotations
 

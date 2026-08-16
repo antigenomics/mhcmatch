@@ -24,7 +24,8 @@ productionizes the reference `seqtree.pmhc` methodology (anchor-masked TCR-facin
 presentation-aware E-values, allele guessing) and adds a **pseudosequence-based cross-allele
 diffusion model** that rescues rare alleles by borrowing from groove-similar frequent ones.
 
-The mathematical/statistical theory is in [`appendix/mhcmatch.tex`](appendix/mhcmatch.tex); the
+The mathematical/statistical theory is in the manuscript repo
+(`../../manuscripts/2026-mhcmatch/appendix/mhcmatch.tex`); the
 development plan is in [`ROADMAP.md`](ROADMAP.md).
 
 ## What it does (v0)

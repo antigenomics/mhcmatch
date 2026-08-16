@@ -6,7 +6,7 @@ whose per-allele anchor residue distributions are smoothed toward groove-similar
 :class:`mhcmatch.Pseudoseq`. With ``raw=True`` (or bandwidth ``h -> 0``) there is no borrowing and a
 rare allele scores off its own few peptides; with diffusion on, it borrows from frequent
 groove-neighbours, rescuing rare alleles. This is the forward per-allele E-value's data-rescued null
-of ``appendix/mhcmatch.tex`` §4.
+of the theory appendix §4.
 """
 from __future__ import annotations
 

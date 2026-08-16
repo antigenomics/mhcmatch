@@ -7,7 +7,7 @@ has enough neighbours, then rank presenting alleles by neighbour **vote fraction
 **confidence** by a binomial-tail enrichment over the panel background. The vote fraction is the
 ranking statistic (robust to panel skew); the enrichment is the non-binder filter.
 
-Significance theory: ``appendix/mhcmatch.tex`` §2-3 (forward per-allele E-value + reverse problem).
+Significance theory: the theory appendix §2-3 (forward per-allele E-value + reverse problem).
 """
 from __future__ import annotations
 

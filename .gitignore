@@ -14,20 +14,6 @@ data/proteomes/
 *.fasta
 *.fasta.gz
 
-# figure intermediates (keep the generated .pdf; regenerate via bench/*.py)
-appendix/*.dat
-appendix/*.gp
-appendix/*.dot
-
-# LaTeX build artifacts (keep .tex, .bib, .pdf)
-appendix/*.aux
-appendix/*.log
-appendix/*.out
-appendix/*.bbl
-appendix/*.blg
-appendix/*.fls
-appendix/*.fdb_latexmk
-
 # head-to-head benchmark cache (examples + NetMHC scores)
 
 # private-sample concordance outputs (private donor data — never commit or share in this PUBLIC repo)

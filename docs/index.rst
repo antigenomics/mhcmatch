@@ -8,7 +8,7 @@ cross-allele **diffusion** model that rescues rare alleles by borrowing from gro
 frequent ones.
 
 The mathematical and statistical theory lives in the technical appendix
-(``appendix/mhcmatch.tex``); the development plan is in ``ROADMAP.md``.
+(the theory appendix); the development plan is in ``ROADMAP.md``.
 
 .. raw:: html
 

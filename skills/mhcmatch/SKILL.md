@@ -8,7 +8,7 @@ description: Applied peptide-MHC tool — restriction/presentation, cross-allele
 The applied peptide–MHC tool. Sits on **seqtree** (fuzzy-search core, anchor/TCR layout, E-values) and
 **tcren** (groove pseudosequences); it does **not** reimplement search, E-values, anchor masking, or
 k-mer indexing. Authoritative context: [`ROADMAP.md`](../../ROADMAP.md) (phase status, open loops) and
-[`appendix/mhcmatch.tex`](../../appendix/mhcmatch.tex) (the method/statistics spec).
+`../../manuscripts/2026-mhcmatch/appendix/mhcmatch.tex` (the method/statistics spec).
 
 **Check here before writing new code** — most of what a task needs already exists.
 
@@ -41,7 +41,7 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 | param | default | use |
 |---|---|---|
 | `background` | `"ligand"` | **the null, and the main per-task knob.** `"ligand"` = specificity (which allele? → restriction/hard-negative tasks). `"proteome"` = presentation `log(θ_A/p_proteome)` (is it presented at all? → screening). `"markov"` = order-1 proteome (measured slightly worse; opt-in) |
-| `footprint` | `"anchor"` | `"anchor"` (primary pockets) / `"core"` (all core positions) / `"adaptive"` (anchors for rare, core otherwise). ⚠️ `rare_max=30` is a hard threshold sitting on the eval stratum boundary — see `appendix/hierarchical_rules.md` |
+| `footprint` | `"anchor"` | `"anchor"` (primary pockets) / `"core"` (all core positions) / `"adaptive"` (anchors for rare, core otherwise). ⚠️ `rare_max=30` is a hard threshold sitting on the eval stratum boundary — see `docs/hierarchical_rules.md` |
 | `n_motifs` | `3` (MHC-II) | motif-mixture components, fit by EM on the corpus. K=3 closes ~40% of the frequent gap. Self-adapting: an empty component returns the pooled motif *identically*. `1` = single-PWM escape hatch |
 | `register` | `"marginal"` | MHC-II: integrate the register out under the learned core-offset prior; `"max"` = pre-v0.6 |
 | `register_em` | `2` | best-frame register-EM passes. **`"converge"`** (v0.7.2) runs each allele to *its own* fixed point — closes 28% of the class-II frequent screening gap, but is a restriction cost. See below |

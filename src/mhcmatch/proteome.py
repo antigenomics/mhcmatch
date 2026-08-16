@@ -4,7 +4,7 @@ Given a query peptide (e.g. a neoantigen), find the nearly-exact self peptide it
 its parent protein / position via **full-sequence** (unmasked) ``<= max_subs`` search over all
 windows of the proteome of the query's length -- using the seqtree Hamming fast path. This is a
 *distinct* mode from the anchor-masked TCR-facing homology and the presentation-signature searches.
-See ``appendix/mhcmatch.tex`` §5 (near-exact source identification).
+See the theory appendix §5 (near-exact source identification).
 """
 from __future__ import annotations
 

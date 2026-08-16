@@ -57,7 +57,7 @@ diagnostic rather than a default flip: the class-II frequent gap is a **register
 on HLA-DP**, not a motif deficit or an estimator-variance problem.
 
 Results: `2026-mhcmatch-benchmark/KEY_FINDINGS.md`, `bench/results/register_em_convergence_dp.md`,
-`bench/results/blosum_pseudocount.md`. Design: [`appendix/hierarchical_rules.md`](appendix/hierarchical_rules.md).
+`bench/results/blosum_pseudocount.md`. Design: [`docs/hierarchical_rules.md`](docs/hierarchical_rules.md).
 
 ### Added
 
@@ -133,7 +133,7 @@ Results: `2026-mhcmatch-benchmark/KEY_FINDINGS.md`, `bench/results/register_em_c
 
 ### Docs
 
-- [`appendix/hierarchical_rules.md`](appendix/hierarchical_rules.md) — the design: global prior → family
+- [`docs/hierarchical_rules.md`](docs/hierarchical_rules.md) — the design: global prior → family
   (kernel communities, Q=0.94/0.90) → allele, with the shrinkage strength derived from the variance ratio
   rather than tuned. Names the remaining violator: `footprint`'s `rare_max=30`, a capacity threshold
   sitting **exactly** on the evaluation stratum's boundary.

@@ -9,7 +9,7 @@ position and the allele's anchor-residue choice) -- the "feature importance" of 
 
 Kernel-weighted **shrinkage** (:meth:`Pseudoseq.shrink`) borrows presented-peptide statistics from
 similar alleles to rescue rare ones, lifting the seqtree limitation "distinct alleles are distinct
-nulls". See ``appendix/mhcmatch.tex`` §4.
+nulls". See the theory appendix §4.
 """
 from __future__ import annotations
 

@@ -3,7 +3,7 @@
 **Status:** living draft. Owner: @mikessh. This file is the development plan and the contract for
 agents working on `mhcmatch`; it is updated as work lands and is the source for the methods section
 of the eventual paper. The mathematical/statistical theory lives in
-[`appendix/mhcmatch.tex`](appendix/mhcmatch.tex) — treat the appendix as the spec and this file as
+`../../manuscripts/2026-mhcmatch/appendix/mhcmatch.tex` (manuscript repo) — treat the appendix as the spec and this file as
 the build plan. Phase sections marked _(TBD)_ await detail.
 
 ---
@@ -572,12 +572,12 @@ NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2)
 - **Anchors are parametrized** via `seqtree.layout` (presets per class, overridable) — never hardcode
   positions; allele-specific anchors come from the learned pocket weights.
 - **Never fabricate citations** — verify every DOI via a tool (PubMed/arXiv) before adding it to
-  `appendix/refs.bib`.
+  `../../manuscripts/2026-mhcmatch/appendix/refs.bib`.
 - **gitflow**: feature → `dev` → `master`; end commit messages with the `Co-Authored-By` trailer; no
   PyPI release without explicit sign-off.
 
 ## 8. Pointers
 
-- Theory & derivations: [`appendix/mhcmatch.tex`](appendix/mhcmatch.tex).
+- Theory & derivations: `../../manuscripts/2026-mhcmatch/appendix/mhcmatch.tex` (manuscript repo).
 - Substrate contract & E-value theory: `../seqtree/ROADMAP.md` §3, `../seqtree/appendix/evalue.tex`.
 - Validated reverse-problem benchmark: `../seqtree/bench/bench_mhc_guess.py`.
