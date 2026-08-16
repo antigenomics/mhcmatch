@@ -255,19 +255,28 @@ def cmd_rank(a):
 
 def cmd_explain(a):
     """Print every component of the aggregate for one (peptide, allele), so a rank is auditable."""
-    from . import ipred, rank as R
+    from . import ipred, posbayes, rank as R
     store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
     from . import predict as P
     bs = P.binder_score(store, a.peptide, alleles=[a.allele], cls=a.cls)
     pres = R._neglog10(bs[0].binder_rank) if bs else float("nan")
-    phys = ipred.log_p(a.peptide)
+    # This must be the axis `rank` scores with, and the axis GATE was fitted on -- otherwise the
+    # aggregate below is a coefficient applied to a scale it was not fitted for.
+    recog = R._recognition(a.peptide, a.species)
     print(f"# {a.peptide}  {a.allele}  ({a.cls})")
     if bs:
         b = bs[0]
         print(f"  presentation %rank   {b.presentation_rank:.4g}")
         print(f"  affinity   IC50 nM   {b.affinity_nm:.4g}   (%rank {b.affinity_rank:.4g})")
         print(f"  binder     %rank     {b.binder_rank:.4g}   -> presentation term {pres:+.4f}")
-    print(f"  physchem   log P      {phys:+.4f}   (P = {ipred.p_immunogenic(a.peptide):.4f})")
+    print(f"  recognition  LLR      {recog:+.4f}   (posbayes {a.species} -- the term `rank` uses)")
+    print(f"  ipred        log P    {ipred.log_p(a.peptide):+.4f}   "
+          f"(P = {ipred.p_immunogenic(a.peptide):.4f}; pooled physchem, shown for comparison)")
+    if a.prior:
+        # The LLR carries no prior, so the base rate is the caller's to supply -- a screen at
+        # 4.8e-4 and the training corpus at 3.2e-2 differ by ~66x.
+        print(f"    P at prior {a.prior:g}   "
+              f"{posbayes.posterior(a.peptide, a.prior, a.species):.6g}")
     if a.wt:
         from .affinity import AffinityModel
         am = AffinityModel.load(store.anchor_model(a.cls), store.corpus(a.cls), a.cls)
@@ -278,7 +287,7 @@ def cmd_explain(a):
         print(f"  expression           {rec['median_tpm']:.4g} TPM "
               f"({'TCGA ' + a.tumor if a.tumor else 'GTEx ' + a.tissue}, n={rec['n']})"
               if rec else "  expression           (no reference row)")
-    print(f"  AGGREGATE  P         {R.gate_probability(pres, phys):.6f}")
+    print(f"  AGGREGATE  P         {R.gate_probability(pres, recog):.6f}")
 
 
 def cmd_expression(a):
@@ -438,6 +447,8 @@ def main(argv=None):
     ex.add_argument("--gene", help="source gene symbol, for the expression lookup")
     ex.add_argument("--tissue", help="GTEx tissue")
     ex.add_argument("--tumor", help="TCGA cancer_type, e.g. SKCM")
+    ex.add_argument("--prior", type=float,
+                    help="base rate for the recognition posterior (e.g. 4.8e-4 for an exome screen)")
     _add_store_opts(ex)
     ex.set_defaults(fn=cmd_explain)
 

@@ -88,8 +88,15 @@ def _neglog10(rank: float) -> float:
         return float("nan")
 
 
-def _recognition(peptide: str, species: str = "human") -> float:
+def _recognition(peptide: str, species: str = "human", cls: str = "mhc1") -> float:
     """The recognition axis: the position-role log-likelihood ratio from :mod:`mhcmatch.posbayes`.
+
+    **Class I only; class II returns NaN.** :mod:`~mhcmatch.posbayes` splits roles with the class-I
+    scheme (P1-P3, PΩ-1, PΩ), and its tables are fitted on an ``mhc_class == "MHCI"`` corpus. A
+    class-II ligand is anchored by the P1/P4/P6/P9 core of a 9-mer register that floats inside a
+    longer peptide (:func:`mhcmatch.store.anchor_indices`), so applying the class-I scheme to it
+    labels the wrong residues as anchors and returns a confident, wrong number. Scoring class-II
+    candidates on presentation alone is the honest option until a class-II table exists.
 
     Chosen over ``ipred.log_p`` because it separates anchor from TCR-facing residues, which carry
     opposite-sign contributions for several amino acids that a pooled score averages away. On the
@@ -98,6 +105,8 @@ def _recognition(peptide: str, species: str = "human") -> float:
     *in-sample*, since that corpus is its training set.
 
     Both are log-scale and larger-is-more-immunogenic, so the gate coefficients transfer unchanged."""
+    if cls != "mhc1":
+        return float("nan")
     from . import posbayes
     return posbayes.llr(peptide, species)
 
@@ -184,7 +193,7 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
             dai = math.log10(p.wt_affinity_nm / p.affinity_nm)
         rows.append(Ranked(peptide=p.peptide, allele=p.allele, gene=gene, source=p.source,
                            presentation=_neglog10(p.percent_rank), agretopicity=dai,
-                           physchem=_recognition(p.peptide), expression=expr,
+                           physchem=_recognition(p.peptide, cls=cls), expression=expr,
                            expression_imputed=imputed, wt_peptide=p.wt_peptide,
                            known_epitope=_known(p.peptide, refs)))
     return _finish(rows, gate)
@@ -221,7 +230,7 @@ def rank_table(path: str, *, tissue: str | None = None, tumor: str | None = None
                     pres = _neglog10(bs[0].binder_rank)
             r = Ranked(peptide=pep, allele=allele, gene=gene,
                        source=os.path.basename(path), presentation=pres,
-                       physchem=_recognition(pep), expression=expr, expression_imputed=imputed,
+                       physchem=_recognition(pep, cls=cls), expression=expr, expression_imputed=imputed,
                        known_epitope=_known(pep, refs))
             try:
                 r.components["score_builtin"] = float(rec["score"]) if rec.get("score") else None
