@@ -189,6 +189,26 @@ The bar is now **`predict.binder_score` at TESLA AUROC 0.786**, not the 0.752 in
   are not imported. Both are GPL-3.0-or-later, as is mhcmatch, so this is licence-clean.
 - **`mhcmatch.immuno`** — `features()` returns 141 values (length + 20 scales × 7 statistics).
   `python -m mhcmatch.immuno` self-checks against published constants.
+- **`predict._fisher_combine`** — one definition of the combined statistic, replacing three
+  hand-synchronised copies; variadic so a third component composes without touching callers.
+  Pinned by a characterization test written before the change.
+- **`predict.BinderScore.p_binder`** — isotonic-calibrated `P(binder)` over the combined statistic.
+  It already existed (`_binder_calibrator` always passed `positives=`) and was never read.
+
+### Module status — corrected
+
+`mhcmatch.mimics` is **more complete than the framework plan assumed**. `DEFAULT_REFS` +
+`load_reference_sets` + `scan` already cover all three reference sets and run end to end
+(measured 2026-08-16, MHC-I human: self/thymus 25,696 · viral 57,331 · neoag 382,086 peptides;
+~1.6 s per binder). What is missing is not the wiring but the **composition** — mimicry acting as a
+multiplier on precursor availability rather than as another additive score.
+
+> **Leakage trap, found on the first real run.** Scoring a *known* epitope against a pathogen
+> reference that contains it returns `n_exact = 1` trivially — GILGFVFTL, NLVPMVATV and KLGGALQAK
+> all match themselves in `viral`. Any pathogen-similarity feature must exclude the query's own
+> identity (and ideally its source study) from the reference, or it reports circularity as signal.
+> `find_mimics` already excludes the exact query inside the fuzzy search; the `n_exact`
+> set-membership check in `scan` does not.
 
 ### Two design commitments
 
