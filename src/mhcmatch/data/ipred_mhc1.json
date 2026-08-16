@@ -1,0 +1,299 @@
+{
+ "model": "two-class Gaussian (diagonal covariance), fitted by weighted EM",
+ "generated": "bench/ipred/fit.py --stage freeze (2026-08-16)",
+ "seed": 20260816,
+ "arm": "all",
+ "n_components": 2,
+ "aggregate": "sum",
+ "mask": "full",
+ "scales": [
+  "AF1",
+  "AF2",
+  "AF3",
+  "AF4",
+  "AF5",
+  "Aboderin",
+  "AbrahamLeo",
+  "Argos",
+  "BLOSUM1",
+  "BLOSUM10",
+  "BLOSUM2",
+  "BLOSUM3",
+  "BLOSUM4",
+  "BLOSUM5",
+  "BLOSUM6",
+  "BLOSUM7",
+  "BLOSUM8",
+  "BLOSUM9",
+  "Barley",
+  "BlackMould",
+  "BullBreese",
+  "Casari",
+  "Chothia",
+  "Cid",
+  "Cowan3.4",
+  "Cowan7.5",
+  "E1",
+  "E2",
+  "E3",
+  "E4",
+  "E5",
+  "Eisenberg",
+  "Engelman",
+  "F1",
+  "F2",
+  "F3",
+  "F4",
+  "F5",
+  "F6",
+  "Fasman",
+  "Fauchere",
+  "Goldsack",
+  "Guy",
+  "HoppWoods",
+  "Janin",
+  "Jones",
+  "Juretic",
+  "KF1",
+  "KF10",
+  "KF2",
+  "KF3",
+  "KF4",
+  "KF5",
+  "KF6",
+  "KF7",
+  "KF8",
+  "KF9",
+  "Kidera",
+  "Kuhn",
+  "KyteDoolittle",
+  "Levitt",
+  "MJ",
+  "MSWHIM1",
+  "MSWHIM2",
+  "MSWHIM3",
+  "Manavalan",
+  "Miyazawa",
+  "PD1",
+  "PD2",
+  "PP1",
+  "PP2",
+  "PP3",
+  "PRIN1",
+  "PRIN2",
+  "PRIN3",
+  "Parker",
+  "Ponnuswamy",
+  "Prabhakaran",
+  "ProtFP1",
+  "ProtFP2",
+  "ProtFP3",
+  "ProtFP4",
+  "ProtFP5",
+  "ProtFP6",
+  "ProtFP7",
+  "ProtFP8",
+  "Rao",
+  "Rose",
+  "Roseman",
+  "ST1",
+  "ST2",
+  "ST3",
+  "ST4",
+  "ST5",
+  "ST6",
+  "ST7",
+  "ST8",
+  "SV1",
+  "SV2",
+  "SV3",
+  "SV4",
+  "SVGER1",
+  "SVGER10",
+  "SVGER11",
+  "SVGER2",
+  "SVGER3",
+  "SVGER4",
+  "SVGER5",
+  "SVGER6",
+  "SVGER7",
+  "SVGER8",
+  "SVGER9",
+  "Sweet",
+  "T1",
+  "T2",
+  "T3",
+  "T4",
+  "T5",
+  "Tanford",
+  "VHSE1",
+  "VHSE2",
+  "VHSE3",
+  "VHSE4",
+  "VHSE5",
+  "VHSE6",
+  "VHSE7",
+  "VHSE8",
+  "VSTPV1",
+  "VSTPV2",
+  "VSTPV3",
+  "VSTPV4",
+  "VSTPV5",
+  "VSTPV6",
+  "Welling",
+  "Wilson",
+  "Wolfenden",
+  "Z1",
+  "Z2",
+  "Z3",
+  "Z4",
+  "Z5",
+  "Zimmerman"
+ ],
+ "residue_scores": {
+  "A": [
+   1.254672,
+   8.232053
+  ],
+  "C": [
+   4.346936,
+   3.587121
+  ],
+  "D": [
+   -9.365844,
+   1.335676
+  ],
+  "E": [
+   -8.183104,
+   -0.966133
+  ],
+  "F": [
+   10.105378,
+   -4.624916
+  ],
+  "G": [
+   -2.007487,
+   10.096848
+  ],
+  "H": [
+   -3.394648,
+   -4.382562
+  ],
+  "I": [
+   10.300859,
+   1.268831
+  ],
+  "K": [
+   -8.199014,
+   -4.476004
+  ],
+  "L": [
+   8.838052,
+   1.227076
+  ],
+  "M": [
+   6.67471,
+   -1.45099
+  ],
+  "N": [
+   -6.953567,
+   0.716177
+  ],
+  "P": [
+   1.207809,
+   2.330299
+  ],
+  "Q": [
+   -6.791976,
+   -1.677639
+  ],
+  "R": [
+   -9.794956,
+   -7.23446
+  ],
+  "S": [
+   -4.572944,
+   4.800281
+  ],
+  "T": [
+   -2.095019,
+   4.067635
+  ],
+  "V": [
+   7.332347,
+   4.421173
+  ],
+  "W": [
+   7.60184,
+   -9.811313
+  ],
+  "Y": [
+   3.695956,
+   -7.459154
+  ]
+ },
+ "features": [
+  "pc1",
+  "pc2",
+  "length"
+ ],
+ "standardizer": {
+  "mean": [
+   10.114833218986469,
+   6.455237329477481,
+   9.26683573531917
+  ],
+  "std": [
+   23.300736446612596,
+   15.319888221613583,
+   0.8061055232941313
+  ]
+ },
+ "classes": {
+  "non_immunogenic": {
+   "mean": [
+    -0.1189087922124101,
+    0.02402486440877075,
+    0.10882131945085162
+   ],
+   "var": [
+    1.0346498051848496,
+    0.9953409652865377,
+    1.1668488567014692
+   ]
+  },
+  "immunogenic": {
+   "mean": [
+    0.11890879221107419,
+    -0.02402486440854198,
+    -0.10882131948491928
+   ],
+   "var": [
+    0.9370735930969016,
+    1.003506646505391,
+    0.8094689841593228
+   ]
+  }
+ },
+ "calibration": {
+  "kind": "platt",
+  "a": 1.3388766206380398,
+  "b": 0.0909473371996199,
+  "fitted_on": "chowell",
+  "meaning": "P(immunogenic) for a peptide on a Chowell-like tested-epitope set (51.3% positive, within-assay negatives)"
+ },
+ "training": {
+  "sources": [
+   "chowell",
+   "calis",
+   "cedar",
+   "tesla",
+   "nci",
+   "iedb",
+   "h2kb"
+  ],
+  "n_rows": 694507,
+  "n_immunogenic": 35595,
+  "weighting": "1 / (S * 2 * n[source, label])"
+ }
+}

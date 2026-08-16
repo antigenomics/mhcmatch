@@ -96,3 +96,11 @@ mhcmatch.mimics module
    :members:
    :undoc-members:
    :show-inheritance:
+
+mhcmatch.ipred module
+---------------------
+
+.. automodule:: mhcmatch.ipred
+   :members:
+   :undoc-members:
+   :show-inheritance:

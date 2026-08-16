@@ -48,6 +48,12 @@ development plan is in [`ROADMAP.md`](ROADMAP.md).
 8. **Generalized binder score** — the recommended single-number neoantigen index: a calibrated combined
    %rank fusing presentation and affinity (Fisher's method). On the clean TESLA immunogenicity set it
    **beats NetMHCpan** (AUROC 0.786 vs 0.747) at ~68× the speed.
+9. **Physicochemical immunogenicity** (`mhcmatch.ipred`) — the question presentation cannot answer:
+   of the peptides an allele *does* present, which ones a repertoire responds to. Two principal
+   components of the 20×142 amino-acid **property** matrix (PC1 is a hydrophobicity axis) plus
+   peptide length, under two class-conditional Gaussians — **13 fitted parameters**, not a trained
+   discriminative model — emitting a calibrated `log P(immunogenic)`, never a hard label. Pure
+   Python, no numpy on the scoring path.
 
 ## Install
 
