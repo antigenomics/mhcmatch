@@ -131,3 +131,65 @@ Inputs are distributed via the public HF dataset
         --cls both --out src/mhcmatch/data/ligand_context.tsv
 
 Held-out validation: `bench/results/spans_mhc2_human.md`, `bench/results/spans_mhc1_human.md`.
+
+## `aa_tables.py`
+
+Amino-acid property scales for `mhcmatch.immuno`: `DESCRIPTORS` (17 families, 102 components),
+`HYDROPHOBICITY` (45 scales) and `MJ_PARTITION`. **Generated, never transcribed** — the vendoring
+script reads the upstream tables and emits a literal Python module, so a re-run reproduces the file
+byte-for-byte and a typo is impossible.
+
+Two upstreams, both GPL-3.0-or-later like mhcmatch, so copying is licence-clean:
+
+- **`peptides` 0.5.0** (<https://github.com/althonos/peptides.py>, PyPI), file
+  `peptides/tables/__init__.py` → `DESCRIPTORS` + `HYDROPHOBICITY`. **Derived/computed**: each
+  family is a published descriptor scale fitted by its own authors, redistributed by the package.
+  It is *not* a dependency — nothing at runtime imports it.
+- **`tcren` 2.8.0** (`antigenomics/tcren`), file `src/tcren/data/MJ1985_partition_energies.csv`
+  = AAindex `MIYS850101` → `MJ_PARTITION`. **Derived/computed**: a statistical contact potential
+  Miyazawa & Jernigan fitted to a PDB structure set. Larger = more hydrophobic.
+  Re-fetch: <https://www.genome.jp/dbget-bin/www_bget?aaindex:MIYS850101>.
+
+Regenerate (from the `2026-mhcmatch-benchmark` repo; `peptides` must be downloaded and unpacked
+first — it is not installed in any venv here):
+
+    pip download peptides==0.5.0 --no-deps -d /tmp/pep && unzip /tmp/pep/peptides-0.5.0*.whl -d /tmp/pep/pkg
+    python bench/immuno/vendor_aa_tables.py \
+        --peptides /tmp/pep/pkg --tcren ~/vcs/code/tcren \
+        --out src/mhcmatch/data/aa_tables.py
+
+Verified at generation: 17 families / 102 components / 45 hydrophobicity scales / 20 MJ residues;
+every table covers exactly AA20; Kidera KF1(A) = −1.56, VHSE1(A) = 0.15, Kyte-Doolittle I/R =
+4.5/−4.5, MJ A/F = 2.36/4.37 all match the published values. Non-standard residues (B, J, O, U, X, Z)
+are absent by construction so a caller must decide how to handle them rather than silently scoring 0.
+
+## `contact_profile.py`
+
+Per-position **TCR↔peptide** contact frequency by (MHC class, peptide length), backing
+`mhcmatch.immuno`'s `"contact"` anchor scheme — a continuous positional weighting that needs no
+anchor call at all. Generated, not hand-written.
+
+Built from three `tcren` 2.8.0 files (`antigenomics/tcren`):
+
+| input | path in `tcren` | what is taken | provenance |
+|---|---|---|---|
+| `contacts_2026.csv` | `notebooks/natcompsci2022/results_new/` | `pdb.id`, `pos.to` (0-based peptide index) | **derived/computed** — contact calls computed from **experimental** PDB crystal coordinates |
+| `markup_2026.csv` | `notebooks/natcompsci2022/results_new/` | peptide length | **experimental** — sequences as deposited |
+| `orient_metadata.json` | `src/tcren/data/` | `mhc.class` | **derived/computed** — tcren's per-structure annotation |
+
+8,062 TCR↔peptide residue contacts over 370 structures, 19 (class, length) strata. Note what is
+*not* used: no register call and no anchor call, class-I or class-II, so tcren's class-II register
+heuristic — which is itself ported from mhcmatch — cannot make this circular.
+
+Regenerate (from the `2026-mhcmatch-benchmark` repo):
+
+    python bench/immuno/build_contact_profile.py \
+        --tcren ~/vcs/code/tcren --out src/mhcmatch/data/contact_profile.py
+
+**Validation gate (independent line).** The class-I 9-mer profile (176 structures, 3,772 contacts)
+rank-correlates with Calis et al. 2013 (PMID 24204222) Table 2's KL position importances at
+Spearman ρ = **0.943** (P3–P8, n = 6, one adjacent swap at P7/P8). Those KL values are derived from
+immunogenicity *labels*; this profile is crystal *geometry* — the two share no data. P1/P2/P9 are
+excluded because the paper itself marks them NA (anchors), which is also the conservative choice:
+they are the three positions that would most inflate ρ. Caveat: only P4–P7 carry a significance star
+in the source, so ρ = 0.943 leans partly on ranks the authors did not call significant.
