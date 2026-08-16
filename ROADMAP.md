@@ -194,6 +194,27 @@ The bar is now **`predict.binder_score` at TESLA AUROC 0.786**, not the 0.752 in
   Pinned by a characterization test written before the change.
 - **`predict.BinderScore.p_binder`** — isotonic-calibrated `P(binder)` over the combined statistic.
   It already existed (`_binder_calibrator` always passed `positives=`) and was never read.
+- **`mhcmatch.precursor`** (extra `[precursor]`, needs `vdjtools>=3.9`) — five estimators of the same
+  `F(e) = Σ_{C_e} π(τ)`, plus the cross-check that turns two of them into a missing-mass measurement.
+  Nothing reimplements Pgen: the DP, the closed Hamming-1 ball and the degenerate/masked DP are
+  vdjtools', the deduplicated neighbourhood enumeration is seqtree's.
+  - `observed_mass` — the strict lower bound; `pgen` exposes the per-junction vector behind it.
+  - `coverage_corrected_mass` — the bound with the size-bias deficit put back. Capture probability
+    is fitted as `p_i = 1 − exp(−θ·π_i)` (increasing in Pgen, which *is* the size-biasing), by
+    zero-truncated-binomial MLE on donor/study multiplicities, then Horvitz–Thompson reweighting.
+    **Not** textbook Good–Turing: flat G–T is known-bad on TCR data (Laydon et al., *PLoS Comput
+    Biol* 2014;10:e1003646 — 61.7% median error), so it is returned as `gt_coverage` for contrast
+    only. Degenerates loudly — all-singletons, `n_units < 2`, or a boundary fit each set
+    `degenerate=True` with a `reason` and return the bound, never an `inf` or a `ZeroDivisionError`.
+  - `ball_mass` / `shell_profile` — union (not sum) of Hamming-`r` balls, and the same resolved by
+    exact distance so `α_r` applies per shell: `F ≈ Σ_r α^r · mass(shell r)`. `ALPHA_PER_EDIT = 0.1`
+    is a **parameter**, sourced to Mayer & Callan, *PNAS* 2023;120:e2213264120 (~10× decay per
+    Levenshtein unit). Memory is sized with `union_size` before enumeration and capped by
+    `MAX_BALL_MEMBERS` (300 junctions at `r=2` ≈ 9.9M sequences ≈ 1.8 GB).
+  - `load_cluster_motifs` + `motif_mass` — VDJdb cluster PWMs → per-position residue sets → one
+    degenerate-DP call for the whole cluster's mass. Takes a **path argument**, never a mirror path.
+  - `cross_check` — A (set, no coverage bias) vs B (observed sample, coverage-limited);
+    `missing_fraction` is the headline.
 
 ### Module status — corrected
 
@@ -255,14 +276,21 @@ part of what defines a real ligand set, not a nuisance to regress out.
 
 ### Not yet in the library
 
-The classifier itself, the contact-frequency profile, and precursor frequency. Precursor frequency
-depends on `vdjtools` (Pgen) — it ships here only if it clears its replication gate
-(Pogorelyy 2018 ρ = 0.71) in the benchmark repo first.
+The classifier itself and the immunodominance regression. ~~Precursor frequency ships only if it
+clears its replication gate (Pogorelyy 2018 ρ = 0.71) in the benchmark repo first~~ — **cleared, so
+it ships.** Measured in `2026-mhcmatch-benchmark` `bench/results/precursor_pogorelyy.md`: **ρ = 0.802
+over 259 epitopes** (p = 1e-69), against the published 0.71.
+
+> **The mismatch setting is the whole gate.** With *exact* Pgen the same correlation is only
+> ρ = 0.51–0.61; with the closed Hamming-1 ball (`mismatches=1`, the frequency proxy the paper
+> actually used, and the same ≤1-substitution rule it used to annotate repertoires) it is 0.76–0.86.
+> Anyone re-running this with `mismatches=0` will conclude the Pgen path is broken when it is not.
 
 ### Dependency pins to bump when this lands
 
-`seqtree>=0.4.0` → `>=0.6.1` (current 0.6.1), `tcren>=2.2` → `>=2.8.0` (current 2.8.0). Add
-`vdjtools>=3.8.0` and `arda>=2.20.0` **only if** the precursor-frequency path ships in-library.
+`seqtree>=0.4.0` → `>=0.7.0` (current 0.7.0; `precursor` needs `neighbourhood_union(..., shell=)`),
+`tcren>=2.2` → `>=2.8.0` (current 2.8.0). `vdjtools>=3.9` is pinned in the `precursor` extra (it
+needs `pgen_aa_degenerate`); `arda>=2.20.0` is still not required.
 
 ## 6. Phase 3 — benchmark & paper
 

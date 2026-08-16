@@ -93,11 +93,14 @@ _JUNCTION_END = ("F", "W")
 ALPHA_PER_EDIT = 0.1
 
 #: Default per-position residue-frequency cut for turning a VDJdb cluster PWM into an allowed-set
-#: motif. Calibrated on the 2026-06 release against ``cluster_members.txt``: the largest round
-#: threshold at which the motifs still match >= 95% of their own clusters' member junctions
-#: (measured 0.10 -> 99.2% member recall, 0.15 -> 96.6%, 0.20 -> 92.1%). Raise it for a tighter,
-#: lower-mass motif; lower it towards 0 for the union of everything observed in the cluster.
-MOTIF_FREQ_THRESHOLD = 0.15
+#: motif. Criterion: the largest round threshold at which a motif still matches **>= 95% of its own
+#: cluster's member junctions**. Measured on the 2026-06 release (1,791 clusters, 53,757 members in
+#: ``cluster_members.txt``) — member recall 0.9999 at 0.000, 0.996 at 0.002, 0.984 at 0.004, 0.960
+#: at 0.008, 0.948 at 0.010, 0.267 at 0.10, 0.089 at 0.15. Recall falls off a cliff because a member
+#: must clear the cut at *every* one of ~15 positions, so per-position losses compound; anything
+#: above ~0.01 keeps only the consensus. Raise it for a tighter, lower-mass motif; set it to 0 for
+#: exactly the residue alphabet the cluster was observed to use.
+MOTIF_FREQ_THRESHOLD = 0.008
 
 #: Ceiling on the number of enumerated neighbourhood members, for :func:`shell_profile`. The
 #: enumeration is materialised as Python strings: 300 measured junctions at ``r=2`` produce ~9.9M
@@ -419,14 +422,24 @@ def load_cluster_motifs(path, threshold: float = MOTIF_FREQ_THRESHOLD, species: 
     """Read VDJdb's ``motif_pwms.txt`` into per-position allowed-residue sets.
 
     The file is one row per (cluster, position, residue) with ``freq`` the residue's frequency
-    *within* the cluster; only residues actually observed are listed. Because a cluster is pinned to
-    one V, one J and one length, thresholding ``freq`` per position yields exactly the ``allowed``
-    argument :func:`motif_mass` wants — no alignment, no register search, no enumeration.
+    *within* the cluster. Because a cluster is pinned to one V, one J and one length, thresholding
+    ``freq`` per position yields the ``allowed`` argument :func:`motif_mass` wants — no alignment,
+    no register search, no enumeration.
 
     ``threshold`` is the per-position frequency cut, default :data:`MOTIF_FREQ_THRESHOLD`. A
     position never comes back empty: if no residue clears the cut the modal residue(s) are kept, so
     raising the threshold shrinks the motif monotonically towards the consensus sequence rather than
-    zeroing its mass. Positions absent from the file become wildcards.
+    zeroing its mass.
+
+    **The file is not a complete count table**, and assuming it is silently drops real cluster
+    members. Measured on the 2026-06 release: **2,326 of 24,036 listed positions (9.7%), spread over
+    1,042 of 1,791 clusters (58%), have listed frequencies summing to less than 1**, and 172
+    positions are missing outright — residues the release filtered out. In one worked case
+    (``H.B.ATDALMTGY.5``) the position-12 row lists only ``F`` at ``freq=0.4`` while 6 of the 10
+    member junctions carry ``Y`` there. So: whenever the listed frequencies fall short of 1 by more
+    than ``threshold``, the unlisted residues could individually clear the cut and there is no way
+    to know which they are, so **the position becomes a wildcard** rather than a set that excludes
+    known members. Positions absent from the file are wildcards for the same reason.
 
     ``species``/``gene``/``epitope`` filter exactly; ``min_size`` drops clusters below that many
     members (``csz``). Accepts a plain or gzipped path.
@@ -458,8 +471,8 @@ def load_cluster_motifs(path, threshold: float = MOTIF_FREQ_THRESHOLD, species: 
         allowed = []
         for i in range(length):
             d = c["pos"].get(i)
-            if not d:
-                allowed.append("")                          # unobserved position -> wildcard
+            if not d or (1.0 - sum(d.values())) > threshold:
+                allowed.append("")                          # unlisted residue mass -> wildcard
                 continue
             keep = sorted(a for a, f in d.items() if f >= threshold)
             if not keep:                                    # never emit an empty set
