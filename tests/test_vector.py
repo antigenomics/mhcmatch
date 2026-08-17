@@ -385,14 +385,15 @@ def test_the_titin_pair_is_anchor_matched_and_tcr_divergent():
     assert len(MAGEA3) - len(same) == 4, "four TCR-facing substitutions -- no radius reaches it"
 
 
-def _titin_risk(peptides, _alleles=None):
+def _titin_risk(unit, registers):
     """A `risk` callable standing in for `self_origin_risk`: only the titin register is dangerous."""
-    return [[{"protein": "sp|Q8WZ42|TITIN_HUMAN", "gene": "TTN", "subs": 0, "position": 24336,
-              "tissue": "Heart - Left Ventricle", "tpm": 64.41}]
-            if p == TITIN else [] for p in peptides]
+    return [{"clause": "unrelated self origin", "register": p, "protein": "sp|Q8WZ42|TITIN_HUMAN",
+             "gene": "TTN", "subs": 0, "position": 24336,
+             "tissue": "Heart - Left Ventricle", "tpm": 64.41}
+            for p in registers if p == TITIN]
 
 
-def test_screen_drops_a_unit_whose_buried_register_mimics_an_essential_tissue_protein():
+def test_screen_drops_a_unit_whose_buried_register_matches_an_essential_tissue_protein():
     """The dangerous register need not be the one carrying the mutation."""
     danger = vector.unit("K" * 9 + TITIN + "K" * 9, 4, gene="MAGEA3", allele="HLA-A*01:01", p=0.9)
     safe = vector.unit("W" * 27, 13, gene="SAFE", allele="HLA-A*01:01", p=0.4)
@@ -403,8 +404,8 @@ def test_screen_drops_a_unit_whose_buried_register_mimics_an_essential_tissue_pr
     assert len(rejected) == 1
     unit_, register, reason = rejected[0]
     assert unit_.gene == "MAGEA3" and register == TITIN
-    assert reason[0]["gene"] == "TTN" and reason[0]["tissue"].startswith("Heart")
-    assert reason[0]["protein"].endswith("TITIN_HUMAN"), "the record has to name what withdrew it"
+    assert reason["gene"] == "TTN" and reason["tissue"].startswith("Heart")
+    assert reason["protein"].endswith("TITIN_HUMAN"), "the record has to name what withdrew it"
 
 
 def test_screening_first_frees_capacity_for_the_next_safe_candidate():
@@ -423,10 +424,15 @@ def test_screening_first_frees_capacity_for_the_next_safe_candidate():
     assert len(rejected) == 1
 
 
-def test_screen_rejects_a_risk_callable_of_the_wrong_arity():
-    u = vector.unit("W" * 27, 13, gene="G", allele="A", p=0.3)
-    with pytest.raises(ValueError, match="registers"):
-        vector.screen([u], lambda peps, _a=None: [[]])
+def test_a_unit_level_reason_records_no_register():
+    """The MAGE-A12 shape: the target gene itself is the hazard, no register search needed."""
+    u = vector.unit("W" * 27, 13, gene="MAGEA12", allele="A", p=0.8)
+    kept, rejected = vector.screen(
+        [u], lambda unit, regs: [{"clause": "target gene", "gene": unit.gene,
+                                  "tissue": "Brain - Caudate (basal ganglia)", "tpm": 0.33}])
+    assert kept == []
+    assert rejected[0][1] is None, "unit-level reasons name no register"
+    assert rejected[0][2]["clause"] == "target gene"
 
 
 def test_self_origin_risk_refuses_to_run_without_the_accession_map():
@@ -437,27 +443,82 @@ def test_self_origin_risk_refuses_to_run_without_the_accession_map():
         vector.self_origin_risk(proteome=None, symbols={})
 
 
-def test_self_origin_risk_joins_a_source_hit_to_its_tissue(monkeypatch):
-    """The whole join, with the proteome and the expression table stubbed at their real values."""
+class _Hit:
+    def __init__(self, protein, n_subs=0, position=24336):
+        self.protein, self.n_subs, self.position = protein, n_subs, position
+
+
+def _stub_expression(monkeypatch):
+    """TTN's real GTEx profile; everything else silent."""
     from mhcmatch import expression as EX
-
-    class _Hit:
-        protein, position, n_subs = "sp|Q8WZ42|TITIN_HUMAN", 24336, 0
-
-    class _P:
-        def find_source(self, pep):
-            return [_Hit()] if pep == TITIN else []
-
     monkeypatch.setattr(EX, "safety_profile",
                         lambda g, **kw: [("Muscle - Skeletal", 351.35),
                                          ("Heart - Left Ventricle", 64.41),
                                          ("Testis", 1.51)] if g == "TTN" else [])
+
+
+def test_self_origin_risk_joins_an_unrelated_source_hit_to_its_tissue(monkeypatch):
+    """The whole join, with the proteome and the expression table stubbed at their real values."""
+    _stub_expression(monkeypatch)
+
+    class _P:
+        def find_source(self, pep):
+            return [_Hit("sp|Q8WZ42|TITIN_HUMAN")] if pep == TITIN else []
+
     risk = vector.self_origin_risk(_P(), {"Q8WZ42": "TTN"})
-    safe, danger = risk([MAGEA3, TITIN])
-    assert safe == []
-    assert {h["tissue"] for h in danger} == {"Muscle - Skeletal", "Heart - Left Ventricle"}
-    assert "Testis" not in {h["tissue"] for h in danger}, "1.51 TPM in testis is not the hazard"
-    assert all(h["gene"] == "TTN" and h["subs"] == 0 for h in danger)
+    u = vector.Unit("K" * 9 + TITIN + "K" * 9, 4, "MAGEA3", "HLA-A*01:01", 0.9)
+    hits = risk(u, [MAGEA3, TITIN])
+    assert {h["tissue"] for h in hits} == {"Muscle - Skeletal", "Heart - Left Ventricle"}
+    assert "Testis" not in {h["tissue"] for h in hits}, "1.51 TPM in testis is not the hazard"
+    assert all(h["clause"] == "unrelated self origin" and h["gene"] == "TTN" for h in hits)
+    assert all(h["register"] == TITIN for h in hits), "MAGE-A3 resolves to nothing here"
+
+
+def test_a_units_own_parent_protein_is_native_context_not_a_hazard(monkeypatch):
+    """Without this exclusion the screen rejects every unit of every cassette.
+
+    A 27-mer is native sequence by design: the flanks *are* self peptides from the parent, and the
+    mutated register is one substitution from the parent's wild type. Both resolve to the unit's own
+    gene, and tolerance already covers them.
+    """
+    _stub_expression(monkeypatch)
+
+    class _P:                     # every register traces back to one protein, the unit's own parent
+        def find_source(self, pep):
+            return [_Hit("sp|P00000|KRAS_HUMAN", n_subs=0 if pep != TITIN else 1)]
+
+    risk = vector.self_origin_risk(_P(), {"P00000": "KRAS", "Q8WZ42": "TTN"})
+    own = vector.Unit("K" * 9 + TITIN + "K" * 9, 4, "KRAS", "HLA-A*01:01", 0.9)
+    assert risk(own, [MAGEA3, TITIN]) == [], "its own parent is native context, at 0 subs and at 1"
+
+    # the same registers under a unit from a different gene: now the match is unrelated, and KRAS
+    # being silent is what keeps this test about the parent exclusion rather than about tissue.
+    class _PT(_P):
+        def find_source(self, pep):
+            return [_Hit("sp|Q8WZ42|TITIN_HUMAN")] if pep == TITIN else []
+
+    unrelated = vector.self_origin_risk(_PT(), {"Q8WZ42": "TTN"})
+    other = vector.Unit("K" * 9 + TITIN + "K" * 9, 4, "MAGEA3", "HLA-A*01:01", 0.9)
+    assert unrelated(other, [MAGEA3, TITIN]), "a MAGE-A3 unit matching titin still fires"
+    assert vector.screen([own], risk)[0] == [own]
+
+
+def test_the_target_gene_clause_fires_without_any_register_match(monkeypatch):
+    """MAGE-A12's shape: nothing in the cassette resembles anything, the gene itself is the hazard."""
+    from mhcmatch import expression as EX
+    monkeypatch.setattr(EX, "safety_profile",
+                        lambda g, **kw: [("Brain - Caudate (basal ganglia)", 0.33)]
+                        if g == "MAGEA12" else [])
+
+    class _P:
+        def find_source(self, pep):
+            return []
+
+    risk = vector.self_origin_risk(_P(), {"x": "y"})
+    hits = risk(vector.Unit("W" * 27, 13, "MAGEA12", "A", 0.8), ["WWWWWWWWW"])
+    assert [h["clause"] for h in hits] == ["target gene"]
+    assert hits[0]["tpm"] == 0.33 and "register" not in hits[0]
+    assert risk(vector.Unit("W" * 27, 13, "MAGEA3", "A", 0.8), ["WWWWWWWWW"]) == []
 
 
 def test_the_default_floor_catches_the_lower_of_the_two_fatal_precedents():

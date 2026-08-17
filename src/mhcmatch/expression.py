@@ -178,11 +178,30 @@ def matched_tissues(tumor: str) -> tuple[str, ...]:
     return TUMOR_TISSUE.get(tumor.strip().upper(), ())
 
 
+@functools.lru_cache(maxsize=4)
+def _by_gene(resolved: str) -> dict:
+    """``{gene: [(tissue, median_tpm)]}``, sorted descending -- one pass over the table.
+
+    :func:`safety_profile` used to scan all 5,586,792 rows per call, **511 ms each**, and its callers
+    ask per gene inside a loop: :func:`mhcmatch.mimicry.safety` once per mimic hit, and
+    :func:`mhcmatch.vector.self_origin_risk` once per register of every candidate. A thousand-peptide
+    screen therefore spent over half an hour in a linear scan it could pay once. Indexed: 0.1 us.
+
+    **Keyed on the resolved file, not on the ``path`` argument.** Both are ``None`` when
+    ``$MHCMATCH_EXPRESSION`` points somewhere else, so an argument-keyed cache would keep serving the
+    previous table after the environment changed -- silently, and with plausible numbers."""
+    out: dict = {}
+    for (kt, key, ctx), row in load(resolved).items():
+        if kt == "gene":
+            out.setdefault(key, []).append((ctx, row["median_tpm"]))
+    for v in out.values():
+        v.sort(key=lambda x: -x[1])
+    return out
+
+
 def safety_profile(gene: str, top: int = 10, path: str | None = None) -> list[tuple[str, float]]:
     """``[(tissue, median_tpm)]`` for a gene across normal tissues, highest first.
 
     The safety read: a target expressed only in the tumour's lineage is very different from one
     expressed in heart and lung too, and the ranking score alone does not show that."""
-    tbl = load(path)
-    hits = [(c, r["median_tpm"]) for (kt, k, c), r in tbl.items() if kt == "gene" and k == gene]
-    return sorted(hits, key=lambda x: -x[1])[:top]
+    return _by_gene(fetch_reference(path)).get(gene, [])[:top]

@@ -130,6 +130,24 @@ def test_impute_never_raises_on_an_unknown_gene(tiny_reference):
 def test_safety_profile_is_ordered_high_to_low(tiny_reference):
     prof = EX.safety_profile("PMEL")
     assert [t for t, _ in prof] == ["Skin", "Lung"]
+    assert EX.safety_profile("NOSUCHGENE") == [], "an unknown gene is empty, never a KeyError"
+    assert [t for t, _ in EX.safety_profile("PMEL", top=1)] == ["Skin"]
+
+
+def test_safety_profile_index_follows_the_table_it_was_built_from(tmp_path, monkeypatch,
+                                                                  tiny_reference):
+    """The gene index is cached; pointing at a different table must not serve the previous one.
+
+    Both calls pass ``path=None``, so an argument-keyed cache would answer the second from the
+    first -- silently, with plausible numbers. It is keyed on the resolved file instead.
+    """
+    assert EX.safety_profile("PMEL")[0][0] == "Skin"
+    other = tmp_path / "other_expression.tsv.gz"
+    with gzip.open(other, "wt") as fh:
+        fh.write("\t".join(EX.COLUMNS) + "\n")
+        fh.write("PMEL\tgene\tgtex\tLiver\t99.9\t1.0\t2.0\t3\n")
+    monkeypatch.setenv("MHCMATCH_EXPRESSION", str(other))
+    assert [t for t, _ in EX.safety_profile("PMEL")] == ["Liver"]
 
 
 def test_contexts_are_listed_separately(tiny_reference):

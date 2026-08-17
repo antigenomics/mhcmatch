@@ -316,44 +316,43 @@ def screen(units, risk, lengths=JUNCTION_LENGTHS) -> tuple:
 
     Read the two together and they give this function its shape:
 
-    - **Preclinical binding panels missed both.** The check that would have caught the first is
-      *which tissue expresses the source of the peptide this one resembles* — a mimicry search joined
-      to reference expression, which is exactly :func:`mhcmatch.mimicry.safety` plus
-      :func:`mhcmatch.expression.safety_profile`.
-    - **Every register is screened, not just the mutated one.** ``EVDPIGHLY``/``ESDPIVAQY`` agree at
-      P1, P3, P4, P5 and P9 and differ at four TCR-facing positions: anchor-matched, TCR-face-
-      divergent, and four substitutions apart, so a radius-2 search over the mutated window alone
-      would not have found it. A 27-mer unit contains ~70 class-I registers and the dangerous one
-      need not contain the mutation, so the whole unit is enumerated.
+    - **The hazard is in the source gene's tissue, not the candidate's score.** Both events were
+      invisible to binding prediction and visible in expression: MAGE-A12 is transcribed in brain, and
+      titin in heart. So the check joins a peptide to a *protein* to a *tissue*.
+    - **Two different questions, and the unit answers both.** Is the unit's own target gene
+      transcribed somewhere it must not be attacked (MAGE-A12)? And does any register of it coincide
+      with a self peptide from an **unrelated** essential-tissue gene?
     - **Exclusion, not down-ranking.** The second-best cassette is cheap; myocarditis is not.
 
-    ``risk(peptides) -> [reasons]`` returns one entry per peptide, **falsy meaning safe**; anything
-    truthy is carried into the rejection record. :func:`self_origin_risk` builds one from the human
-    proteome and reference expression. Injected for the same reason ``binder`` is — the policy here
-    is testable with no panel, no proteome and no download, and a site with its own toxicity list
-    substitutes it wholesale.
+    **The unit's own gene has to be excluded from the register test, or the screen rejects
+    everything.** A 27-mer is native context by design: its flanking registers *are* self peptides
+    from its own parent protein, and the mutated register sits one substitution from that protein's
+    wild type. Screened naively at any useful radius, every unit of every cassette fires. Those
+    matches are also the ones tolerance already covers — the flanks are presented in normal tissue
+    daily. What is not covered is a register that coincides with a *different* protein, which is why
+    ``risk`` is handed the unit and not just its registers.
 
-    ``rejected`` is ``[(unit, register, reason)]``. A withdrawn candidate has to say what withdrew
-    it: "the screen dropped 3 of 40" is not a safety argument, and the reason is what a clinician
-    overrides or accepts.
+    ``risk(unit, registers) -> [reason, ...]`` returns **zero or more** reasons, empty meaning safe.
+    Each reason is a dict; a ``"register"`` key naming which register triggered it is carried into the
+    record, and its absence means the reason is unit-level. :func:`self_origin_risk` builds one from
+    the human proteome and reference expression. Injected for the same reason ``binder`` is — the
+    policy here is testable with no panel, no proteome and no download, and a site with its own
+    toxicity list substitutes it wholesale.
 
-    The same ``risk`` callable applies to ``[j["peptide"] for j in cassette.junctions]`` — a junction
-    can manufacture a self-mimic just as it can manufacture a binder — but that check needs the
-    layout, so it belongs after :func:`order` rather than here.
+    ``rejected`` is ``[(unit, register, reason)]``, ``register`` being ``None`` for a unit-level
+    reason. A withdrawn candidate has to say what withdrew it: "the screen dropped 3 of 40" is not a
+    safety argument, and the reason is what a clinician overrides or accepts.
+
+    A junction can manufacture a self-mimic just as it can manufacture a binder, but that check needs
+    the layout, so it belongs after :func:`order` rather than here.
     """
     kept, rejected = [], []
     for u in units:
-        wins = sorted({u.peptide[i:i + L] for L in lengths
+        regs = sorted({u.peptide[i:i + L] for L in lengths
                        for i in range(len(u.peptide) - L + 1)})
-        if not wins:
-            kept.append(u)
-            continue
-        reasons = list(risk(wins))
-        if len(reasons) != len(wins):
-            raise ValueError(f"risk returned {len(reasons)} reasons for {len(wins)} registers")
-        bad = [(w, r) for w, r in zip(wins, reasons) if r]
-        if bad:
-            rejected.extend((u, w, r) for w, r in bad)
+        reasons = list(risk(u, regs)) if regs else []
+        if reasons:
+            rejected.extend((u, r.get("register"), r) for r in reasons)
         else:
             kept.append(u)
     return kept, rejected
@@ -382,10 +381,16 @@ def self_origin_risk(proteome, symbols, tissues=ESSENTIAL_TISSUES, min_tpm: floa
     ``sp|Q8WZ42|TITIN_HUMAN`` at 0 substitutions, ``EVDPIGHLY`` to ``sp|P43357|MAGA3_HUMAN`` at 0
     (and MAGE-A6 at 1), and ``GILGFVFTL`` to **nothing at all**.
 
-    **``max_subs=1`` rather than 0** because a neoantigen register does not exact-match anything: it
-    is one substitution from its own wild type, and the wild type's gene is the one whose tissue
-    distribution the decision needs. A mutation in a gene transcribed in heart is a cardiac risk
-    whatever the mutation did.
+    **Two clauses, and the reason carries which one fired.** ``"target gene"`` — the unit's own
+    ``gene`` is transcribed in an essential tissue, the MAGE-A12 case, and no register search is
+    needed to see it. ``"unrelated self origin"`` — a register coincides within ``max_subs`` of a
+    protein that is *not* the unit's own parent. Hits to the parent are dropped, because a long
+    peptide is native context by design and tolerance already covers it; without that exclusion the
+    screen rejects every unit of every cassette.
+
+    **``max_subs=1`` rather than 0** so that a register one substitution from an unrelated protein
+    still counts — the mutation may have moved a peptide *onto* another gene's sequence. Set 0 for
+    coincidence only.
 
     **``min_tpm`` defaults to 0.25 because the two precedents disagree by two orders of magnitude and
     the lower one is what has to be caught.** Titin is 64.4 TPM in heart left ventricle and 351.4 in
@@ -419,23 +424,30 @@ def self_origin_risk(proteome, symbols, tissues=ESSENTIAL_TISSUES, min_tpm: floa
                          "proteome.gene_symbols(path, key='accession'); without it every peptide "
                          "screens as safe")
 
-    def risk(peptides, _alleles=None):
+    def _essential(gene):
+        return [(t, v) for t, v in EX.safety_profile(gene)
+                if v >= min_tpm and t.startswith(tuple(tissues))]
+
+    def risk(unit, registers):
         out = []
-        for pep in peptides:
-            seen, hits = set(), []
+        for tissue, tpm in _essential(unit.gene):           # clause 1: the target gene itself
+            out.append({"clause": "target gene", "gene": unit.gene, "tissue": tissue, "tpm": tpm})
+        for pep in registers:                               # clause 2: an unrelated self origin
+            seen = set()
             for h in proteome.find_source(pep) or []:
                 if h.n_subs > max_subs:
                     continue
                 parts = h.protein.split("|")
                 gene = symbols.get(parts[1] if len(parts) >= 3 else h.protein)
-                if not gene or gene in seen:
+                # The unit's own parent is native context, not a hazard: its flanks are self by
+                # construction and its mutated register is one substitution from its own wild type.
+                if not gene or gene in seen or gene == unit.gene:
                     continue
                 seen.add(gene)
-                for tissue, tpm in EX.safety_profile(gene):
-                    if tpm >= min_tpm and tissue.startswith(tuple(tissues)):
-                        hits.append({"protein": h.protein, "gene": gene, "subs": h.n_subs,
-                                     "position": h.position, "tissue": tissue, "tpm": tpm})
-            out.append(hits)
+                for tissue, tpm in _essential(gene):
+                    out.append({"clause": "unrelated self origin", "register": pep,
+                                "protein": h.protein, "gene": gene, "subs": h.n_subs,
+                                "position": h.position, "tissue": tissue, "tpm": tpm})
         return out
 
     return risk
