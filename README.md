@@ -111,6 +111,12 @@ non-immunogenic, IEDB-immunogenic epitopes, the thymic self-immunopeptidome, the
 exact match is stronger evidence than any score, so `rank` reports it as a flag and floats those
 candidates into a tier of their own instead of folding it into the number.
 
+**Pick your tumour type.** `mhcmatch expression --list-contexts` prints all 19 TCGA↔GTEx pairings;
+`expression.matched_tissues('BRCA')` gives the matched normal and `expression.lookup(gene,
+tumor='BRCA')` the tumour value. The benchmark's own expression term is a GTEx **cross-tissue
+median** so that it is identical on fit and holdout — that is a comparability requirement, not a
+recommendation, and a real ranking run should pass its own tumour type.
+
 **Expression, and which normal tissue to compare against.** `--tumor` takes a **TCGA study
 abbreviation** (`SKCM`, `LUAD`, …; `CRC` merges TCGA's `COAD` and `READ`) and `--tissue` a **GTEx
 `SMTSD`** name (`Skin - Sun Exposed (Lower leg)`). Neither is a clinical coding system — not

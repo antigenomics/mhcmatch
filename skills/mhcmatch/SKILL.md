@@ -79,7 +79,7 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 | `mhcmatch.complement` | `score`, `design`, `feature_names`, `posterior` | the recognition axis: six blocks, per species, **never pooled across hosts**. Vectorised — pass a list. `posbayes` and `ipred` are strict special cases |
 | `mhcmatch.rank` | `rank_fasta`, `rank_table` | presentation × recognition through a **gate** (product of sigmoids), not a sum. `rank --extended` appends the mimicry contributions and `--annotate` what each candidate resembles — **columns only, the ordering is unchanged** |
 | `mhcmatch.known` | five built-in reference sets | exact-match lookup. An exact match outranks any model output, so `rank` flags it and never folds it into the score |
-| `mhcmatch.expression` | `lookup`, `safety_profile`, `matched_tissues`, `TUMOR_TISSUE` | GTEx `SMTSD` tissues and TCGA study abbreviations — **two vocabularies, never merged, neither clinical** |
+| `mhcmatch.expression` | `lookup`, `safety_profile`, `matched_tissues`, `tumor_types`, `TUMOR_TISSUE` | GTEx `SMTSD` tissues and TCGA study abbreviations — **two vocabularies, never merged, neither clinical**. **Always pass the caller's own tumour type**; the benchmark's cross-tissue median exists for fit/holdout comparability, not as a default |
 | `mhcmatch.mimics` | `neighbours`, `KINDS`, `DEFAULT_REFS` | the raw scan, per category, **never summed** — each category argues something different |
 | `mhcmatch.mimicry` | `score`, `probability`, `annotate`, `safety`, `masks` | the *fitted* form: `viral`/`self`/`thymus` × `anchor`/`tcr` as signed log-odds. `probability` demands a **named** corpus. `annotate` (tested-neoantigen DB) is prior evidence and **never a fitted term** |
 | `mhcmatch.precursor` | re-export of `vdjmatch.precursor` | moved there; **optional `[precursor]` extra** |
@@ -95,6 +95,32 @@ whole cost: the presentation/affinity calibrators ~5 s, a human-proteome length 
 process over a list is the difference between seconds per peptide and thousands per second.
 `--threads` exists **only** on `source` and `mimics`, whose neighbour search runs in C++ with the GIL
 released; elsewhere it is absent rather than accepted and ignored.
+
+## Best recorded model (2026-08-17)
+
+`BECRT` — binder, expression, complementarity, the fitted Łuksza `R`, and the three TCR-facing
+mimicry channels. One partially-pooled Bayesian fit over all seven neoantigen screens, per-screen
+intercept, `tau = 0.25` by out-of-screen deviance.
+
+| | within-screen median AUROC |
+|---|--:|
+| `B` | 0.6473 |
+| `BE` | 0.6333 |
+| `BEC` | 0.6628 |
+| **`BECRT`** | **0.6707** |
+| held out, Sahin TNBC (`BECR`) | **0.6786** |
+
+- **`C` is the term that holds**: z +11.5, bootstrap [+0.288, +0.436]. `BE` is *below* `B`, so
+  complementarity — not expression — is what adds recognition signal.
+- **`R` beats the hard foreignness step**: z +3.85 vs −1.62 (the step carried the wrong sign).
+- **Anchor mimicry channels are excluded on measurement**: each correlates with `binder` (r ≤ +0.25)
+  and moves it up to −2.2 sd, because anchor similarity to a presented reference *is* presentation.
+- **Judge by parameter stability, not AUROC.** GBM has 14 positives, VACCIMEL 26, TESLA 37; the
+  read-out is whether coefficients survive deleting a cohort or resampling peptides.
+
+Numbers and generators: `neoag_hier.md`, `neoag_cohorts.md`, `luksza_r.md`, `mimicry_collinear.md`
+in the benchmark repo. **Open**: expression is GTEx cross-tissue median everywhere and wants a
+tumour-matched refit across all eight cohorts at once (ROADMAP §6).
 
 ## Traps
 

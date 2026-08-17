@@ -55,6 +55,15 @@ One letter per parameter, in a fixed canonical order — presentation, then reco
      - mimicry
      - :mod:`mhcmatch.mimicry`
      - the six-channel signed aggregate
+   * - ``R``
+     - foreignness, soft
+     - viral IEDB ligandome
+     - ``R = Z/(1+Z)``, ``Z = Σ exp(−k(a₀−a))`` — a Boltzmann sum over near-matches, ``k`` and
+       ``a₀`` fitted
+   * - ``T``
+     - TCR-facing mimicry
+     - :mod:`mhcmatch.mimicry`
+     - the three TCR-facing channels only; the anchor ones are dropped as collinear with ``B``
 
 ``V`` is "vanilla", not "ipred"
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -167,6 +176,12 @@ The models
    * - ``PADECM``
      - + mimicry
      - the aggregate plus the mimicry block
+   * - ``BECR``
+     - binder, expression, complementarity, Łuksza ``R``
+     - **the current scorer.** Every term's bootstrap interval excludes zero
+   * - ``BECRT``
+     - + the three TCR-facing mimicry channels
+     - **best within-screen median (0.6707).** ``T``'s own coefficients do not resolve
    * - ``BDEVF``
      - binder, agretopicity, expression, vanilla physicochemistry, foreignness
      - the older design; folds presentation into ``B``
@@ -208,10 +223,28 @@ Headline results, each traced to a table in the benchmark repository:
      - **0.786** vs 0.747 AUROC (+0.039)
      - ``immuno_binder_score.md``
    * - ``BDEVF``
-     - **beats the** ``BE`` **incumbent on the frozen Gfeller holdout** — fitted peptide-disjoint,
-       then frozen. Quoted against binder+expression, *not* binder alone
-     - **0.896** vs 0.890 (+0.006, paired DeLong p = 0.0018)
+     - beats the ``BE`` incumbent on the frozen Gfeller holdout — quoted against binder+expression,
+       *not* binder alone
+     - 0.896 vs 0.890 (+0.006, paired DeLong p = 0.0018)
      - ``neoag_risk2.md``
+   * - ``BECRT``
+     - **best within-screen median over all seven screens**, on four fewer parameters than the
+       anchor-including alternative
+     - **0.6707** vs 0.6628 (``BEC``), 0.6473 (``B``)
+     - ``neoag_hier.md``
+   * - ``BECR``
+     - **held out on a cohort published after every model was fitted** — Sahin TNBC, frozen
+       coefficients, 53 targets
+     - **0.6786**, above the in-fit median
+     - ``neoag_cohorts.md``
+   * - ``R``
+     - **the soft foreignness term beats the hard step it replaces**, which carried the wrong sign
+     - z **+3.85** vs **−1.62**
+     - ``luksza_r.md``
+   * - ``B``
+     - **agrees with netMHCpan-4.2 9/9** on confirmed epitopes neither tool had seen
+     - 8 binders each
+     - ``tnbc_binders.md``
    * - ``C``
      - peptide-grouped 5-fold CV on the Chowell arms
      - **0.7188** human, **0.7718** mouse
@@ -303,6 +336,30 @@ binding-prefiltered set. That is what the gate encodes and what a pooled additiv
    what localises the length effect: length carries *which residue is preferred where*, not a global
    reweighting. Terms are kept or dropped on a likelihood test, not a feature-selection loop, so a
    coefficient whose interval covers zero is reported with its interval rather than removed.
+
+.. important::
+
+   **Always select your own tumour type for the expression term.** The benchmark's ``E`` is GTEx
+   **cross-tissue median TPM** — one number per gene — because it has to be computed identically on
+   fit and holdout, and that uniformity is what makes the cohorts comparable. It is *not* a
+   recommendation: a cross-tissue median asks "is this gene expressed anywhere", when the question
+   is whether it is expressed **in this tumour**, and for the safety read whether it is *also* on in
+   the normal tissue you cannot afford to damage.
+
+   :mod:`mhcmatch.expression` carries both vocabularies and the mapping between them::
+
+       from mhcmatch import expression as E
+
+       E.tumor_types()                  # 19 TCGA study abbreviations
+       E.tissues()                      # GTEx SMTSD names
+       E.matched_tissues("BRCA")        # ('Breast - Mammary Tissue',)
+       E.lookup("TP53", tumor="BRCA")   # tumour expression
+       E.safety_profile("TP53")         # where else it is on
+
+   ``mhcmatch expression --list-contexts`` prints all 19 pairings. Refitting the benchmark itself
+   against matched tumour types is an open item — it is a refit of every cohort at once, not a
+   substitution on one, because a tumour-matched value for a single cohort scores a different
+   feature than the one fitted.
 
 .. warning::
 
