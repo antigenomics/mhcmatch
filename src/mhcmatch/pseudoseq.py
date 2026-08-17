@@ -116,6 +116,58 @@ def class2_from_name(name: str, impute_alpha: bool = True) -> str:
     return normalize_allele(a)
 
 
+#: Class-II reporting granularities, finest first. See :func:`class2_report`.
+REPORT_MODES = ("pair", "beta", "isotype")
+
+_CHAIN = re.compile(r"^(D[PQR][AB]\d)(\d{4,})$")
+
+
+def _imgt(chain: str) -> str:
+    """``'DQB10301'`` -> ``'DQB1*03:01'``; anything else unchanged. Fields are two digits each, so a
+    three-field key round-trips too (``'DRB1010101'`` -> ``'DRB1*01:01:01'``)."""
+    m = _CHAIN.match(chain.replace("*", "").replace(":", "").replace("_", ""))
+    if not m:
+        return chain
+    gene, d = m.groups()
+    return gene + "*" + ":".join(d[i:i + 2] for i in range(0, len(d), 2))
+
+
+def class2_report(key: str, mode: str = "pair") -> str:
+    """Reduce a class-II key to a reporting granularity.
+
+    - ``"pair"`` -- the key unchanged: ``'DRB1_0101'``, ``'HLA-DQA10501-DQB10301'``. This is
+      NetMHCIIpan's own naming and what :func:`class2_key` produces, so it is the default and the
+      only mode in which two tools' outputs are directly comparable as strings.
+    - ``"beta"`` -- the beta chain alone, in IMGT form: ``'DRB1*01:01'``, ``'DQB1*03:01'``.
+    - ``"isotype"`` -- ``'DR'`` / ``'DP'`` / ``'DQ'`` (mouse: ``'H-2'``).
+
+    **Why the coarser modes exist.** A class-II key does not lead with the same chain at every
+    isotype: DRA is monomorphic, so DR is keyed by its *beta*, while DP and DQ keys lead with the
+    *alpha*. Any comparison that reads the leading gene out of a key is therefore matching DR's beta
+    against DP/DQ's alpha -- two different genes, and the alpha is the less polymorphic half. It also
+    splits DR against itself, because ``DRB1`` and ``DRB3`` are different leading genes at the same
+    isotype. ``"beta"`` and ``"isotype"`` both compare like with like; ``"isotype"`` is the right
+    granularity for the question "did the two callers even pick the same molecule family".
+
+    Measured on the class-II arm of the Gamaleya ISP concordance (10,402 rows where both callers
+    named an allele): leading-gene agreement 0.401, true isotype agreement **0.527**. The gap is
+    1,318 DR-vs-DR pairs differing only in DRB gene.
+    """
+    if mode not in REPORT_MODES:
+        raise ValueError(f"mode must be one of {REPORT_MODES}, got {mode!r}")
+    k = (key or "").strip()
+    if mode == "pair" or not k:
+        return k
+    up = k.upper()
+    if up.startswith("H-2") or up.startswith("H2-"):        # mouse: one isotype, no alpha/beta key
+        return "H-2" if mode == "isotype" else k
+    if mode == "isotype":
+        return next((iso for iso in ("DR", "DP", "DQ") if iso in up), k)
+    tail = k.split("-")[-1]             # 'HLA-DQA10501-DQB10301' and '-DPB11101' both end in the beta
+    beta = _imgt(tail)
+    return beta if beta != tail else k  # not a class-II chain: hand the key back rather than a stub
+
+
 def resolve_allele(name: str, cls: str):
     """Resolve a user-typed allele name to a pseudosequence key for ``cls``.
 

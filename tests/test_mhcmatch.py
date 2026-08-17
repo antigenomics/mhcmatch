@@ -1182,3 +1182,43 @@ def test_proteome_meta_reconstructs_the_tuple_it_replaced():
     assert got == [("P1", 0, "MKTAYIAKQ"), ("P2", 0, "QRQISFVKS")]
     for name, pos, w in got:
         assert seqs[name][pos:pos + 9] == w
+
+
+def test_class2_report_compares_like_with_like():
+    """The coarser modes exist because a class-II key does not lead with the same chain everywhere.
+
+    DRA is monomorphic so DR is keyed by its *beta*; DP/DQ keys lead with the *alpha*. Reading the
+    leading gene out of a key therefore matches DR's beta against DP/DQ's alpha, and splits DR
+    against itself whenever the DRB gene differs. Both failures are asserted here directly.
+    """
+    from mhcmatch.pseudoseq import REPORT_MODES, class2_report
+
+    dr1, dr3 = "DRB1_0101", "DRB3_0202"
+    dq, dp = "HLA-DQA10501-DQB10301", "HLA-DPA10103-DPB10401"
+
+    # pair: unchanged, so two tools' outputs stay directly comparable as strings
+    for k in (dr1, dr3, dq, dp):
+        assert class2_report(k, "pair") == k
+
+    assert class2_report(dr1, "beta") == "DRB1*01:01"
+    assert class2_report(dq, "beta") == "DQB1*03:01"        # the beta, not the leading DQA1
+    assert class2_report(dp, "beta") == "DPB1*04:01"
+    assert class2_report("-DPB11101", "beta") == "DPB1*11:01"   # alpha-less key still yields its beta
+
+    assert [class2_report(k, "isotype") for k in (dr1, dr3, dq, dp)] == ["DR", "DR", "DQ", "DP"]
+
+    # the two failures the mode fixes
+    lead = lambda k: k.replace("HLA-", "").split("_")[0].split("-")[0][:4]
+    assert lead(dq) == "DQA1" and lead(dr1) == "DRB1", "leading genes are different chains"
+    assert lead(dr1) != lead(dr3), "DR splits against itself at leading-gene level"
+    assert class2_report(dr1, "isotype") == class2_report(dr3, "isotype")
+
+    # class I and mouse are handed back untouched rather than mangled into a stub
+    for k in ("HLA-A02:01", "H-2-IAb"):
+        assert class2_report(k, "beta") == k
+    assert class2_report("H-2-IAb", "isotype") == "H-2"
+    assert class2_report("", "isotype") == ""
+
+    assert REPORT_MODES == ("pair", "beta", "isotype")
+    with pytest.raises(ValueError):
+        class2_report(dr1, "gene")

@@ -24,7 +24,7 @@ import gzip
 import os
 import sys
 
-from . import Proteome, Store
+from . import Proteome, Store, pseudoseq
 
 
 def _add_store_opts(p):
@@ -46,6 +46,23 @@ def _add_batch_opts(p, what="peptide"):
 def _add_thread_opt(p):
     p.add_argument("--threads", type=int, default=0, metavar="N",
                    help="worker threads for the C++ neighbour search (0 = every core)")
+
+
+def _add_mhc2_report(p):
+    """``--mhc2-report``: how much of the class-II restriction to name. Offered on the commands where
+    *we* pick the allele; a command handed one echoes back what the caller typed."""
+    p.add_argument("--mhc2-report", choices=pseudoseq.REPORT_MODES, default="pair",
+                   help="class-II allele granularity: pair = the full alpha-beta key, NetMHCIIpan's "
+                        "own naming (default); beta = the beta chain alone; isotype = DR/DP/DQ. Use "
+                        "a coarser mode to compare callers -- a class-II key leads with the beta for "
+                        "DR but the alpha for DP/DQ, so matching leading genes matches two different "
+                        "chains")
+
+
+def _allele(a, name):
+    """An allele as reported: class II reduced to ``--mhc2-report``, class I untouched."""
+    return (pseudoseq.class2_report(name, getattr(a, "mhc2_report", "pair"))
+            if getattr(a, "cls", None) == "mhc2" else name)
 
 
 def _store(a):
@@ -194,7 +211,7 @@ def cmd_restriction(a):
                                                     alleles=[allele] if allele else "all",
                                                     top=a.top, diffuse=a.diffuse,
                                                     calibrated=a.calibrated), 1):
-                out.row(p, i, r.allele, f"{r.vote:.4g}", f"{r.enrichment:.4g}",
+                out.row(p, i, _allele(a, r.allele), f"{r.vote:.4g}", f"{r.enrichment:.4g}",
                         f"{r.anchor_score:.4g}" if r.anchor_score is not None else "",
                         f"{r.rank:.4g}" if a.calibrated else "",
                         f"{r.p_present:.4g}" if a.calibrated else "",
@@ -212,7 +229,7 @@ def cmd_restriction(a):
         hdr += f"{'%rank':>8}{'P':>7}{'band':>12}"
     print(hdr + f"{'binder':>8}")
     for r in res:
-        line = f"{r.allele:<18}{r.vote:>7.2f}{r.enrichment:>7.1f}"
+        line = f"{_allele(a, r.allele):<18}{r.vote:>7.2f}{r.enrichment:>7.1f}"
         if diffuse:
             line += f"{(r.anchor_score or 0.0):>8.2f}"
         if a.calibrated:
@@ -271,7 +288,7 @@ def cmd_binder(a):
         for p in peps:
             hits = store.binder_score(p, alleles=(a.alleles or "all"), cls=a.cls)
             for i, b in enumerate(hits[:(a.top or 10)], 1):
-                out.row(p, i, b.allele, b.binder_rank, b.band, b.p_binder,
+                out.row(p, i, _allele(a, b.allele), b.binder_rank, b.band, b.p_binder,
                         b.presentation_rank, b.affinity_nm, b.affinity_rank)
         out.close()
         return
@@ -284,7 +301,7 @@ def cmd_binder(a):
     print(f"{'allele':14s}{'binder%rank':>12s}{'band':>13s}{'P(binder)':>11s}"
           f"{'pres%rank':>11s}{'aff_nM':>11s}{'aff%rank':>10s}")
     for b in res[:(a.top or 10)]:
-        print(f"{b.allele:14s}{b.binder_rank:12.3f}{b.band:>13s}{b.p_binder:11.4f}"
+        print(f"{_allele(a, b.allele):14s}{b.binder_rank:12.3f}{b.band:>13s}{b.p_binder:11.4f}"
               f"{b.presentation_rank:11.3f}{b.affinity_nm:11.0f}{b.affinity_rank:10.3f}")
 
 
@@ -295,7 +312,7 @@ def cmd_scan(a):
     label = f" ({a.correction} FWER/FDR)" if a.correction else ""
     print(f"# {len(hits)} presented window(s){label}")
     for pos, pep, binders in hits:
-        print(f"{pos:>5}  {pep:<14}  {','.join(b.allele for b in binders)}")
+        print(f"{pos:>5}  {pep:<14}  {','.join(_allele(a, b.allele) for b in binders)}")
 
 
 def cmd_source(a):
@@ -359,7 +376,7 @@ def cmd_predict(a):
         print(f"# {len(preds)} predicted binder(s) (%rank <= {a.rank_threshold}) over "
               f"{len(alleles)} allele(s)")
         for p in preds[:(a.top or 20)]:
-            print(f"{p.peptide:<15} {p.allele:<18} %rank={p.percent_rank:<6} {p.band:<11} "
+            print(f"{p.peptide:<15} {_allele(a, p.allele):<18} %rank={p.percent_rank:<6} {p.band:<11} "
                   f"{p.var.get('gene_name', '')}")
 
 
@@ -423,7 +440,7 @@ def cmd_rank(a):
     try:
         print("\t".join(cols), file=out)
         for i, r in enumerate(rows, 1):
-            print("\t".join([str(i), r.peptide, r.allele, r.gene, f"{r.score:.6g}",
+            print("\t".join([str(i), r.peptide, _allele(a, r.allele), r.gene, f"{r.score:.6g}",
                              f"{r.presentation:.4g}", f"{r.agretopicity:.4g}",
                              f"{r.physchem:.4g}", f"{r.expression:.4g}",
                              "1" if r.expression_imputed else "0", r.wt_peptide,
@@ -642,6 +659,7 @@ def main(argv=None):
     _add_store_opts(r)
     _add_batch_opts(r)
     r.set_defaults(fn=cmd_restriction)
+    _add_mhc2_report(r)
 
     af = sub.add_parser("affinity", help="predict IC50 (nM) + neoantigen amplitude/DAI for a peptide")
     af.add_argument("peptide", nargs="?", default="")
@@ -663,6 +681,7 @@ def main(argv=None):
     _add_store_opts(bd)
     _add_batch_opts(bd)
     bd.set_defaults(fn=cmd_binder)
+    _add_mhc2_report(bd)
 
     s = sub.add_parser("scan", help="find presented peptides in a protein (sequence or FASTA path)")
     s.add_argument("protein")
@@ -673,6 +692,7 @@ def main(argv=None):
                    help="multiple-testing control over windows x alleles (FWER / BH-FDR)")
     _add_store_opts(s)
     s.set_defaults(fn=cmd_scan)
+    _add_mhc2_report(s)
 
     so = sub.add_parser("source", help="find the self peptide a neoantigen derives from")
     so.add_argument("peptide", nargs="?", default="")
@@ -715,6 +735,7 @@ def main(argv=None):
     pr.add_argument("--seed", type=int, default=0)
     _add_store_opts(pr)
     pr.set_defaults(fn=cmd_predict)
+    _add_mhc2_report(pr)
 
     bs = sub.add_parser("bootstrap", help="pre-fetch the pmhc panel (and optionally proteomes) from HF")
     bs.add_argument("--tier", default="all", choices=("full", "shortlist", "all"),
@@ -752,6 +773,7 @@ def main(argv=None):
     rk.add_argument("--out", help="write TSV here instead of stdout")
     _add_store_opts(rk)
     rk.set_defaults(fn=cmd_rank)
+    _add_mhc2_report(rk)
 
     ex = sub.add_parser("explain", help="every component of the aggregate for one (peptide, allele)")
     ex.add_argument("peptide", nargs="?", default="")

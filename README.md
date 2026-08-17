@@ -210,6 +210,31 @@ Read the class-II numbers with `compare/SOURCES.md` in hand: NetMHCIIpan trained
 public IEDB eluted-ligand data, so its in-corpus medium/frequent strata are contaminated in its
 favour and the rare / zero-shot axis is the fair comparison.
 
+### Naming a class-II restriction
+
+Class-II alleles are reported in NetMHCIIpan's own form — `DRB1_0101` for DR (DRA is monomorphic, so
+the beta chain names the molecule) and `HLA-DQA10501-DQB10301` for the DP/DQ heterodimers. The two
+forms **do not lead with the same chain**: DR leads with its beta, DP and DQ with their alpha. Code
+that compares two callers by pulling the leading gene out of the key is therefore matching DR's beta
+against DP/DQ's alpha, and splitting DR against itself whenever the DRB gene differs (`DRB1` vs
+`DRB3`). Both mistakes are easy to make and neither announces itself.
+
+`--mhc2-report` picks the granularity, on every command that *chooses* an allele (`restriction`,
+`binder`, `scan`, `predict`, `rank`):
+
+```bash
+mhcmatch restriction PKYVKQNTLKLAT --cls mhc2 --mhc2-report isotype
+```
+
+| mode | `DRB1_0101` becomes | `HLA-DQA10501-DQB10301` becomes | use it for |
+|---|---|---|---|
+| `pair` (default) | `DRB1_0101` | `HLA-DQA10501-DQB10301` | reporting, and string-comparing against NetMHCIIpan |
+| `beta` | `DRB1*01:01` | `DQB1*03:01` | comparing alleles across isotypes on the same chain |
+| `isotype` | `DR` | `DQ` | "did the two callers pick the same molecule family" |
+
+`mhcmatch.pseudoseq.class2_report(key, mode)` is the same reduction from Python. Commands that are
+*handed* an allele (`affinity`, `explain`, `logo`) echo back what the caller typed.
+
 ## Development
 
 ```bash
