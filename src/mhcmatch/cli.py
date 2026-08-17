@@ -548,6 +548,60 @@ def cmd_complement(a):
               file=sys.stderr)
 
 
+def _read_table(path):
+    """Every row of a TSV with a ``peptide`` column, as dicts, preserving column order."""
+    fh = sys.stdin if path == "-" else (
+        gzip.open if str(path).endswith(".gz") else open)(path, "rt")
+    try:
+        cols = fh.readline().rstrip("\n").split("\t")
+        if "peptide" not in cols:
+            raise SystemExit(f"{path}: no `peptide` column (found {cols})")
+        out = []
+        for line in fh:
+            line = line.rstrip("\n")
+            if line:
+                d = dict(zip(cols, line.split("\t")))
+                d["peptide"] = (d.get("peptide") or "").strip().upper()
+                out.append(d)
+        return out
+    finally:
+        if path != "-":
+            fh.close()
+
+
+def cmd_neoag(a):
+    """Annotate candidates by fuzzy search against the tested-neoantigen database.
+
+    **Prior evidence, not a prediction.** The database is the union of what has been assayed
+    somewhere, so a hit says "this, or something one or two substitutions from it, was tested and
+    came back immunogenic". That is a strong prioritisation signal for a fresh cohort and a
+    meaningless one for a benchmark assembled from the same deposits, which is why
+    :func:`mhcmatch.mimicry.annotate` is kept out of the fitted mimicry aggregate entirely.
+
+    With ``--peptides`` pointing at a TSV, every original column is carried through and the
+    annotation is appended, so this drops into an existing candidate table without a join."""
+    from . import mimicry as MM
+    src = getattr(a, "peptides", None)
+    rows = _read_table(src) if src else None
+    peps = [r["peptide"] for r in rows] if rows else _read_peptides(None, a.input)
+    if not peps:
+        raise SystemExit("no peptides: pass them as arguments or with --peptides")
+    ann = MM.annotate(peps, cls=a.cls, max_subs=a.max_subs)
+    cols = ("neoag_distance", "neoag_nearest", "neoag_n_within", "known")
+    extra = [c for c in (rows[0] if rows else {}) if c != "peptide"]
+    out = _Out(a, "candidate")
+    out.header("peptide", *extra, *cols)
+    for i, r in enumerate(ann):
+        if a.known_only and not r["known"]:
+            continue
+        if a.hits_only and r["neoag_distance"] > a.max_subs:
+            continue
+        s = rows[i] if rows else {}
+        out.row(r["peptide"], *(s.get(c, "") for c in extra),
+                *("" if r[k] is None else r[k] for k in cols))
+    out.close()
+
+
 def cmd_mimics(a):
     """Near-identical reference peptides per category, in one threaded batch."""
     from . import mimics as M
@@ -803,6 +857,21 @@ def main(argv=None):
     cm.add_argument("--features", action="store_true", help="emit the full design matrix too")
     cm.add_argument("--out", help="write TSV here instead of stdout")
     cm.set_defaults(fn=cmd_complement)
+
+    ng = sub.add_parser("neoag",
+                        help="annotate candidates against the tested-neoantigen database "
+                             "(nearest validated-immunogenic peptide + substitution distance)")
+    ng.add_argument("input", nargs="*", help="peptide(s); or use --peptides")
+    ng.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
+    ng.add_argument("--max-subs", type=int, default=2,
+                    help="fuzzy search radius. 0 is an exact database lookup; 2 roughly doubles "
+                         "the recall of a fresh cohort's true positives over exact lookup")
+    ng.add_argument("--known-only", action="store_true",
+                    help="keep only exact database matches (distance 0)")
+    ng.add_argument("--hits-only", action="store_true",
+                    help="drop candidates with nothing inside --max-subs")
+    _add_batch_opts(ng, "candidate")
+    ng.set_defaults(fn=cmd_neoag)
 
     mi = sub.add_parser("mimics",
                         help="near-identical reference peptides per category (self / thymus / "
