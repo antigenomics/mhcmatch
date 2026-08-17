@@ -57,14 +57,14 @@ each junction against the recipient's own allotypes** rather than picking a link
 
 Two mechanistic constraints worth knowing before choosing a spacer:
 
-``AAY``    ends in tyrosine. ERAP1 prefers hydrophobic C-termini and has low affinity for charged
-           ones (Chang et al., *PNAS* 2005, PMID 16286653), so a terminal Y genuinely aids
-           processing — while also supplying the C-terminal anchor for A\\*01:01, A\\*29:02 and
-           B\\*35:01. It is a trade-off, not a mistake, and which way it falls is donor-specific.
-``KK``     leaves charged residues at the boundary: the mirror image, poor for ERAP1.
-G/P-rich   glycine and proline are disfavoured at MHC-I anchor positions and abundant in the
-           C-terminal regions from which ligands are cleaved (Martín-Galiano & López, *PLoS One*
-           2019, PMID 30645615), so these sit in the permissive zone.
+- ``AAY`` ends in tyrosine. ERAP1 prefers hydrophobic C-termini and has low affinity for charged
+  ones (Chang et al., *PNAS* 2005, PMID 16286653), so a terminal Y genuinely aids processing --
+  while also supplying the C-terminal anchor for A\\*01:01, A\\*29:02 and B\\*35:01. It is a
+  trade-off, not a mistake, and which way it falls is donor-specific.
+- ``KK`` leaves charged residues at the boundary: the mirror image, poor for ERAP1.
+- Gly/Pro-rich spacers use residues disfavoured at MHC-I anchor positions and abundant in the
+  C-terminal regions from which ligands are cleaved (Martin-Galiano & Lopez, *PLoS One* 2019,
+  PMID 30645615), so they sit in the permissive zone.
 
 :data:`SPACERS` therefore leads with ``None``. A cassette whose junctions are already clean should
 carry no spacer at all — every inserted residue is sequence that has to be translated and could
