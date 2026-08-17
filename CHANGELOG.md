@@ -55,6 +55,25 @@ what they mean.
   does *not* cover, so an offline `rank` process fails at build time rather than on a compute node.
 - **README rewritten** around a task → command table, the batch/threads contract, and the two axes.
 
+### Performance
+
+- **The binder calibrator was 45 s and is now ~4 s**, from two independent causes the CLI benchmark's
+  profile exposed. Nothing it reports changes: the isotonic step levels are identical on 300
+  randomized trials, and the Potts scores are **bit-identical** on 60,000 checks over three alleles.
+  - `calibrate._isotonic` was **O(n²)**. PAVA is linear, but the blocks lived in a list and each pool
+    did `del ys[i + 1]`, shifting the tail of three lists. A common allele's known ligands against a
+    10,000-peptide background is ~118,000 points: 2.66 s → 0.041 s. Blocks go on a stack now.
+  - `PottsAffinity.predict_y` summed ~315 weights per peptide, and ~34 of every 35 depend only on
+    the allele. The pocket side is fixed once the allele is, so the energy factors into a constant
+    plus a table `E[p][r]`, leaving nine float adds per peptide — **21× scalar, 30× via the new
+    `predict_y_batch`**. Each cell is a `math.fsum`, and that is load-bearing rather than
+    fastidious: the weights are float32 and the loop it replaces added them into a Python float,
+    i.e. exactly. Summing the pocket contributions in float32 costs ~1e-7 and moves 735 of 20,000
+    IC50 values at their reported precision; numpy's float64 pairwise sum leaves ~2e-9 and moves 122.
+  - End to end: `mhcmatch binder` on one peptide 52.7 s → 10.7 s, `explain` 37.9 → 7.7,
+    `predict` 48.2 → 9.5, `rank fasta` 53.3 → 9.6; the library's own test suite 71 s → 26 s.
+    Commands that do not touch the calibrator are unchanged at 1.0–1.1×.
+
 ### Fixed
 
 - **`mimics.DEFAULT_REFS["neoag"]` pointed at `immunogenicity/neoag_tested.tsv.gz`**, which 404s —
