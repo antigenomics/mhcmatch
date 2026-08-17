@@ -567,11 +567,21 @@ def cmd_expression(a):
     """Reference expression for a gene in a normal tissue, or a peptide in a tumour type."""
     from . import expression as EX
     if a.list_contexts:
-        print("# GTEx tissues:")
-        for t in EX.tissues():
+        print("# TCGA tumour type -> its matched normal GTEx tissue(s), best match first.")
+        print("# Keys are TCGA study abbreviations (NCI GDC); values are GTEx SMTSD names.")
+        print("# Neither is a clinical coding system -- not ICD-O-3, SNOMED CT or OncoTree.")
+        for t in EX.tumor_types():
+            m = EX.matched_tissues(t)
+            flag = "  (approximate: GTEx has no matching organ)" \
+                if t in EX.TUMOR_TISSUE_APPROXIMATE else ""
+            print(f"  {t:6s} {' | '.join(m) if m else '(no matched normal)'}{flag}")
+        print("# CRC is not a TCGA code: TCGA has COAD and READ, and the source table merged them.")
+        unmatched = [t for t in EX.tissues()
+                     if not any(t in v for v in EX.TUMOR_TISSUE.values())]
+        print(f"\n# {len(EX.tissues())} GTEx tissues in total; the {len(unmatched)} below are not "
+              "any tumour type's matched normal and are for the safety read only:")
+        for t in unmatched:
             print(f"  {t}")
-        print("# TCGA tumour types:")
-        print("  " + ", ".join(EX.tumor_types()))
         return
     rec = EX.lookup(a.key, tissue=a.tissue, tumor=a.tumor)
     if not rec:

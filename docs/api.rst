@@ -140,8 +140,10 @@ mhcmatch.complement module
 
 The recognition axis as one score: ``ipred``'s physicochemistry and length, the same components
 split MHC-facing vs TCR-facing, MJ1996 / repertoire-marginalised TCRen contact potentials,
-hydrophobic-run and dipeptide motifs, and per-role residue log-odds — whose two columns reproduce
-:func:`mhcmatch.posbayes.llr` exactly, so that model is a strict special case. Linear head, because
+hydrophobic-run and dipeptide motifs, and per-role residue log-odds — pooled, **per length bin
+(8/9/10/11+)** and per relative third of the TCR face, whose pooled ``aa_anchor``/``aa_tcr`` pair
+reproduces :func:`mhcmatch.posbayes.llr` exactly, so that model is a strict special case. Linear
+head, because
 a diagonal Gaussian cannot represent a summed log-odds; the EM Gaussian parameters ship alongside
 for comparison. **Vectorised** — pass a list, not a loop. See :doc:`complementarity`.
 

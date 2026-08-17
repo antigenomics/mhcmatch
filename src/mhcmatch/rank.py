@@ -127,8 +127,8 @@ def _recognition(peptide: str, species: str = "human", cls: str = "mhc1") -> flo
 
     Chosen over ``posbayes.llr`` -- which it contains as its ``aa`` block -- and over
     ``ipred.log_p``, on peptide-grouped 5-fold CV over all four deposited corpus arms x both hosts:
-    it wins every one (chowell/human 0.7125 vs 0.7111, chowell/mouse 0.7633 vs 0.7582,
-    kesmir/human 0.6480 vs 0.6369). ``ipred``'s figures on that corpus are *in-sample*, since it is
+    it wins every one (chowell/human 0.7188 vs 0.7111, chowell/mouse 0.7718 vs 0.7582,
+    kesmir/human 0.6580 vs 0.6369). ``ipred``'s figures on that corpus are *in-sample*, since it is
     its training set.
 
     ``species`` selects the fitted table: ``"human"`` (464,161 rows) or ``"mouse"`` (47,140). The

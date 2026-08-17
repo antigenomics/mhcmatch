@@ -22,9 +22,10 @@ block         what it adds
 ``motif``     Contiguity: longest run, number of runs and above-median fraction of
               hydrophobic TCR-facing residues. A run of 3-4 is a different object from
               the same residues scattered, and **no sum can express the difference**.
-``aa``        Residue **identity** as a log-odds per amino acid per role. Every block
-              above projects onto a property; this one does not. Its two columns sum to
-              exactly :func:`mhcmatch.posbayes.llr`.
+``aa``        Residue **identity** as a log-odds per amino acid per role, and the block
+              that knows the peptide's **length**: a pooled anchor/TCR pair whose sum is
+              exactly :func:`mhcmatch.posbayes.llr`, one pair per length bin (8/9/10/11+),
+              and the TCR face in relative thirds.
 ``kmer``      The same over **adjacent TCR-facing residue pairs** -- a preference for a
               specific dipeptide that no marginal composition feature can express.
 ============  =========================================================================

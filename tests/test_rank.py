@@ -192,3 +192,18 @@ def test_scan_exclude_query_keeps_real_neighbours_only():
     a = mimics.scan(binders, self_set=[], foreign_sets=refs, exclude_query=False)
     b = mimics.scan(binders, self_set=[], foreign_sets=refs, exclude_query=True)
     assert [(r.n_exact, r.n_near) for r in a] == [(r.n_exact, r.n_near) for r in b]
+
+
+def test_every_tumour_type_has_a_matched_normal_that_resolves():
+    """`TUMOR_TISSUE` is hand-curated, so the thing that can rot is a tissue name that no longer
+    exists in the reference table -- which would make the safety read silently empty."""
+    from mhcmatch import expression as EX
+    tissues, tumors = set(EX.tissues()), set(EX.tumor_types())
+    assert set(EX.TUMOR_TISSUE) == tumors, "a tumour type gained or lost its entry"
+    for t, matched in EX.TUMOR_TISSUE.items():
+        assert matched, t
+        for m in matched:
+            assert m in tissues, f"{t} -> {m!r} is not a GTEx tissue in the table"
+    assert EX.matched_tissues("skcm") == EX.matched_tissues("SKCM")     # case-insensitive
+    assert EX.matched_tissues("ZZZZ") == ()                            # unknown -> empty, not a guess
+    assert set(EX.TUMOR_TISSUE_APPROXIMATE) <= tumors

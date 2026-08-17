@@ -46,6 +46,7 @@ mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor 
 | Why did *this* candidate rank there? | `mhcmatch explain PEP --allele A` | — |
 | What self / viral / bacterial peptide does it mimic? | `mhcmatch mimics --peptides p.txt` | `mimics.neighbours` |
 | Where in the proteome does it come from? | `mhcmatch source --peptides p.txt --proteome human` | `Proteome.find_sources` |
+| Is the gene on in the tumour, and in normal tissue? | `mhcmatch expression --list-contexts` | `expression.lookup` |
 | What does this allele's motif look like? | `mhcmatch logo 'HLA-A*02:01'` | `logo.motif` |
 | Which peptides in this protein are presented? | `mhcmatch scan p.fasta --correction bh` | `store.scan_protein` |
 | What is the full MHC-II ligand around this core? | `mhcmatch span CORE --protein p.fasta` | `ligand.presented_span` |
@@ -104,6 +105,15 @@ public deposits — confirmed tumour neoantigens, peptides the screens tested an
 non-immunogenic, IEDB-immunogenic epitopes, the thymic self-immunopeptidome, the viral ligandome. An
 exact match is stronger evidence than any score, so `rank` reports it as a flag and floats those
 candidates into a tier of their own instead of folding it into the number.
+
+**Expression, and which normal tissue to compare against.** `--tumor` takes a **TCGA study
+abbreviation** (`SKCM`, `LUAD`, …; `CRC` merges TCGA's `COAD` and `READ`) and `--tissue` a **GTEx
+`SMTSD`** name (`Skin - Sun Exposed (Lower leg)`). Neither is a clinical coding system — not
+ICD-O-3, SNOMED CT or OncoTree — so a pipeline needing one brings its own crosswalk.
+`expression.matched_tissues("SKCM")` gives a tumour type's matched normal, which is what makes the
+safety read askable without knowing the pairing by heart; `mhcmatch expression --list-contexts`
+prints all 19 pairings and the 31 tissues that are safety-read-only. `HNSC` is marked approximate —
+GTEx has no head-and-neck mucosa.
 
 **Cross-reactivity.** `mhcmatch.mimics` reports near-identical reference peptides per category, and
 never sums them, because a hit in each argues something different: **thymus** (presented during

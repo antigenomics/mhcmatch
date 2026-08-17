@@ -17,7 +17,7 @@ Install and self-check
    pip install mhcmatch
 
    python -m mhcmatch.complement
-   # ok - 19 features over 6 blocks, fitted on 464,161 rows (chowell_rebuilt/human); ...
+   # ok - 30 features over 6 blocks, fitted on 464,161 rows (chowell_rebuilt/human); ...
 
 The fitted parameters are vendored in the package, so nothing on this page needs a download except
 the corpus in the last section.

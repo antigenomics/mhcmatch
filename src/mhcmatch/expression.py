@@ -36,7 +36,8 @@ import functools
 import gzip
 import os
 
-__all__ = ["REFERENCE_FILE", "fetch_reference", "load", "lookup", "impute", "tissues",
+__all__ = ["REFERENCE_FILE", "TUMOR_TISSUE", "matched_tissues",
+           "fetch_reference", "load", "lookup", "impute", "tissues",
            "tumor_types", "safety_profile"]
 
 #: Path inside the HF dataset repo.
@@ -124,6 +125,57 @@ def tissues(path: str | None = None) -> list[str]:
 def tumor_types(path: str | None = None) -> list[str]:
     """Every TCGA ``cancer_type`` in the reference table (``SKCM`` is melanoma)."""
     return sorted({c for (kt, _, c) in load(path) if kt == "peptide"})
+
+
+#: **Which normal tissue is a tumour type's matched normal**, so the safety read can be asked without
+#: the caller having to know that melanoma pairs with skin.
+#:
+#: The two vocabularies are different and neither is clinical, which is worth being explicit about:
+#:
+#: * the keys are **TCGA study abbreviations** (NCI GDC), a research nomenclature. ``CRC`` is the one
+#:   exception -- TCGA itself has ``COAD`` and ``READ`` separately, and the source table merged them.
+#: * the values are **GTEx ``SMTSD``** tissue names, GTEx's own controlled vocabulary.
+#: * neither is ICD-O-3, SNOMED CT or OncoTree. Nothing here maps to a clinical coding system, and a
+#:   pipeline that needs one has to bring its own crosswalk.
+#:
+#: Curated by organ correspondence against the 53 tissues actually present in the reference table, so
+#: every value resolves. Ordered best-match first. **``HNSC`` is the weak one and is marked**: GTEx
+#: has no head-and-neck mucosa, so minor salivary gland and oesophageal mucosa are the nearest
+#: epithelia rather than the matched normal. Where a tumour has more than one plausible normal, all
+#: of them are listed rather than one being picked silently -- ``SKCM`` against sun-exposed and
+#: sun-protected skin is a different safety question in each.
+TUMOR_TISSUE: dict[str, tuple[str, ...]] = {
+    "BLCA": ("Bladder",),
+    "BRCA": ("Breast - Mammary Tissue",),
+    "CESC": ("Cervix - Ectocervix", "Cervix - Endocervix"),
+    "CRC":  ("Colon - Transverse", "Colon - Sigmoid"),
+    "GBM":  ("Brain - Cortex", "Brain - Frontal Cortex (BA9)"),
+    "HNSC": ("Minor Salivary Gland", "Esophagus - Mucosa"),      # approximate -- see above
+    "KICH": ("Kidney - Cortex",),
+    "KIRC": ("Kidney - Cortex",),
+    "KIRP": ("Kidney - Cortex",),
+    "LIHC": ("Liver",),
+    "LUAD": ("Lung",),
+    "LUSC": ("Lung",),
+    "OV":   ("Ovary", "Fallopian Tube"),
+    "PAAD": ("Pancreas",),
+    "PRAD": ("Prostate",),
+    "SKCM": ("Skin - Sun Exposed (Lower leg)", "Skin - Not Sun Exposed (Suprapubic)"),
+    "STAD": ("Stomach",),
+    "THCA": ("Thyroid",),
+    "UCEC": ("Uterus",),
+}
+#: Tumour types whose matched normal is an approximation rather than the same organ.
+TUMOR_TISSUE_APPROXIMATE = ("HNSC",)
+
+
+def matched_tissues(tumor: str) -> tuple[str, ...]:
+    """The GTEx tissue(s) that are ``tumor``'s matched normal, best match first.
+
+    ``()`` for a tumour type with no entry, which is the honest answer -- a wrong matched normal
+    turns the safety read into a confident wrong one. See :data:`TUMOR_TISSUE` for what the two
+    vocabularies are and what they are not."""
+    return TUMOR_TISSUE.get(tumor.strip().upper(), ())
 
 
 def safety_profile(gene: str, top: int = 10, path: str | None = None) -> list[tuple[str, float]]:
