@@ -6,6 +6,40 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [Unreleased]
+
+The step after ranking: assembling a cassette, and refusing one.
+
+### Added
+
+- **`mhcmatch.vector`** — polyepitope cassette assembly. `screen` **excludes** candidates on
+  essential-tissue risk and runs *before* `select`, because capacity spent on a unit that has to be
+  withdrawn is capacity not spent on a safe one. `select` grows each allotype while the next
+  candidate beats that allotype's own expected yield per slot, so diversification falls out of the
+  arithmetic rather than being imposed as a quota; `order` picks a spacer and an ordering minimising
+  the strongest predicted binder spanning each junction, trying **no spacer first**;
+  `slippery_sites`/`deslip` find and synonymously remove the m1Ψ +1-ribosomal-frameshift motif, which
+  matters more for a concatemer than for a natural ORF. Scoring is injected (`binder`, `risk`), so
+  the layout and policy logic are testable with no panel, no proteome and no download.
+- **`vector.self_origin_risk`** — the shipped exclusion policy, two clauses: the unit's own target
+  gene transcribed in an essential tissue (the MAGE-A12 shape), and a register coinciding within one
+  substitution of an **unrelated** protein that is (the titin shape). Hits to the unit's own parent
+  are excluded — a 27-mer is native context by design, and without that exclusion the screen rejects
+  every unit of every cassette. A mimicry-similarity screen was built and measured first and fires on
+  almost everything, because anchor-masked similarity to a presented reference is presentation rather
+  than recognition (`bench/results/vector_safety_screen.md`).
+- **`proteome.gene_symbols`** — `{name|accession: gene}` from the UniProt `GN=` field. Closes the
+  join between deposits naming sources as accessions and `expression.safety_profile`, which is keyed
+  on HGNC symbols. `mimicry.safety` takes it as `symbols=` and now returns a resolved `gene` beside
+  the deposit's own `source`.
+
+### Fixed
+
+- **`expression.safety_profile` scanned all 5,586,792 rows per call** — 511 ms, and its callers ask
+  per gene inside a loop (`mimicry.safety` once per mimic hit). Indexed by gene: 0.1 µs, identical
+  values. The index is keyed on the resolved file rather than the `path` argument, so it cannot serve
+  a stale table after `$MHCMATCH_EXPRESSION` changes.
+
 ## [0.12.0] - 2026-08-17
 
 Mimicry stops being a distance and becomes a signed, per-component risk; the precursor estimators
