@@ -37,7 +37,9 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    mo.md(r"""## 6.1 — One peptide, and its parts""")
+    mo.md(r"""
+    ## 6.1 — One peptide, and its parts
+    """)
     return
 
 

@@ -69,6 +69,7 @@ from __future__ import annotations
 import json
 import math
 from importlib import resources
+from statistics import median
 
 import numpy as np
 
@@ -155,7 +156,11 @@ BASIS = _basis()
 #: The "hydrophobic" cut for the run features: the median of the Kyte-Doolittle scale itself, so it
 #: is a property of the scale rather than a tuned constant. Same rule as
 #: :func:`mhcmatch.immuno._aggregate`.
-KD_THRESHOLD = float(np.median(BASIS["kd"]))
+#:
+#: Taken from the plain dict with the stdlib rather than from :data:`BASIS` with ``numpy``, because
+#: sphinx mocks ``numpy`` at doc-build time and a module-level ``float(np.median(...))`` then raises
+#: on a Mock -- the whole module fails to import and its page renders empty.
+KD_THRESHOLD = float(median(aa_tables.HYDROPHOBICITY["KyteDoolittle"].values()))
 
 
 def feature_names() -> list[str]:
