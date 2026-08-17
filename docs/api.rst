@@ -103,6 +103,24 @@ whole query set through one threaded C++ index per (category, length).
    :undoc-members:
    :show-inheritance:
 
+mhcmatch.vector module
+----------------------
+
+Assembling the cassette, once selection has chosen the candidates: **how many units each allotype
+should carry, in what order, and joined by what.** Competition for a response is local to the
+antigen-presenting cell and strongest *within* an allotype, so expected yield is a sum of
+independently saturating per-allotype terms rather than one global budget --
+:func:`~mhcmatch.vector.select` grows each allotype while the next candidate beats that allotype's
+own expected yield per slot, and diversification follows from the arithmetic instead of a quota.
+:func:`~mhcmatch.vector.order` scores every register spanning every junction against the recipient's
+own allotypes and picks the spacer and ordering that minimise predicted junctional binding, trying
+**no spacer first**.
+
+.. automodule:: mhcmatch.vector
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 mhcmatch.immuno module
 ----------------------
 
