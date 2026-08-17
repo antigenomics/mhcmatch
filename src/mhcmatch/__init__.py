@@ -8,12 +8,14 @@
 - :class:`Pseudoseq` -- pseudosequence allele similarity & cross-allele diffusion (rare-allele rescue).
 - :func:`logo.motif` -- per-allele motif logos + length distributions.
 - :mod:`predict` -- score a variant peptide-window FASTA into native + pipeline-``.scored.csv`` output.
+- :mod:`vector` -- assemble a polyepitope vaccine cassette: how many units per allotype, in what
+  order, joined by what spacer.
 
 Theory: the theory appendix. Roadmap: ``ROADMAP.md``.
 """
 from importlib.metadata import PackageNotFoundError, version as _version
 
-from . import logo, mimics, predict, search
+from . import logo, mimics, predict, search, vector
 from .affinity import AffinityModel, PottsAffinity
 from .structure import StructureScorer
 from .diffusion import AnchorModel
@@ -54,6 +56,7 @@ __all__ = [
     "predict_windows",
     "predict_fasta",
     "mimics",
+    "vector",
     "__version__",
 ]
 

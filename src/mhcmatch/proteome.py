@@ -37,6 +37,39 @@ def read_fasta(path):
     return seqs
 
 
+def gene_symbols(path):
+    """``{name: gene}`` from the UniProt ``GN=`` field, keyed the same way as :func:`read_fasta`.
+
+    **This closes the join between a mimicry hit and its tissue-expression profile.** A
+    :class:`SourceHit` names its protein as the FASTA's first whitespace token --
+    ``tr|A0A087WVL8|A0A087WVL8_HUMAN`` -- while :func:`mhcmatch.expression.lookup` and
+    :func:`mhcmatch.expression.safety_profile` are keyed on the HGNC symbol, ``FMR1``. Without the
+    map there is no way to ask *which tissue* a T cell cross-reactive with a given self peptide would
+    attack, and that is the question separating a titin match (heart left ventricle, 64 TPM) from a
+    testis-restricted one.
+
+    The symbol is absent from :func:`read_fasta`'s output because that function keeps only the name,
+    and widening its return contract would ripple through every caller. A second pass over the
+    headers is cheap -- one second for the human proteome -- and additive.
+
+    Entries with no ``GN=`` map to ``None`` rather than being dropped: the 147,506 human records
+    include TrEMBL entries with no assigned symbol, and silently losing them would overstate the
+    coverage of any downstream tissue filter.
+    """
+    import re
+
+    op = gzip.open if str(path).endswith(".gz") else open
+    pat = re.compile(r"\bGN=(\S+)")
+    out = {}
+    with op(path, "rt") as fh:
+        for line in fh:
+            if line.startswith(">"):
+                head = line[1:].rstrip()
+                m = pat.search(head)
+                out[head.split()[0]] = m.group(1) if m else None
+    return out
+
+
 @dataclass
 class SourceHit:
     protein: str

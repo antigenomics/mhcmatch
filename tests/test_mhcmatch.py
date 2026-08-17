@@ -250,6 +250,30 @@ def test_restriction_diffuse_rescues_rare():
     assert r.binder and r.anchor_score > 0              # borrowed PΩ=V from groove-neighbour A*02:01
 
 
+def test_gene_symbols_keys_match_read_fasta_and_carry_the_symbol(tmp_path):
+    """The join a mimicry hit needs to reach tissue expression: protein name -> HGNC symbol.
+
+    ``read_fasta`` keys on the first whitespace token, ``expression.lookup`` keys on the symbol, and
+    nothing bridged them. Entries without ``GN=`` must survive as ``None``, not vanish -- dropping
+    them would overstate the coverage of any downstream tissue filter.
+    """
+    from mhcmatch.proteome import gene_symbols, read_fasta
+    fasta = tmp_path / "p.fasta"
+    fasta.write_text(
+        ">sp|Q8WZ42|TITIN_HUMAN Titin OS=Homo sapiens OX=9606 GN=TTN PE=1 SV=5\n"
+        "MKTAYIAKQRQISFVK\n"
+        ">tr|A0A087X1C5|A0A087X1C5_HUMAN Uncharacterized OS=Homo sapiens OX=9606 PE=4 SV=1\n"
+        "QRQISFVKSHFSRQLE\n"
+        ">sp|P43363|MAGA3_HUMAN Melanoma-associated antigen 3 GN=MAGEA3 PE=1 SV=1\n"
+        "EERLGLIEVQ\n")
+
+    g = gene_symbols(fasta)
+    assert set(g) == set(read_fasta(fasta)), "must key exactly like read_fasta"
+    assert g["sp|Q8WZ42|TITIN_HUMAN"] == "TTN"
+    assert g["sp|P43363|MAGA3_HUMAN"] == "MAGEA3"
+    assert g["tr|A0A087X1C5|A0A087X1C5_HUMAN"] is None, "no GN= must map to None, not disappear"
+
+
 # -- near-exact source lookup -------------------------------------------------
 def test_proteome_source_lookup():
     from mhcmatch import Proteome
