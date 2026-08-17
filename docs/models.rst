@@ -154,6 +154,10 @@ The models
    * - name
      - parameters
      - notes
+   * - ``BE``
+     - binder + expression
+     - **the incumbent.** Clinical triage is binding plus expression, so holdout claims are quoted
+       against this column, never against ``B`` alone
    * - ``P``
      - presentation
      - the presentation-only baseline — and the best mean LODO AUROC of the three, at one parameter
@@ -204,10 +208,10 @@ Headline results, each traced to a table in the benchmark repository:
      - **0.786** vs 0.747 AUROC (+0.039)
      - ``immuno_binder_score.md``
    * - ``BDEVF``
-     - **beats** ``binder_score`` **on the frozen Gfeller holdout** — fitted on a peptide-disjoint
-       corpus, then frozen
-     - **0.896** vs 0.794 (+0.102, paired DeLong p < 1e-300)
-     - ``neoag_glm.md``
+     - **beats the** ``BE`` **incumbent on the frozen Gfeller holdout** — fitted peptide-disjoint,
+       then frozen. Quoted against binder+expression, *not* binder alone
+     - **0.896** vs 0.890 (+0.006, paired DeLong p = 0.0018)
+     - ``neoag_risk2.md``
    * - ``C``
      - peptide-grouped 5-fold CV on the Chowell arms
      - **0.7188** human, **0.7718** mouse
@@ -275,14 +279,30 @@ resolve away from zero:
 (+5.6), ``self_tcr`` **−0.464** (−4.6), ``thymus_tcr`` +0.075 (+1.1, unresolved). Viral positive,
 self negative — priming and tolerance, which is what the design predicts.
 
+Not everything here is a linear predictor
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:data:`mhcmatch.rank.GATE` is a **noisy-AND / product of experts**, four parameters, and the shape is
+the hypothesis rather than a convenience::
+
+    P(immunogenic) = sigmoid(a * presentation + b) * sigmoid(c * recognition + d)
+
+A recognition term is worth almost nothing on a peptide that is not presented and a great deal on one
+that is; an additive predictor has one coefficient per term and no way to say that. The product
+collapses to presentation-only when the recognition sigmoid saturates.
+
+**Interactions were fitted, not assumed.** ``binder × para`` and ``binder × ipred`` entered as an
+explicit product block over main effects: nested LRT **χ² = 1.78 on 3 df, p = 0.619** — no
+interaction *within* a cohort. The interplay is real but sits **between** cohorts, with the fitted
+weight on everything-beyond-presentation running from 0.07 on a raw exome screen to 0.91 on a
+binding-prefiltered set. That is what the gate encodes and what a pooled additive fit averages away.
+
 .. note::
 
-   **Interactions were tested and did not earn their place.** A length × role interaction and a
-   bulge/flank split both bought nothing on the recognition axis, which is what localises the length
-   effect: length carries *which residue is preferred where*, not a global reweighting
-   (``length_roles.md``). Terms are kept or dropped on a likelihood test, not a feature-selection
-   loop, so a coefficient whose interval covers zero is reported with its interval rather than
-   removed.
+   A length × role interaction and a bulge/flank split were also tested and bought nothing, which is
+   what localises the length effect: length carries *which residue is preferred where*, not a global
+   reweighting. Terms are kept or dropped on a likelihood test, not a feature-selection loop, so a
+   coefficient whose interval covers zero is reported with its interval rather than removed.
 
 .. warning::
 
