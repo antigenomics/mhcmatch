@@ -92,6 +92,12 @@ mhcmatch.predict module
 mhcmatch.mimics module
 ----------------------
 
+Cross-reactivity by **category**, never summed: a hit in the thymic immunopeptidome argues tolerance
+and autoimmune risk, a hit in the host proteome argues peripheral cross-reactivity without implying
+presentation, and a viral or bacterial hit argues a pre-existing repertoire may cross-react.
+:data:`~mhcmatch.mimics.KINDS` states which is which; :func:`~mhcmatch.mimics.neighbours` runs the
+whole query set through one threaded C++ index per (category, length).
+
 .. automodule:: mhcmatch.mimics
    :members:
    :undoc-members:

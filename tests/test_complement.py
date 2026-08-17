@@ -125,7 +125,8 @@ def test_vendored_parameters_are_self_consistent():
     assert 0.0 < p["prevalence"] < 1.0
     assert set(p["log_odds"]) == set(c for c in p["features"] if c in CM.FITTED)
     for name, src in p["log_odds_source"].items():
-        assert len(p["log_odds"][name]) == {"anchor": 20, "tcr": 20, "pair": 400}[src]
+        assert len(p["log_odds"][name]) == (400 if src == "pair" else 20)
+        assert src.split("@")[0] in ("anchor", "tcr", "pair", *CM.TCR_THIRDS)
     # both Gaussian fits ship alongside, so the head choice stays re-checkable
     for tag in ("em", "supervised"):
         f = p["fits"][tag]
@@ -144,3 +145,32 @@ def test_design_matrix_matches_the_declared_feature_order():
 def test_every_block_contributes_a_declared_feature():
     declared = [c for cols in CM.BLOCKS.values() for c in cols]
     assert sorted(declared) == sorted(CM.feature_names())
+
+
+def test_length_bin_closes_the_tail_and_every_length_is_scorable():
+    """The reason the aa tables are binned rather than per-observed-length: a 12- or 13-mer has no
+    table of its own and must still get a number."""
+    assert [CM.length_bin(L) for L in (6, 8, 9, 10, 11, 12, 25)] == [8, 8, 9, 10, 11, 11, 11]
+    s = CM.score(["AAAIIIIAA", "AAAIIIIAAAAA", "AAAIIIIAAAAAAAAA"])
+    assert np.all(np.isfinite(s))
+
+
+def test_the_tcr_thirds_partition_the_tcr_face_exactly():
+    """`tcr` is the sum of its thirds, so the pooled model is exactly recoverable from the split
+    one and the two constructions cannot drift apart."""
+    _, c = CM.encode(["GILGFVFTL", "SIINFEKL", "AAAAAAAAAAA"])
+    assert np.allclose(c["tcr"], sum(c[t] for t in CM.TCR_THIRDS))
+    # every residue is counted exactly once across anchor + the thirds
+    peps = ["GILGFVFTL", "SIINFEKL", "AAAAAAAAAAA"]
+    assert c["anchor"].sum() + c["tcr"].sum() == sum(len(p) for p in peps)
+
+
+def test_a_length_binned_table_only_sees_its_own_rows():
+    _, c = CM.encode(["GILGFVFTL", "SIINFEKL", "AAAAAAAAAAA"])
+    w = np.arange(20, dtype=float)
+    full = CM.apply_log_odds(c, "anchor", w)
+    for b in CM.LENGTH_BINS:
+        part = CM.apply_log_odds(c, f"anchor@{b}", w)
+        assert np.allclose(part, np.where(c["bin"] == b, full, 0.0))
+    # and they sum back to the pooled column, which is what makes the pooled model a special case
+    assert np.allclose(sum(CM.apply_log_odds(c, f"anchor@{b}", w) for b in CM.LENGTH_BINS), full)

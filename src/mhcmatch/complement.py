@@ -100,18 +100,37 @@ PARATOPE = {
     "T": (0.1307, 0.3778), "D": (0.1813, 0.5419), "C": (0.1994, 0.5024), "H": (0.2189, 0.5621),
 }
 
+#: Length bins for the ``aa`` block: 8, 9, 10 and **11+**. Closed at both ends, which is a
+#: shippability property and not only a variance one -- a model with one table per *observed* length
+#: cannot score a 12-mer at all, and real inputs contain those.
+LENGTH_BINS = (8, 9, 10, 11)
+#: Relative thirds of the TCR-facing face. The same cell means the same fraction along the peptide
+#: at every length, which is what the contact profile already does for its per-position weights.
+TCR_THIRDS = ("tcr_n", "tcr_m", "tcr_c")
+
+
+def length_bin(L) -> int:
+    """Which of :data:`LENGTH_BINS` a peptide of length ``L`` falls in."""
+    return min(max(int(L), LENGTH_BINS[0]), LENGTH_BINS[-1])
+
+
 #: Feature blocks, in the order the benchmark's cumulative ablation adds them.
 BLOCKS = {
     "phys": ["pc1", "pc2", "length"],
     "role": ["pc1_anchor", "pc2_anchor", "pc1_tcr", "pc2_tcr", "kf4_anchor", "kf4_tcr"],
     "pot": ["mj_anchor", "mj_tcr", "para_tcr", "para_sd_tcr"],
     "motif": ["kd_run_max", "kd_run_n", "kd_run_frac"],
-    "aa": ["aa_anchor", "aa_tcr"],
+    "aa": (["aa_anchor", "aa_tcr"]
+           + [f"aa_{r}{b}" for b in LENGTH_BINS for r in ("anchor", "tcr")]
+           + [f"aa_{t}" for t in TCR_THIRDS]),
     "kmer": ["kmer_llr"],
 }
 #: Columns computed from a fitted log-odds table rather than from the peptide alone:
-#: ``feature -> which count matrix it weights``.
-FITTED = {"aa_anchor": "anchor", "aa_tcr": "tcr", "kmer_llr": "pair"}
+#: ``feature -> which count matrix it weights``. ``<matrix>@<bin>`` is that matrix restricted to the
+#: rows of one length bin, so a per-length table costs a mask rather than another count matrix.
+FITTED = {"aa_anchor": "anchor", "aa_tcr": "tcr", "kmer_llr": "pair",
+          **{f"aa_{r}{b}": f"{r}@{b}" for b in LENGTH_BINS for r in ("anchor", "tcr")},
+          **{f"aa_{t}": t for t in TCR_THIRDS}}
 
 _SRC = "complement_mhc1_{species}.json"
 #: Species with a fitted table. Both are the ``chowell_rebuilt`` arm of their own host -- human
@@ -134,9 +153,12 @@ def _load(species: str = "human") -> dict:
     if not 0.0 < p["prevalence"] < 1.0:
         raise ValueError(f"{src}: prevalence {p['prevalence']!r} is not a base rate")
     for name, s in p["log_odds_source"].items():
-        want = {"anchor": 20, "tcr": 20, "pair": 400}[s]
+        want = 400 if s == "pair" else 20
         if len(p["log_odds"][name]) != want:
             raise ValueError(f"{src}: {name} has {len(p['log_odds'][name])} cells, want {want}")
+        base = s.split("@")[0]
+        if base not in ("anchor", "tcr", "pair", *TCR_THIRDS):
+            raise ValueError(f"{src}: {name} weights unknown count matrix {s!r}")
     return p
 
 
@@ -213,7 +235,8 @@ def encode(peptides) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
     peps = [str(p).strip().upper() for p in peptides]
     n = len(peps)
     c_anc = np.zeros((n, 20))
-    c_tcr = np.zeros((n, 20))
+    c_third = {t: np.zeros((n, 20)) for t in TCR_THIRDS}
+    bins = np.array([length_bin(len(p)) for p in peps], dtype=np.int16)
     pair_code: list = []
     pair_row: list = []
     out = {k: np.zeros(n) for k in ("kd_run_max", "kd_run_n", "kd_run_frac")}
@@ -234,7 +257,17 @@ def encode(peptides) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
         valid = code >= 0
         safe = np.where(valid, code, 0)
 
-        for mask, mat in ((anc, c_anc), (~anc, c_tcr)):
+        # The TCR face is accumulated in relative thirds; the pooled `tcr` matrix is their sum, so
+        # the split costs no extra pass and the pooled model stays exactly recoverable from it.
+        tcr_pos = [j for j in range(L) if not anc[j]]
+        k = len(tcr_pos)
+        thirds = [tcr_pos[int(k * f):int(k * g)] for f, g in ((0, 1 / 3), (1 / 3, 2 / 3), (2 / 3, 1))]
+        masks = [("anchor", anc, c_anc)]
+        for name, cols in zip(TCR_THIRDS, thirds):
+            m = np.zeros(L, dtype=bool)
+            m[cols] = True
+            masks.append((name, m, c_third[name]))
+        for _, mask, mat in masks:
             sel = valid & mask[None, :]
             if sel.any():
                 np.add.at(mat, (np.repeat(rows, L)[sel.ravel()], safe[sel]), 1)
@@ -263,6 +296,7 @@ def encode(peptides) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
             pair_code.append(code2[ok])
             pair_row.append(np.repeat(rows, L - 1)[ok.ravel()])
 
+    c_tcr = sum(c_third[t] for t in TCR_THIRDS)
     c_all = c_anc + c_tcr
     out["pc1"] = c_all @ BASIS["pc1"]
     out["pc2"] = c_all @ BASIS["pc2"]
@@ -276,7 +310,7 @@ def encode(peptides) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
     out["para_sd_tcr"] = (c_tcr @ BASIS["para_sd"]) / ntcr
     cat = np.concatenate
     empty = np.empty(0, dtype=np.int64)
-    return out, {"anchor": c_anc, "tcr": c_tcr, "n": n,
+    return out, {"anchor": c_anc, "tcr": c_tcr, **c_third, "bin": bins, "n": n,
                  "pair_code": cat(pair_code) if pair_code else empty,
                  "pair_row": cat(pair_row) if pair_row else empty}
 
@@ -284,13 +318,22 @@ def encode(peptides) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
 def apply_log_odds(counts: dict, source: str, weights) -> np.ndarray:
     """A fitted log-odds table applied to one count structure -- one value per peptide.
 
-    ``anchor``/``tcr`` are dense (n, 20) and this is a matrix product. ``pair`` is the sparse pair
-    list, and summing ``weights[code]`` per row with :func:`numpy.bincount` costs O(pairs) rather
-    than O(n x 400) -- the difference between seconds and a gigabyte of temporaries on a corpus."""
+    ``anchor`` / ``tcr`` / the three :data:`TCR_THIRDS` are dense (n, 20) and this is a matrix
+    product. ``pair`` is the sparse pair list, and summing ``weights[code]`` per row with
+    :func:`numpy.bincount` costs O(pairs) rather than O(n x 400) -- the difference between seconds
+    and a gigabyte of temporaries on a corpus.
+
+    ``"<matrix>@<bin>"`` is that matrix restricted to one :data:`LENGTH_BINS` bin. The restriction
+    is applied to the **result**, not by materialising a masked copy: a per-length table is then a
+    length-n mask rather than another (n, 20) matrix, which is what makes eight of them affordable.
+    """
     w = np.asarray(weights, dtype=np.float64)
     if source == "pair":
         return np.bincount(counts["pair_row"], weights=w[counts["pair_code"]],
                            minlength=counts["n"])[:counts["n"]]
+    if "@" in source:
+        base, b = source.split("@")
+        return np.where(counts["bin"] == int(b), counts[base] @ w, 0.0)
     return counts[source] @ w
 
 

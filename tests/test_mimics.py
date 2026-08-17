@@ -3,6 +3,8 @@
 Self-contained: uses tiny synthetic reference sets (no compendium download). The scan itself goes
 through seqtree's find_mimics, so it needs the compiled seqtree core (present in the dev venv).
 """
+import os
+
 from mhcmatch import mimics as M
 
 
@@ -83,3 +85,30 @@ def test_scan_fast_path_agrees_with_find_mimics():
     assert slow == fast
     assert all(r.e_value != r.e_value                      # nan, i.e. not computed
                for r in M.scan(binders, self_set, foreign, evalue=False))
+
+
+def test_kinds_covers_every_category_and_says_what_a_hit_argues():
+    """A category with no KINDS entry would be reported without an interpretation."""
+    for cat in list(M.DEFAULT_REFS) + list(M.PROTEOME_REFS):
+        assert cat in M.KINDS, cat
+    # self and thymus are both tolerance references but are deliberately NOT the same category:
+    # one is presented during negative selection, the other is merely encoded
+    assert M.KINDS["thymus"] == M.KINDS["self"] == "self"
+    assert "self" in M.PROTEOME_REFS and "thymus" not in M.PROTEOME_REFS
+    assert M.KINDS["viral"] == M.KINDS["bacterial"] == "foreign"
+
+
+def test_proteome_reference_sets_are_rejected_for_class_II():
+    """15 class-II lengths x several proteomes is tens of millions of windows; fail loudly --
+    and before any download, not after."""
+    import pytest
+    with pytest.raises(ValueError, match="class II"):
+        M.load_reference_sets(None, "mhc2", proteomes=("bacterial",))
+
+
+def test_default_reference_paths_exist_in_the_deposit():
+    """Regression: `neoag` pointed at immunogenicity/ after the deposit moved it to neoantigens/,
+    so the documented default set 404'd for anyone without a local mirror."""
+    from mhcmatch.store import fetch_file
+    for name, (rel, _) in M.DEFAULT_REFS.items():
+        assert os.path.exists(fetch_file(rel)), f"{name}: {rel}"

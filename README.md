@@ -8,7 +8,7 @@
   </picture>
 </p>
 
-<h1 align="center">mhcmatch — Peptide–MHC presentation &amp; cross-reactivity</h1>
+<h1 align="center">mhcmatch — which neoantigens are presented, and which ones a T cell will see</h1>
 
 <p align="center">
   <a href="https://pypi.org/project/mhcmatch/"><img alt="PyPI" src="https://img.shields.io/pypi/v/mhcmatch"></a>
@@ -18,252 +18,195 @@
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-GPLv3-green"></a>
 </p>
 
-Peptide–MHC presentation, cross-reactivity, and motif tools — the applied peptide–MHC layer on top
-of the [`seqtree`](https://github.com/antigenomics/seqtree) fuzzy-search substrate. `mhcmatch`
-productionizes the reference `seqtree.pmhc` methodology (anchor-masked TCR-facing homology,
-presentation-aware E-values, allele guessing) and adds a **pseudosequence-based cross-allele
-diffusion model** that rescues rare alleles by borrowing from groove-similar frequent ones.
-
-The mathematical/statistical theory is in the manuscript repo
-(`../../manuscripts/2026-mhcmatch/appendix/mhcmatch.tex`); the
-development plan is in [`ROADMAP.md`](ROADMAP.md).
-
-## What it does (v0)
-
-1. **MHC restriction & presentation** — rank presenting alleles for a peptide (single / set / all,
-   human & mouse), flag non-binders, and scan a whole protein for presented peptides.
-2. **Large-scale similarity search** — find similar peptides across big sets / proteomes, either by
-   *same-MHC binding* (presentation signature) or *similar TCR recognition* (anchor-masked,
-   TCR-facing); neoantigen molecular mimicry with per-allele E-values.
-3. **Anchor / TCR-facing split** — decompose a peptide into anchor and TCR-facing parts (`X` masks).
-4. **Near-exact source lookup** — find the self peptide a neoantigen derives from + its parent
-   protein / mutated position, against a reference proteome.
-5. **Motif logos** — per-allele information-content logos with length distributions.
-6. **Pseudosequence diffusion** — allele similarity, clustering, and kernel-shrinkage pooling over
-   34-mer groove pseudosequences (rare-allele rescue).
-7. **Quantitative affinity (IC50 nM)** — a pan-allele Potts-style model (single-site fields + peptide×pocket
-   coupling features, ridge-fit on measured IEDB IC50) predicts nM affinity and the neoantigen-fitness differentials
-   — Łuksza amplitude `A = Kd_WT/Kd_MT` and the differential agretopicity index — for MHC-I and MHC-II,
-   human and mouse. Optional structure-based MJ ΔΔG via the `[structure]` extra (`tcren`).
-8. **Generalized binder score** — the recommended single-number neoantigen index: a calibrated combined
-   %rank fusing presentation and affinity (Fisher's method). On the clean TESLA immunogenicity set it
-   **beats NetMHCpan** (AUROC 0.786 vs 0.747) at ~68× the speed.
-9. **Physicochemical immunogenicity** (`mhcmatch.ipred`) — the question presentation cannot answer:
-   of the peptides an allele *does* present, which ones a repertoire responds to. Two principal
-   components of the 20×142 amino-acid **property** matrix (PC1 is a hydrophobicity axis) plus
-   peptide length, under two class-conditional Gaussians — **13 fitted parameters**, not a trained
-   discriminative model — emitting a calibrated `log P(immunogenic)`, never a hard label. Pure
-   Python, no numpy on the scoring path.
-10. **Complementarity** (`mhcmatch.complement`) — the same axis, grown up. Six feature blocks:
-    `ipred`'s physicochemistry and length; the same components split **MHC-facing vs TCR-facing**;
-    MJ1996 on the anchors and **TCRen marginalised over 28M real CDR3 loops** on the TCR-facing
-    side; contiguous-hydrophobic-run motifs; per-role **residue log-odds** (whose two columns
-    reproduce `mhcmatch.posbayes` exactly, so that model is a strict special case); and adjacent
-    TCR-facing dipeptides. Emits a prior-free log-odds, **per species** (human and mouse tables,
-    never pooled). **Vectorised** — a whole published corpus scores in seconds, so pass a list
-    rather than looping.
-11. **Known-epitope lookup** (`mhcmatch.known`) — five reference sets built from the public
-    deposits: confirmed tumour neoantigens, peptides the screens tested and found non-immunogenic,
-    IEDB-immunogenic epitopes, the thymic self-immunopeptidome, and the viral ligandome. An exact
-    match is stronger evidence than any model output, so `mhcmatch.rank` reports it as a flag and
-    floats those candidates into a tier of their own instead of folding it into the score.
-
-## Install
+Pure Python, no compiled extension beyond the [`seqtree`](https://github.com/antigenomics/seqtree)
+search core, MHC-I and MHC-II, human and mouse. Every reference dataset is fetched from
+[`isalgo/pmhc_data`](https://huggingface.co/datasets/isalgo/pmhc_data) on first use, so a fresh
+`pip install` runs every example in this file with no manual downloads.
 
 ```bash
-bash setup.sh            # repo-local .venv + editable install (uses sibling ../seqtree if present)
-bash setup.sh --tests    # + pytest
-bash setup.sh --logo     # + logomaker/matplotlib for rendering logos
+pip install mhcmatch
+mhcmatch bootstrap                                   # pre-fetch the panel (optional; ~16 MB)
 ```
 
-## Quickstart
+```bash
+# rank a donor's neoantigen candidates end to end
+mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor SKCM --out ranked.tsv
+```
+
+## Pick your entry point
+
+| your question | command | Python |
+|---|---|---|
+| Which of these peptides does an allele present? | `mhcmatch predict f.fasta --cls mhc1` | `predict.predict_fasta` |
+| Which allele presents this peptide? | `mhcmatch restriction PEP --calibrated` | `store.restriction` |
+| Is it a binder at all, one number? | `mhcmatch binder PEP` | `store.binder_score` |
+| What is the IC50, and vs its wild type? | `mhcmatch affinity PEP --wt WTPEP` | `store.affinity_model` |
+| Will a T cell respond to it? | `mhcmatch complement --peptides p.txt` | `complement.score` |
+| Rank neoantigen candidates for a donor | `mhcmatch rank fasta ...` | `rank.rank_fasta` |
+| Why did *this* candidate rank there? | `mhcmatch explain PEP --allele A` | — |
+| What self / viral / bacterial peptide does it mimic? | `mhcmatch mimics --peptides p.txt` | `mimics.neighbours` |
+| Where in the proteome does it come from? | `mhcmatch source --peptides p.txt --proteome human` | `Proteome.find_sources` |
+| What does this allele's motif look like? | `mhcmatch logo 'HLA-A*02:01'` | `logo.motif` |
+| Which peptides in this protein are presented? | `mhcmatch scan p.fasta --correction bh` | `store.scan_protein` |
+| What is the full MHC-II ligand around this core? | `mhcmatch span CORE --protein p.fasta` | `ligand.presented_span` |
+
+`predict` is the presentation axis (**is it presented at all**, the NetMHCpan `%Rank_EL` analogue);
+`restriction` is the specificity axis (**which allele**). They answer different questions and a
+peptide can top one and not the other — `NLVPMVATV` is unambiguously A\*02:01-restricted yet bands
+mid-pack against A\*02:01's own ligands.
+
+## Batch and threads — read this before scripting a loop
+
+**Pass `--peptides FILE` to any peptide-keyed command.** The expensive part of most of them is setup
+that a per-peptide invocation pays again every time: the presentation and affinity calibrators are
+~5 s, the binder calibrator ~45 s, a human-proteome length index ~70 s. All of it is cached for the
+life of the process, so one process over a whole list is the difference between 49 s per peptide and
+thousands per second. Measured, both ways, in
+[`bench/cli/`](https://github.com/antigenomics/2026-mhcmatch-benchmark).
+
+```bash
+mhcmatch binder     --peptides peptides.txt --alleles "$ALLELES" --top 1 --out binders.tsv
+mhcmatch complement --peptides peptides.txt --prior 4.2e-4       --out recognition.tsv
+mhcmatch affinity   --peptides pairs.tsv --allele 'HLA-A*02:01'  --out affinity.tsv   # pairs.tsv has
+                                                                     # peptide + wt_peptide columns
+mhcmatch source     --peptides peptides.txt --proteome human --threads 0 --out sources.tsv
+mhcmatch mimics     --peptides peptides.txt --categories thymus,viral,bacterial --threads 0
+cut -f1 table.tsv | mhcmatch complement --peptides -              # `-` reads stdin
+```
+
+The input is one peptide per line, or a TSV with a `peptide` column (`.gz` fine); the output is TSV
+with a header on stdout or `--out`. `--threads` is offered **only** on `source` and `mimics`, whose
+neighbour search runs in C++ with the GIL released; everywhere else the per-peptide work is a small
+numpy product and a thread pool would buy nothing, so the flag is absent rather than ignored.
+
+## The two axes
+
+Presentation is necessary and not sufficient: most presented peptides are ignored. mhcmatch keeps
+the two questions apart and combines them with a **gate** (a product of sigmoids), not a sum, so a
+candidate that fails either one cannot be rescued by the other.
+
+**Presentation** — per-allele %rank / `P(present)` / band from a learned anchor model with
+cross-allele **pseudosequence diffusion** (rare alleles borrow from groove-similar frequent ones), a
+K=3 motif mixture and per-allele register EM for class II; plus a pan-allele **Potts affinity head**
+(IC50 nM, Łuksza amplitude `A = Kd_WT/Kd_MT`, DAI). Their calibrated combination is the
+**generalized binder score** (`binder_rank`), the recommended single-number binder index.
+
+**Recognition** — `mhcmatch.complement`, a prior-free log-odds over six blocks: physicochemistry and
+length; the same components split **MHC-facing vs TCR-facing**; MJ1996 on the anchors and **TCRen
+marginalised over 28 M real CDR3 loops** on the TCR-facing side; contiguous-hydrophobic-run motifs;
+per-role **residue log-odds**, now with per-length (8/9/10/11+) and relative-position tables; and
+adjacent TCR-facing dipeptides. Fitted per species and never pooled across hosts. Vectorised — a
+whole published corpus scores in seconds, so pass a list. `mhcmatch.posbayes` and `mhcmatch.ipred`
+are strict special cases of it and ship alongside for comparison.
+
+**Evidence that outranks a model.** `mhcmatch.known` carries five reference sets built from the
+public deposits — confirmed tumour neoantigens, peptides the screens tested and found
+non-immunogenic, IEDB-immunogenic epitopes, the thymic self-immunopeptidome, the viral ligandome. An
+exact match is stronger evidence than any score, so `rank` reports it as a flag and floats those
+candidates into a tier of their own instead of folding it into the number.
+
+**Cross-reactivity.** `mhcmatch.mimics` reports near-identical reference peptides per category, and
+never sums them, because a hit in each argues something different: **thymus** (presented during
+negative selection — tolerance, and autoimmune risk for a vaccine), **self** (encoded but not known
+to be presented), **viral** / **bacterial** (a pre-existing repertoire may cross-react, raising
+immunogenicity), **neoag** (already tested somewhere).
+
+## Python
 
 ```python
 import mhcmatch
+from mhcmatch import complement, known, mimics
 
-# build from the isalgo/pmhc_data table (full or shortlist tier; auto-fetched from HF, cached)
-store = mhcmatch.Store.from_pmhc(tier="shortlist", species="human")
+store = mhcmatch.Store.from_pmhc(tier="shortlist", species="human")   # auto-fetched from HF, cached
 
-store.restriction("NLVPMVATV")                  # ranked presenting alleles + binder flags
-store.is_binder("NLVPMVATV", "HLA-A*02:01")
-store.scan_protein(my_protein, cls="mhc1")       # presented peptides in a protein
-store.decompose("NLVPMVATV", cls="mhc1")         # (tcr_facing, presentation) with X masks
+store.restriction("NLVPMVATV", calibrated=True)      # ranked alleles + %rank / P(present) / band
+store.binder_score("NLVPMVATV")                      # the single-number binder index
+store.scan_protein(my_protein, cls="mhc1")
+store.decompose("NLVPMVATV")                         # anchor / TCR-facing split, with X masks
 
-# similarity at scale
-mhcmatch.search.search("NLVPMVATV", big_peptide_set, mode="tcr")   # TCR-facing homologs
-mhcmatch.search.find_mimics("EAAGIGILTV", self_set, bacterial_sets={...})
-
-# near-exact source of a neoantigen
-pm = mhcmatch.Proteome.from_hf("human")          # auto-fetched from HF (or .from_fasta(<your FASTA>))
-pm.find_source("NLVPMVATV", max_subs=1)
-
-# pseudosequence allele similarity + rare-allele diffusion
-ps = mhcmatch.Pseudoseq("mhc1")
-ps.neighbors("HLA-A*02:01", candidates=store.alleles("mhc1"))
-
-# diffusion-powered forward scorer (rescues rare alleles by borrowing from groove-neighbours)
-am = store.anchor_model("mhc1")          # learned anchor weights + bounded-prior shrinkage
-am.score("NLVPMVATV", "HLA-A*02:01")     # anchor log-odds; am.score(..., raw=True) disables borrowing
-
-# footprint (which core positions) and background (the log-odds null) tune the model to the question:
-store.anchor_model("mhc1", footprint="adaptive")             # anchors for rare alleles, full core otherwise
-store.anchor_model("mhc1", background="proteome")            # presentation null (is it presented at all?)
-store.anchor_model("mhc1", background="ligand")              # specificity null (which allele? — default)
-
-# per-allele / per-position estimators (v0.7.2) — all inert at their defaults
-store.anchor_model("mhc2", register_em="converge")           # each allele's register EM runs to ITS OWN
-                                                             # fixed point, not a shared pass count
-store.anchor_model("mhc1", prior_strength="auto")            # empirical-Bayes tau per anchor position
-store.anchor_model("mhc2", pseudocount=50)                   # BLOSUM substitution pseudocount (a measured
-                                                             # negative; off by default — see CHANGELOG)
-
-# calibrated, cross-allele-comparable output on the ALLELE-SPECIFICITY axis (which allele, not
-# how presentable): %rank vs a random-peptide background + P(present) + band. NLVPMVATV is
-# unambiguously A*02:01-restricted (it tops the list) but bands mid-pack against A*02:01's own
-# ligands. For the presentation axis (NetMHCpan %Rank_EL: is it presented at all?) use `predict`.
-for r in store.restriction("NLVPMVATV", cls="mhc1", calibrated=True):
-    print(r.allele, r.rank, r.p_present, r.band)             # HLA-A*02:01 ranks first
-
-mhcmatch.logo.motif(store, "HLA-A*02:01", "mhc1")
-
-# quantitative affinity + neoantigen-fitness differentials (Potts model, vendored weights)
 aff = store.affinity_model("mhc1")
-aff.predict_ic50("NLVPMVATV", "HLA-A*02:01")            # -> ~64 nM
-aff.amplitude("NLVPMVATL", "NLVPMVATV", "HLA-A*02:01")  # Kd_WT/Kd_MT (Łuksza eq. 9) -> ~2.05
-aff.dai("NLVPMVATL", "NLVPMVATV", "HLA-A*02:01")        # differential agretopicity (log10 ratio)
-store.affinity_model("mhc2").predict_ic50("PKYVKQNTLKLAT", "HLA-DRB1*15:01")   # MHC-II, core auto-located
+aff.predict_ic50("NLVPMVATV", "HLA-A*02:01")             # ~64 nM
+aff.amplitude("NLVPMVATL", "NLVPMVATV", "HLA-A*02:01")   # Kd_WT/Kd_MT (Łuksza eq. 9)
+
+complement.score(peptides)                           # vectorised: pass the list, not a loop
+complement.posterior(peptides, prior=4.2e-4)         # the log-odds carries NO prior; supply yours
+complement.score(peptides, species="mouse")          # separate table; the hosts are never pooled
+
+known.lookup("GILGFVFTL")                            # -> 'viral'
+mimics.neighbours(peptides, ref_sets, threads=0)     # threaded C++ neighbour search
+
+pm = mhcmatch.Proteome.from_hf("human")
+pm.find_sources(peptides, max_subs=1, threads=0)     # batch; find_source() is the single-query form
+pm.wildtype("NLVPMVATV")                             # the WT counterpart, for agretopicity
 ```
 
-## Command line
-
-```fish
-mhcmatch decompose NLVPMVATV                                  # anchor / TCR-facing split (no data)
-set -x MHCMATCH_PMHC /path/to/pmhc_data                       # or pass --pmhc to each command
-mhcmatch restriction NLVPMVATV --allele 'A*02:01' --diffuse   # allele name auto-resolved; rare-aware
-mhcmatch restriction NLVPMVATV --calibrated                   # + %rank, P(present), binding band
-mhcmatch scan my_protein.fasta --correction bh                # presented windows, BH-FDR controlled
-mhcmatch source MKTAYIAKW --proteome human                    # HF name auto-fetched (or a FASTA path)
-mhcmatch logo 'HLA-A*02:01'
-mhcmatch affinity NLVPMVATV --allele 'A*02:01' --wt NLVPMVATL   # IC50 nM + amplitude A=Kd_WT/Kd_MT + DAI
-mhcmatch predict neoantigens.fasta --cls mhc1                   # score a FASTA -> native + .scored.csv
-mhcmatch span PKYVKQNTLKLAT --allele 'DRB1*15:01'              # MHC-II core -> full presented ligand
-```
-
-**"I have a FASTA of neoantigens — which are presented, by which allele?"** → `mhcmatch predict
-peptides.fasta --cls mhc1`. A plain one-peptide-per-record FASTA works; the pipeline schema (WT
-counterpart, agretopicity) only *adds* variant annotation. It carries the task-correct presentation
-defaults (`background="proteome"`), so this — not `restriction` — is the presentation-axis entry point.
-
-## Worked examples
-
-[`notebooks/`](notebooks/README.md) holds four [marimo](https://marimo.io) notebooks — plain Python
-files, so they diff like source — covering the core workflow and `binder_score`, the `mhcmatch.immuno`
-feature set, TCR precursor frequency (`mhcmatch.precursor`), and mimicry scanning
-(`mhcmatch.mimics`). Each bootstraps its own data from the public HF datasets, so `pip install
-'mhcmatch[notebooks]'` is enough to run them.
+Full API: [antigenomics.github.io/mhcmatch](https://antigenomics.github.io/mhcmatch/). Six
+[marimo](https://marimo.io) notebooks in [`notebooks/`](notebooks/README.md) run the workflows end to
+end on whole published deposits (`pip install 'mhcmatch[notebooks]'`).
 
 ## Data
 
-- **Reference ligands:** the public HF dataset [`isalgo/pmhc_data`](https://huggingface.co/datasets/isalgo/pmhc_data)
-  (full / shortlist tiers). `Store.from_pmhc()` **auto-fetches** `pmhc/pmhc_<tier>.tsv.gz` on first use
-  (cached by `huggingface_hub`) — no manual download, which is what lets the container/nextflow deploy
-  bootstrap with no pre-staged data. Override with a local copy via `Store.from_pmhc(path=...)` or
-  `$MHCMATCH_PMHC`.
-- **Pseudosequences:** 34-mer groove pseudosequences vendored in `src/mhcmatch/data/` (see its
-  `PROVENANCE.md`).
-- **Reference proteomes:** the human (UP000005640) and mouse (UP000000589) UniProt proteomes — plus
-  pathogen proteomes for mimicry — live in the same HF dataset. `Proteome.from_hf("human")` /
-  `mhcmatch source --proteome human` **auto-fetch** them (cached), or `mhcmatch bootstrap --proteome
-  human,mouse` to pre-fetch. Pass your own FASTA to `Proteome.from_fasta` to override.
+Everything is fetched on demand from [`isalgo/pmhc_data`](https://huggingface.co/datasets/isalgo/pmhc_data)
+and cached by `huggingface_hub`; `$MHCMATCH_PMHC_DIR` points at a local mirror instead.
 
-## Benchmark vs NetMHCpan
-
-> **Benchmarks live in a separate repo.** `bench/` moved to
-> [`2026-mhcmatch-benchmark`](https://github.com/antigenomics/2026-mhcmatch-benchmark) — the head-to-head harness, the `bench/results/*.md`
-> tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
-> below resolve there, not here.
-
-
-A reproducible head-to-head against **NetMHCpan-4.2b** and **NetMHCIIpan-4.3i** lives in
-`bench/compare/` (results in `bench/results/compare_*.md`, provenance and caveats in
-`bench/compare/SOURCES.md`). It compares the two tools on the *same*
-per-(peptide, allele) task, stratified by allele rarity, with AUROC / AUPRC / PPV@k, bootstrap CIs and
-paired significance. Headline results (shortlist tier, human, seed 0):
-
-- **Immunogenicity ranking** (the downstream question — is a neoantigen T-cell-immunogenic?): on the
-  clean, predictor-agnostic **TESLA-608** set the v0.8.0 generalized binder score **beats NetMHCpan**
-  (AUROC 0.786 vs 0.747; each single head also beats it) — see the dedicated section below.
-- **Allele-specificity** (which allele presents a peptide — the restriction problem): mhcmatch **beats**
-  NetMHCpan on MHC-I medium and frequent alleles on AUROC, AUPRC *and* PPV@k (all p < 0.001; e.g.
-  frequent AUPRC 0.850 vs 0.769). Rare MHC-I is a wash (+0.008 AUROC, p = 0.41).
-- **Presented-vs-random screening** (`background="proteome"`): mhcmatch **beats** NetMHCpan on MHC-I
-  frequent alleles (AUROC p < 0.001, AUPRC 0.881 vs 0.846, p = 0.001). Medium and rare are a wash —
-  the deltas sit inside the CI. This task is much easier for both tools (every AUROC ≥ 0.97).
-- **MHC-II** (K=3 mixture, the shipped default): mhcmatch **wins the rare stratum** on both tasks
-  (screening AUPRC 0.648 vs 0.610; specificity 0.521 vs 0.473) and NetMHCIIpan leads medium and frequent.
-  **The frequent gap is one locus, not the class:** per-allele, DP averages **−0.305** AUPRC while **DR
-  is already at parity or better (+0.010)** — "class II", "frequent" and "DP" are three labels for one
-  cell. The mechanism is a **register-EM convergence failure on DPA1\*02:01** (core-offset prior at
-  H/Hmax 0.89–0.98, i.e. random-peptide flat, on 100% mass-spec ligands); `register_em="converge"` closes
-  **28%** of it (0.625 → 0.667). See `bench/results/register_em_convergence_dp.md`.
-  Read these with `compare/SOURCES.md` in hand: NetMHCIIpan trained on essentially all public IEDB
-  eluted-ligand data, so the in-corpus medium/frequent strata are contaminated in its favour and the
-  rare/zero-shot axis is the fair one.
-- **Mouse MHC-II**: mhcmatch **wins all nine cells** on the specificity task
-  (`compare_mhc2_mouse_hard_ligandbg.md`) — the only panel where it leads every stratum on every metric.
-- **Speed:** MHC-I scores ~**68×** faster than NetMHCpan (pure Python, ~195k–260k peptide-allele
-  scores/s, warm cache). The MHC-II default is heavier — 3 mixture components × ~7 register frames per
-  score — at ~19k scores/s (~6.6× NetMHCIIpan); still pure Python, no compiled extension.
-
-```fish
-python bench/compare/run_compare.py --cls mhc1 --decoy-mode hard   --background ligand    # specificity
-python bench/compare/run_compare.py --cls mhc1 --decoy-mode random --background proteome  # screening
+```bash
+mhcmatch bootstrap                              # the reference ligand panel, both tiers (~16 MB)
+mhcmatch bootstrap --proteome human,mouse       # + reference proteomes
+mhcmatch bootstrap --reference                  # + corpora, known-epitope, mimicry, expression (~115 MB)
 ```
 
-### Immunogenicity ranking — the generalized binder score (v0.8.0)
+Pseudosequences (34-mer grooves) and the fitted model parameters are vendored in
+`src/mhcmatch/data/` with their `PROVENANCE.md`. Nothing is refitted at import.
 
-The shipped recommendation for ranking neoantigens is the **generalized binder score**
-(`store.binder_score` / `mhcmatch binder`): a **calibrated combined %rank** that fuses the presentation
-head (`AnchorModel` %rank) and the affinity head (`PottsAffinity` %rank) via Fisher's method — a soft-AND
-that scores high only when a peptide is *both* presented and binds. The two heads are complementary along
-the binding-strength axis (presentation rescues weak-but-presented ligands, affinity rescues
-strong-but-atypical binders), so the blend beats either alone.
+## Deployment
 
-Each result also carries **`p_binder`** — the isotonic-calibrated `P(binder)` over the same combined
-statistic. Use `binder_rank` to *rank* candidates and `p_binder` when a downstream model needs a
-probability on an absolute scale: unlike a %rank re-normalised per candidate pool, it does not move
-when the pool changes.
+`integrations/nextflow/mhcmatch/` is a self-contained nf-core-style module (`main.nf`,
+`nextflow.config`, `environment.yml`, `Dockerfile`) that drops in for MHCflurry class I and the
+class-II binding subworkflow, consuming the same `(meta, peptide.fasta, alleles)` channel and
+emitting a pipeline-compatible `.scored.csv`. The image bootstraps its panel at **build** time, so
+compute nodes need no network.
 
-On **TESLA-608** (Wells et al. 2020 — 608 candidates, 37 T-cell-validated; the clean, predictor-agnostic
-set every tool scores independently) mhcmatch **beats NetMHCpan**:
+## Benchmarks
 
-| ranker | AUROC | Δ vs NetMHCpan |
-|---|--:|--:|
-| NetMHCpan-4.2 (embedded nM affinity) | 0.747 | — |
-| mhcmatch affinity %rank | 0.757 | +0.010 |
-| mhcmatch presentation %rank | 0.763 | +0.016 |
-| **mhcmatch `binder_score`** | **0.786** | **+0.039** |
+> Harness and result tables live in
+> [`2026-mhcmatch-benchmark`](https://github.com/antigenomics/2026-mhcmatch-benchmark). Paths like
+> `bench/results/...` resolve there.
 
-`bench/results/immuno_binder_score.md` — and at **~68× the scoring speed** (pure Python). On real donor
-neoantigen lists (Gamaleya, 20 donors) mhcmatch's allele calls are as close to NetMHCpan as MHCflurry's
-are (87.2% vs 87.4% — no measurable gap).
+Head-to-head against **NetMHCpan-4.2b** / **NetMHCIIpan-4.3i** on the same per-(peptide, allele)
+task, stratified by allele rarity, with bootstrap CIs and paired significance
+(`bench/compare/SOURCES.md` for provenance and caveats):
 
-The affinity head also gives what a %rank cannot: the quantitative WT-vs-mutant **ratio** (Łuksza
-amplitude `A = Kd_WT/Kd_MT`, DAI) for neoantigen fitness — a compact, dependency-light linear model
-(numpy-only dot product, ~µs/peptide). Its standalone nM-regression accuracy vs NetMHCpan −BA, and the
-known length-blindness caveat, are tracked in the benchmark repo (`bench/affinity/`) and ROADMAP §6c;
-for **ranking**, use the calibrated `binder_score`, not the raw nM.
+- **Immunogenicity ranking on TESLA-608** (608 candidates, 37 T-cell-validated; predictor-agnostic,
+  every tool scores it independently) — mhcmatch's `binder_score` **0.786** AUROC vs NetMHCpan
+  **0.747**; each single head also beats it (affinity 0.757, presentation 0.763).
+  `bench/results/immuno_binder_score.md`.
+- **Allele specificity, MHC-I** — mhcmatch beats NetMHCpan on medium and frequent alleles on AUROC,
+  AUPRC and PPV@k (all p < 0.001; frequent AUPRC 0.850 vs 0.769). Rare is a wash (p = 0.41).
+- **Presented-vs-random screening** — mhcmatch wins MHC-I frequent (AUPRC 0.881 vs 0.846, p = 0.001);
+  medium and rare sit inside the CI. Both tools are ≥ 0.97 here.
+- **MHC-II** — mhcmatch wins the **rare** stratum on both tasks; NetMHCIIpan leads medium and
+  frequent. That gap is **one locus, not the class**: DP averages −0.305 AUPRC while **DR is at
+  parity or better (+0.010)**, and the mechanism is a register-EM convergence failure on
+  DPA1\*02:01 that `register_em="converge"` closes 28 % of. `bench/results/register_em_convergence_dp.md`.
+- **Mouse MHC-II** — mhcmatch wins all nine cells on specificity.
+- **Speed** — MHC-I ~195k–260k peptide-allele scores/s (~68× NetMHCpan); MHC-II ~19k/s (~6.6×
+  NetMHCIIpan), heavier because of 3 mixture components × ~7 register frames.
+- **Recognition** — the complementarity score beats the shipped `posbayes` sum on all four corpus
+  arms and both hosts under peptide-grouped CV; the per-length and relative-position role tables add
+  +0.007 to +0.021 AUROC on top, with paired bootstrap CIs excluding zero on every arm.
+  `bench/results/complementarity.md`, `bench/results/length_roles.md`.
 
-```fish
-mhcmatch binder NLVPMVATV --alleles 'HLA-A*02:01,HLA-B*07:02' --cls mhc1   # ranked generalized binder score
+Read the class-II numbers with `compare/SOURCES.md` in hand: NetMHCIIpan trained on essentially all
+public IEDB eluted-ligand data, so its in-corpus medium/frequent strata are contaminated in its
+favour and the rare / zero-shot axis is the fair comparison.
+
+## Development
+
+```bash
+bash setup.sh            # repo-local .venv + editable install (uses a sibling ../seqtree if present)
+bash setup.sh --tests    # + pytest
+pytest -q
 ```
 
-## Status
-
-Beta (v0.8.0). Presentation scoring (per-allele diffusion, K=3 motif mixture, marginal register,
-per-allele register-EM convergence, empirical-Bayes τ), affinity (IC50 nM) + neoantigen amplitude/DAI,
-the **generalized binder score** (calibrated presentation×affinity %rank — the recommended ranking axis),
-ligand spans, and calibrated %rank — all for MHC-I/II, human & mouse; optional structure-based MJ ΔΔG
-via the `[structure]` extra. See [`ROADMAP.md`](ROADMAP.md) for what's next (a learned reranker for
-rare-allele screening, ligandome-refit couplings for MHC-II cooperativity, full-tier + temporal cluster
-sweeps, and the stability/immunogenicity predictors).
+Theory and derivations are in the manuscript repo (`appendix/mhcmatch.tex`); what is planned and what
+is in flight is in [`ROADMAP.md`](ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).

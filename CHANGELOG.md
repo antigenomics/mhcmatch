@@ -6,6 +6,63 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [Unreleased]
+
+A CLI that can be pointed at a file, a length-aware recognition model, and mimic categories that say
+what they mean.
+
+### Added
+
+- **`--peptides FILE` on every peptide-keyed command** — `decompose`, `restriction`, `affinity`,
+  `binder`, `source`, `explain`, `complement`, and the new `mimics`. One peptide per line or a TSV
+  with a `peptide` column; `-` reads stdin; output is TSV on stdout or `--out`. This is the fix for
+  the real cost of the CLI, which was never the scoring: the presentation and affinity calibrators
+  are ~5 s, the binder calibrator ~45 s and a human-proteome length index ~70 s — all cached for the
+  life of the process, and all re-paid by a shell loop. `bench/cli/run_cli_bench.zsh` measures both
+  forms of every command.
+- **`--threads` on `source` and `mimics`**, and deliberately nowhere else. Those two run the
+  neighbour search in C++ with the GIL released; every other command's per-peptide work is a small
+  numpy product, so the flag is absent rather than accepted and ignored.
+- **`mhcmatch mimics`** — the module had no CLI at all. Reports near-identical reference peptides
+  per category with that category's *kind*, batched and threaded.
+- **`mhcmatch.proteome.Proteome.find_sources`** — the batch form of `find_source`: one index build
+  per length and one threaded `search_batch`, instead of one Python-level query per peptide. Also
+  `windows(L)`, the public form of the window set the mimic loaders need.
+- **`mhcmatch.mimics.KINDS` and `PROTEOME_REFS`** — the mimic categories are now `thymus`, `self`,
+  `viral`, `bacterial` and `neoag`, each with what a hit in it *argues*, and they are never summed.
+  `self` (the host proteome) is kept separate from `thymus` (the thymic immunopeptidome) because
+  being encoded does not imply being presented and the two license different conclusions.
+  `bacterial` is five gut-commensal and pathogen proteomes; `load_reference_sets(..., proteomes=…)`
+  builds them — class I only, since class II spans 15 lengths and would materialise tens of millions
+  of windows, which now raises rather than swapping.
+- **`affinity --peptides` reads a `wt_peptide` column**, so agretopicity comes out of the same pass
+  instead of a second run joined back on a peptide string that is not a key.
+
+### Changed
+
+- **The `aa` block of `complement` is length-aware**, and both species are refitted. It keeps the
+  pooled `aa_anchor`/`aa_tcr` pair — whose sum is still exactly `posbayes.llr` — and adds an
+  anchor/TCR table **per length bin (8, 9, 10, 11+)** plus the TCR face in **relative thirds**.
+  Bins rather than one table per observed length, so a 12- or 13-mer is scorable at all. Against the
+  pooled construction under peptide-grouped CV, paired bootstrap over peptide groups, CI excluding
+  zero on all four corpus arms: chowell/human +0.0069, chowell/mouse +0.0115, kesmir/human +0.0206,
+  kesmir/mouse +0.0208 AUROC. A length × role interaction and a bulge/flank split both buy nothing,
+  which localises the effect: length carries *which residue is preferred where*, not a global
+  reweighting. 19 features → 30. `bench/results/length_roles.md`.
+- **`rank.GATE` refitted** on the new recognition axis — `recog_mu`/`recog_sd` describe *that* axis,
+  so they move with it. Holdouts unchanged within noise: TESLA 0.592, Neopep 0.804, Gfeller 0.784.
+- **Nextflow module pins bumped 0.8.0 → 0.10.0**, and the Dockerfile now states what its `bootstrap`
+  does *not* cover, so an offline `rank` process fails at build time rather than on a compute node.
+- **README rewritten** around a task → command table, the batch/threads contract, and the two axes.
+
+### Fixed
+
+- **`mimics.DEFAULT_REFS["neoag"]` pointed at `immunogenicity/neoag_tested.tsv.gz`**, which 404s —
+  the deposit moved it to `neoantigens/`. The documented default reference set was unusable without
+  a local mirror. A regression test now asserts every default path resolves.
+- **`store.fetch_proteome` ignored `$MHCMATCH_PMHC_DIR`**, so a local mirror was bypassed for
+  proteomes only. Routed through `fetch_file` like everything else.
+
 ## [0.10.0] - 2026-08-17
 
 The recognition axis, grown up: a six-block complementarity score with a per-species table, a
