@@ -180,6 +180,119 @@ difference is now visible without opening either: ``BDEVF`` carries the **vanill
 and foreignness and folds presentation into ``B``; ``PADEC`` carries the **current** recognition term
 and splits presentation from affinity.
 
+What each model is worth
+------------------------
+
+Every model here is a **Bayesian logistic fit** — Normal(0, τ²) prior, intercept unpenalised, IRLS
+to the MAP, Laplace posterior sd — so a term the data does not support arrives as a wide interval
+rather than a confident-looking point estimate. Coefficients ship with the artifact and are printed
+by ``mhcmatch mimicry --coefficients``.
+
+Headline results, each traced to a table in the benchmark repository:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 14 44 18 24
+
+   * - model
+     - result
+     - number
+     - table
+   * - ``B``
+     - **beats NetMHCpan-4.2 on TESLA-608 immunogenicity**, on the predictor-agnostic set every tool
+       scores independently
+     - **0.786** vs 0.747 AUROC (+0.039)
+     - ``immuno_binder_score.md``
+   * - ``BDEVF``
+     - **beats** ``binder_score`` **on the frozen Gfeller holdout** — fitted on a peptide-disjoint
+       corpus, then frozen
+     - **0.896** vs 0.794 (+0.102, paired DeLong p < 1e-300)
+     - ``neoag_glm.md``
+   * - ``C``
+     - peptide-grouped 5-fold CV on the Chowell arms
+     - **0.7188** human, **0.7718** mouse
+     - ``complementarity.md``
+   * - ``C``
+     - **transfers across species**, held out — fitted on human, scored on mouse and vice versa
+     - 0.7250 human→mouse, 0.6895 mouse→human
+     - ``complementarity.md``
+   * - ``C``
+     - the **length-aware role split** is a real gain, bootstrap CI excluding zero on **all four**
+       corpus arms
+     - +0.0049 to +0.0097 AUROC
+     - ``length_roles.md``
+   * - ``M``
+     - the mimicry block is significant **residual to** ``BDEVF`` **and screen indicators** — i.e.
+       after presentation, agretopicity, expression, physicochemistry, foreignness and screen
+     - χ² = **142.82** on 16 df, p = 2.0e-22
+     - ``mimicry_residual.md``
+
+Which terms resolve
+~~~~~~~~~~~~~~~~~~~
+
+``BDEVF``'s standardized coefficients, percentile bootstrap over whole peptides. Five of seven
+resolve away from zero:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 18 34 26
+
+   * - parameter
+     - estimate
+     - 95 % CI
+     - excludes 0
+   * - ``expr_missing``
+     - **+0.524**
+     - [+0.475, +0.567]
+     - yes
+   * - ``ipred`` (``V``)
+     - **+0.271**
+     - [+0.235, +0.308]
+     - yes
+   * - ``binder`` (``B``)
+     - **+0.174**
+     - [+0.141, +0.207]
+     - yes
+   * - ``expr`` (``E``)
+     - **+0.136**
+     - [+0.094, +0.177]
+     - yes
+   * - ``foreign`` (``F``)
+     - **+0.089**
+     - [+0.042, +0.134]
+     - yes
+   * - ``dai`` (``D``)
+     - −0.025
+     - [−0.078, +0.035]
+     - no
+   * - ``dai_missing``
+     - +0.034
+     - [−0.003, +0.075]
+     - no
+
+``M``'s six channels, from the shipped ``mimicry_mhc1.json``: ``viral_anchor`` **+0.605** (z = +16.8),
+``thymus_anchor`` **+0.368** (+13.1), ``self_anchor`` **−0.304** (−11.8), ``viral_tcr`` **+0.443**
+(+5.6), ``self_tcr`` **−0.464** (−4.6), ``thymus_tcr`` +0.075 (+1.1, unresolved). Viral positive,
+self negative — priming and tolerance, which is what the design predicts.
+
+.. note::
+
+   **Interactions were tested and did not earn their place.** A length × role interaction and a
+   bulge/flank split both bought nothing on the recognition axis, which is what localises the length
+   effect: length carries *which residue is preferred where*, not a global reweighting
+   (``length_roles.md``). Terms are kept or dropped on a likelihood test, not a feature-selection
+   loop, so a coefficient whose interval covers zero is reported with its interval rather than
+   removed.
+
+.. warning::
+
+   **Read within-corpus numbers, not pooled ones, wherever both exist.** The seven neoantigen
+   screens run from 0.048 % to 46.8 % positive, so pooling them manufactures AUROC: ``M`` scores
+   0.849 pooled and **0.596** as the median within screen. On the aggregate arm, leave-one-cohort-out
+   is the honest comparison, and there presentation alone (``P``, one parameter) still leads at
+   0.7071 against ``PADEC`` 0.7000. The wins above are on **held-out, single-corpus** evaluations,
+   which is the setting they should be quoted in.
+
 Shipped artifacts
 -----------------
 

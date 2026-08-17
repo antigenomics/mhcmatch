@@ -172,6 +172,89 @@ From the command line
    # every feature, so a score can be taken apart
    mhcmatch complement GILGFVFTL --features
 
+What it scores
+--------------
+
+Peptide-grouped 5-fold CV on the deposited corpus arms — peptides are the grouping unit, so no
+peptide appears in both a train and a test fold (``complementarity.md``).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 12 12 14 14 14
+
+   * - arm
+     - rows
+     - immunogenic
+     - ``aa`` alone
+     - full, 30 feat.
+     - Δ
+   * - ``chowell_rebuilt/human``
+     - 464,161
+     - 14,712
+     - 0.7175
+     - **0.7188**
+     - +0.0013
+   * - ``chowell_rebuilt/mouse``
+     - 47,140
+     - 5,154
+     - 0.7701
+     - **0.7718**
+     - +0.0017
+   * - ``chowell_rebuilt_hla_matched/human``
+     - 94,380
+     - 14,712
+     - 0.6979
+     - **0.7040**
+     - +0.0060
+   * - ``chowell_rebuilt_hla_matched/mouse``
+     - 21,212
+     - 5,154
+     - 0.7602
+     - **0.7647**
+     - +0.0045
+   * - ``kesmir_rebuilt/human``
+     - 58,789
+     - 17,346
+     - 0.6564
+     - **0.6580**
+     - +0.0016
+   * - ``kesmir_rebuilt/mouse``
+     - 6,948
+     - 5,267
+     - 0.6870
+     - **0.6886**
+     - +0.0016
+
+The ``aa`` block alone *is* :func:`mhcmatch.posbayes.llr` — its two columns sum to that score
+exactly, asserted in the test suite — so the right-hand column measures what the other five blocks
+add to a model that already ships.
+
+It transfers across species
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Fitted on one host, frozen, scored on the other, with shared peptides dropped:
+
+* human → mouse **0.7250** (n = 41,870)
+* mouse → human **0.6895** (n = 454,804)
+
+Both well above chance on data the fit never saw — which is why :func:`mhcmatch.complement.score`
+takes ``species=`` and ships a table per host. Pooling two hosts with different MHC and different
+thymic repertoires would be fitting a mixture.
+
+The length-aware role split is a real gain
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Per-length-bin (8/9/10/11+) anchor and TCR-facing tables against one pooled pair, paired bootstrap
+over peptide groups. **The CI excludes zero on all four arms** (``length_roles.md``):
+
+* ``chowell_rebuilt/human`` +0.0049 [+0.0029, +0.0070]
+* ``chowell_rebuilt/mouse`` +0.0083 [+0.0055, +0.0110]
+* ``kesmir_rebuilt/human`` +0.0052 [+0.0010, +0.0093]
+* ``kesmir_rebuilt/mouse`` +0.0097 [+0.0006, +0.0191]
+
+A length × role interaction and a bulge/flank split both bought nothing, which localises the effect:
+length carries *which residue is preferred where*, not a global reweighting.
+
 Where it sits in the ranker
 ---------------------------
 
