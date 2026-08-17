@@ -104,3 +104,13 @@ def test_threads_flag_is_only_offered_where_it_does_something(capsys):
         with pytest.raises(SystemExit):
             cli.main([cmd, "--help"])
         assert ("--threads" in capsys.readouterr().out) is has, cmd
+
+
+def test_every_batch_capable_command_makes_its_positional_optional(capsys):
+    """Regression: `explain --peptides f.tsv` was a usage error because the positional stayed
+    required, which the CLI benchmark caught and the unit tests did not."""
+    for cmd in ("decompose", "restriction", "affinity", "binder", "source", "explain"):
+        with pytest.raises(SystemExit):
+            cli.main([cmd, "--help"])
+        usage = capsys.readouterr().out.split("\n\n")[0]
+        assert "[peptide]" in usage, f"{cmd}: {usage}"

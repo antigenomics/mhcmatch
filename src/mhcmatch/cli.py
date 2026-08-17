@@ -744,7 +744,7 @@ def main(argv=None):
     rk.set_defaults(fn=cmd_rank)
 
     ex = sub.add_parser("explain", help="every component of the aggregate for one (peptide, allele)")
-    ex.add_argument("peptide")
+    ex.add_argument("peptide", nargs="?", default="")
     ex.add_argument("--allele", required=True)
     ex.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
     ex.add_argument("--wt", help="wild-type counterpart -> also report agretopicity (DAI)")
