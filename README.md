@@ -140,6 +140,41 @@ the pooled one (0.849). The tested-neoantigen database is `mimicry.annotate` / `
 prior evidence, and deliberately never a fitted term, since every labelled screen we hold sits
 inside it.
 
+## Model names
+
+Every fitted model is named by the **acronym of its parameters** — `aggregate5` and "the full model"
+said nothing about what was in them, and two designs were once both "the neoantigen model". One
+letter per parameter, in a fixed canonical order:
+
+| letter | parameter | from | what it is |
+|---|---|---|---|
+| `P` | presentation | `AnchorModel` | `-log10` of the per-allele `%rank` |
+| `B` | binder score | `predict.binder_score` | `-log10` of the calibrated combined `%rank` (Fisher of `P` and `A`) |
+| `A` | affinity | `PottsAffinity` | `-log10` of the Potts IC50 `%rank` |
+| `D` | differential agretopicity | `PottsAffinity.dai` | `log10(Kd_WT / Kd_MT)` vs the recovered wild type |
+| `E` | expression | `mhcmatch.expression` | `log1p(TPM)`, observed or reference-imputed |
+| `V` | vanilla physicochemistry | `mhcmatch.ipred` | the 13-parameter calibrated log-odds |
+| `C` | complementarity | `mhcmatch.complement` | the six-block recognition log-odds |
+| `F` | foreignness | viral IEDB ligandome | distance to the nearest viral epitope |
+| `M` | mimicry | `mhcmatch.mimicry` | the six-channel signed aggregate |
+
+So `PADEC` is presentation + affinity + agretopicity + expression + complementarity, and `PADECM`
+adds mimicry. Suffixes are fitting choices rather than parameters: `-bal` (every screen weighted to
+the same total mass), `-scr` (screen indicators as nuisance columns).
+
+**`V` is "vanilla", not "ipred".** `ipred` is the *old* recognition term and `complement` is what
+replaced it — the same axis at two generations, with `ipred` a strict special case of `complement`.
+Naming the letter after the generation rather than the module makes `BDEVF` legible as "the old
+model" at a glance.
+
+**`P` is a rank, not a similarity search** — worth stating because the name invites the other
+reading. It is the AnchorModel's score as a `%rank` against a random-peptide background (10,000
+peptides matched to the corpus's amino-acid and length distribution). Nothing is retrieved: no
+reference peptide is looked up and no anchor-matched protein is searched for. `A` and `B` are the
+same, so the whole presentation side is **scoring, not retrieval**. The searches are `restriction`
+(the epitope panel, anchor-masked — not in any acronym), `M` (thymic/viral/proteome windows) and `F`
+(the viral ligandome). A design carrying `P` says nothing about similarity to anything.
+
 ## Python
 
 ```python

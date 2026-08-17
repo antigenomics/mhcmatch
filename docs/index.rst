@@ -55,5 +55,6 @@ Capabilities
    getting-started
    immunogenicity
    complementarity
+   models
    property_basis
    api
