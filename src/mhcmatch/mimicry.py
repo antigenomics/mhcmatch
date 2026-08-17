@@ -25,8 +25,8 @@ indicators and nothing else -- the sign follows the **reference**, the way the d
 (-0.30, -0.46): priming and tolerance respectively. ``thymus`` is positive on the anchor channel
 (+0.37) and unresolved on the TCR channel (+0.08, ``|z| = 1.1``).
 
-*Residual to a model that already contains* :mod:`mhcmatch.ipred` *and a foreignness term* --
-``bench/results/mimicry_residual.md`` -- a different pattern appears: across all four references
+*Residual to* ``BDEIF`` *-- a model that already contains* :mod:`mhcmatch.ipred` *and a foreignness
+term* -- ``bench/results/mimicry_residual.md`` -- a different pattern appears: across all four references
 tried, anchor-restricted similarity is positive and TCR-face-restricted similarity is negative, with
 whole-peptide similarity between them and near zero. That is a statement about what mimicry adds to
 *those* terms, not about mimicry on its own, and quoting the second pattern as though it were the
