@@ -369,13 +369,27 @@ def cmd_expression(a):
             print(f"  {v:10.4g}  {t}")
 
 
+#: Deposits the docs, notebooks and reference lookups read, by repo-relative path. Named here so
+#: ``mhcmatch bootstrap --reference`` pre-stages a container or an offline run in one call, rather
+#: than each page discovering its own download on first use.
+REFERENCE_FILES = (
+    "immunogenicity/chowell_rebuilt.tsv.gz",      # immunogenic vs presented self
+    "immunogenicity/kesmir_rebuilt.tsv.gz",       # immunogenic vs presented non-self
+    "thymus/thymus_immunopeptidome.tsv.gz",       # tolerance reference for mimicry
+    "ligandome/viral_foreign_iedb.tsv.gz",        # foreign reference for mimicry
+    "expression/reference_expression.tsv.gz",     # GTEx tissue + TCGA tumour medians (~105 MB)
+)
+
+
 def cmd_bootstrap(a):
-    from .store import PMHC_REPO, fetch_pmhc, fetch_proteome
+    from .store import PMHC_REPO, fetch_file, fetch_pmhc, fetch_proteome
     tiers = ("full", "shortlist") if a.tier == "all" else (a.tier,)
     for t in tiers:
         print(f"# pmhc {t}: {fetch_pmhc(t)}")
     for name in (x.strip() for x in (a.proteome or "").split(",") if x.strip()):
         print(f"# proteome {name}: {fetch_proteome(name)}")
+    for rel in (REFERENCE_FILES if a.reference else ()):
+        print(f"# reference {rel}: {fetch_file(rel)}")
     print(f"# cached from HF dataset {PMHC_REPO}")
 
 
@@ -469,6 +483,9 @@ def main(argv=None):
                     help="which panel tier(s) to download into the huggingface_hub cache")
     bs.add_argument("--proteome", help="also fetch these reference proteomes "
                                        "(comma-separated: human,mouse,<pathogen stem>)")
+    bs.add_argument("--reference", action="store_true",
+                    help="also fetch the corpora and reference tables the docs, notebooks and "
+                         "expression/mimicry lookups read (~115 MB) — everything offline in one call")
     bs.set_defaults(fn=cmd_bootstrap)
 
     rk = sub.add_parser("rank", help="rank neoantigen candidates (FASTA of windows, or a scored table)")
