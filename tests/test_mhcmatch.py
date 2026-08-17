@@ -257,21 +257,33 @@ def test_gene_symbols_keys_match_read_fasta_and_carry_the_symbol(tmp_path):
     nothing bridged them. Entries without ``GN=`` must survive as ``None``, not vanish -- dropping
     them would overstate the coverage of any downstream tissue filter.
     """
+    import pytest as _pytest
+
     from mhcmatch.proteome import gene_symbols, read_fasta
     fasta = tmp_path / "p.fasta"
+    # Real UniProt accessions: Q8WZ42 = TTN, P43357 = MAGEA3. (P43363 is MAGEA10, not MAGEA3.)
     fasta.write_text(
         ">sp|Q8WZ42|TITIN_HUMAN Titin OS=Homo sapiens OX=9606 GN=TTN PE=1 SV=5\n"
         "MKTAYIAKQRQISFVK\n"
         ">tr|A0A087X1C5|A0A087X1C5_HUMAN Uncharacterized OS=Homo sapiens OX=9606 PE=4 SV=1\n"
         "QRQISFVKSHFSRQLE\n"
-        ">sp|P43363|MAGA3_HUMAN Melanoma-associated antigen 3 GN=MAGEA3 PE=1 SV=1\n"
+        ">sp|P43357|MAGA3_HUMAN Melanoma-associated antigen 3 GN=MAGEA3 PE=1 SV=1\n"
         "EERLGLIEVQ\n")
 
     g = gene_symbols(fasta)
     assert set(g) == set(read_fasta(fasta)), "must key exactly like read_fasta"
     assert g["sp|Q8WZ42|TITIN_HUMAN"] == "TTN"
-    assert g["sp|P43363|MAGA3_HUMAN"] == "MAGEA3"
+    assert g["sp|P43357|MAGA3_HUMAN"] == "MAGEA3"
     assert g["tr|A0A087X1C5|A0A087X1C5_HUMAN"] is None, "no GN= must map to None, not disappear"
+
+    # `mimicry.safety` receives a bare accession from the thymic/ligandome deposits, not a FASTA
+    # name, so it needs the other keying to reach expression.safety_profile.
+    a = gene_symbols(fasta, key="accession")
+    assert a["Q8WZ42"] == "TTN" and a["P43357"] == "MAGEA3"
+    assert a["A0A087X1C5"] is None
+    assert set(a).isdisjoint(set(g)), "the two keyings are different namespaces"
+    with _pytest.raises(ValueError):
+        gene_symbols(fasta, key="gene")
 
 
 # -- near-exact source lookup -------------------------------------------------

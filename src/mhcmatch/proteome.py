@@ -37,16 +37,21 @@ def read_fasta(path):
     return seqs
 
 
-def gene_symbols(path):
-    """``{name: gene}`` from the UniProt ``GN=`` field, keyed the same way as :func:`read_fasta`.
+def gene_symbols(path, key: str = "name"):
+    """``{key: gene}`` from the UniProt ``GN=`` field. ``key="name"`` (default) matches
+    :func:`read_fasta`; ``key="accession"`` matches a bare UniProt accession.
 
-    **This closes the join between a mimicry hit and its tissue-expression profile.** A
-    :class:`SourceHit` names its protein as the FASTA's first whitespace token --
-    ``tr|A0A087WVL8|A0A087WVL8_HUMAN`` -- while :func:`mhcmatch.expression.lookup` and
-    :func:`mhcmatch.expression.safety_profile` are keyed on the HGNC symbol, ``FMR1``. Without the
-    map there is no way to ask *which tissue* a T cell cross-reactive with a given self peptide would
-    attack, and that is the question separating a titin match (heart left ventricle, 64 TPM) from a
-    testis-restricted one.
+    **Both keyings exist because two different callers need two different sides of the same header.**
+    A :class:`SourceHit` names its protein as the FASTA's first whitespace token,
+    ``sp|Q8WZ42|TITIN_HUMAN``, so a proteome scan needs ``name``. The thymic and ligandome deposits
+    record ``source_protein`` as a bare accession, ``Q8WZ42``, so
+    :func:`mhcmatch.mimicry.safety` needs ``accession``. Neither can reach
+    :func:`mhcmatch.expression.safety_profile`, which is keyed on the HGNC symbol ``TTN``, without
+    one of them.
+
+    Without it there is no way to ask *which tissue* a T cell cross-reactive with a given self peptide
+    would attack, and that is the question separating a titin match (``Q8WZ42`` → ``TTN`` → heart left
+    ventricle, 64 TPM) from a testis-restricted one.
 
     The symbol is absent from :func:`read_fasta`'s output because that function keeps only the name,
     and widening its return contract would ripple through every caller. A second pass over the
@@ -58,6 +63,8 @@ def gene_symbols(path):
     """
     import re
 
+    if key not in ("name", "accession"):
+        raise ValueError(f"key must be 'name' or 'accession', got {key!r}")
     op = gzip.open if str(path).endswith(".gz") else open
     pat = re.compile(r"\bGN=(\S+)")
     out = {}
@@ -65,8 +72,16 @@ def gene_symbols(path):
         for line in fh:
             if line.startswith(">"):
                 head = line[1:].rstrip()
+                name = head.split()[0]
                 m = pat.search(head)
-                out[head.split()[0]] = m.group(1) if m else None
+                gene = m.group(1) if m else None
+                if key == "name":
+                    out[name] = gene
+                else:
+                    # sp|Q8WZ42|TITIN_HUMAN -> Q8WZ42; a header without the db|acc|id form is
+                    # keyed on itself rather than dropped.
+                    parts = name.split("|")
+                    out[parts[1] if len(parts) >= 3 else name] = gene
     return out
 
 
