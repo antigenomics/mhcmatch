@@ -137,3 +137,56 @@ def test_structure_mj_optional():
     e = sc.mj_energies(["GILGFVFTL", "GILGFVFTK", "AAAAAAAAA"], "HLA-A*02:01")
     assert e["GILGFVFTL"] < e["GILGFVFTK"] < e["AAAAAAAAA"]     # native < bad-anchor < poly-Ala
     assert sc.ddg("GILGFVFTL", "GILGFVFTK", "HLA-A*02:01") > 0
+
+
+def _potts_y_reference(m, peptide, allele):
+    """The per-peptide triple loop `predict_y` used to be: fields, then couplings, summed one float32
+    at a time into a Python float. Kept as the reference the factored table must match **exactly**."""
+    key = m._key(allele)
+    ps = m._psidx.get(key) if key else None
+    if ps is None:
+        return float("nan")
+    pidx = m._pep_idx(m._core(peptide, key))
+    if pidx is None:
+        return float("nan")
+    Q, NF_PEP, NF_FIELD, PSP = m.Q, m.NF_PEP, m.NF_FIELD, m.PSP
+    s = float(m.b)
+    for p, r in enumerate(pidx):
+        if r >= 0:
+            s += float(m.w[p * Q + r])
+    for q, sx in enumerate(ps):
+        if sx >= 0:
+            s += float(m.w[NF_PEP + q * Q + sx])
+    for p, r in enumerate(pidx):
+        if r < 0:
+            continue
+        base = NF_FIELD + p * PSP * Q * Q
+        for q, sx in enumerate(ps):
+            if sx >= 0:
+                s += float(m.w[base + (q * Q + r) * Q + sx])
+    return s
+
+
+def test_potts_effective_table_is_bit_identical_to_the_triple_loop():
+    """`_effective` pre-contracts the pocket side, which is ~20x faster and must not move a single
+    score -- these are shipped IC50 values.
+
+    The precision is not incidental. The vendored weights are float32 and the reference adds them
+    into a Python float, i.e. in float64 with enough headroom never to round. A factored table has
+    to be exact per cell to match: summing the pocket contributions in float32 costs ~1e-7 and moves
+    735 of 20,000 IC50 values at their reported precision, and even numpy's float64 pairwise sum
+    leaves ~2e-9 and moves 122. Hence math.fsum per cell."""
+    import random
+    import numpy as np
+    from mhcmatch import Store
+    m = Store.from_pmhc(tier="shortlist", species="human", classes=("mhc1",)).affinity_model("mhc1")
+    rng = random.Random(20260817)
+    peps = ["".join(rng.choices("ACDEFGHIKLMNPQRSTVWY", k=rng.choice([8, 9, 10, 11])))
+            for _ in range(400)]
+    for allele in ("HLA-A*02:01", "HLA-B*07:02", "HLA-C*07:01"):
+        ref = [_potts_y_reference(m, p, allele) for p in peps]
+        assert [m.predict_y(p, allele) for p in peps] == ref
+        assert np.array_equal(m.predict_y_batch(peps, allele), np.asarray(ref))
+    # an unresolvable allele is nan for every peptide, in place, both paths
+    assert all(v != v for v in m.predict_y_batch(peps, "HLA-Z*99:99"))
+    assert m.predict_y(peps[0], "HLA-Z*99:99") != m.predict_y(peps[0], "HLA-Z*99:99")
