@@ -54,9 +54,15 @@ __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability"]
 #: sigmoids is not rank-preserving under a monotone rescaling of one axis. Measured cost of the bug,
 #: same rows, corrected vs previous: TESLA 0.597 vs 0.473, Neopep 0.802 vs 0.662, Gfeller 0.782 vs
 #: 0.702 AUROC -- every cohort improved.
+#:
+#: Refitted whenever the recognition axis changes, because ``recog_mu``/``recog_sd`` describe *that*
+#: axis. The length-aware ``aa`` block moved them (0.4642/1.1712 -> 0.5116/1.2631); the holdouts are
+#: unchanged within noise (TESLA 0.592, Neopep 0.804, Gfeller 0.784), which is the expected result --
+#: the length arm improves the recognition axis on the corpora it is fitted and cross-validated on,
+#: and the gate's holdout performance is dominated by presentation.
 GATE = {
-    "a": 0.4466, "b": -3.1992, "c": 1.4755, "d": -0.2381,
-    "pres_mu": -0.3965, "pres_sd": 0.8481, "recog_mu": 0.4642, "recog_sd": 1.1712,
+    "a": 0.4546, "b": -3.2283, "c": 1.5090, "d": -0.1743,
+    "pres_mu": -0.3965, "pres_sd": 0.8481, "recog_mu": 0.5116, "recog_sd": 1.2631,
 }
 
 

@@ -82,9 +82,8 @@ def fetch_proteome(name: str = "human") -> str:
     in the same dataset (e.g. ``"ecoli_K12_UP000000625"``, for molecular-mimicry sets). Cached by
     ``huggingface_hub``, so it downloads once. Feeds :meth:`mhcmatch.Proteome.from_hf`.
     """
-    from huggingface_hub import hf_hub_download
     fname = _PROTEOME_ALIAS.get(name, name if name.endswith(".fasta.gz") else f"{name}.fasta.gz")
-    return hf_hub_download(repo_id=PMHC_REPO, repo_type="dataset", filename=f"proteome/{fname}")
+    return fetch_file(f"proteome/{fname}")
 
 
 def infer_class(peptide: str) -> str:

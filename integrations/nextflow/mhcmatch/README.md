@@ -56,16 +56,16 @@ No data staging needed — the build runs `mhcmatch bootstrap`, which fetches th
 `huggingface_hub` cache, so the container resolves the panel offline at runtime.
 
 ```zsh
-docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.8.0 \
-    --build-arg MHCMATCH_VERSION=0.8.0 \
+docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.10.0 \
+    --build-arg MHCMATCH_VERSION=0.10.0 \
     integrations/nextflow/mhcmatch/
-docker push <ISPRAS_REGISTRY>/mhcmatch:0.8.0
+docker push <ISPRAS_REGISTRY>/mhcmatch:0.10.0
 ```
 
 Point `container` at it (in `main.nf` or, better, an override in `conf/containers.config`):
 
 ```groovy
-withName: MHCMATCH_PREDICT { container = '<ISPRAS_REGISTRY>/mhcmatch:0.8.0' }
+withName: MHCMATCH_PREDICT { container = '<ISPRAS_REGISTRY>/mhcmatch:0.10.0' }
 ```
 
 (`-profile conda` needs none of this — it builds the env from `environment.yml`.)

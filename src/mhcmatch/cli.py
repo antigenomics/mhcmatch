@@ -3,6 +3,19 @@
 Commands: ``decompose`` (no data needed), ``restriction``, ``scan``, ``logo`` (need a pmhc_data
 table via ``--pmhc`` or ``$MHCMATCH_PMHC``), ``source`` (needs a proteome FASTA), and ``span``
 (core -> full presented ligand; the panel is optional, and only supplies the observed-ligand tier).
+
+**Every peptide-keyed command takes ``--peptides FILE`` and emits TSV**, because the expensive part
+of almost all of them is setup that a per-peptide invocation pays again every time: the presentation
+and affinity calibrators are ~5 s, the binder calibrator ~45 s, and a human-proteome length index
+~70 s. Those are all cached on the :class:`~mhcmatch.Store` / :class:`~mhcmatch.Proteome` for the
+life of the process, so one process over a whole list is the difference between 49 s per peptide and
+a few thousand per second. A shell ``while read`` loop around the single-peptide form is the wrong
+way to use this CLI and the benchmark repo measures exactly how wrong (``bench/cli/``).
+
+``--threads`` is offered only where it does something: the C++ neighbour search (``source``,
+``mimics``) releases the GIL and scales across cores. The scoring heads are small numpy products per
+peptide, so threads there would buy nothing and the flag is not offered rather than being offered
+and ignored.
 """
 from __future__ import annotations
 
@@ -21,6 +34,20 @@ def _add_store_opts(p):
     p.add_argument("--species", default="human", choices=("human", "mouse"))
 
 
+def _add_batch_opts(p, what="peptide"):
+    """``--peptides`` / ``--out``: the batch form of a per-``what`` command."""
+    p.add_argument("--peptides", metavar="FILE",
+                   help=f"run over many {what}s in ONE process: a file with one per line, or a TSV "
+                        "with a `peptide` column (.gz ok, `-` = stdin). Output becomes TSV. This is "
+                        "the fast path -- the per-call setup is paid once, not once per peptide")
+    p.add_argument("--out", metavar="FILE", help="write TSV here instead of stdout")
+
+
+def _add_thread_opt(p):
+    p.add_argument("--threads", type=int, default=0, metavar="N",
+                   help="worker threads for the C++ neighbour search (0 = every core)")
+
+
 def _store(a):
     return Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species)
 
@@ -35,12 +62,108 @@ def _read_seq(arg):
     return arg.strip()
 
 
+def _read_peptides(path, inline=()):
+    """Peptides from ``path`` (one per line, or the ``peptide`` column of a TSV) plus any inline.
+
+    ``-`` reads stdin, so this composes with a pipe. Whole-file reads on purpose: the scoring paths
+    are vectorised or amortised over one setup, so handing them a whole deposit is both the fast
+    path and the intended one."""
+    peps = [p.strip().upper() for p in (inline or ()) if p and p.strip()]
+    if not path:
+        return peps
+    if path == "-":
+        fh, close = sys.stdin, False
+    else:
+        fh = (gzip.open if str(path).endswith(".gz") else open)(path, "rt")
+        close = True
+    try:
+        first = fh.readline()
+        cols = first.rstrip("\n").split("\t")
+        col = cols.index("peptide") if "peptide" in cols else None
+        if col is None:
+            peps.append(first.strip().split("\t")[0].upper())
+        for line in fh:
+            line = line.rstrip("\n")
+            if line:
+                peps.append(line.split("\t")[col if col is not None else 0].strip().upper())
+    finally:
+        if close:
+            fh.close()
+    return [p for p in peps if p]
+
+
+def _read_pairs(path, second="wt_peptide"):
+    """``[(peptide, wt), ...]`` from a TSV with ``peptide`` + ``second`` columns, else columns 1-2.
+
+    Exists so agretopicity comes out of the same pass as affinity: the mutant and its wild-type
+    counterpart are one row of the caller's table, and splitting them across two runs means joining
+    them back on a peptide string that is not a key."""
+    op = gzip.open if str(path).endswith(".gz") else open
+    fh = sys.stdin if path == "-" else op(path, "rt")
+    try:
+        cols = fh.readline().rstrip("\n").split("\t")
+        if "peptide" in cols:
+            i, j = cols.index("peptide"), (cols.index(second) if second in cols else None)
+            rows = []
+        else:
+            i, j = 0, (1 if len(cols) > 1 else None)
+            rows = [(cols[0].strip().upper(), cols[1].strip().upper() if j is not None else "")]
+        for line in fh:
+            f = line.rstrip("\n").split("\t")
+            if f and f[i].strip():
+                rows.append((f[i].strip().upper(),
+                             f[j].strip().upper() if j is not None and len(f) > j else ""))
+        return rows
+    finally:
+        if path != "-":
+            fh.close()
+
+
+def _batch(a, positional=None):
+    """The peptide list for a batch run, or ``None`` when this is a single-peptide invocation."""
+    if not getattr(a, "peptides", None):
+        return None
+    return _read_peptides(a.peptides, [positional] if positional else ())
+
+
+class _Out:
+    """``--out`` if given, else stdout; closes only what it opened, and reports the row count."""
+
+    def __init__(self, a, unit="row"):
+        self.path = getattr(a, "out", None)
+        self.fh = open(self.path, "w") if self.path else sys.stdout
+        self.n = 0
+        self.unit = unit
+
+    def row(self, *cells):
+        print("\t".join(str(c) for c in cells), file=self.fh)
+        self.n += 1
+
+    def header(self, *cells):
+        print("\t".join(cells), file=self.fh)
+
+    def close(self):
+        if self.path:
+            self.fh.close()
+            print(f"# wrote {self.path}: {self.n:,} {self.unit}(s)", file=sys.stderr)
+
+
 def cmd_decompose(a):
-    d = Store().decompose(a.peptide, cls=a.cls)
-    print(f"peptide       {d.peptide}")
-    print(f"anchors       {','.join(str(i + 1) for i in d.anchors)}")
-    print(f"tcr_facing    {d.tcr_facing}")
-    print(f"presentation  {d.presentation}")
+    store = Store()
+    peps = _batch(a)
+    if peps is None:
+        d = store.decompose(a.peptide, cls=a.cls)
+        print(f"peptide       {d.peptide}")
+        print(f"anchors       {','.join(str(i + 1) for i in d.anchors)}")
+        print(f"tcr_facing    {d.tcr_facing}")
+        print(f"presentation  {d.presentation}")
+        return
+    out = _Out(a, "peptide")
+    out.header("peptide", "anchors", "tcr_facing", "presentation")
+    for p in peps:
+        d = store.decompose(p, cls=a.cls)
+        out.row(d.peptide, ",".join(str(i + 1) for i in d.anchors), d.tcr_facing, d.presentation)
+    out.close()
 
 
 def _resolve_panel_allele(store, name, cls):
@@ -61,6 +184,23 @@ def _resolve_panel_allele(store, name, cls):
 def cmd_restriction(a):
     store = _store(a)
     allele = _resolve_panel_allele(store, a.allele, a.cls) if a.allele else None
+    peps = _batch(a)
+    if peps is not None:
+        out = _Out(a, "call")
+        out.header("peptide", "rank", "allele", "vote", "enrichment", "score", "percent_rank",
+                   "p_present", "band", "binder")
+        for p in peps:
+            for i, r in enumerate(store.restriction(p, cls=a.cls,
+                                                    alleles=[allele] if allele else "all",
+                                                    top=a.top, diffuse=a.diffuse,
+                                                    calibrated=a.calibrated), 1):
+                out.row(p, i, r.allele, f"{r.vote:.4g}", f"{r.enrichment:.4g}",
+                        f"{r.anchor_score:.4g}" if r.anchor_score is not None else "",
+                        f"{r.rank:.4g}" if a.calibrated else "",
+                        f"{r.p_present:.4g}" if a.calibrated else "",
+                        r.band if a.calibrated else "", "1" if r.binder else "0")
+        out.close()
+        return
     res = store.restriction(a.peptide, cls=a.cls, alleles=[allele] if allele else "all",
                             top=a.top, diffuse=a.diffuse, calibrated=a.calibrated)
     if not res:
@@ -84,6 +224,21 @@ def cmd_affinity(a):
     store = _store(a)
     allele = _resolve_panel_allele(store, a.allele, a.cls)
     am = store.affinity_model(a.cls)
+    if a.peptides:
+        # a `wt_peptide` (or second) column is read as the WT counterpart, so agretopicity comes out
+        # of the same pass instead of needing a second run keyed back on the peptide
+        pairs = _read_pairs(a.peptides)
+        out = _Out(a, "peptide")
+        out.header("peptide", "allele", "ic50_nm", "wt_peptide", "wt_ic50_nm", "amplitude", "dai")
+        for p, wt in pairs:
+            nm = am.predict_ic50(p, allele)
+            if wt:
+                out.row(p, allele, f"{nm:.6g}", wt, f"{am.predict_ic50(wt, allele):.6g}",
+                        f"{am.amplitude(wt, p, allele):.6g}", f"{am.dai(wt, p, allele):.6g}")
+            else:
+                out.row(p, allele, f"{nm:.6g}", "", "", "", "")
+        out.close()
+        return
     nm = am.predict_ic50(a.peptide, allele)
     print(f"{a.peptide}  {allele}  predicted IC50 ~ {nm:,.0f} nM")
     if a.wt:
@@ -106,6 +261,20 @@ def cmd_affinity(a):
 
 def cmd_binder(a):
     store = _store(a)
+    peps = _batch(a)
+    if peps is not None:
+        # The binder calibrator is the ~45 s of this command and it is cached on the store, so the
+        # whole list costs one build plus a few numpy products per peptide.
+        out = _Out(a, "call")
+        out.header("peptide", "rank", "allele", "binder_rank", "band", "p_binder",
+                   "presentation_rank", "affinity_nm", "affinity_rank")
+        for p in peps:
+            hits = store.binder_score(p, alleles=(a.alleles or "all"), cls=a.cls)
+            for i, b in enumerate(hits[:(a.top or 10)], 1):
+                out.row(p, i, b.allele, b.binder_rank, b.band, b.p_binder,
+                        b.presentation_rank, b.affinity_nm, b.affinity_rank)
+        out.close()
+        return
     res = store.binder_score(a.peptide, alleles=(a.alleles or "all"), cls=a.cls)
     if not res:
         print("# no scorable allele (unknown groove / no background)")
@@ -131,7 +300,21 @@ def cmd_scan(a):
 
 def cmd_source(a):
     pm = Proteome.from_fasta(a.proteome) if os.path.exists(a.proteome) else Proteome.from_hf(a.proteome)
-    hits = pm.find_source(a.peptide, max_subs=a.max_subs)
+    peps = _batch(a)
+    if peps is not None:
+        # One index build per length (~70 s each for the human proteome) and one threaded C++ batch
+        # query, rather than one index build per invocation.
+        res = pm.find_sources(peps, max_subs=a.max_subs, exclude_exact=a.exclude_exact,
+                              threads=a.threads)
+        out = _Out(a, "hit")
+        out.header("peptide", "protein", "position", "n_subs", "ref_peptide", "mutations")
+        for p in peps:
+            for h in res.get(p, ())[:(a.top or 0) or None]:
+                out.row(p, h.protein, h.position, h.n_subs, h.ref_peptide,
+                        ",".join(f"{q}{i + 1}{r}" for i, q, r in h.mutations) or "exact")
+        out.close()
+        return
+    hits = pm.find_source(a.peptide, max_subs=a.max_subs, exclude_exact=a.exclude_exact)
     if not hits:
         print("# no source within max_subs")
         return
@@ -260,6 +443,28 @@ def cmd_explain(a):
     from . import complement as CM, ipred, posbayes, rank as R
     store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
     from . import predict as P
+    if a.peptides:
+        pairs = _read_pairs(a.peptides)
+        peps = [p for p, _ in pairs]
+        recog = CM.score(peps, a.species)                 # vectorised: one pass for the whole list
+        llr = [posbayes.llr(p, a.species) for p in peps]
+        am = store.affinity_model(a.cls) if any(w for _, w in pairs) else None
+        out = _Out(a, "peptide")
+        out.header("peptide", "allele", "presentation_rank", "affinity_nm", "affinity_rank",
+                   "binder_rank", "presentation_term", "recognition", "posbayes_llr", "ipred_logp",
+                   "wt_peptide", "dai", "aggregate_p")
+        for (p, wt), rc, lr in zip(pairs, recog, llr):
+            bs = P.binder_score(store, p, alleles=[a.allele], cls=a.cls)
+            b = bs[0] if bs else None
+            pres = R._neglog10(b.binder_rank) if b else float("nan")
+            out.row(p, a.allele,
+                    f"{b.presentation_rank:.6g}" if b else "", f"{b.affinity_nm:.6g}" if b else "",
+                    f"{b.affinity_rank:.6g}" if b else "", f"{b.binder_rank:.6g}" if b else "",
+                    f"{pres:.6g}", f"{rc:.6g}", f"{lr:.6g}", f"{ipred.log_p(p):.6g}",
+                    wt, f"{am.dai(wt, p, a.allele):.6g}" if (am and wt) else "",
+                    f"{R.gate_probability(pres, rc):.6g}")
+        out.close()
+        return
     bs = P.binder_score(store, a.peptide, alleles=[a.allele], cls=a.cls)
     pres = R._neglog10(bs[0].binder_rank) if bs else float("nan")
     # This must be the axis `rank` scores with, and the axis GATE was fitted on -- otherwise the
@@ -326,26 +531,36 @@ def cmd_complement(a):
               file=sys.stderr)
 
 
-def _read_peptides(path, inline):
-    """Peptides from ``path`` (one per line, or the ``peptide`` column of a TSV) plus any inline.
-
-    Whole-file reads on purpose: :func:`mhcmatch.complement.score` is vectorised, so handing it a
-    whole deposit is both the fast path and the intended one."""
-    peps = list(inline or [])
-    if not path:
-        return peps
-    op = gzip.open if str(path).endswith(".gz") else open
-    with op(path, "rt") as fh:
-        first = fh.readline()
-        cols = first.rstrip("\n").split("\t")
-        col = cols.index("peptide") if "peptide" in cols else None
-        if col is None:
-            peps.append(first.strip().split("\t")[0])
-        for line in fh:
-            line = line.rstrip("\n")
-            if line:
-                peps.append(line.split("\t")[col if col is not None else 0].strip())
-    return [p for p in peps if p]
+def cmd_mimics(a):
+    """Near-identical reference peptides per category, in one threaded batch."""
+    from . import mimics as M
+    peps = _read_peptides(getattr(a, "peptides", None), a.input)
+    if not peps:
+        raise SystemExit("no peptides: pass them as arguments or with --peptides")
+    cats = [c.strip() for c in a.categories.split(",") if c.strip()]
+    unknown = [c for c in cats if c not in M.DEFAULT_REFS and c not in M.PROTEOME_REFS]
+    if unknown:
+        raise SystemExit(f"unknown categor(y|ies) {unknown}; expected from "
+                         f"{sorted(set(M.DEFAULT_REFS) | set(M.PROTEOME_REFS))}")
+    proteomes = tuple(c for c in cats if c in M.PROTEOME_REFS)
+    refs = {k: v for k, v in M.DEFAULT_REFS.items() if k in cats}
+    self_set, foreign = M.load_reference_sets(None, a.cls, a.species, refs=refs,
+                                              proteomes=proteomes)
+    ref_sets = ({"thymus": self_set} if self_set else {}) | foreign
+    near = M.neighbours(peps, ref_sets, max_subs=a.max_subs, threads=a.threads)
+    exact = {c: set(v) for c, v in ref_sets.items()}
+    out = _Out(a, "hit")
+    out.header("peptide", "category", "kind", "n_exact", "n_near", "top_mimic", "top_subs")
+    for p in peps:
+        got = near.get(p, {})
+        for cat in ref_sets:
+            hits = [h for h in got.get(cat, ()) if h[0] <= a.near_subs]
+            n_ex = 1 if p in exact[cat] else 0
+            if not hits and not n_ex:
+                continue
+            top_subs, top = (0, p) if n_ex else hits[0]
+            out.row(p, cat, M.KINDS.get(cat, "?"), n_ex, len(hits), top, top_subs)
+    out.close()
 
 
 def cmd_expression(a):
@@ -401,12 +616,13 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     d = sub.add_parser("decompose", help="split a peptide into anchor / TCR-facing parts (X masks)")
-    d.add_argument("peptide")
+    d.add_argument("peptide", nargs="?", default="")
     d.add_argument("--cls", choices=("mhc1", "mhc2"))
+    _add_batch_opts(d)
     d.set_defaults(fn=cmd_decompose)
 
     r = sub.add_parser("restriction", help="rank presenting alleles for a peptide")
-    r.add_argument("peptide")
+    r.add_argument("peptide", nargs="?", default="")
     r.add_argument("--allele", help="restrict to a single allele")
     r.add_argument("--cls", choices=("mhc1", "mhc2"))
     r.add_argument("--diffuse", action="store_true", help="rare-allele-aware (diffusion-shrunk anchors)")
@@ -414,25 +630,28 @@ def main(argv=None):
                    help="add per-allele %%rank, P(present), and binding band (implies --diffuse)")
     r.add_argument("--top", type=int, default=10)
     _add_store_opts(r)
+    _add_batch_opts(r)
     r.set_defaults(fn=cmd_restriction)
 
     af = sub.add_parser("affinity", help="predict IC50 (nM) + neoantigen amplitude/DAI for a peptide")
-    af.add_argument("peptide")
+    af.add_argument("peptide", nargs="?", default="")
     af.add_argument("--allele", required=True)
     af.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
     af.add_argument("--wt", help="wild-type peptide -> also report amplitude A=Kd_WT/Kd_MT and DAI")
     af.add_argument("--structure", action="store_true",
                     help="also compute the tcren MJ contact energy / ΔΔG (needs the [structure] extra)")
     _add_store_opts(af)
+    _add_batch_opts(af)
     af.set_defaults(fn=cmd_affinity)
 
     bd = sub.add_parser("binder",
                         help="generalized binder score (presentation x affinity) ranked over alleles")
-    bd.add_argument("peptide")
+    bd.add_argument("peptide", nargs="?", default="")
     bd.add_argument("--alleles", help="comma-separated alleles (default: the whole panel)")
     bd.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
     bd.add_argument("--top", type=int, default=10)
     _add_store_opts(bd)
+    _add_batch_opts(bd)
     bd.set_defaults(fn=cmd_binder)
 
     s = sub.add_parser("scan", help="find presented peptides in a protein (sequence or FASTA path)")
@@ -446,11 +665,17 @@ def main(argv=None):
     s.set_defaults(fn=cmd_scan)
 
     so = sub.add_parser("source", help="find the self peptide a neoantigen derives from")
-    so.add_argument("peptide")
+    so.add_argument("peptide", nargs="?", default="")
     so.add_argument("--proteome", required=True,
                     help="reference proteome FASTA(.gz) path, or an HF name auto-fetched from the "
                          "public dataset (human / mouse / a pathogen stem)")
     so.add_argument("--max-subs", type=int, default=1)
+    so.add_argument("--exclude-exact", action="store_true",
+                    help="drop 0-mismatch hits -- the wild-type-origin question, not the "
+                         "is-this-self one")
+    so.add_argument("--top", type=int, help="keep only the N nearest hits per peptide")
+    _add_batch_opts(so)
+    _add_thread_opt(so)
     so.set_defaults(fn=cmd_source)
 
     lg = sub.add_parser("logo", help="motif logo (information content) + length distribution")
@@ -529,6 +754,7 @@ def main(argv=None):
     ex.add_argument("--prior", type=float,
                     help="base rate for the recognition posterior (e.g. 4.8e-4 for an exome screen)")
     _add_store_opts(ex)
+    _add_batch_opts(ex)
     ex.set_defaults(fn=cmd_explain)
 
     cm = sub.add_parser("complement",
@@ -545,6 +771,22 @@ def main(argv=None):
     cm.add_argument("--features", action="store_true", help="emit the full design matrix too")
     cm.add_argument("--out", help="write TSV here instead of stdout")
     cm.set_defaults(fn=cmd_complement)
+
+    mi = sub.add_parser("mimics",
+                        help="near-identical reference peptides per category (self / thymus / "
+                             "viral / bacterial / neoag) -- batched and threaded")
+    mi.add_argument("input", nargs="*", help="peptide(s); or use --peptides")
+    mi.add_argument("--categories", default="thymus,viral,neoag",
+                    help="comma-separated: thymus, viral, neoag (deposits) and self, bacterial "
+                         "(reference proteomes). They answer different questions -- see "
+                         "mhcmatch.mimics.KINDS -- and are never summed into one score")
+    mi.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
+    mi.add_argument("--species", default="human", choices=("human", "mouse"))
+    mi.add_argument("--max-subs", type=int, default=2, help="fuzzy search radius")
+    mi.add_argument("--near-subs", type=int, default=2, help="count hits within this many subs")
+    _add_batch_opts(mi)
+    _add_thread_opt(mi)
+    mi.set_defaults(fn=cmd_mimics)
 
     xp = sub.add_parser("expression", help="reference expression by normal tissue or tumour type")
     xp.add_argument("key", nargs="?", default="", help="gene symbol (with --tissue) or peptide "

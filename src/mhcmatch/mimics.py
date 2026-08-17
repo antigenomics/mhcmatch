@@ -8,9 +8,18 @@ lower = more significant mimicry) per category:
   the neoantigen resembles a self-peptide presented during **negative selection**: reactive T cells
   were likely deleted (reduced immunogenicity) *and* it flags **cross-reactivity / autoimmune risk**
   for a cancer vaccine.
-* **viral** / **bacterial** — foreign presented peptides / pathogen proteomes. A foreign mimic can
-  *raise* immunogenicity (a pre-existing anti-pathogen repertoire cross-reacts) — molecular mimicry.
+* **self** — a window of the host proteome with no evidence of thymic presentation. Encoded is not
+  presented, so the tolerance argument is weaker than ``thymus``; the peripheral cross-reactivity
+  risk is the same. Kept as its own category rather than merged into ``thymus`` because those two
+  hits license different conclusions.
+* **viral** / **bacterial** — foreign presented peptides / pathogen and commensal proteomes. A
+  foreign mimic can *raise* immunogenicity (a pre-existing anti-pathogen repertoire cross-reacts) —
+  molecular mimicry.
 * **neoag** — the tested-neoantigen database: has this (or a near-identical) neoantigen been reported.
+
+:data:`KINDS` states what each category argues; :data:`PROTEOME_REFS` names the proteomes behind
+``self`` and ``bacterial``, which are opt-in (``load_reference_sets(..., proteomes=("bacterial",))``)
+because building their window sets is the expensive part.
 
 This scores **cross-reactivity**, not presentation or immunogenicity directly; compose it with the
 presentation / affinity scores from :mod:`mhcmatch.predict`. Reference data: the ``isalgo/pmhc_data``
@@ -36,7 +45,38 @@ _LEN = {"mhc1": range(8, 12), "mhc2": range(11, 26)}   # plausible presented len
 DEFAULT_REFS = {
     "thymus": ("thymus/thymus_immunopeptidome.tsv.gz", "self"),
     "viral": ("ligandome/viral_foreign_iedb.tsv.gz", "foreign"),
-    "neoag": ("immunogenicity/neoag_tested.tsv.gz", "database"),
+    "neoag": ("neoantigens/neoag_tested.tsv.gz", "database"),
+}
+
+#: **What a hit in each category argues.** Not the same question per category, which is why they are
+#: never summed into one "mimicry score":
+#:
+#: ===============  ==================================================================
+#: category         a hit means
+#: ===============  ==================================================================
+#: ``thymus``       presented in the thymus, so reactive clones met it during
+#:                  **negative selection**. Lowers expected immunogenicity; raises
+#:                  autoimmune risk for a vaccine.
+#: ``self``         a window of the host proteome not known to be thymically
+#:                  presented. Weaker tolerance argument -- being encoded does not
+#:                  imply being presented -- but the same peripheral cross-reactivity
+#:                  risk. Kept distinct from ``thymus`` on purpose.
+#: ``viral``        a foreign presented peptide. *Raises* expected immunogenicity: a
+#:                  pre-existing anti-pathogen repertoire may cross-react.
+#: ``bacterial``    the same, from pathogen and commensal proteomes.
+#: ``neoag``        already tested as a neoantigen somewhere. Prior evidence, not
+#:                  biology.
+#: ===============  ==================================================================
+KINDS = {"thymus": "self", "self": "self", "viral": "foreign", "bacterial": "foreign",
+         "neoag": "database"}
+
+#: Reference **proteomes** per category, as :func:`mhcmatch.store.fetch_proteome` stems. Gut
+#: commensals (*L. reuteri*, *M. gnavus*, *E. gallinarum*), a gut/lab strain (*E. coli* K12) and a
+#: skin/nasal pathogen (*S. aureus*) -- the exposures a human repertoire has plausibly seen.
+PROTEOME_REFS = {
+    "self": ("human",),
+    "bacterial": ("ecoli_K12_UP000000625", "saureus_UP000008816", "lreuteri_UP000001991",
+                  "mgnavus_UP000018690", "egallinarum_UP000254807"),
 }
 
 
@@ -61,12 +101,20 @@ class MimicResult:
     significant: bool        # has a mimic within near_subs (n_near > 0)
 
 
-def load_peptides(pmhc_dir: str, rel_path: str, cls: str, species: str = "human") -> list:
+def load_peptides(pmhc_dir, rel_path: str, cls: str, species: str = "human") -> list:
     """The ``peptide`` column of a compendium TSV, filtered to ``cls`` / ``species`` and plausible
-    presented lengths. Rows without a class/species field are kept (some sets are unlabelled)."""
+    presented lengths. Rows without a class/species field are kept (some sets are unlabelled).
+
+    ``pmhc_dir=None`` fetches the file from the public HF dataset instead (cached, and overridable
+    with ``$MHCMATCH_PMHC_DIR``), so a fresh install needs no pre-staged mirror."""
     sp, cl, lens = _SPECIES[species], _CLS[cls], set(_LEN[cls])
     out = []
-    with gzip.open(os.path.join(pmhc_dir, rel_path), "rt") as fh:
+    if pmhc_dir is None:
+        from .store import fetch_file
+        path = fetch_file(rel_path)
+    else:
+        path = os.path.join(pmhc_dir, rel_path)
+    with gzip.open(path, "rt") as fh:
         for row in csv.DictReader(fh, delimiter="\t"):
             if row.get("mhc_class") and row["mhc_class"] != cl:
                 continue
@@ -78,10 +126,45 @@ def load_peptides(pmhc_dir: str, rel_path: str, cls: str, species: str = "human"
     return out
 
 
-def load_reference_sets(pmhc_dir: str, cls: str, species: str = "human", refs=None) -> tuple:
+def proteome_peptides(category: str, lengths) -> list:
+    """Every distinct ``lengths``-mer window of the reference proteomes of one
+    :data:`PROTEOME_REFS` category, standard residues only.
+
+    A proteome is a *sequence* reference, not a ligandome: these windows are what the source
+    organism **encodes**, with no claim that any of them is presented. That is the whole point of
+    keeping ``self`` separate from ``thymus`` -- see :data:`KINDS`.
+
+    ``lengths`` is required rather than defaulted to the full class range because the cost is linear
+    in it and dominated by the host: the human proteome has ~11.4 M distinct 9-mers, so asking for
+    all of 8-11 is several GB. For the human ``self`` category prefer
+    :class:`mhcmatch.proteome.Proteome`, which indexes on demand instead of materialising a set."""
+    from .proteome import Proteome
+    from .store import fetch_proteome
+
+    out: set = set()
+    for stem in PROTEOME_REFS[category]:
+        p = Proteome.from_fasta(fetch_proteome(stem))
+        for L in lengths:
+            out |= p.windows(L)
+    return sorted(out)
+
+
+def load_reference_sets(pmhc_dir=None, cls: str = "mhc1", species: str = "human", refs=None,
+                        proteomes=()) -> tuple:
     """``(self_set, foreign_sets)`` for :func:`scan`. ``self_set`` is the single tolerance reference
     (the ``self``-kind entry, thymus by default); ``foreign_sets`` is ``{name: [peptides]}`` for the
-    rest. ``refs`` overrides :data:`DEFAULT_REFS`."""
+    rest. ``refs`` overrides :data:`DEFAULT_REFS`.
+
+    ``proteomes`` adds :data:`PROTEOME_REFS` categories (``"bacterial"``, ``"self"``) built from
+    FASTA windows over the class's plausible presented lengths. They land in ``foreign_sets``
+    whatever their :data:`KINDS` entry says, because :func:`find_mimics` computes its E-value
+    against exactly one background and that slot is already the thymic set -- ``KINDS`` is how a
+    caller reads a category, not how it is passed."""
+    if proteomes and cls != "mhc1":
+        raise ValueError(
+            f"proteomes={proteomes!r} with cls={cls!r}: class II spans "
+            f"{len(_LEN[cls])} lengths, so this would materialise tens of millions of windows per "
+            "category. Call proteome_peptides(category, [L]) with the lengths you actually need.")
     refs = refs or DEFAULT_REFS
     self_set, foreign = [], {}
     for name, (rel, kind) in refs.items():
@@ -90,6 +173,8 @@ def load_reference_sets(pmhc_dir: str, cls: str, species: str = "human", refs=No
             self_set = peps
         else:
             foreign[name] = peps
+    for name in proteomes:
+        foreign[name] = proteome_peptides(name, _LEN[cls])
     return self_set, foreign
 
 

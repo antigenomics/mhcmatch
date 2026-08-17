@@ -81,9 +81,38 @@ Each answers something the block above it cannot express.
 
 ``aa``
    Residue **identity**, as a log-odds per amino acid per role. Every block above projects the
-   peptide onto a property; this one does not. Its two columns sum to exactly
-   :func:`mhcmatch.posbayes.llr`, so the shipped position-role model is this feature set's ``aa``
-   block on its own.
+   peptide onto a property; this one does not. Its ``aa_anchor`` and ``aa_tcr`` columns sum to
+   exactly :func:`mhcmatch.posbayes.llr`, so the shipped position-role model is a strict special
+   case of this feature set.
+
+   The block carries eleven more columns, and they are **length-aware** — a measured choice, not a
+   structural guess:
+
+   * one anchor and one TCR-facing table **per length bin**: 8, 9, 10 and **11+**. Binning rather
+     than one table per observed length is what makes the model defined for a 12- or 13-mer at all;
+     on the fitted corpora, which are entirely 8–11, the binning is the identity map and costs
+     nothing.
+   * the TCR face split into thirds by **relative** position, so the same cell means the same
+     fraction along the peptide at every length — the construction the contact profile already uses
+     for its per-position weights.
+
+   The two are not variants of one idea: one says *which residues* a length prefers, the other
+   *where along the peptide*, and a head given both beats a head given either. Against the pooled
+   construction under peptide-grouped CV, on all four corpus arms, with a paired bootstrap CI
+   excluding zero on every one: chowell/human **+0.0069**, chowell/mouse **+0.0115**, kesmir/human
+   **+0.0206**, kesmir/mouse **+0.0208** AUROC. A length × role *interaction* on the pooled columns
+   and a bulge/flank split both buy nothing — so what length carries is which residue is preferred
+   where, not a global reweighting and not a bulge. See ``bench/results/length_roles.md``.
+
+   .. note::
+
+      **None of this transfers to class II.** A class-II ligand is anchored by a 9-mer register that
+      *floats* inside an 11–25-mer, so its length is the length of the flanking regions and not of
+      the binding core: an 18-mer and a 13-mer sharing a core present the same residues to the TCR.
+      Binning on total length would split a table on a variable carrying no register information.
+      The class-II analogue is a **register**-relative split around
+      :func:`mhcmatch.store.anchor_indices`, a different construction that is not fitted here; this
+      module stays class-I only.
 
 ``kmer``
    The same construction over adjacent TCR-facing residue pairs — a preference for a specific

@@ -267,6 +267,23 @@ def test_proteome_source_lookup():
     assert pm.wildtype("YYYYYYYYY") is None           # nothing within 1 sub -> None
 
 
+def test_proteome_find_sources_batch_matches_the_single_query():
+    """The batch form is one index build and one threaded query, not a different search."""
+    from mhcmatch import Proteome
+    prot = "MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQ"
+    pm = Proteome({"P1": prot})
+    wild = prot[5:14]
+    mutant = wild[:4] + ("W" if wild[4] != "W" else "Y") + wild[5:]
+    queries = [mutant, wild, "YYYYYYYYY", "AAAAAAAAAA"]   # incl. a length with no window at all
+    batch = pm.find_sources(queries, max_subs=1, threads=2)
+    for q in queries:
+        assert [(h.protein, h.position, h.n_subs, h.ref_peptide) for h in batch[q]] == \
+               [(h.protein, h.position, h.n_subs, h.ref_peptide) for h in pm.find_source(q, 1)]
+    # duplicates and blanks collapse; the keys are the stripped upper-cased queries
+    assert set(pm.find_sources([mutant.lower(), mutant, "  "], max_subs=1)) == {mutant}
+    assert pm.find_sources([wild], max_subs=1, exclude_exact=True)[wild] == []
+
+
 # -- CLI ----------------------------------------------------------------------
 # -- allele-name resolution (item 7) -----------------------------------------
 def test_resolve_allele():

@@ -97,6 +97,44 @@ class Proteome:
         out.sort(key=lambda h: h.n_subs)
         return out
 
+    def find_sources(self, peptides, max_subs=1, exclude_exact=False, threads=0):
+        """``{peptide: [SourceHit, ...]}`` for many peptides at once -- the batch form of
+        :meth:`find_source`.
+
+        One index build per distinct length and **one threaded C++ batch query** per length
+        (``search_batch`` releases the GIL), instead of one Python-level query per peptide. The index
+        build dominates a single lookup -- roughly a minute for the human proteome -- so the
+        per-peptide entry point is the wrong one for anything but an interactive question.
+
+        ``threads=0`` uses every core. Duplicate and blank queries are collapsed; the returned dict
+        is keyed by the stripped, upper-cased peptide."""
+        qs = sorted({str(p).strip().upper() for p in peptides if str(p).strip()})
+        out = {q: [] for q in qs}
+        by_len = {}
+        for q in qs:
+            by_len.setdefault(len(q), []).append(q)
+        p = SearchParams(max_subs=max_subs, engine="seqtm")
+        for L, group in by_len.items():
+            idx, meta = self._index(L)
+            if idx is None:
+                continue
+            for q, hits in zip(group, idx.search_batch(group, p, threads)):
+                res = []
+                for hit in hits:
+                    name, pos, w = meta[hit.ref_id]
+                    muts = tuple((i, q[i], w[i]) for i in range(L) if q[i] != w[i])
+                    if exclude_exact and not muts:
+                        continue
+                    res.append(SourceHit(name, pos, w, len(muts), muts))
+                res.sort(key=lambda h: h.n_subs)
+                out[q] = res
+        return out
+
+    def windows(self, L):
+        """Every distinct length-``L`` standard-AA window of the proteome, as a ``set``. Cached, and
+        roughly 1 GB per length for the human proteome -- ask for the lengths you need."""
+        return self._window_set(L)
+
     def _window_set(self, L):
         """Set of all length-``L`` standard-AA proteome windows (lazy). ~1 GB/length as a Python set --
         much lighter than the seqtree index, and O(1) membership for the 1-sub wildtype fast path."""
