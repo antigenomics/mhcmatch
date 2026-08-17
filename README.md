@@ -43,6 +43,7 @@ mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor 
 | What is the IC50, and vs its wild type? | `mhcmatch affinity PEP --wt WTPEP` | `store.affinity_model` |
 | Will a T cell respond to it? | `mhcmatch complement --peptides p.txt` | `complement.score` |
 | Rank neoantigen candidates for a donor | `mhcmatch rank fasta ...` | `rank.rank_fasta` |
+| …with mimicry risk and what each one resembles | `mhcmatch rank ... --extended --annotate` | `mimicry.score` |
 | Why did *this* candidate rank there? | `mhcmatch explain PEP --allele A` | — |
 | What self / viral / bacterial peptide does it mimic? | `mhcmatch mimics --peptides p.txt` | `mimics.neighbours` |
 | Does that mimicry raise or lower the risk, and why? | `mhcmatch mimicry --peptides p.txt` | `mimicry.score` |
@@ -74,7 +75,7 @@ mhcmatch affinity   --peptides pairs.tsv --allele 'HLA-A*02:01'  --out affinity.
                                                                      # peptide + wt_peptide columns
 mhcmatch source     --peptides peptides.txt --proteome human --threads 0 --out sources.tsv
 mhcmatch mimics     --peptides peptides.txt --categories thymus,viral,bacterial --threads 0
-mhcmatch mimicry    --peptides candidates.tsv --out risk.tsv     # signed per-component log-odds
+mhcmatch mimicry    --peptides candidates.tsv --annotate --out risk.tsv   # + what was hit
 mhcmatch neoag      --peptides candidates.tsv --out annotated.tsv  # keeps every original column
 cut -f1 table.tsv | mhcmatch complement --peptides -              # `-` reads stdin
 ```

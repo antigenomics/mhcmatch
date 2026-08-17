@@ -45,6 +45,29 @@ def test_score_refuses_a_silently_smaller_model():
         mimicry.score(["GILGFVFTL"], {("viral", "anchor", 9): None}, cls="mhc1")
 
 
+def test_rank_extended_appends_columns_without_moving_the_ranking(tmp_path, capsys):
+    """--extended/--annotate are columns, not a re-score. If they ever move the order, mimicry has
+    silently entered the gate, which is the thing that is explicitly not settled."""
+    from mhcmatch.cli import main
+    p = tmp_path / "c.scored.csv"
+    p.write_text("epitope,best_allele,gene_name,tpm,score\n"
+                 "GILGFVFTL,HLA-A*02:01,PMEL,3.0,0.9\n"
+                 "KLVVVGACGV,HLA-A*02:01,KRAS,12.0,0.8\n")
+
+    def run(*flags):
+        main(["rank", "table", str(p), "--tumor", "SKCM", *flags])
+        body = [ln.split("\t") for ln in capsys.readouterr().out.strip().splitlines()]
+        return body[0], body[1:]
+
+    head, rows = run()
+    ehead, erows = run("--extended", "--annotate", "--no-self")
+    assert [r[:len(head)] for r in erows] == rows          # same order, same values
+    assert ehead[:len(head)] == head                       # base schema is a strict prefix
+    for c, ch in (("viral", "anchor"), ("self", "tcr"), ("thymus", "anchor")):
+        assert f"{c}_{ch}" in ehead and f"source_{c}_{ch}" in ehead
+    assert "neoag_distance" in ehead
+
+
 def test_cli_coefficients_reports_both_aurocs(capsys):
     """`mhcmatch mimicry --coefficients` must print the six shipped coefficients and BOTH AUROCs --
     the pooled/within-screen gap is the pooling artifact and hiding it is how it gets misquoted."""

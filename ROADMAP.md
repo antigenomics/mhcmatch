@@ -449,8 +449,12 @@ within-screen.
    four lengths, against 1.9 s with `--no-self`. Paid once per process, so it amortizes over a
    candidate list and is absurd for one peptide. `--no-self` drops the largest coefficients, which
    `score()` raises about rather than silently absorbing.
-4. **Not wired into `rank`.** The aggregate is a standalone command; whether it belongs inside the
-   gate, as a third axis or as an annotation column, is a benchmark question and not settled.
+4. **Reaches `rank` as columns, not as a term.** `rank --extended` appends the six contributions and
+   `--annotate` appends what each candidate resembles, but neither touches `score` — the base schema
+   is a strict prefix and the ordering is identical with and without them, asserted in the test
+   suite. Whether mimicry belongs *inside* the gate, as a third axis or as a re-weighting, is the
+   open benchmark question; the columns exist so that question can be answered on real candidate
+   tables without having pre-committed to an answer.
 
 ## 6. Phase 3 — benchmark & paper
 

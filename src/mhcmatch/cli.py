@@ -416,6 +416,24 @@ def _load_refs(spec):
     return refs
 
 
+#: The six (component, channel) pairs of the mimicry aggregate, in artifact order.
+_MIM_PAIRS = [(c, ch) for c in ("viral", "self", "thymus") for ch in ("anchor", "tcr")]
+
+
+def _mimicry_scores(peptides, cls: str, no_self: bool):
+    """Score a candidate list on the mimicry aggregate, warning about what it is about to cost.
+
+    Shared by ``rank --extended/--annotate`` and ``mimicry``: the reference index is built once for
+    the whole list, which is the only way this is affordable at all."""
+    from . import mimicry as MM
+    if not no_self:
+        print("# indexing the host proteome (~12 M windows per length): several minutes and ~7 GB, "
+              "paid once for the whole list. --no-self skips it at the cost of the largest "
+              "coefficients", file=sys.stderr, flush=True)
+    refs = MM.load_references(cls=cls, with_self=not no_self)
+    return MM.score(peptides, refs, cls=cls, allow_missing=no_self)
+
+
 def cmd_rank(a):
     """Rank neoantigen candidates from a window FASTA or an already-scored table."""
     from . import rank as R
@@ -436,15 +454,43 @@ def cmd_rank(a):
     rows = rows[:a.top] if a.top else rows
     cols = ["rank", "peptide", "allele", "gene", "score", "presentation", "agretopicity",
             "physchem", "expression", "expr_imputed", "wt_peptide", "known_epitope"]
+    # The mimicry columns are appended, never folded into `score`. Whether mimicry belongs inside
+    # the gate is a benchmark question that is not settled, and quietly moving the ranking on an
+    # unvalidated term is the failure mode worth avoiding -- so the ordering is identical with and
+    # without these flags.
+    mim, ann = [], []
+    if a.extended or a.annotate:
+        mim = _mimicry_scores([r.peptide for r in rows], a.cls, a.no_self)
+    if a.extended:
+        cols += ["mimicry_logodds", "autoimmune"] + [f"{c}_{ch}" for c, ch in _MIM_PAIRS]
+    if a.annotate:
+        from . import mimicry as MM
+        ann = MM.annotate([r.peptide for r in rows], cls=a.cls)
+        cols += [f"{k}_{c}_{ch}" for c, ch in _MIM_PAIRS
+                 for k in ("nearest", "source", "subs")]
+        cols += ["neoag_distance", "neoag_nearest", "neoag_n_within"]
     out = open(a.out, "w") if a.out else sys.stdout
     try:
         print("\t".join(cols), file=out)
         for i, r in enumerate(rows, 1):
-            print("\t".join([str(i), r.peptide, _allele(a, r.allele), r.gene, f"{r.score:.6g}",
-                             f"{r.presentation:.4g}", f"{r.agretopicity:.4g}",
-                             f"{r.physchem:.4g}", f"{r.expression:.4g}",
-                             "1" if r.expression_imputed else "0", r.wt_peptide,
-                             r.known_epitope]), file=out)
+            cells = [str(i), r.peptide, _allele(a, r.allele), r.gene, f"{r.score:.6g}",
+                     f"{r.presentation:.4g}", f"{r.agretopicity:.4g}",
+                     f"{r.physchem:.4g}", f"{r.expression:.4g}",
+                     "1" if r.expression_imputed else "0", r.wt_peptide,
+                     r.known_epitope]
+            if a.extended:
+                s = mim[i - 1]
+                cells += [f"{s.logodds:.6g}", f"{s.autoimmune:.6g}"]
+                cells += [f"{s.components[c][ch]:.6g}" for c, ch in _MIM_PAIRS]
+            if a.annotate:
+                near = mim[i - 1].nearest
+                for c, ch in _MIM_PAIRS:
+                    n = (near.get(c) or {}).get(ch)
+                    cells += [n["peptide"], n["source"], str(n["subs"])] if n else ["", "", ""]
+                g = ann[i - 1]
+                cells += [str(g["neoag_distance"]), g["neoag_nearest"] or "",
+                          str(g["neoag_n_within"])]
+            print("\t".join(cells), file=out)
     finally:
         if a.out:
             out.close()
@@ -630,16 +676,11 @@ def cmd_mimicry(a):
     peps = [r["peptide"] for r in rows] if rows else _read_peptides(None, a.input)
     if not peps:
         raise SystemExit("no peptides: pass them as arguments or with --peptides")
-    if not a.no_self:
-        print("# indexing the host proteome (~12 M windows per length): several minutes and ~7 GB, "
-              "paid once per process. Pass a whole candidate list, not one peptide; --no-self skips "
-              "it at the cost of the largest coefficients", file=sys.stderr, flush=True)
-    refs = MM.load_references(cls=a.cls, with_self=not a.no_self)
-    scores = MM.score(peps, refs, cls=a.cls, allow_missing=a.no_self)
+    scores = _mimicry_scores(peps, a.cls, a.no_self)
     prob = MM.probability(scores, corpus=a.corpus, cls=a.cls) if a.corpus else None
-    pairs = [(c, ch) for c in MM.COMPONENTS for ch in MM.CHANNELS]
-    cols = [f"{c}_{ch}" for c, ch in pairs] + [f"{k}_{c}_{ch}" for c, ch in pairs
-                                               for k in ("nearest", "source", "subs")]
+    cols = [f"{c}_{ch}" for c, ch in _MIM_PAIRS]
+    if a.annotate:
+        cols += [f"{k}_{c}_{ch}" for c, ch in _MIM_PAIRS for k in ("nearest", "source", "subs")]
     extra = [c for c in (rows[0] if rows else {}) if c != "peptide"]
     out = _Out(a, "peptide")
     out.header("peptide", *extra, "logodds", "autoimmune",
@@ -877,6 +918,19 @@ def main(argv=None):
     rk.add_argument("--recompute-presentation", action="store_true",
                     help="mode=table: rescore presentation with mhcmatch instead of trusting the "
                          "table's own columns")
+    rk.add_argument("--extended", action="store_true",
+                    help="append the mimicry aggregate: signed viral / self / thymus contributions "
+                         "per anchor and TCR-facing channel, their sum, and the autoimmunity "
+                         "read-out. Appended as COLUMNS -- the ranking is unchanged, because "
+                         "whether mimicry belongs inside the gate is not settled")
+    rk.add_argument("--annotate", action="store_true",
+                    help="append what each candidate actually resembles: the nearest self / viral / "
+                         "thymic mimic per channel with its source protein, plus the nearest "
+                         "validated neoantigen and its distance")
+    rk.add_argument("--no-self", action="store_true",
+                    help="with --extended/--annotate, skip the host proteome. It is the expensive "
+                         "reference (several minutes, ~7 GB) and carries the largest coefficients, "
+                         "so this is faster and deliberately a smaller model")
     rk.add_argument("--top", type=int, help="print only the top N candidates")
     rk.add_argument("--out", help="write TSV here instead of stdout")
     _add_store_opts(rk)
@@ -937,6 +991,9 @@ def main(argv=None):
                          "(default 'screens'). Omit to keep the prior-free log-odds, which is what "
                          "you rank on -- the screens run from 0.048%% to 46.8%% positive, so an "
                          "unqualified probability mostly reports one of those prevalences")
+    my.add_argument("--annotate", action="store_true",
+                    help="also emit what was hit: the nearest mimic per channel and its source "
+                         "protein. Without this the table is the eight numeric columns")
     my.add_argument("--no-self", action="store_true",
                     help="skip the host proteome. It is the expensive reference and it carries the "
                          "largest coefficients, so this scores a deliberately smaller model")

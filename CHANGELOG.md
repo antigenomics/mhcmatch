@@ -51,6 +51,14 @@ move to the repertoire library that owns them.
   memorisation. Held out honestly it still earns its place: rebuilt without the test screen, fuzzy
   matching at two substitutions recovers 0.08–0.34 of a screen's positives where exact lookup
   recovers 0.00–0.26, which is why `--max-subs` defaults to 2 rather than 0.
+- **`mhcmatch rank --extended` and `--annotate`** — the mimicry read-out on the candidate table
+  that a donor's shortlist actually comes out of. `--extended` appends the six signed contributions,
+  their sum and the autoimmunity total; `--annotate` appends what each candidate *resembles* — the
+  nearest self / viral / thymic mimic per channel with its source protein, plus the nearest
+  validated neoantigen and its distance. **Both are columns, never a re-score**: the base schema is
+  a strict prefix and the ordering is byte-identical with and without them, asserted in the test
+  suite, because whether mimicry belongs inside the gate is a benchmark question that is not
+  settled. `--no-self` trades the expensive reference for speed on both.
 - **`notebooks/07_mimicry_risk.py`** — the fitted form, against notebook 4's raw scan.
 
 ### Changed
