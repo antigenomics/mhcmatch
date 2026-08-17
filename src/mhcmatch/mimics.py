@@ -30,7 +30,7 @@ from __future__ import annotations
 import csv
 import gzip
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .search import find_mimics
 

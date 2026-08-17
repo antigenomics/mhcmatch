@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import gzip
 import math
-import os
 
 import pytest
 

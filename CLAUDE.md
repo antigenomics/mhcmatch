@@ -43,6 +43,31 @@ A test that asserts a *benchmark* number (an AUC, a head-to-head win) is researc
 benchmark repo. A test that asserts an *API contract* (a probability is in [0,1], a refactor is
 score-identical) is a unit test and belongs here.
 
+## This repo is public — nothing non-public goes in it
+
+**mhcmatch is a public repo. Never commit non-public data to it — patient or sample data, private
+cohort outputs, anything under NDA or consent.** Not in code, tests, fixtures, docs, notebooks,
+commit messages, or a benchmark table. A git history is public forever once pushed, and `git rm`
+does not remove a blob that has already shipped.
+
+This is a property of the *repo*, not of any one path. There used to be a `bench/results/private/`
+ignore rule standing in for the policy; it went stale the moment `bench/` moved out, and a path rule
+was never the right shape anyway — it protects one directory and says nothing about the next one
+someone invents.
+
+- Private analyses belong in a private repo (e.g. the per-patient concordance runs, which live with
+  the benchmark harness). Reference their *conclusions* here, not their contents.
+- Public-by-construction data is fine: the `isalgo/pmhc_data` compendium, IEDB, IMGT, published
+  benchmarks.
+- Sample identifiers count as data. A surname plus an HLA genotype is identifying.
+- If you are unsure whether something is public, it is not. Ask.
+
+The mirror-image rule, for the same reason: **shipped package data is never ignorable.**
+`.gitignore` carries a `*.fasta` glob for fetched proteomes, and `src/mhcmatch/data/mhci_pseudo.fa`
+escapes it only by its extension. A `!src/mhcmatch/data/**` negation is what actually holds — without
+it, a model file named `.fasta` would be silently untracked and every fresh clone would ship a
+package that cannot load its own models.
+
 ## Benchmarks — record the result, and scrutinise asymmetrically *on purpose*
 
 **Every benchmark run that completes gets recorded. Never delete a result because we won it.**

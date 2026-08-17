@@ -17,17 +17,13 @@ data/proteomes/
 *.fasta
 *.fasta.gz
 
-# head-to-head benchmark cache (examples + NetMHC scores)
-
-# private-sample concordance outputs (private donor data — never commit or share in this PUBLIC repo)
-bench/results/private/
+# ...but shipped package data is never ignorable, whatever a glob above says. `mhci_pseudo.fa`
+# escapes the *.fasta rule only by its extension; named .fasta it would have been silently
+# untracked, and every fresh clone would ship a package that cannot load its own models.
+!src/mhcmatch/data/**
 
 # Obsidian memory-sync marker (machine-local absolute paths + sync hashes)
 .claude/obsidian-sync.json
 
 # per-feature git worktrees (see CLAUDE.md) — live inside the repo dir but are never committed
 .claude/worktrees/
-
-# affinity training table (regenerable from the IEDB dump via bench/affinity/data.py)
-bench/affinity/measured.tsv
-# cached NetMHCpan/NetMHCIIpan predictions for the affinity head-to-head
