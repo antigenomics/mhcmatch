@@ -21,6 +21,10 @@ The mathematical and statistical theory lives in the technical appendix
        <h3>Immunogenicity features</h3>
        <p>Physicochemical featurization of an epitope, offline, in one second.</p>
      </a>
+     <a class="proj-card" href="complementarity.html">
+       <h3>Complementarity</h3>
+       <p>The recognition axis: six feature blocks, one score, a whole corpus in seconds.</p>
+     </a>
      <a class="proj-card" href="api.html">
        <h3>API Reference</h3>
        <p>Store, search, proteome, pseudoseq diffusion, logos.</p>
@@ -50,5 +54,6 @@ Capabilities
 
    getting-started
    immunogenicity
+   complementarity
    property_basis
    api

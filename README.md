@@ -54,6 +54,13 @@ development plan is in [`ROADMAP.md`](ROADMAP.md).
    peptide length, under two class-conditional Gaussians — **13 fitted parameters**, not a trained
    discriminative model — emitting a calibrated `log P(immunogenic)`, never a hard label. Pure
    Python, no numpy on the scoring path.
+10. **Complementarity** (`mhcmatch.complement`) — the same axis, grown up. Six feature blocks:
+    `ipred`'s physicochemistry and length; the same components split **MHC-facing vs TCR-facing**;
+    MJ1996 on the anchors and **TCRen marginalised over 28M real CDR3 loops** on the TCR-facing
+    side; contiguous-hydrophobic-run motifs; per-role **residue log-odds** (whose two columns
+    reproduce `mhcmatch.posbayes` exactly, so that model is a strict special case); and adjacent
+    TCR-facing dipeptides. Emits a prior-free log-odds. **Vectorised** — a whole published corpus
+    scores in seconds, so pass a list rather than looping.
 
 ## Install
 

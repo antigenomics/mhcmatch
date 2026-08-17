@@ -17,6 +17,8 @@ fresh `pip install mhcmatch` is enough to run them. No local paths, no pre-stage
 | [`02_immunogenicity_features.py`](02_immunogenicity_features.py) | `mhcmatch.immuno` | the 141 physicochemical features; the three anchor schemes plus the contact scheme; run statistics as contiguity; the unsupervised contact profile | ~1 s |
 | [`03_precursor_frequency.py`](03_precursor_frequency.py) | `mhcmatch.precursor` | `observed_mass` / `ball_mass` / `motif_mass` on one epitope's real TCRs; ball union vs naive sum; the CDR3-vs-junction trap | ~20 s |
 | [`04_mimicry_and_self.py`](04_mimicry_and_self.py) | `mhcmatch.mimics` | thymus / viral / neoag reference scanning, and the self-identity leakage trap any mimicry feature has to exclude | ~20 s |
+| [`05_position_role_bayes.py`](05_position_role_bayes.py) | `mhcmatch.posbayes` | anchor vs TCR-facing amino-acid evidence, the residues whose two roles carry opposite signs, and why the score carries no prior | ~2 s |
+| [`06_complementarity.py`](06_complementarity.py) | `mhcmatch.complement` | the six feature blocks of the recognition axis; arrangement vs composition; that the `aa` block *is* `posbayes`; scoring a whole 511k-row corpus in one call | ~30 s |
 
 Runtimes are warm-cache, single core on an M-series Mac. The first run of each notebook also
 downloads its reference data (~4 MB for the pmhc panel, ~10 MB for VDJdb, ~30 MB for the three

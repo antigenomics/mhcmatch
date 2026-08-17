@@ -46,6 +46,30 @@ def fetch_pmhc(tier: str = "full") -> str:
                            filename=f"pmhc/pmhc_{tier}.tsv.gz")
 
 
+def fetch_file(relpath: str) -> str:
+    """Download any file of the public HF dataset :data:`PMHC_REPO` by its repo-relative path.
+
+    The escape hatch behind :func:`fetch_pmhc` and :func:`fetch_proteome`, for the deposits that do
+    not have a named accessor -- the immunogenicity corpora, the thymus immunopeptidome, the viral
+    ligandome, the neoantigen screens. It exists so a worked example can run on a **whole published
+    deposit** rather than a hand-copied excerpt, which is the only version of an example that
+    demonstrates anything about scale.
+
+    ``$MHCMATCH_PMHC_DIR`` overrides with a local mirror (e.g. ``~/hf/pmhc_data``), for offline and
+    cluster runs. Each file is fetched once and cached by ``huggingface_hub``.
+
+        >>> from mhcmatch import store
+        >>> store.fetch_file("immunogenicity/chowell_rebuilt.tsv.gz")     # doctest: +SKIP
+    """
+    root = os.environ.get("MHCMATCH_PMHC_DIR")
+    if root:
+        local = os.path.join(os.path.expanduser(root), relpath)
+        if os.path.exists(local):
+            return local
+    from huggingface_hub import hf_hub_download
+    return hf_hub_download(repo_id=PMHC_REPO, repo_type="dataset", filename=relpath)
+
+
 _PROTEOME_ALIAS = {"human": "human.fasta.gz", "mouse": "mouse.fasta.gz"}
 
 

@@ -35,12 +35,22 @@ from dataclasses import dataclass, field
 
 __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability"]
 
-#: Noisy-AND coefficients, fitted on the presentation-matched IEDB-ligandome corpus by
-#: ``bench/neoag/round.py`` (see ``bench/results/neoag_round_vdjdb_contact.md``). ``presentation``
-#: and ``recognition`` are standardized before entering, using the same corpus's mean/sd.
+#: Noisy-AND coefficients **and the standardizer they were fitted with**, from
+#: ``bench/neoag/gate_fit.py`` on the presentation-matched IEDB-ligandome corpus (44,904 rows, 811
+#: positive; see ``bench/results/neoag_gate.md``). The recognition axis is
+#: :func:`mhcmatch.complement.score`.
+#:
+#: The four ``mu``/``sd`` entries are not decoration. ``a``-``d`` are coefficients **on z-scores** --
+#: the fit standardizes both axes first -- so feeding a raw ``-log10(%rank)`` and a raw log-odds
+#: through them is applying coefficients to the wrong scale. That is what the previous values here
+#: did (they carried ``mu = 0, sd = 1`` placeholders because the fitting script never wrote the
+#: standardizer out), and it moved the *ranking*, not merely the calibration: a product of two
+#: sigmoids is not rank-preserving under a monotone rescaling of one axis. Measured cost of the bug,
+#: same rows, corrected vs previous: TESLA 0.597 vs 0.473, Neopep 0.802 vs 0.662, Gfeller 0.782 vs
+#: 0.702 AUROC -- every cohort improved.
 GATE = {
-    "a": 0.739, "b": 0.491, "c": 1.122, "d": -3.853,
-    "pres_mu": 0.0, "pres_sd": 1.0, "recog_mu": 0.0, "recog_sd": 1.0,
+    "a": 0.4466, "b": -3.1992, "c": 1.4755, "d": -0.2381,
+    "pres_mu": -0.3965, "pres_sd": 0.8481, "recog_mu": 0.4642, "recog_sd": 1.1712,
 }
 
 
@@ -49,7 +59,12 @@ def _sig(z: float) -> float:
 
 
 def gate_probability(presentation: float, recognition: float, gate: dict | None = None) -> float:
-    """The noisy-AND aggregate. Both inputs are on their standardized scales, larger = better."""
+    """The noisy-AND aggregate. Inputs are the **raw** axes; standardization happens here.
+
+    ``presentation`` is ``-log10(%rank)`` and ``recognition`` is
+    :func:`mhcmatch.complement.score`, both larger-is-better. They are z-scored with the fit
+    corpus's constants from :data:`GATE` before the coefficients apply -- pass raw values, not
+    pre-standardized ones."""
     g = gate or GATE
     p = (presentation - g["pres_mu"]) / (g["pres_sd"] or 1.0)
     r = (recognition - g["recog_mu"]) / (g["recog_sd"] or 1.0)
@@ -89,26 +104,32 @@ def _neglog10(rank: float) -> float:
 
 
 def _recognition(peptide: str, species: str = "human", cls: str = "mhc1") -> float:
-    """The recognition axis: the position-role log-likelihood ratio from :mod:`mhcmatch.posbayes`.
+    """The recognition axis: the complementarity log-odds from :mod:`mhcmatch.complement`.
 
-    **Class I only; class II returns NaN.** :mod:`~mhcmatch.posbayes` splits roles with the class-I
-    scheme (P1-P3, PΩ-1, PΩ), and its tables are fitted on an ``mhc_class == "MHCI"`` corpus. A
-    class-II ligand is anchored by the P1/P4/P6/P9 core of a 9-mer register that floats inside a
-    longer peptide (:func:`mhcmatch.store.anchor_indices`), so applying the class-I scheme to it
-    labels the wrong residues as anchors and returns a confident, wrong number. Scoring class-II
-    candidates on presentation alone is the honest option until a class-II table exists.
+    **Class I only; class II returns NaN.** :mod:`~mhcmatch.complement` splits roles with the
+    class-I scheme (P1-P3, PΩ-1, PΩ). A class-II ligand is anchored by the P1/P4/P6/P9 core of a
+    9-mer register that floats inside a longer peptide
+    (:func:`mhcmatch.store.anchor_indices`), so applying the class-I scheme to it labels the wrong
+    residues as anchors and returns a confident, wrong number. Scoring class-II candidates on
+    presentation alone is the honest option until a class-II table exists.
 
-    Chosen over ``ipred.log_p`` because it separates anchor from TCR-facing residues, which carry
-    opposite-sign contributions for several amino acids that a pooled score averages away. On the
-    IEDB assayed-vs-eluted corpus under peptide-grouped 5-fold CV it reaches **0.712** (human) /
-    **0.758** (mouse) against ``ipred``'s 0.607 / 0.668 -- and ``ipred``'s figures there are
-    *in-sample*, since that corpus is its training set.
+    Chosen over ``posbayes.llr`` -- which it contains as its ``aa`` block -- and over
+    ``ipred.log_p``, on peptide-grouped 5-fold CV over all four deposited corpus arms x both hosts:
+    it wins every one (chowell/human 0.7125 vs 0.7111, chowell/mouse 0.7633 vs 0.7582,
+    kesmir/human 0.6480 vs 0.6369). ``ipred``'s figures on that corpus are *in-sample*, since it is
+    its training set.
 
-    Both are log-scale and larger-is-more-immunogenic, so the gate coefficients transfer unchanged."""
+    ``species`` is accepted for signature compatibility and currently unused: the vendored
+    complementarity parameters are the human-arm fit. :func:`mhcmatch.posbayes.llr` still takes a
+    per-species table if a mouse-specific recognition term is what you want.
+
+    One peptide at a time, because :class:`Ranked` is per-candidate. For a corpus call
+    :func:`mhcmatch.complement.score` with the whole list -- it is vectorised and roughly three
+    orders of magnitude faster than this in a loop."""
     if cls != "mhc1":
         return float("nan")
-    from . import posbayes
-    return posbayes.llr(peptide, species)
+    from . import complement
+    return float(complement.score([peptide])[0])
 
 
 def _expression_for(gene: str, observed, tissue: str | None, tumor: str | None,

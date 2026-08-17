@@ -255,28 +255,30 @@ def cmd_rank(a):
 
 def cmd_explain(a):
     """Print every component of the aggregate for one (peptide, allele), so a rank is auditable."""
-    from . import ipred, posbayes, rank as R
+    from . import complement as CM, ipred, posbayes, rank as R
     store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
     from . import predict as P
     bs = P.binder_score(store, a.peptide, alleles=[a.allele], cls=a.cls)
     pres = R._neglog10(bs[0].binder_rank) if bs else float("nan")
     # This must be the axis `rank` scores with, and the axis GATE was fitted on -- otherwise the
     # aggregate below is a coefficient applied to a scale it was not fitted for.
-    recog = R._recognition(a.peptide, a.species)
+    recog = R._recognition(a.peptide, a.species, cls=a.cls)
     print(f"# {a.peptide}  {a.allele}  ({a.cls})")
     if bs:
         b = bs[0]
         print(f"  presentation %rank   {b.presentation_rank:.4g}")
         print(f"  affinity   IC50 nM   {b.affinity_nm:.4g}   (%rank {b.affinity_rank:.4g})")
         print(f"  binder     %rank     {b.binder_rank:.4g}   -> presentation term {pres:+.4f}")
-    print(f"  recognition  LLR      {recog:+.4f}   (posbayes {a.species} -- the term `rank` uses)")
+    print(f"  recognition  log-odds {recog:+.4f}   (complement -- the term `rank` uses)")
+    print(f"  posbayes     LLR      {posbayes.llr(a.peptide, a.species):+.4f}   "
+          f"(role identity only; the `aa` block of the above, shown for comparison)")
     print(f"  ipred        log P    {ipred.log_p(a.peptide):+.4f}   "
           f"(P = {ipred.p_immunogenic(a.peptide):.4f}; pooled physchem, shown for comparison)")
     if a.prior:
-        # The LLR carries no prior, so the base rate is the caller's to supply -- a screen at
-        # 4.8e-4 and the training corpus at 3.2e-2 differ by ~66x.
+        # The log-odds carries no prior, so the base rate is the caller's to supply -- a screen at
+        # 4.2e-4 and the training corpus at 3.2e-2 differ by ~75x.
         print(f"    P at prior {a.prior:g}   "
-              f"{posbayes.posterior(a.peptide, a.prior, a.species):.6g}")
+              f"{CM.posterior([a.peptide], a.prior)[0]:.6g}")
     if a.wt:
         from .affinity import AffinityModel
         am = AffinityModel.load(store.anchor_model(a.cls), store.corpus(a.cls), a.cls)
@@ -288,6 +290,59 @@ def cmd_explain(a):
               f"({'TCGA ' + a.tumor if a.tumor else 'GTEx ' + a.tissue}, n={rec['n']})"
               if rec else "  expression           (no reference row)")
     print(f"  AGGREGATE  P         {R.gate_probability(pres, recog):.6f}")
+
+
+def cmd_complement(a):
+    """Score peptides on the complementarity axis. Vectorised: pass the whole file, not a loop."""
+    from . import complement as CM
+    peps = _read_peptides(a.peptides, a.input)
+    if not peps:
+        raise SystemExit("no peptides: pass them as arguments or with --peptides FILE")
+    s = CM.score(peps)
+    out = open(a.out, "w") if a.out else sys.stdout
+    try:
+        if a.features:
+            names = CM.feature_names()
+            print("\t".join(["peptide", "score"] + names), file=out)
+            X = CM.design(peps)
+            for p, v, row in zip(peps, s, X):
+                print("\t".join([p, f"{v:.6g}"] + [f"{x:.6g}" for x in row]), file=out)
+        else:
+            head = ["peptide", "score"] + (["posterior"] if a.prior else [])
+            print("\t".join(head), file=out)
+            post = CM.posterior(peps, a.prior) if a.prior else None
+            for i, (p, v) in enumerate(zip(peps, s)):
+                cells = [p, f"{v:.6g}"] + ([f"{post[i]:.6g}"] if a.prior else [])
+                print("\t".join(cells), file=out)
+    finally:
+        if a.out:
+            out.close()
+            print(f"# wrote {a.out}: {len(peps)} peptide(s)", file=sys.stderr)
+    if not a.prior:
+        print("# score is a log-odds and carries NO prior; pass --prior to get a probability "
+              f"(training corpus prevalence {CM.PARAMS['prevalence']:.4g})", file=sys.stderr)
+
+
+def _read_peptides(path, inline):
+    """Peptides from ``path`` (one per line, or the ``peptide`` column of a TSV) plus any inline.
+
+    Whole-file reads on purpose: :func:`mhcmatch.complement.score` is vectorised, so handing it a
+    whole deposit is both the fast path and the intended one."""
+    peps = list(inline or [])
+    if not path:
+        return peps
+    op = gzip.open if str(path).endswith(".gz") else open
+    with op(path, "rt") as fh:
+        first = fh.readline()
+        cols = first.rstrip("\n").split("\t")
+        col = cols.index("peptide") if "peptide" in cols else None
+        if col is None:
+            peps.append(first.strip().split("\t")[0])
+        for line in fh:
+            line = line.rstrip("\n")
+            if line:
+                peps.append(line.split("\t")[col if col is not None else 0].strip())
+    return [p for p in peps if p]
 
 
 def cmd_expression(a):
@@ -451,6 +506,19 @@ def main(argv=None):
                     help="base rate for the recognition posterior (e.g. 4.8e-4 for an exome screen)")
     _add_store_opts(ex)
     ex.set_defaults(fn=cmd_explain)
+
+    cm = sub.add_parser("complement",
+                        help="complementarity score (recognition axis) for peptides — vectorised")
+    cm.add_argument("input", nargs="*", help="peptide(s); or use --peptides")
+    cm.add_argument("--peptides", help="file of peptides: one per line, or a TSV with a "
+                                       "`peptide` column (.gz ok). Pass the whole deposit — "
+                                       "scoring is vectorised, not a per-peptide loop")
+    cm.add_argument("--prior", type=float,
+                    help="base rate of the setting being scored, e.g. 4.2e-4 for the NCI screen. "
+                         "Without it only the prior-free log-odds is printed, on purpose")
+    cm.add_argument("--features", action="store_true", help="emit the full design matrix too")
+    cm.add_argument("--out", help="write TSV here instead of stdout")
+    cm.set_defaults(fn=cmd_complement)
 
     xp = sub.add_parser("expression", help="reference expression by normal tissue or tumour type")
     xp.add_argument("key", nargs="?", default="", help="gene symbol (with --tissue) or peptide "

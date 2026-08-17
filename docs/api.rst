@@ -129,6 +129,21 @@ module warning.
    :undoc-members:
    :show-inheritance:
 
+mhcmatch.complement module
+--------------------------
+
+The recognition axis as one score: ``ipred``'s physicochemistry and length, the same components
+split MHC-facing vs TCR-facing, MJ1996 / repertoire-marginalised TCRen contact potentials,
+hydrophobic-run and dipeptide motifs, and per-role residue log-odds — whose two columns reproduce
+:func:`mhcmatch.posbayes.llr` exactly, so that model is a strict special case. Linear head, because
+a diagonal Gaussian cannot represent a summed log-odds; the EM Gaussian parameters ship alongside
+for comparison. **Vectorised** — pass a list, not a loop. See :doc:`complementarity`.
+
+.. automodule:: mhcmatch.complement
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 mhcmatch.expression module
 --------------------------
 
