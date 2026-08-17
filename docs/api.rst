@@ -212,12 +212,19 @@ Combines presentation and recognition through a **gate** (a product of sigmoids)
 mhcmatch.precursor module
 -------------------------
 
-Optional extra: ``pip install 'mhcmatch[precursor]'`` (needs ``vdjtools``).
+Optional extra: ``pip install 'mhcmatch[precursor]'``.
 
-.. automodule:: mhcmatch.precursor
-   :members:
-   :undoc-members:
-   :show-inheritance:
+Since 0.12.0 this is a **re-export of** ``vdjmatch.precursor`` — the estimators, their maths and the
+``vdjmatch precursor`` CLI live in the repertoire library, which is where that half of the problem
+belongs. The name is kept so existing imports and notebooks keep working, and
+``from mhcmatch import precursor as P`` still gives ``P.event_ratio``, ``P.observed_mass``,
+``P.coverage_corrected_mass``, ``P.ball_mass``, ``P.shell_profile``, ``P.motif_mass`` and
+``P.cross_check``, plus what vdjmatch added: ``union_mass``, ``closed_ball_mass``,
+``unseen_junctions`` and ``precursor_frequency``.
+
+There is deliberately no ``automodule`` here: the module has no API of its own, so autodoc would
+either duplicate vdjmatch's reference or, without the extra installed, fail the build. See
+vdjmatch's own documentation for the signatures.
 
 mhcmatch.data.aa_tables module
 ------------------------------
