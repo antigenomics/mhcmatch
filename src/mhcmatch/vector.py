@@ -379,17 +379,28 @@ def self_origin_risk(proteome, symbols, tissues=ESSENTIAL_TISSUES, min_tpm: floa
 
     **This is a near-identity test, not a similarity test, and that distinction is the whole design.**
     The obvious alternative — score each register with :mod:`mhcmatch.mimicry` and flag the ones
-    resembling a tolerance-side reference — was built and measured, and it flags everything. On the
-    shipped thymic references the influenza epitope ``GILGFVFTL``, about as safe and as
-    well-characterised a foreign epitope as exists, drew 14 essential-tissue hits; ``EVDPIGHLY`` drew
-    7. The reason is the one ``mimicry_collinear.md`` already records: **anchor-channel similarity to
-    a presented reference is presentation, not recognition**, so an anchor-masked match fires for
-    every peptide sharing the allele's motif. A screen with a ~100% firing rate excludes nothing and
-    hides the cases that matter, so the mimicry route is not offered here.
+    resembling a tolerance-side reference — was built and measured against this one on 1,000 viral
+    epitopes (which cannot be self, so every firing is a false positive) and 1,000 thymic peptides
+    from essential-tissue genes (``bench/results/vector_safety_screen.md``):
 
-    ``find_source`` separates where the masked search cannot: ``ESDPIVAQY`` resolves to
-    ``sp|Q8WZ42|TITIN_HUMAN`` at 0 substitutions, ``EVDPIGHLY`` to ``sp|P43357|MAGA3_HUMAN`` at 0
-    (and MAGE-A6 at 1), and ``GILGFVFTL`` to **nothing at all**.
+    ======================== ============ ============
+    route                     false pos.   true pos.
+    ======================== ============ ============
+    mimicry, masked                0.693        0.944
+    self origin, this one          0.020        0.940
+    ======================== ============ ============
+
+    **Equal sensitivity, 35× the false positives.** The reason is the one ``mimicry_collinear.md``
+    already records: anchor-channel similarity to a presented reference is presentation, not
+    recognition, so an anchor-masked match fires for every peptide sharing the allele's motif — the
+    influenza epitope ``GILGFVFTL`` draws 14 essential-tissue hits. Nobody withdraws two-thirds of a
+    cassette, so that route excludes nothing in practice and is not offered here.
+
+    ``find_source`` separates instead: ``ESDPIVAQY`` resolves to ``sp|Q8WZ42|TITIN_HUMAN`` at 0
+    substitutions, ``EVDPIGHLY`` to ``sp|P43357|MAGA3_HUMAN`` at 0 (and MAGE-A6 at 1), and
+    ``GILGFVFTL`` to **nothing at all**. The 2 % that remains is not obviously noise — a viral 9-mer
+    within one substitution of a human protein is what molecular mimicry means — and it is the floor
+    on how specific this can get.
 
     **Two clauses, and the reason carries which one fired.** ``"target gene"`` — the unit's own
     ``gene`` is transcribed in an essential tissue, the MAGE-A12 case, and no register search is
