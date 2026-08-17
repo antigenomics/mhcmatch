@@ -146,6 +146,22 @@ the pooled one (0.849). The tested-neoantigen database is `mimicry.annotate` / `
 prior evidence, and deliberately never a fitted term, since every labelled screen we hold sits
 inside it.
 
+**Building the cassette.** `mhcmatch.vector` is the step after ranking: **withdraw on safety**, then
+how many units each allotype carries, in what order, joined by what. `screen()` **excludes** rather
+than down-ranks — the second-best cassette is cheap, myocarditis is not — and it screens *every*
+register of a 27-mer unit, not the mutated one, against near-exact self origin joined to tissue
+expression. `select()` grows each allotype while the next candidate beats that allotype's own
+expected yield per slot, so diversification falls out of the arithmetic instead of a quota;
+`order()` tries **no spacer first** and picks the layout minimising the strongest predicted binder
+spanning each junction; `slippery_sites()`/`deslip()` remove the m1Ψ +1-frameshift motif, which
+matters more for a concatemer than for a natural ORF.
+
+⚠️ **`mimicry` is a scoring term, not a safety screen.** Flagging candidates by "resembles a
+tolerance-side reference" fires on almost everything — influenza `GILGFVFTL` drew 14
+essential-tissue hits — because anchor-masked similarity to a *presented* reference is presentation,
+not recognition. Exclusion goes through `vector.self_origin_risk`
+(`bench/results/vector_safety_screen.md`).
+
 ## Model names
 
 Every fitted model is named by the **acronym of its parameters** — `aggregate5` and "the full model"

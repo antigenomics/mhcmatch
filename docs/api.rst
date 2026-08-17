@@ -106,8 +106,15 @@ whole query set through one threaded C++ index per (category, length).
 mhcmatch.vector module
 ----------------------
 
-Assembling the cassette, once selection has chosen the candidates: **how many units each allotype
-should carry, in what order, and joined by what.** Competition for a response is local to the
+Assembling the cassette, once selection has chosen the candidates: **what to withdraw on safety
+grounds, how many units each allotype should carry, in what order, and joined by what.**
+
+:func:`~mhcmatch.vector.screen` runs first, and it excludes rather than down-ranks: a register that
+is itself an essential-tissue self peptide, or a target gene transcribed where it was assumed silent,
+is withdrawn, because the second-best cassette is cheap and myocarditis is not. The two fatal
+precedents behind that rule, and the measurement that chose
+:func:`~mhcmatch.vector.self_origin_risk` over a mimicry-similarity screen, are in the function's own
+documentation. Competition for a response is then local to the
 antigen-presenting cell and strongest *within* an allotype, so expected yield is a sum of
 independently saturating per-allotype terms rather than one global budget --
 :func:`~mhcmatch.vector.select` grows each allotype while the next candidate beats that allotype's

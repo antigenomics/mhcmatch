@@ -369,3 +369,116 @@ def test_scan_junctions_counts_binders_only_when_asked():
     assert vector.scan_junctions(units, binder, None, lengths=(9,))[0]["n_over"] is None
     j = vector.scan_junctions(units, binder, None, lengths=(9,), binder_threshold=0.5)[0]
     assert 0 < j["n_over"] <= j["n_windows"]
+
+
+# ------------------------------------------------- essential-tissue exclusion
+#: The MAGE-A3 epitope an affinity-enhanced HLA-A*01:01 TCR was raised against, and the titin peptide
+#: it actually killed two patients through (PMID 23770775, PMID 23926201).
+MAGEA3 = "EVDPIGHLY"
+TITIN = "ESDPIVAQY"
+
+
+def test_the_titin_pair_is_anchor_matched_and_tcr_divergent():
+    """Why no distance threshold reaches titin from MAGE-A3, and the screen does not claim to."""
+    same = [i for i, (a, b) in enumerate(zip(MAGEA3, TITIN), 1) if a == b]
+    assert same == [1, 3, 4, 5, 9], "P3 and P9 are the A*01:01 anchors, and both are conserved"
+    assert len(MAGEA3) - len(same) == 4, "four TCR-facing substitutions -- no radius reaches it"
+
+
+def _titin_risk(peptides, _alleles=None):
+    """A `risk` callable standing in for `self_origin_risk`: only the titin register is dangerous."""
+    return [[{"protein": "sp|Q8WZ42|TITIN_HUMAN", "gene": "TTN", "subs": 0, "position": 24336,
+              "tissue": "Heart - Left Ventricle", "tpm": 64.41}]
+            if p == TITIN else [] for p in peptides]
+
+
+def test_screen_drops_a_unit_whose_buried_register_mimics_an_essential_tissue_protein():
+    """The dangerous register need not be the one carrying the mutation."""
+    danger = vector.unit("K" * 9 + TITIN + "K" * 9, 4, gene="MAGEA3", allele="HLA-A*01:01", p=0.9)
+    safe = vector.unit("W" * 27, 13, gene="SAFE", allele="HLA-A*01:01", p=0.4)
+    assert TITIN in danger.peptide and danger.peptide[danger.mutation_index] == "K"
+
+    kept, rejected = vector.screen([danger, safe], _titin_risk)
+    assert [u.gene for u in kept] == ["SAFE"]
+    assert len(rejected) == 1
+    unit_, register, reason = rejected[0]
+    assert unit_.gene == "MAGEA3" and register == TITIN
+    assert reason[0]["gene"] == "TTN" and reason[0]["tissue"].startswith("Heart")
+    assert reason[0]["protein"].endswith("TITIN_HUMAN"), "the record has to name what withdrew it"
+
+
+def test_screening_first_frees_capacity_for_the_next_safe_candidate():
+    """Exclusion before selection, not after: the point of the ordering."""
+    danger = vector.unit("K" * 9 + TITIN + "K" * 9, 4, gene="MAGEA3", allele="A", p=0.9)
+    others = [vector.unit(c * 27, 13, gene=f"G{i}", allele="A", p=0.5 - 0.1 * i)
+              for i, c in enumerate("WMF")]
+
+    unscreened = vector.select([danger] + others, n0=2.0)
+    kept, rejected = vector.screen([danger] + others, _titin_risk)
+    screened = vector.select(kept, n0=2.0)
+
+    assert "MAGEA3" in [u.gene for u in unscreened.units], "unscreened, the lethal one ranks first"
+    assert "MAGEA3" not in [u.gene for u in screened.units]
+    assert len(screened.units) > len(unscreened.units) - 1, "its slot goes to the next safe unit"
+    assert len(rejected) == 1
+
+
+def test_screen_rejects_a_risk_callable_of_the_wrong_arity():
+    u = vector.unit("W" * 27, 13, gene="G", allele="A", p=0.3)
+    with pytest.raises(ValueError, match="registers"):
+        vector.screen([u], lambda peps, _a=None: [[]])
+
+
+def test_self_origin_risk_refuses_to_run_without_the_accession_map():
+    """No map means nothing resolves, which reads as `no risk` -- refuse instead of reporting safe."""
+    with pytest.raises(ValueError, match="symbols"):
+        vector.self_origin_risk(proteome=None, symbols=None)
+    with pytest.raises(ValueError, match="symbols"):
+        vector.self_origin_risk(proteome=None, symbols={})
+
+
+def test_self_origin_risk_joins_a_source_hit_to_its_tissue(monkeypatch):
+    """The whole join, with the proteome and the expression table stubbed at their real values."""
+    from mhcmatch import expression as EX
+
+    class _Hit:
+        protein, position, n_subs = "sp|Q8WZ42|TITIN_HUMAN", 24336, 0
+
+    class _P:
+        def find_source(self, pep):
+            return [_Hit()] if pep == TITIN else []
+
+    monkeypatch.setattr(EX, "safety_profile",
+                        lambda g, **kw: [("Muscle - Skeletal", 351.35),
+                                         ("Heart - Left Ventricle", 64.41),
+                                         ("Testis", 1.51)] if g == "TTN" else [])
+    risk = vector.self_origin_risk(_P(), {"Q8WZ42": "TTN"})
+    safe, danger = risk([MAGEA3, TITIN])
+    assert safe == []
+    assert {h["tissue"] for h in danger} == {"Muscle - Skeletal", "Heart - Left Ventricle"}
+    assert "Testis" not in {h["tissue"] for h in danger}, "1.51 TPM in testis is not the hazard"
+    assert all(h["gene"] == "TTN" and h["subs"] == 0 for h in danger)
+
+
+def test_the_default_floor_catches_the_lower_of_the_two_fatal_precedents():
+    """A screen tuned to the cardiac case alone would have passed the neurological one.
+
+    GTEx medians, measured: titin 64.41 TPM in heart left ventricle, MAGE-A12 **0.33** in brain
+    caudate. The conventional 5-TPM 'is it expressed' cut sits between them, so the floor is set
+    under the lower one. MAGE-A3's own 0.00 elsewhere is what keeps 0.25 from meaning 'everything'.
+    """
+    import inspect
+
+    floor = inspect.signature(vector.self_origin_risk).parameters["min_tpm"].default
+    assert floor <= 0.31, "must catch MAGE-A12 in brain putamen (PMID 23377668)"
+    assert floor > 0.0, "0.00 is MAGE-A3's own median outside testis -- silent must stay silent"
+
+
+def test_essential_tissues_are_real_gtex_names_and_cover_both_fatal_precedents():
+    """Prefixes must match the GTEx SMTSD vocabulary, or the screen silently matches nothing."""
+    gtex = ["Heart - Left Ventricle", "Heart - Atrial Appendage", "Brain - Cortex", "Lung",
+            "Liver", "Kidney - Cortex", "Muscle - Skeletal", "Testis", "Whole Blood", "Ovary"]
+    hit = [t for t in gtex if t.startswith(vector.ESSENTIAL_TISSUES)]
+    assert "Heart - Left Ventricle" in hit, "the titin/cardiac precedent (PMID 23770775)"
+    assert "Brain - Cortex" in hit, "the MAGE-A12/brain precedent (PMID 23377668)"
+    assert "Testis" not in hit, "cancer-testis antigens are the target class, not the hazard"

@@ -25,7 +25,7 @@ indicators and nothing else -- the sign follows the **reference**, the way the d
 (-0.30, -0.46): priming and tolerance respectively. ``thymus`` is positive on the anchor channel
 (+0.37) and unresolved on the TCR channel (+0.08, ``|z| = 1.1``).
 
-*Residual to* ``BDEIF`` *-- a model that already contains* :mod:`mhcmatch.ipred` *and a foreignness
+*Residual to* ``BDEVF`` *-- a model that already contains* :mod:`mhcmatch.ipred` *and a foreignness
 term* -- ``bench/results/mimicry_residual.md`` -- a different pattern appears: across all four references
 tried, anchor-restricted similarity is positive and TCR-face-restricted similarity is negative, with
 whole-peptide similarity between them and near zero. That is a statement about what mimicry adds to
@@ -335,7 +335,7 @@ def annotate(peptides, pmhc_dir=None, cls: str = "mhc1", max_subs: int = 2) -> l
              "known": best.get(p, miss)[0] == 0} for p in peptides]
 
 
-def safety(scores, tumor: str | None = None, top: int = 5) -> list[dict]:
+def safety(scores, tumor: str | None = None, top: int = 5, symbols=None) -> list[dict]:
     """Where the self/thymus mimics are expressed -- the autoimmunity read-out, made actionable.
 
     A ``self`` or ``thymus`` hit says the candidate resembles a peptide the body presents; the
@@ -346,24 +346,34 @@ def safety(scores, tumor: str | None = None, top: int = 5) -> list[dict]:
     Returns, per peptide, the tolerance-side hits with
     :func:`mhcmatch.expression.safety_profile` resolved for each source that maps to a gene.
 
-    **Two gaps, both of which return an empty ``profile`` rather than a guess.** The ``self``
-    component is built from proteome windows, which carry no source column at all, so only the
-    ``thymus`` channel is resolvable today -- and its deposit names sources as **UniProt
-    accessions**, so a gene-level answer additionally needs an accession-to-symbol map that is not
-    shipped. The mimic peptide and its raw source are always returned; ``profile`` is empty when
-    either gap applies."""
+    **The ``thymus`` deposit names its sources as UniProt accessions** (``Q8WZ42``) while
+    :func:`mhcmatch.expression.safety_profile` is keyed on HGNC symbols (``TTN``), so the join needs
+    a map: pass ``symbols=`` from
+    :func:`mhcmatch.proteome.gene_symbols(path, key="accession")`. Without it an accession simply
+    fails to resolve and ``profile`` comes back empty -- which reads as *no risk found* and is the
+    dangerous direction to be wrong in, so :func:`mhcmatch.vector.mimicry_risk` refuses to run
+    without the map rather than defaulting it.
+
+    **One gap remains and it returns an empty ``profile`` rather than a guess.** The ``self``
+    component is built from proteome windows, which carry no source column at all, so it is not
+    resolvable to a gene however good the map is. The mimic peptide and its raw source are always
+    returned.
+
+    ``gene`` is the resolved symbol and ``source`` stays the deposit's own identifier, because a
+    withdrawal decision has to be traceable back to the record it came from."""
     from . import expression as EX
     out = []
     for s in scores:
         hits = []
         for comp in ("self", "thymus"):
             for ch, n in (s.nearest.get(comp) or {}).items():
-                gene = n.get("source") or ""
+                src = n.get("source") or ""
+                gene = (symbols or {}).get(src) or src
                 try:
                     prof = EX.safety_profile(gene, top=top) if gene else []
                 except Exception:
                     prof = []
                 hits.append({"component": comp, "channel": ch, "subs": n["subs"],
-                             "mimic": n["peptide"], "source": gene, "profile": prof})
+                             "mimic": n["peptide"], "source": src, "gene": gene, "profile": prof})
         out.append({"peptide": s.peptide, "autoimmune_logodds": s.autoimmune, "hits": hits})
     return out

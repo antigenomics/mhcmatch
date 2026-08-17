@@ -97,7 +97,7 @@ A ``binder`` returns one number per peptide, **higher meaning a stronger predict
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 
 #: Spacers tried in order, ``None`` first. A clean junction needs no spacer, and pVACvector's
 #: default list is tried only when one is needed. See the module docstring for why ``AAY`` is a
@@ -111,6 +111,17 @@ JUNCTION_LENGTHS: tuple = (8, 9, 10, 11)
 #: Class-II junction registers. The bound core is 9 residues but the presented span is longer, so
 #: the scan needs the window a core could be read from.
 MHC2_JUNCTION_LENGTHS: tuple = (12, 13, 14, 15)
+
+#: GTEx ``SMTSD`` tissue **prefixes** whose destruction is not survivable or not repairable, so a
+#: candidate whose self-mimic is transcribed there is excluded rather than ranked down. Matched by
+#: prefix because GTEx splits organs into regions -- ``Brain`` alone covers twelve of the 53 tissue
+#: names, ``Heart`` two.
+#:
+#: The list is a clinical judgement, not a fitted parameter, and both fatal precedents behind it are
+#: in :func:`screen`'s docstring. Override it: a cassette for a patient who has already lost an organ
+#: is a different calculation, and so is one for a tissue the protocol accepts damaging.
+ESSENTIAL_TISSUES: tuple = ("Heart", "Brain", "Nerve", "Lung", "Liver", "Kidney",
+                            "Adrenal Gland", "Pituitary", "Muscle - Skeletal")
 
 
 @dataclass(frozen=True)
@@ -287,6 +298,147 @@ def scan_junctions(units, binder, spacer: str | None = None,
                     "peptide": peps[b], "offset": wins[b][1], "n_windows": len(peps),
                     "n_over": n_over})
     return out
+
+
+def screen(units, risk, lengths=JUNCTION_LENGTHS) -> tuple:
+    """``(kept, rejected)`` — drop units carrying a register that mimics an essential-tissue self
+    peptide. **Run this before :func:`select`**: capacity spent on a unit that has to be withdrawn is
+    capacity not spent on a safe one.
+
+    The precedent is not hypothetical and it is not a binding-prediction failure. An
+    affinity-enhanced TCR against the HLA-A\\*01:01-restricted MAGE-A3 epitope ``EVDPIGHLY`` killed
+    the first two patients infused, by cardiogenic shock within days; autopsy found T-cell infiltrate
+    and myocardial damage with **no MAGE-A3 expressed in heart at all**, and the off-target was
+    ``ESDPIVAQY`` from titin (Linette et al., *Blood* 2013;122(6):863-71, PMID 23770775; Cameron et
+    al., *Sci Transl Med* 2013;5(197):197ra103, PMID 23926201). Separately, a TCR recognising
+    MAGE-A3/A9/A12 caused necrotising leukoencephalopathy and two deaths, because MAGE-A12 turned out
+    to be transcribed in human brain (Morgan et al., *J Immunother* 2013;36(2):133-51, PMID 23377668).
+
+    Read the two together and they give this function its shape:
+
+    - **Preclinical binding panels missed both.** The check that would have caught the first is
+      *which tissue expresses the source of the peptide this one resembles* — a mimicry search joined
+      to reference expression, which is exactly :func:`mhcmatch.mimicry.safety` plus
+      :func:`mhcmatch.expression.safety_profile`.
+    - **Every register is screened, not just the mutated one.** ``EVDPIGHLY``/``ESDPIVAQY`` agree at
+      P1, P3, P4, P5 and P9 and differ at four TCR-facing positions: anchor-matched, TCR-face-
+      divergent, and four substitutions apart, so a radius-2 search over the mutated window alone
+      would not have found it. A 27-mer unit contains ~70 class-I registers and the dangerous one
+      need not contain the mutation, so the whole unit is enumerated.
+    - **Exclusion, not down-ranking.** The second-best cassette is cheap; myocarditis is not.
+
+    ``risk(peptides) -> [reasons]`` returns one entry per peptide, **falsy meaning safe**; anything
+    truthy is carried into the rejection record. :func:`self_origin_risk` builds one from the human
+    proteome and reference expression. Injected for the same reason ``binder`` is — the policy here
+    is testable with no panel, no proteome and no download, and a site with its own toxicity list
+    substitutes it wholesale.
+
+    ``rejected`` is ``[(unit, register, reason)]``. A withdrawn candidate has to say what withdrew
+    it: "the screen dropped 3 of 40" is not a safety argument, and the reason is what a clinician
+    overrides or accepts.
+
+    The same ``risk`` callable applies to ``[j["peptide"] for j in cassette.junctions]`` — a junction
+    can manufacture a self-mimic just as it can manufacture a binder — but that check needs the
+    layout, so it belongs after :func:`order` rather than here.
+    """
+    kept, rejected = [], []
+    for u in units:
+        wins = sorted({u.peptide[i:i + L] for L in lengths
+                       for i in range(len(u.peptide) - L + 1)})
+        if not wins:
+            kept.append(u)
+            continue
+        reasons = list(risk(wins))
+        if len(reasons) != len(wins):
+            raise ValueError(f"risk returned {len(reasons)} reasons for {len(wins)} registers")
+        bad = [(w, r) for w, r in zip(wins, reasons) if r]
+        if bad:
+            rejected.extend((u, w, r) for w, r in bad)
+        else:
+            kept.append(u)
+    return kept, rejected
+
+
+def self_origin_risk(proteome, symbols, tissues=ESSENTIAL_TISSUES, min_tpm: float = 0.25,
+                     max_subs: int = 1):
+    """A ``risk`` callable for :func:`screen`: **near-exact self origin, joined to tissue.**
+
+    A register is risky when :meth:`mhcmatch.Proteome.find_source` places it within ``max_subs`` of a
+    human protein whose gene is transcribed above ``min_tpm`` in a tissue named by
+    :data:`ESSENTIAL_TISSUES`. Reasons are
+    ``[{"protein", "gene", "subs", "position", "tissue", "tpm"}]``.
+
+    **This is a near-identity test, not a similarity test, and that distinction is the whole design.**
+    The obvious alternative — score each register with :mod:`mhcmatch.mimicry` and flag the ones
+    resembling a tolerance-side reference — was built and measured, and it flags everything. On the
+    shipped thymic references the influenza epitope ``GILGFVFTL``, about as safe and as
+    well-characterised a foreign epitope as exists, drew 14 essential-tissue hits; ``EVDPIGHLY`` drew
+    7. The reason is the one ``mimicry_collinear.md`` already records: **anchor-channel similarity to
+    a presented reference is presentation, not recognition**, so an anchor-masked match fires for
+    every peptide sharing the allele's motif. A screen with a ~100% firing rate excludes nothing and
+    hides the cases that matter, so the mimicry route is not offered here.
+
+    ``find_source`` separates where the masked search cannot: ``ESDPIVAQY`` resolves to
+    ``sp|Q8WZ42|TITIN_HUMAN`` at 0 substitutions, ``EVDPIGHLY`` to ``sp|P43357|MAGA3_HUMAN`` at 0
+    (and MAGE-A6 at 1), and ``GILGFVFTL`` to **nothing at all**.
+
+    **``max_subs=1`` rather than 0** because a neoantigen register does not exact-match anything: it
+    is one substitution from its own wild type, and the wild type's gene is the one whose tissue
+    distribution the decision needs. A mutation in a gene transcribed in heart is a cardiac risk
+    whatever the mutation did.
+
+    **``min_tpm`` defaults to 0.25 because the two precedents disagree by two orders of magnitude and
+    the lower one is what has to be caught.** Titin is 64.4 TPM in heart left ventricle and 351.4 in
+    skeletal muscle, so any sane floor finds it. MAGE-A12 is **0.33 TPM** in brain caudate and 0.31 in
+    putamen — expression that killed two patients, and that a conventional 5-TPM "is it expressed"
+    cut would have waved through. The floor sits just under the fatal case, not at the conventional
+    line. It still separates: MAGE-A3's own non-testis medians are 0.00.
+
+    **What this does not catch, stated because a safety screen that oversells itself is worse than
+    none.** It would not have caught the titin event *as it happened*. There the cassette contained
+    MAGE-A3, whose profile is clean — 13.4 TPM in testis, 0.00 elsewhere — and the cross-reactive
+    titin peptide was never in the construct. Four TCR-facing substitutions separate the two, so no
+    distance threshold reaches it from the candidate, and the affinity-enhanced TCR that bridged them
+    was the actual cause. What this catches is the **adjacent** and commoner failure: a register that
+    *is* a self peptide from an essential-tissue gene, and a target gene like MAGE-A12 that is
+    transcribed where it was assumed silent.
+
+    ``symbols`` is ``{accession: gene}`` from
+    :func:`mhcmatch.proteome.gene_symbols(path, key="accession")`; ``find_source`` names proteins as
+    ``sp|P43357|MAGA3_HUMAN`` and :func:`mhcmatch.expression.safety_profile` is keyed on ``MAGEA3``.
+    It is required rather than defaulted because a missing map resolves nothing and so returns "no
+    risk" for every peptide — the one wrong answer this must never give quietly.
+
+    Cost is ``find_source``'s: a whole-proteome index per register length, built once and cached on
+    ``proteome``. Screen the whole candidate list in one pass.
+    """
+    from . import expression as EX
+
+    if not symbols:
+        raise ValueError("symbols must be a non-empty {accession: gene} map from "
+                         "proteome.gene_symbols(path, key='accession'); without it every peptide "
+                         "screens as safe")
+
+    def risk(peptides, _alleles=None):
+        out = []
+        for pep in peptides:
+            seen, hits = set(), []
+            for h in proteome.find_source(pep) or []:
+                if h.n_subs > max_subs:
+                    continue
+                parts = h.protein.split("|")
+                gene = symbols.get(parts[1] if len(parts) >= 3 else h.protein)
+                if not gene or gene in seen:
+                    continue
+                seen.add(gene)
+                for tissue, tpm in EX.safety_profile(gene):
+                    if tpm >= min_tpm and tissue.startswith(tuple(tissues)):
+                        hits.append({"protein": h.protein, "gene": gene, "subs": h.n_subs,
+                                     "position": h.position, "tissue": tissue, "tpm": tpm})
+            out.append(hits)
+        return out
+
+    return risk
 
 
 def select(candidates, n0: float, cls: str | None = None) -> Selection:

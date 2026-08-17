@@ -82,6 +82,7 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 | `mhcmatch.expression` | `lookup`, `safety_profile`, `matched_tissues`, `tumor_types`, `TUMOR_TISSUE` | GTEx `SMTSD` tissues and TCGA study abbreviations — **two vocabularies, never merged, neither clinical**. **Always pass the caller's own tumour type**; the benchmark's cross-tissue median exists for fit/holdout comparability, not as a default |
 | `mhcmatch.mimics` | `neighbours`, `KINDS`, `DEFAULT_REFS` | the raw scan, per category, **never summed** — each category argues something different |
 | `mhcmatch.mimicry` | `score`, `probability`, `annotate`, `safety`, `masks` | the *fitted* form: `viral`/`self`/`thymus` × `anchor`/`tcr` as signed log-odds. `probability` demands a **named** corpus. `annotate` (tested-neoantigen DB) is prior evidence and **never a fitted term** |
+| `mhcmatch.vector` | `screen`, `self_origin_risk`, `select`, `order`, `slippery_sites` | **cassette assembly**, the step after `rank`: withdraw on safety, then how many units per allotype, in what order, joined by what. `screen` **excludes**, never down-ranks. Scoring is injected (`binder`, `risk`), so the layout logic needs no panel |
 | `mhcmatch.precursor` | re-export of `vdjmatch.precursor` | moved there; **optional `[precursor]` extra** |
 
 ## CLI
@@ -127,6 +128,13 @@ tumour-matched refit across all eight cohorts at once (ROADMAP §6).
 - **Two MHC-II registers coexist by design — never merge them.** The *heuristic* register
   (`store._mhc2_register`, allele-agnostic) backs signatures/`decompose`/logos; the *model* register
   (`AnchorModel.best_register`, per-allele) backs scoring and benchmarks. They disagree often.
+- **`mimicry` is a scoring term, not a safety screen.** Flagging cassette candidates by "resembles a
+  tolerance-side reference" fires on almost everything: influenza `GILGFVFTL` drew 14
+  essential-tissue hits against the shipped thymic set. Anchor-masked similarity to a *presented*
+  reference is presentation, not recognition (`mimicry_collinear.md`), so it fires for every peptide
+  sharing the allele motif. Exclusion uses `vector.self_origin_risk` — `Proteome.find_source` at
+  ≤1 substitution, joined to `expression.safety_profile` — which resolves titin `ESDPIVAQY` to
+  `TITIN_HUMAN` and viral epitopes to nothing (`bench/results/vector_safety_screen.md`).
 - **Anchors are parametrized** — never hardcode positions. MHC-I masking comes from `seqtree.layout`;
   MHC-II anchors are mhcmatch's own `MHC2_ANCHORS` (`diffusion.py`), since seqtree exposes none — reference
   the constant, never a literal.
