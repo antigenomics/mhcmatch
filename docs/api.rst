@@ -152,6 +152,27 @@ for comparison. **Vectorised** — pass a list, not a loop. See :doc:`complement
    :undoc-members:
    :show-inheritance:
 
+mhcmatch.mimicry module
+-----------------------
+
+Mimicry as a signed, per-component immune-response risk. Three references — ``viral`` (priming),
+``self`` (tolerance, and the autoimmunity read-out) and ``thymus`` (negative selection) — each split
+into an **anchor** and a **TCR-facing** channel, because a whole-peptide distance averages two
+different measurements. Scores are **log-odds**; :func:`mhcmatch.mimicry.probability` is a separate
+step that requires a *named* corpus, because the screens behind any calibration run from 0.048 % to
+46.8 % positive and an unqualified probability is mostly a statement about which intercept was used.
+
+The tested-neoantigen database is exposed as :func:`mhcmatch.mimicry.annotate` — **prior evidence,
+never a fitted term**. Every labelled screen we hold sits inside that database, so a coefficient on
+it would be memorisation; held out honestly, fuzzy matching at two substitutions still recovers
+0.08–0.34 of a fresh screen's positives against 0.00–0.26 for exact lookup, which is what makes it
+worth reporting. Command line: ``mhcmatch neoag``.
+
+.. automodule:: mhcmatch.mimicry
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 mhcmatch.known module
 ---------------------
 

@@ -1,0 +1,152 @@
+{
+ "version": "0.12.0",
+ "cls": "mhc1",
+ "features": [
+  "viral_anchor",
+  "viral_tcr",
+  "self_anchor",
+  "self_tcr",
+  "thymus_anchor",
+  "thymus_tcr"
+ ],
+ "radius": {
+  "anchor": 1,
+  "tcr": 1
+ },
+ "channel_mask": {
+  "anchor": "anchor",
+  "tcr": "tcr5"
+ },
+ "standardizer": {
+  "mean": [
+   1.7980070884156152,
+   3.8810204132424833,
+   3.5834942141136232,
+   4.722674843739679,
+   1.5284343256578452,
+   3.858220955154229
+  ],
+  "std": [
+   2.2705394392683806,
+   3.71767357332111,
+   0.1448807019651634,
+   2.7246520971426715,
+   2.2408628323437836,
+   3.768206688097263
+  ]
+ },
+ "logistic": {
+  "intercept": -2.163269920962856,
+  "coef": [
+   0.6048840978247575,
+   0.4426855967275991,
+   -0.3044285267959009,
+   -0.4639721451610215,
+   0.3679974899491674,
+   0.07517644760966057
+  ],
+  "sd": [
+   0.03606383960197296,
+   0.07918315081947837,
+   0.025790792710832827,
+   0.10151037663502406,
+   0.028174361589991467,
+   0.06755581495671063
+  ],
+  "tau": 2.0
+ },
+ "calibration": {
+  "screens": {
+   "slope": 1.7499494578565942,
+   "intercept": -6.3542334533633005,
+   "prevalence": 0.0050862201602499615,
+   "note": "Platt map fitted on the seven neoantigen screens; their prevalence spans 0.048%-46.8%, so this number is not transferable to another corpus"
+  }
+ },
+ "reference_windows": {
+  "neoag/anchor/10": 40711,
+  "neoag/anchor/11": 35546,
+  "neoag/anchor/8": 61972,
+  "neoag/anchor/9": 50672,
+  "neoag/full/10": 43577,
+  "neoag/full/11": 38094,
+  "neoag/full/8": 66670,
+  "neoag/full/9": 54497,
+  "neoag/tcr2/10": 42962,
+  "neoag/tcr2/11": 37663,
+  "neoag/tcr2/8": 64610,
+  "neoag/tcr2/9": 53298,
+  "neoag/tcr5/10": 40810,
+  "neoag/tcr5/11": 36737,
+  "neoag/tcr5/8": 7623,
+  "neoag/tcr5/9": 38285,
+  "self/anchor/10": 2475382,
+  "self/anchor/11": 2478941,
+  "self/anchor/8": 2465008,
+  "self/anchor/9": 2470561,
+  "self/full/10": 12209939,
+  "self/full/11": 12325836,
+  "self/full/8": 11886586,
+  "self/full/9": 12071043,
+  "self/tcr2/10": 11893410,
+  "self/tcr2/11": 12076740,
+  "self/tcr2/8": 8872347,
+  "self/tcr2/9": 11417540,
+  "self/tcr5/10": 2430313,
+  "self/tcr5/11": 8742165,
+  "self/tcr5/8": 8000,
+  "self/tcr5/9": 159807,
+  "thymus/anchor/10": 6513,
+  "thymus/anchor/11": 1358,
+  "thymus/anchor/8": 48889,
+  "thymus/anchor/9": 26293,
+  "thymus/full/10": 7112,
+  "thymus/full/11": 1462,
+  "thymus/full/8": 53966,
+  "thymus/full/9": 29652,
+  "thymus/tcr2/10": 7107,
+  "thymus/tcr2/11": 1462,
+  "thymus/tcr2/8": 53506,
+  "thymus/tcr2/9": 29576,
+  "thymus/tcr5/10": 7002,
+  "thymus/tcr5/11": 1455,
+  "thymus/tcr5/8": 6083,
+  "thymus/tcr5/9": 21747,
+  "viral/anchor/10": 8785,
+  "viral/anchor/11": 953,
+  "viral/anchor/8": 42527,
+  "viral/anchor/9": 26532,
+  "viral/full/10": 9363,
+  "viral/full/11": 1002,
+  "viral/full/8": 45569,
+  "viral/full/9": 28446,
+  "viral/tcr2/10": 9224,
+  "viral/tcr2/11": 995,
+  "viral/tcr2/8": 44194,
+  "viral/tcr2/9": 27840,
+  "viral/tcr5/10": 8804,
+  "viral/tcr5/11": 976,
+  "viral/tcr5/8": 7340,
+  "viral/tcr5/9": 22735
+ },
+ "fit": {
+  "n": 337972,
+  "pos": 1719,
+  "screens": [
+   "Neopep",
+   "TESLA",
+   "Gfeller",
+   "Gfeller_GBM",
+   "ITSNdb",
+   "VACCIMEL",
+   "GBM"
+  ],
+  "screen_indicators": true,
+  "auroc_pooled": 0.8491293858316645,
+  "auroc_within_screen_median": 0.5962296816389343,
+  "lrt_chi2": 549.9576792093139,
+  "lrt_df": 6,
+  "lrt_p": 1.4418981825538905e-115,
+  "generator": "bench/neoag/mimicry_fit.py"
+ }
+}

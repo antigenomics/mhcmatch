@@ -11,22 +11,33 @@ number** (:data:`mhcmatch.mimics.KINDS` makes the same point about the raw scan)
              simultaneously the **autoimmunity** read-out: whatever cross-reactive clones survived
              selection are the ones that would attack the tissue displaying the mimic.
 
-**Every component is split into two channels, because the sign depends on which residues the
-distance is counted over.** This is the measurement the module exists to express
-(``bench/results/mimicry_residual.md``): across all four references tried and all sixteen
-reference x mask cells, similarity restricted to the **anchor** positions carries a *positive*
-coefficient, similarity restricted to the **TCR-facing** positions carries a *negative* one, and
-whole-peptide similarity -- the conventional construction -- lands between the two near zero, with
-three of its four cells not reaching ``|z| > 2``. A single whole-peptide distance averages two
-opposite effects and reports their difference, which is a property of the corpus's anchor and length
-mix rather than of the biology.
+**Every component is split into two channels**, because a whole-peptide distance averages two
+different measurements. The ``anchor`` channel counts substitutions only over
+:data:`mhcmatch.complement.ANCHORS`; the ``tcr`` channel counts them over the complement. The two
+partition the peptide, so no position is weighted twice.
 
-Mechanistically the two channels are different questions. Anchor similarity to a *presented*
-reference is presentation -- it says the peptide carries an anchor motif that reference's alleles
-present -- and it correlates with the binder score (r = +0.25 to +0.33) while surviving it in the
-fit. TCR-face similarity is a statement about the repertoire and correlates with nothing in the
-binding stack (|r| < 0.11 against presentation and affinity) but strongly with the physicochemical
-:mod:`mhcmatch.ipred` log-odds (r = +0.73 to +0.82).
+**There are two conditionings with two different sign patterns, and they must not be confused.**
+The shipped coefficients are the first one.
+
+*Standalone* -- this artifact, ``bench/results/mimicry_model.md``: the six columns plus screen
+indicators and nothing else -- the sign follows the **reference**, the way the design predicts.
+``viral`` is positive on both channels (+0.60 anchor, +0.44 tcr), ``self`` is negative on both
+(-0.30, -0.46): priming and tolerance respectively. ``thymus`` is positive on the anchor channel
+(+0.37) and unresolved on the TCR channel (+0.08, ``|z| = 1.1``).
+
+*Residual to a model that already contains* :mod:`mhcmatch.ipred` *and a foreignness term* --
+``bench/results/mimicry_residual.md`` -- a different pattern appears: across all four references
+tried, anchor-restricted similarity is positive and TCR-face-restricted similarity is negative, with
+whole-peptide similarity between them and near zero. That is a statement about what mimicry adds to
+*those* terms, not about mimicry on its own, and quoting the second pattern as though it were the
+first is a mistake this paragraph exists to prevent.
+
+Mechanistically the channels are different questions either way, which is why they are kept apart.
+Anchor similarity to a *presented* reference is largely presentation -- the peptide carries an anchor
+motif that reference's alleles present -- and it correlates with the binder score (r = +0.25 to
++0.33). TCR-face similarity correlates with nothing in the binding stack (|r| < 0.11 against
+presentation and affinity) but strongly with the physicochemical :mod:`mhcmatch.ipred` log-odds
+(r = +0.73 to +0.82), which is precisely why its sign moves once ``ipred`` enters the model.
 
 **Scores are log-odds, calibration is separate and explicit.** :func:`score` returns signed
 contributions and their sum on the log-odds scale, which is corpus-free. :func:`probability` maps
@@ -56,7 +67,7 @@ from . import mimics
 from .complement import ANCHORS
 
 __all__ = ["COMPONENTS", "CHANNELS", "params", "MimicryScore", "masks", "features", "score",
-           "probability", "annotate", "load_references"]
+           "probability", "annotate", "load_references", "safety"]
 
 AA = "ACDEFGHIKLMNPQRSTVWY"
 
@@ -123,10 +134,20 @@ class MimicryScore:
     logodds: float
     autoimmune: float
     density: dict[str, float] = field(default_factory=dict)
+    #: ``{component: {channel: {"subs", "peptide", "source", "n"}}}`` -- *which* reference peptide
+    #: was hit and what protein it came from. Without this the self/thymus channels are a bare
+    #: number and :func:`safety` cannot be reached, which is the question a vaccine needs answered.
+    nearest: dict = field(default_factory=dict)
 
     def as_dict(self) -> dict:
-        return {"peptide": self.peptide, "logodds": self.logodds, "autoimmune": self.autoimmune,
-                **{f"{c}_{ch}": v for c, chs in self.components.items() for ch, v in chs.items()}}
+        out = {"peptide": self.peptide, "logodds": self.logodds, "autoimmune": self.autoimmune,
+               **{f"{c}_{ch}": v for c, chs in self.components.items() for ch, v in chs.items()}}
+        for c, chs in self.nearest.items():
+            for ch, n in chs.items():
+                out[f"nearest_{c}_{ch}"] = n["peptide"]
+                out[f"source_{c}_{ch}"] = n["source"]
+                out[f"subs_{c}_{ch}"] = n["subs"]
+        return out
 
 
 def load_references(pmhc_dir=None, cls: str = "mhc1", with_self: bool = True) -> dict:
@@ -140,6 +161,7 @@ def load_references(pmhc_dir=None, cls: str = "mhc1", with_self: bool = True) ->
     lengths = sorted(mimics._LEN[cls])
     out: dict = {}
     for comp in COMPONENTS:
+        src = {}
         if comp == "self":
             if not with_self:
                 continue
@@ -147,12 +169,45 @@ def load_references(pmhc_dir=None, cls: str = "mhc1", with_self: bool = True) ->
         else:
             rel = mimics.DEFAULT_REFS["thymus" if comp == "thymus" else "viral"][0]
             peps = mimics.load_peptides(pmhc_dir, rel, cls)
+            src = _sources(pmhc_dir, rel)
         for L in lengths:
             win = sorted({w for r in peps for i in range(len(r) - L + 1)
                           for w in (r[i:i + L],) if all(c in AA for c in w)})
+            # projection -> a representative (full peptide, source protein). Deduplicated
+            # projections can have several origins; the first in sorted order is kept, and the
+            # count in `features` is what says how many there were.
             for ch, sel in masks(L).items():
-                proj = sorted({"".join(w[i] for i in sel) for w in win})
-                out[(comp, ch, L)] = (Index.build(proj, alphabet="aa"), len(proj))
+                b: dict[str, tuple[str, str]] = {}
+                for w in win:
+                    b.setdefault("".join(w[i] for i in sel), (w, src.get(w, "")))
+                keys = sorted(b)
+                out[(comp, ch, L)] = (Index.build(keys, alphabet="aa"), len(keys),
+                                      [b[k] for k in keys])
+    return out
+
+
+def _sources(pmhc_dir, rel: str) -> dict[str, str]:
+    """``{peptide: source_protein}`` from a compendium TSV that carries one.
+
+    Without this the ``self`` and ``thymus`` channels are a bare number: you can see that a candidate
+    resembles something presented, but not *what*, so
+    :func:`mhcmatch.expression.safety_profile` -- the question a vaccine actually needs answered --
+    is unreachable."""
+    import csv
+    import gzip
+    import os
+    if pmhc_dir is None:
+        from .store import fetch_file
+        path = fetch_file(rel)
+    else:
+        path = os.path.join(pmhc_dir, rel)
+    out = {}
+    with gzip.open(path, "rt") as fh:
+        for row in csv.DictReader(fh, delimiter="\t"):
+            p = (row.get("peptide") or "").strip().upper()
+            s = (row.get("source_protein") or row.get("source_organism") or "").strip()
+            if p and s:
+                out.setdefault(p, s)
     return out
 
 
@@ -178,17 +233,34 @@ def features(peptides, refs: dict, cls: str = "mhc1") -> list[dict]:
                     key = (comp, ch, len(p))
                     if key not in refs:
                         continue
-                    index, nwin = refs[key]
+                    index, nwin, back = refs[key]
                     q = "".join(p[i] for i in masks(len(p))[ch])
                     hits = index.search(q, SearchParams(max_subs=rad[ch], engine="seqtm"))
                     row[f"{comp}_{ch}"] = math.log1p(1e6 * len(hits) / max(nwin, 1))
+                    if hits:
+                        h = min(hits, key=lambda x: x.score)
+                        pep, srcid = back[h.ref_id]
+                        row[f"nearest_{comp}_{ch}"] = {"subs": int(h.score), "peptide": pep,
+                                                       "source": srcid, "n": len(hits)}
         out.append(row)
     return out
 
 
-def score(peptides, refs: dict, cls: str = "mhc1") -> list[MimicryScore]:
-    """Signed per-component log-odds contributions and their sum, one per peptide."""
+def score(peptides, refs: dict, cls: str = "mhc1",
+          allow_missing: bool = False) -> list[MimicryScore]:
+    """Signed per-component log-odds contributions and their sum, one per peptide.
+
+    Raises if ``refs`` is missing a component. A missing feature standardizes to zero, so the
+    aggregate would silently be a *different, smaller* model rather than an error -- and the usual
+    way to get here is ``load_references(with_self=False)``, which drops the component carrying the
+    largest coefficients. Pass ``allow_missing=True`` to accept that deliberately."""
     p = params(cls)
+    have = {c for c, _, _ in refs}
+    if not allow_missing and not set(COMPONENTS) <= have:
+        raise ValueError(
+            f"refs is missing {sorted(set(COMPONENTS) - have)}; those features would standardize to "
+            f"zero and the aggregate would quietly become a smaller model. Build them with "
+            f"load_references(), or pass allow_missing=True if that is what you mean.")
     mu, sd = p["standardizer"]["mean"], p["standardizer"]["std"]
     coef = dict(zip(p["features"], p["logistic"]["coef"]))
     out = []
@@ -201,8 +273,14 @@ def score(peptides, refs: dict, cls: str = "mhc1") -> list[MimicryScore]:
             c, ch = f.rsplit("_", 1)
             comp[c][ch] = v
             tot += v
+        near: dict = {}
+        for k, v in row.items():
+            if k.startswith("nearest_"):
+                c, ch = k[len("nearest_"):].rsplit("_", 1)
+                near.setdefault(c, {})[ch] = v
         out.append(MimicryScore(pep, comp, tot, sum(comp["self"].values()),
-                                {k: v for k, v in row.items()}))
+                                {k: v for k, v in row.items() if not k.startswith("nearest_")},
+                                near))
     return out
 
 
@@ -254,3 +332,33 @@ def annotate(peptides, pmhc_dir=None, cls: str = "mhc1", max_subs: int = 2) -> l
              "neoag_nearest": best.get(p, miss)[1],
              "neoag_n_within": best.get(p, miss)[2],
              "known": best.get(p, miss)[0] == 0} for p in peptides]
+
+
+def safety(scores, tumor: str | None = None, top: int = 5) -> list[dict]:
+    """Where the self/thymus mimics are expressed -- the autoimmunity read-out, made actionable.
+
+    A ``self`` or ``thymus`` hit says the candidate resembles a peptide the body presents; the
+    decision it feeds is *whether the tissue presenting it is one you can afford to damage*. That
+    needs the mimic's **source protein**, which is why :func:`load_references` carries it and
+    :func:`features` keeps it rather than collapsing everything to a density.
+
+    Returns, per peptide, the tolerance-side hits with
+    :func:`mhcmatch.expression.safety_profile` resolved for each source that maps to a gene. Sources
+    are UniProt accessions in the thymic deposit, so a gene-level answer needs the accession-to-symbol
+    map; where it is unavailable the raw source is returned and ``profile`` is empty rather than
+    guessed."""
+    from . import expression as EX
+    out = []
+    for s in scores:
+        hits = []
+        for comp in ("self", "thymus"):
+            for ch, n in (s.nearest.get(comp) or {}).items():
+                gene = n.get("source") or ""
+                try:
+                    prof = EX.safety_profile(gene, top=top) if gene else []
+                except Exception:
+                    prof = []
+                hits.append({"component": comp, "channel": ch, "subs": n["subs"],
+                             "mimic": n["peptide"], "source": gene, "profile": prof})
+        out.append({"peptide": s.peptide, "autoimmune_logodds": s.autoimmune, "hits": hits})
+    return out
