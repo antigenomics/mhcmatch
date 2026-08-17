@@ -257,7 +257,8 @@ def junction_windows(left: str, right: str, spacer: str | None = None,
 
 
 def scan_junctions(units, binder, spacer: str | None = None,
-                   lengths=JUNCTION_LENGTHS, alleles=None) -> list:
+                   lengths=JUNCTION_LENGTHS, alleles=None,
+                   binder_threshold: float | None = None) -> list:
     """Score every junction of ``units`` laid out in the given order.
 
     Returns one dict per junction: ``left``, ``right`` (unit indices), ``score`` (the **strongest**
@@ -280,8 +281,11 @@ def scan_junctions(units, binder, spacer: str | None = None,
         if len(scores) != len(peps):
             raise ValueError(f"binder returned {len(scores)} scores for {len(peps)} peptides")
         b = max(range(len(peps)), key=lambda i: scores[i])
+        n_over = (sum(1 for v in scores if v >= binder_threshold)
+                  if binder_threshold is not None else None)
         out.append({"left": k, "right": k + 1, "score": float(scores[b]),
-                    "peptide": peps[b], "offset": wins[b][1], "n_windows": len(peps)})
+                    "peptide": peps[b], "offset": wins[b][1], "n_windows": len(peps),
+                    "n_over": n_over})
     return out
 
 
@@ -360,8 +364,22 @@ def _greedy_2opt(cost, rounds: int = 4) -> list:
 
 
 def order(units, binder, spacers=SPACERS, lengths=JUNCTION_LENGTHS,
-          alleles=None, threshold: float | None = None) -> Cassette:
+          alleles=None, threshold: float | None = None,
+          objective: str = "sum", binder_threshold: float | None = None) -> Cassette:
     """Choose a spacer and an ordering that minimise predicted junctional binding.
+
+    **``objective`` matters and the two choices disagree, so it is explicit.**
+
+    ``"sum"``   total of the strongest predicted binder at each junction. A junction is a hazard if
+                *one* good binder forms there, which is pVACvector's logic (PMID 31907209). The
+                junction count is ``n-1`` whatever the spacer, but a longer spacer creates more
+                registers per junction and so a stochastically larger maximum — this objective
+                therefore has a real bias toward the **shortest** spacer, up to and including none.
+    ``"rate"``  predicted binders per register, needing ``binder_threshold``. Length-neutral, and it
+                is the metric a junction sweep naturally reports.
+
+    On one measured payload the two picked different spacers — ``"sum"`` chose no spacer where a
+    rate sweep put ``AAA`` ahead of it — so a caller who has not chosen has not finished designing.
 
     Spacers are tried in ``spacers`` order and the **first** one whose worst junction falls at or
     below ``threshold`` wins; with ``threshold=None`` every spacer is tried and the one with the
@@ -393,8 +411,17 @@ def order(units, binder, spacers=SPACERS, lengths=JUNCTION_LENGTHS,
                 cost[i][j] = pair[0]["score"] if pair else float("-inf")
         idx = _greedy_2opt(cost)
         laid = [units[i] for i in idx]
-        js = scan_junctions(laid, binder, sp, lengths, alleles)
-        total = sum(j["score"] for j in js if j["score"] != float("-inf"))
+        js = scan_junctions(laid, binder, sp, lengths, alleles, binder_threshold)
+        finite = [j for j in js if j["score"] != float("-inf")]
+        if objective == "rate":
+            if binder_threshold is None:
+                raise ValueError('objective="rate" needs binder_threshold')
+            nw = sum(j["n_windows"] for j in js) or 1
+            total = sum((j["n_over"] or 0) for j in js) / nw
+        elif objective == "sum":
+            total = sum(j["score"] for j in finite)
+        else:
+            raise ValueError(f'objective must be "sum" or "rate", got {objective!r}')
         worst = max((j["score"] for j in js), default=float("-inf"))
         cand = (total, worst, sp, laid, js)
         if best is None or total < best[0]:

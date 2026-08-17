@@ -333,3 +333,39 @@ def test_cassette_carries_no_backbone():
     cas = vector.order(units, binder=_clean)
     assert not cas.sequence.startswith("M") or len(cas.sequence) == len(units[0].peptide)
     assert "*" not in cas.sequence
+
+def test_order_objectives_can_disagree_and_rate_is_length_neutral():
+    """The reason `objective` is explicit: summing per-junction maxima penalises a longer spacer for
+    having more registers, so it drifts toward no spacer even when the *rate* of binders is worse."""
+    # No spacer: every junction register is all-Z, a *moderate* binder (0.6) -- low maximum, but a
+    # 100% rate. With the spacer: only the registers covering its "W" bind, and they bind *strongly*
+    # (1.0) -- higher maximum, but a much lower rate. So sum-of-maxima prefers no spacer while the
+    # rate prefers the spacer, on the same payload.
+    def binder(peps, alleles=None):
+        return [1.0 if "W" in p else (0.6 if set(p) == {"Z"} else 0.0) for p in peps]
+
+    units = [vector.Unit("Z" * 12, 6, "g1", "A", 0.3), vector.Unit("Z" * 12, 6, "g2", "A", 0.2)]
+    by_sum = vector.order(units, binder=binder, spacers=(None, "WQQQQ"), objective="sum")
+    by_rate = vector.order(units, binder=binder, spacers=(None, "WQQQQ"),
+                           objective="rate", binder_threshold=0.5)
+    assert by_sum.spacer is None, "sum-of-maxima takes the lower peak"
+    assert by_rate.spacer == "WQQQQ", "rate takes the lower share of binding registers"
+    assert by_sum.spacer != by_rate.spacer, "the objectives genuinely disagree here"
+
+
+def test_order_rate_objective_requires_its_threshold():
+    units = [vector.Unit(c * 12, 6, f"g{i}", "A", 0.3) for i, c in enumerate("AC")]
+    with pytest.raises(ValueError, match="binder_threshold"):
+        vector.order(units, binder=_clean, objective="rate")
+    with pytest.raises(ValueError, match="objective"):
+        vector.order(units, binder=_clean, objective="median")
+
+
+def test_scan_junctions_counts_binders_only_when_asked():
+    def binder(peps, alleles=None):
+        return [1.0 if p.startswith("AAC") else 0.0 for p in peps]
+
+    units = [vector.Unit("A" * 10, 5, "g1", "A", 0.3), vector.Unit("C" * 10, 5, "g2", "A", 0.2)]
+    assert vector.scan_junctions(units, binder, None, lengths=(9,))[0]["n_over"] is None
+    j = vector.scan_junctions(units, binder, None, lengths=(9,), binder_threshold=0.5)[0]
+    assert 0 < j["n_over"] <= j["n_windows"]
