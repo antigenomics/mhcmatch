@@ -135,11 +135,11 @@ Suffixes
 
 Suffixes are **fitting choices, not parameters**, and follow a hyphen:
 
-``-bal``
-   every screen weighted to the same total mass (``1/n_screen``, no free parameter)
-
 ``-scr``
-   screen indicators fitted as nuisance columns and dropped from the artifact
+   screen indicators fitted as nuisance columns and dropped from the artifact — how ``M`` is fitted
+
+A suffix is a prompt to ask whether the variant is a result or a knob. If it never changes a
+conclusion it belongs in the history, not in a table.
 
 Missingness indicators are part of their parameter rather than separate letters: they exist so a row
 missing one covariate is kept rather than dropped, and carry no independent meaning.
@@ -156,22 +156,24 @@ The models
      - notes
    * - ``P``
      - presentation
-     - the presentation-only baseline, and the strongest single axis on every screen
-   * - ``ADEC``
-     - affinity, agretopicity, expression, complementarity
-     - —
+     - the presentation-only baseline — and the best mean LODO AUROC of the three, at one parameter
    * - ``PADEC``
-     - + presentation
-     - —
+     - + affinity, agretopicity, expression, complementarity
+     - the aggregate
    * - ``PADECM``
      - + mimicry
-     - —
+     - the aggregate plus the mimicry block
    * - ``BDEVF``
      - binder, agretopicity, expression, vanilla physicochemistry, foreignness
      - the older design; folds presentation into ``B``
    * - ``M``
      - the six mimicry channels alone
      - shipped as ``mimicry_mhc1.json``; fitted as ``M-scr``
+
+Each adjacent pair on the aggregate arm is a contrast worth reading: ``P`` vs ``PADEC`` is what the
+aggregate adds to presentation, ``PADEC`` vs ``PADECM`` is what mimicry adds to the aggregate. Three
+further variants (``ADEC`` and two screen-balanced refits) were measured and dropped because neither
+showed anything these do not; the benchmark's ``MODELS.md`` records what they were and why.
 
 ``BDEVF`` and ``PADEC`` are the two that used to share the name "the neoantigen model". The
 difference is now visible without opening either: ``BDEVF`` carries the **vanilla** recognition term
