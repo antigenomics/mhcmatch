@@ -35,7 +35,7 @@ first is a mistake this paragraph exists to prevent.
 Mechanistically the channels are different questions either way, which is why they are kept apart.
 Anchor similarity to a *presented* reference is largely presentation -- the peptide carries an anchor
 motif that reference's alleles present -- and it correlates with the binder score (r = +0.25 to
-+0.33). TCR-face similarity correlates with nothing in the binding stack (|r| < 0.11 against
++0.33). TCR-face similarity correlates with nothing in the binding stack (``|r| < 0.11`` against
 presentation and affinity) but strongly with the physicochemical :mod:`mhcmatch.ipred` log-odds
 (r = +0.73 to +0.82), which is precisely why its sign moves once ``ipred`` enters the model.
 
@@ -153,10 +153,11 @@ class MimicryScore:
 def load_references(pmhc_dir=None, cls: str = "mhc1", with_self: bool = True) -> dict:
     """Reference window sets per (component, channel, length), ready for :func:`features`.
 
-    ``with_self=False`` skips the host proteome, which is the expensive one (~12 M windows per
-    length, tens of seconds to index and a few GB while it builds). The aggregate is **not defined**
-    without it -- ``self`` carries the largest coefficients in the fit -- so this is for callers who
-    want only the viral and thymic channels."""
+    ``with_self=False`` skips the host proteome, which dominates the cost: ~12 M windows per length,
+    and **measured at 6 min 15 s and ~7.5 GB peak** for class I's four lengths, against 1.9 s
+    without it. That is paid once per process, so it amortizes over a candidate list and is absurd
+    for a single peptide. The aggregate is **not defined** without ``self`` -- it carries the largest
+    coefficients in the fit -- so :func:`score` raises unless the caller passes ``allow_missing``."""
     from seqtree import Index
     lengths = sorted(mimics._LEN[cls])
     out: dict = {}
@@ -343,10 +344,14 @@ def safety(scores, tumor: str | None = None, top: int = 5) -> list[dict]:
     :func:`features` keeps it rather than collapsing everything to a density.
 
     Returns, per peptide, the tolerance-side hits with
-    :func:`mhcmatch.expression.safety_profile` resolved for each source that maps to a gene. Sources
-    are UniProt accessions in the thymic deposit, so a gene-level answer needs the accession-to-symbol
-    map; where it is unavailable the raw source is returned and ``profile`` is empty rather than
-    guessed."""
+    :func:`mhcmatch.expression.safety_profile` resolved for each source that maps to a gene.
+
+    **Two gaps, both of which return an empty ``profile`` rather than a guess.** The ``self``
+    component is built from proteome windows, which carry no source column at all, so only the
+    ``thymus`` channel is resolvable today -- and its deposit names sources as **UniProt
+    accessions**, so a gene-level answer additionally needs an accession-to-symbol map that is not
+    shipped. The mimic peptide and its raw source are always returned; ``profile`` is empty when
+    either gap applies."""
     from . import expression as EX
     out = []
     for s in scores:

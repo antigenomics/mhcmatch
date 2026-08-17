@@ -602,6 +602,60 @@ def cmd_neoag(a):
     out.close()
 
 
+def cmd_mimicry(a):
+    """The fitted mimicry aggregate: six signed contributions, their sum, and what was hit.
+
+    One column per (component, channel), so the aggregate can always be taken apart -- a candidate
+    at +1.5 because it looks viral and one at +1.5 because it looks nothing like self are different
+    candidates. ``--coefficients`` prints the shipped model instead of scoring anything.
+
+    ``self`` is the expensive reference (~12 M windows per length); ``--no-self`` drops it, and with
+    it the largest coefficients, so the aggregate there is deliberately a smaller model."""
+    from . import mimicry as MM
+    if a.coefficients:
+        p = MM.params(a.cls)
+        print(f"# mhcmatch.mimicry {a.cls}, model version {p['version']}, radius {p['radius']}")
+        print(f"# fitted on {p['fit']['n']:,} rows / {p['fit']['pos']:,} positives over "
+              f"{len(p['fit']['screens'])} screens, screen indicators as nuisance columns")
+        print("\t".join(("component", "channel", "coef", "sd", "z")))
+        for f, c, s in zip(p["features"], p["logistic"]["coef"], p["logistic"]["sd"]):
+            comp, ch = f.rsplit("_", 1)
+            print(f"{comp}\t{ch}\t{c:+.4f}\t{s:.4f}\t{c / s:+.2f}")
+        print(f"# AUROC {p['fit']['auroc_pooled']:.3f} pooled, "
+              f"{p['fit']['auroc_within_screen_median']:.3f} median within screen -- report the "
+              f"second one", file=sys.stderr)
+        return
+    src = getattr(a, "peptides", None)
+    rows = _read_table(src) if src else None
+    peps = [r["peptide"] for r in rows] if rows else _read_peptides(None, a.input)
+    if not peps:
+        raise SystemExit("no peptides: pass them as arguments or with --peptides")
+    if not a.no_self:
+        print("# indexing the host proteome (~12 M windows per length): several minutes and ~7 GB, "
+              "paid once per process. Pass a whole candidate list, not one peptide; --no-self skips "
+              "it at the cost of the largest coefficients", file=sys.stderr, flush=True)
+    refs = MM.load_references(cls=a.cls, with_self=not a.no_self)
+    scores = MM.score(peps, refs, cls=a.cls, allow_missing=a.no_self)
+    prob = MM.probability(scores, corpus=a.corpus, cls=a.cls) if a.corpus else None
+    pairs = [(c, ch) for c in MM.COMPONENTS for ch in MM.CHANNELS]
+    cols = [f"{c}_{ch}" for c, ch in pairs] + [f"{k}_{c}_{ch}" for c, ch in pairs
+                                               for k in ("nearest", "source", "subs")]
+    extra = [c for c in (rows[0] if rows else {}) if c != "peptide"]
+    out = _Out(a, "peptide")
+    out.header("peptide", *extra, "logodds", "autoimmune",
+               *(["p_response"] if prob else []), *cols)
+    for i, s in enumerate(scores):
+        d = s.as_dict()
+        out.row(s.peptide, *((rows[i] if rows else {}).get(c, "") for c in extra),
+                f"{s.logodds:.6g}", f"{s.autoimmune:.6g}",
+                *([f"{prob[i]:.6g}"] if prob else []),
+                *(f"{d[c]:.6g}" if isinstance(d.get(c), float) else d.get(c, "") for c in cols))
+    out.close()
+    if not prob:
+        print("# logodds is prior-free; --corpus screens maps it to a probability against that "
+              "corpus's own prevalence, which is not transferable", file=sys.stderr)
+
+
 def cmd_mimics(a):
     """Near-identical reference peptides per category, in one threaded batch."""
     from . import mimics as M
@@ -872,6 +926,24 @@ def main(argv=None):
                     help="drop candidates with nothing inside --max-subs")
     _add_batch_opts(ng, "candidate")
     ng.set_defaults(fn=cmd_neoag)
+
+    my = sub.add_parser("mimicry",
+                        help="the fitted mimicry aggregate: signed viral / self / thymus "
+                             "contributions per anchor and TCR-facing channel, and their sum")
+    my.add_argument("input", nargs="*", help="peptide(s); or use --peptides")
+    my.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
+    my.add_argument("--corpus", nargs="?", const="screens", default=None,
+                    help="map the aggregate to a probability against a NAMED fitted corpus "
+                         "(default 'screens'). Omit to keep the prior-free log-odds, which is what "
+                         "you rank on -- the screens run from 0.048%% to 46.8%% positive, so an "
+                         "unqualified probability mostly reports one of those prevalences")
+    my.add_argument("--no-self", action="store_true",
+                    help="skip the host proteome. It is the expensive reference and it carries the "
+                         "largest coefficients, so this scores a deliberately smaller model")
+    my.add_argument("--coefficients", action="store_true",
+                    help="print the shipped model's coefficients and fit record; score nothing")
+    _add_batch_opts(my, "candidate")
+    my.set_defaults(fn=cmd_mimicry)
 
     mi = sub.add_parser("mimics",
                         help="near-identical reference peptides per category (self / thymus / "

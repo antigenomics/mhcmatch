@@ -56,10 +56,11 @@ diffusion model, and the downstream predictors.
 | Calibrated physicochemical `log P(immunogenic)`, 13 parameters | `mhcmatch.ipred` | **v0.9.0** (§5a) |
 | Position-role naive Bayes over residue identity (prior-free LLR) | `mhcmatch.posbayes` | **v0.9.0** (§5a) |
 | **Complementarity** — six feature blocks, linear head, vectorised | `mhcmatch.complement` | **v0.10-dev** (§5b) |
-| TCR precursor frequency (six estimators) | `mhcmatch.precursor` | **v0.9.0**, validation open (§5a) |
+| TCR precursor frequency (six estimators) | `mhcmatch.precursor` | **v0.12.0** re-export of `vdjmatch.precursor` (§5a) |
 | Reference expression by GTEx tissue / TCGA tumour type | `mhcmatch.expression` | **v0.9.0** |
 | Neoantigen ranking: noisy-AND gate over presentation × recognition | `mhcmatch.rank` | **v0.10-dev** (§5b) |
 | Mimicry scan (thymus / viral / neoag references) | `mhcmatch.mimics` | **v0.9.0**, on the slow search path (§6c) |
+| **Mimicry risk** — viral/self/thymus × anchor/TCR-facing, signed log-odds | `mhcmatch.mimicry` | **v0.12.0**, class I only (§5c) |
 | Stability | — | Phase 2 |
 | NetMHCpan / MixMHCpred head-to-head benchmark + paper | separate repo | Phase 3 |
 
@@ -394,6 +395,62 @@ vs 0.473, Neopep 0.802 vs 0.662, Gfeller 0.782 vs 0.702.
 4. **The gate is fitted where presentation is weak** (`IEDB_ligandome`, 0.610), so its `a`
    under-weights presentation for screens where presentation is strong. Presentation alone still
    leads the LODO mean (0.707 vs 0.698).
+
+## 5c. Mimicry as immune-response risk (v0.12.0, 2026-08-17)
+
+Analysis in `2026-mhcmatch-benchmark` (`bench/results/mimicry_model.md`,
+`mimicry_radius_sweep.md`, `mimicry_residual.md`, `bench/selfnonself/`). This section records what
+landed **in the library**.
+
+**`mhcmatch.mimicry` — the fitted aggregate, shipped** as `mimicry_mhc1.json` v0.12.0. Three
+references (`viral` priming, `self` tolerance *and* autoimmunity, `thymus` negative selection) ×
+two channels (`anchor`, `tcr`) that **partition** the peptide, so no position is weighted twice.
+Bayesian logistic over 337,972 rows / 1,719 positives across seven screens, screen indicators as
+nuisance columns and then dropped from the artifact — which is what makes the shipped coefficients
+within-screen.
+
+- **The earlier null was a search property, not biology.** Whole-peptide radius-2 thymic coverage is
+  1.63 % (viral 1.10 %) — sparse enough to look like nothing is there. Masking to the TCR face and
+  searching at radius 1 reaches **53.4 %**, against 0.25 % for the whole peptide at that radius.
+  Masked Hamming is exact here, not approximated: the peptide and the reference window are projected
+  onto the mask's positions and the *projection* is what gets searched.
+- **Signs follow the reference, as the design predicts**: `viral` +0.605 anchor (z = +16.8) / +0.443
+  tcr (+5.6), `self` −0.304 / −0.464, `thymus` +0.368 anchor and unresolved on tcr (+0.075).
+- **Two conditionings, two sign patterns, and they must not be conflated.** Residual to a model that
+  already contains `ipred` and a foreignness term, the pattern is anchor-positive / TCR-face-negative
+  across *every* reference. That is a statement about what mimicry adds to those terms. The module
+  docstring separates them deliberately; so should anything quoting them.
+- **Not collinear with the presentation stack** (max |r| 0.19 affinity, 0.068 agretopicity, 0.034
+  expression; all VIF < 3.3), but the TCR channel does track `ipred` at r = 0.73–0.82 — which is
+  exactly why its sign moves once `ipred` is in the model.
+- **`MimicryScore.nearest` carries the hit's identity and source protein**, so `mimicry.safety()`
+  reaches `expression.safety_profile`. A bare density cannot answer the question a vaccine asks.
+- **Log-odds, and calibration is a separate named step.** The seven screens run 0.048 %–46.8 %
+  positive, so `probability()` requires a corpus name. AUROC **0.849 pooled / 0.596 within screen**;
+  the second is the reportable one, and the gap *is* the pooling artifact.
+- **`annotate` (tested-neoantigen DB) is prior evidence and never a fitted term** — every labelled
+  screen we hold is inside it, so retrieval recall at distance 0 is 1.000 on all seven and a
+  coefficient would be memorisation. Held out honestly, fuzzy matching at two substitutions recovers
+  0.08–0.34 of a fresh screen's positives against 0.00–0.26 for exact lookup, which is why
+  `--max-subs` defaults to 2. CLI: `mhcmatch mimicry`, `mhcmatch neoag`. Notebook 07.
+
+**Open in the library:**
+
+1. **Class I only.** `params("mhc2")` has no artifact. Class II spans 15 lengths and the anchor
+   positions float with the register, so the channel masks need `store.anchor_indices`, not the
+   class-I offsets — the same blocker as `complement`'s class-II arm (§5b open item 2).
+2. **`safety()` cannot yet resolve the channel that matters most.** Two gaps: the `self` component
+   is built from *proteome windows*, which carry no source column at all, so only `thymus` hits have
+   a source; and the thymic deposit names sources as **UniProt accessions** while `expression` is
+   gene-keyed, so even those need an accession→symbol map that is not on disk. Both return the raw
+   source with an empty profile rather than a guess. Closing this is what makes the autoimmunity
+   read-out actionable, so it is the first thing to do here.
+3. **`load_references(with_self=True)` is expensive: measured 6 min 15 s and ~7.5 GB** for class I's
+   four lengths, against 1.9 s with `--no-self`. Paid once per process, so it amortizes over a
+   candidate list and is absurd for one peptide. `--no-self` drops the largest coefficients, which
+   `score()` raises about rather than silently absorbing.
+4. **Not wired into `rank`.** The aggregate is a standalone command; whether it belongs inside the
+   gate, as a third axis or as an annotation column, is a benchmark question and not settled.
 
 ## 6. Phase 3 — benchmark & paper
 

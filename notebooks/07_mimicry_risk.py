@@ -40,7 +40,9 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    mo.md(r"""## 7.1 The shipped model, and what it says""")
+    mo.md(r"""
+    ## 7.1 The shipped model, and what it says
+    """)
     return
 
 
@@ -75,7 +77,9 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    mo.md(r"""## 7.2 The two channels partition the peptide""")
+    mo.md(r"""
+    ## 7.2 The two channels partition the peptide
+    """)
     return
 
 

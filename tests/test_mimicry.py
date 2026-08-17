@@ -36,3 +36,24 @@ def test_score_says_what_is_missing_rather_than_failing_obscurely():
         mimicry.params("mhc1")
     except FileNotFoundError as e:
         assert "annotate() and masks() do not need it" in str(e)
+
+
+def test_score_refuses_a_silently_smaller_model():
+    """A component missing from refs standardizes to zero, so the aggregate would quietly become a
+    different model. That must raise, and the message must name what is gone."""
+    with pytest.raises(ValueError, match="self"):
+        mimicry.score(["GILGFVFTL"], {("viral", "anchor", 9): None}, cls="mhc1")
+
+
+def test_cli_coefficients_reports_both_aurocs(capsys):
+    """`mhcmatch mimicry --coefficients` must print the six shipped coefficients and BOTH AUROCs --
+    the pooled/within-screen gap is the pooling artifact and hiding it is how it gets misquoted."""
+    from mhcmatch.cli import main
+    main(["mimicry", "--coefficients"])
+    out, err = capsys.readouterr()
+    p = mimicry.params("mhc1")
+    for f in p["features"]:
+        comp, ch = f.rsplit("_", 1)
+        assert f"{comp}\t{ch}\t" in out
+    assert f"{p['fit']['auroc_pooled']:.3f}" in err
+    assert f"{p['fit']['auroc_within_screen_median']:.3f}" in err

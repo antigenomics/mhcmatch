@@ -76,11 +76,25 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 | `mhcmatch.calibrate` | `RankCalibrator` | per-allele `%rank` / `P(present)` / band |
 | `mhcmatch.predict` | `predict_fasta`, `predict_windows` | variant-window scoring; native table carries `binder_rank`/`binder_band`/`affinity_rank` (the generalized binder score) alongside %rank/IC50/agretopicity. `.scored.csv` keeps the fixed 57-col pipeline schema |
 | `mhcmatch.structure` | `StructureScorer` | MJ ΔΔG; **optional `[structure]` extra** (needs `tcren`) |
+| `mhcmatch.complement` | `score`, `design`, `feature_names`, `posterior` | the recognition axis: six blocks, per species, **never pooled across hosts**. Vectorised — pass a list. `posbayes` and `ipred` are strict special cases |
+| `mhcmatch.rank` | `rank_fasta`, `rank_table` | presentation × recognition through a **gate** (product of sigmoids), not a sum |
+| `mhcmatch.known` | five built-in reference sets | exact-match lookup. An exact match outranks any model output, so `rank` flags it and never folds it into the score |
+| `mhcmatch.expression` | `lookup`, `safety_profile`, `matched_tissues`, `TUMOR_TISSUE` | GTEx `SMTSD` tissues and TCGA study abbreviations — **two vocabularies, never merged, neither clinical** |
+| `mhcmatch.mimics` | `neighbours`, `KINDS`, `DEFAULT_REFS` | the raw scan, per category, **never summed** — each category argues something different |
+| `mhcmatch.mimicry` | `score`, `probability`, `annotate`, `safety`, `masks` | the *fitted* form: `viral`/`self`/`thymus` × `anchor`/`tcr` as signed log-odds. `probability` demands a **named** corpus. `annotate` (tested-neoantigen DB) is prior evidence and **never a fitted term** |
+| `mhcmatch.precursor` | re-export of `vdjmatch.precursor` | moved there; **optional `[precursor]` extra** |
 
 ## CLI
 
-`decompose`, `restriction`, `affinity`, `binder`, `scan`, `source`, `logo`, `span`, `predict`, `bootstrap`.
+`decompose`, `restriction`, `affinity`, `binder`, `scan`, `source`, `logo`, `span`, `predict`,
+`rank`, `explain`, `complement`, `mimics`, `mimicry`, `neoag`, `expression`, `bootstrap`.
 `mhcmatch binder <peptide> --alleles ... --cls mhc1` ranks alleles by the generalized binder score.
+
+**Pass `--peptides FILE`, never loop the shell.** The setup a per-peptide invocation re-pays is the
+whole cost: the presentation/affinity calibrators ~5 s, a human-proteome length index ~70 s. One
+process over a list is the difference between seconds per peptide and thousands per second.
+`--threads` exists **only** on `source` and `mimics`, whose neighbour search runs in C++ with the GIL
+released; elsewhere it is absent rather than accepted and ignored.
 
 ## Traps
 

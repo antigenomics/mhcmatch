@@ -45,6 +45,8 @@ mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor 
 | Rank neoantigen candidates for a donor | `mhcmatch rank fasta ...` | `rank.rank_fasta` |
 | Why did *this* candidate rank there? | `mhcmatch explain PEP --allele A` | — |
 | What self / viral / bacterial peptide does it mimic? | `mhcmatch mimics --peptides p.txt` | `mimics.neighbours` |
+| Does that mimicry raise or lower the risk, and why? | `mhcmatch mimicry --peptides p.txt` | `mimicry.score` |
+| Has this, or something near it, already been tested? | `mhcmatch neoag --peptides p.txt` | `mimicry.annotate` |
 | Where in the proteome does it come from? | `mhcmatch source --peptides p.txt --proteome human` | `Proteome.find_sources` |
 | Is the gene on in the tumour, and in normal tissue? | `mhcmatch expression --list-contexts` | `expression.lookup` |
 | What does this allele's motif look like? | `mhcmatch logo 'HLA-A*02:01'` | `logo.motif` |
@@ -72,6 +74,8 @@ mhcmatch affinity   --peptides pairs.tsv --allele 'HLA-A*02:01'  --out affinity.
                                                                      # peptide + wt_peptide columns
 mhcmatch source     --peptides peptides.txt --proteome human --threads 0 --out sources.tsv
 mhcmatch mimics     --peptides peptides.txt --categories thymus,viral,bacterial --threads 0
+mhcmatch mimicry    --peptides candidates.tsv --out risk.tsv     # signed per-component log-odds
+mhcmatch neoag      --peptides candidates.tsv --out annotated.tsv  # keeps every original column
 cut -f1 table.tsv | mhcmatch complement --peptides -              # `-` reads stdin
 ```
 
@@ -120,6 +124,20 @@ never sums them, because a hit in each argues something different: **thymus** (p
 negative selection — tolerance, and autoimmune risk for a vaccine), **self** (encoded but not known
 to be presented), **viral** / **bacterial** (a pre-existing repertoire may cross-react, raising
 immunogenicity), **neoag** (already tested somewhere).
+
+**Mimicry as risk.** `mhcmatch.mimicry` is the fitted form of that scan: `viral`, `self` and
+`thymus`, each split into an **anchor** and a **TCR-facing** channel that partition the peptide, as
+six signed log-odds contributions and their sum. A single whole-peptide distance is the wrong
+feature and the sparsity that suggests otherwise is a search artifact — whole-peptide radius-2
+thymic coverage is 1.63 %, while the TCR face at radius 1 reaches **53.4 %**. Signs follow the
+reference, as designed: `viral` positive on both channels, `self` negative on both, `thymus`
+positive on its anchor. `MimicryScore.nearest` carries *which* peptide was hit and what protein it
+came from, so `mimicry.safety()` reaches `expression.safety_profile` — a bare distance cannot.
+**Scores are log-odds**; `probability()` needs a *named* corpus, because the seven screens behind
+the calibration run from 0.048 % to 46.8 % positive. Report the **within-screen** AUROC (0.596), not
+the pooled one (0.849). The tested-neoantigen database is `mimicry.annotate` / `mhcmatch neoag` —
+prior evidence, and deliberately never a fitted term, since every labelled screen we hold sits
+inside it.
 
 ## Python
 

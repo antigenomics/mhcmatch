@@ -6,6 +6,73 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.12.0] - 2026-08-17
+
+Mimicry stops being a distance and becomes a signed, per-component risk; the precursor estimators
+move to the repertoire library that owns them.
+
+### Added
+
+- **`mhcmatch.mimicry`** — the fitted aggregate. Three references (`viral` priming, `self` tolerance
+  *and* the autoimmunity read-out, `thymus` negative selection), each split into an **anchor** and a
+  **TCR-facing** channel that partition the peptide, so no position is weighted twice. Six signed
+  log-odds contributions and their sum, from a Bayesian logistic fit over 337,972 rows / 1,719
+  positives across seven screens with screen indicators as nuisance columns — which is what makes
+  the shipped coefficients within-screen. `mimicry_mhc1.json` v0.12.0.
+  - **The signs follow the reference, as designed**: `viral` positive on both channels (+0.605
+    anchor z = +16.8, +0.443 tcr z = +5.6), `self` negative on both (−0.304, −0.464), `thymus`
+    positive on its anchor (+0.368) and unresolved on its TCR channel (+0.075, |z| = 1.1).
+  - **A single whole-peptide distance was the wrong feature, and that was a search artifact, not
+    biology.** Whole-peptide radius-2 thymic coverage of a candidate set is 1.63 % (viral 1.10 %);
+    restricting to the TCR face at radius 1 reaches **53.4 %** against 0.25 % for the whole peptide
+    at the same radius.
+  - **Scores are log-odds; `probability()` is a separate step that demands a *named* corpus.** The
+    seven screens run from 0.048 % to 46.8 % positive, so an unqualified probability mostly reports
+    which intercept was used. AUROC **0.849 pooled / 0.596 median within screen** — both are in the
+    artifact's fit record, and the second is the one to quote.
+  - **Not collinear with the presentation stack**: max |r| 0.19 against affinity, 0.068 against
+    agretopicity, 0.034 against expression, all VIF < 3.3. The TCR channel does correlate with
+    `ipred` (r = 0.73–0.82), which is why its sign moves when `ipred` is already in the model — the
+    module docstring keeps the two conditionings apart deliberately.
+  - **`MimicryScore.nearest` carries which reference peptide was hit and what protein it came from**,
+    so `mimicry.safety()` can resolve a self or thymic mimic through
+    `expression.safety_profile`. Without the identity those channels are a bare number and the
+    question a vaccine actually needs answered is unreachable. Thymic sources are UniProt
+    accessions; `safety()` returns the accession with an empty profile rather than guessing a gene.
+- **`mhcmatch mimicry`** — the aggregate on the command line, one column per (component, channel)
+  plus the nearest hit and its source, so a rank can always be taken apart. `--corpus` for a named
+  probability, `--no-self` to skip the expensive reference, `--coefficients` to print the shipped
+  model and its fit record without scoring anything.
+- **`mhcmatch neoag`** — annotate candidates against the tested-neoantigen database: nearest
+  validated-immunogenic peptide and its substitution distance. With `--peptides` on a TSV every
+  original column is carried through, so it drops into an existing candidate table without a join.
+  **Prior evidence, never a fitted term** — every labelled screen we hold sits inside that database
+  (retrieval recall at distance 0 is 1.000 on all seven), so a coefficient on it would be
+  memorisation. Held out honestly it still earns its place: rebuilt without the test screen, fuzzy
+  matching at two substitutions recovers 0.08–0.34 of a screen's positives where exact lookup
+  recovers 0.00–0.26, which is why `--max-subs` defaults to 2 rather than 0.
+- **`notebooks/07_mimicry_risk.py`** — the fitted form, against notebook 4's raw scan.
+
+### Changed
+
+- **`mhcmatch.precursor` is now a re-export of `vdjmatch.precursor`** (801 lines → 75). The
+  estimators, their maths and the `vdjmatch precursor` CLI live in the repertoire library, which is
+  where the problem belongs; this name keeps working so existing imports and notebooks do not break.
+  Two behaviour changes came with the move, both because nothing enumerates any more: `shell_profile`
+  has no `max_members` and no memory ceiling (the `r=2` profile for 300 junctions cost ~9.9 M
+  materialised strings and is now a few DP passes), and its shells report `n=None` when the union is
+  too large to census — the masses are always exact. Adds `union_mass`, `closed_ball_mass`,
+  `unseen_junctions` and `precursor_frequency`. Install unchanged: `pip install 'mhcmatch[precursor]'`.
+
+### Fixed
+
+- **`mimicry.score()` silently produced a different, smaller model** when a component was missing
+  from `refs` — the absent feature standardizes to zero rather than erroring, and the usual way to
+  get there is `load_references(with_self=False)`, which drops the component carrying the largest
+  coefficients. It now raises, with `allow_missing=True` to accept that deliberately.
+- **A bare `|r|` in the `mimicry` module docstring** was an undefined RST substitution and failed the
+  `-W` docs build.
+
 ## [0.11.0] - 2026-08-17
 
 A CLI that can be pointed at a file, a length-aware recognition model, and mimic categories that say
