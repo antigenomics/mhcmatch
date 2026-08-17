@@ -248,6 +248,30 @@ def test_rebuild_keeps_the_payload_and_relays_it():
     assert good.worst_junction < bad.worst_junction
 
 
+def test_store_binder_reads_a_field_restriction_actually_has():
+    """`store_binder` reaches into `Restriction`, so a rename there must fail here and not in a
+    four-minute analysis run. (It did: the first version read `percent_rank`, which does not exist.)"""
+    import dataclasses
+
+    from mhcmatch.store import Restriction
+    fields = {f.name for f in dataclasses.fields(Restriction)}
+    assert "rank" in fields, f"store_binder reads .rank; Restriction has {sorted(fields)}"
+
+
+def test_store_binder_scales_rank_so_stronger_binders_score_higher():
+    class _R:
+        def __init__(self, rank): self.rank = rank
+
+    class _Store:
+        def restriction(self, p, cls=None, alleles=None, calibrated=None):
+            return {"S": [_R(0.1)], "W": [_R(5.0)], "N": [], "U": [_R(None)]}[p[0]]
+
+    b = vector.store_binder(_Store(), ["HLA-A*02:01"])
+    strong, weak, none_, uncal = b(["Sxx", "Wxx", "Nxx", "Uxx"])
+    assert strong > weak > none_, "higher must mean a stronger predicted binder"
+    assert none_ == uncal == pytest.approx(-math.log10(100.0)), "no usable rank -> non-binder"
+
+
 def test_cassette_carries_no_backbone():
     """The cassette is epitopes only -- no ATG, no stop -- so it can be cloned into a backbone
     that already supplies them."""

@@ -429,7 +429,9 @@ def store_binder(store, alleles, cls: str = "mhc1"):
         out = []
         for p in peptides:
             r = store.restriction(p, cls=cls, alleles=list(_alleles or alleles), calibrated=True)
-            pct = min((x.percent_rank for x in r), default=100.0) if r else 100.0
+            # Restriction.rank is the per-allele %rank and is None unless calibrated=True; a peptide
+            # with no restriction at all is a non-binder, i.e. %rank 100.
+            pct = min((x.rank for x in r if x.rank is not None), default=100.0)
             out.append(-math.log10(max(pct, 1e-4)))
         return out
 
