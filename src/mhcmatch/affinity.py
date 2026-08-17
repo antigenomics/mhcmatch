@@ -88,6 +88,7 @@ class PottsAffinity:
         self.am = anchor_model                      # MHC-II register oracle; unused for MHC-I
         self.pseudo = load_pseudo(cls_name)
         self._psidx = {a: [self._AAI.get(c, -1) for c in ps] for a, ps in self.pseudo.items()}
+        self._eff = {}          # allele key -> (b0, E as nested list, E as array); see _effective
 
     def _key(self, allele):
         from .pseudoseq import resolve_allele
@@ -128,32 +129,84 @@ class PottsAffinity:
             return None
         return [-1 if i is None else self._AAI.get(core[i], -1) for i in idxs]
 
+    def _effective(self, key):
+        """``(b0, E_list, E_array)`` for one allele -- the energy pre-contracted over the pocket side.
+
+        **The pocket side is fixed once the allele is.** So
+
+        ``E = Σ_p h_p(r_p) + Σ_q g_q(s_q) + Σ_{p,q} J_pq(r_p, s_q)``
+
+        factors into a constant ``b0 = b + Σ_q g_q(s_q)`` and a table
+        ``E[p][r] = h_p(r) + Σ_q J_pq(r, s_q)``, leaving ``score = b0 + Σ_p E[p][r_p]``: **nine float
+        additions per peptide instead of ~315 weight lookups**, the same arithmetic regrouped. This
+        is where the calibrator build time went -- 381,216 scoring calls at 44 µs to calibrate two
+        alleles, and the panel's own ligands are most of them.
+
+        ``E`` carries a trailing zero column so an unfilled slot (``r = -1``) indexes it rather than
+        branching. Cached per allele, as a nested list *and* an array: for nine lookups a Python
+        float add beats numpy's per-call overhead, and the array is what :meth:`predict_y_batch`
+        gathers from."""
+        hit = self._eff.get(key)
+        if hit is not None:
+            return hit
+        import numpy as np
+        ps = np.asarray(self._psidx[key])
+        qs = np.flatnonzero(ps >= 0)
+        Q, w = self.Q, self.w
+        # Every cell is a math.fsum, and that is the requirement rather than a flourish. The vendored
+        # weights are float32; the per-peptide path this replaces added them one at a time into a
+        # Python float, i.e. in float64 with 29 bits of headroom over a 24-bit mantissa, so it never
+        # rounded and was exact against fsum. A factored table has to be exact per cell or the error
+        # lands in every score: summing the pocket contributions in float32 costs ~1e-7 and moves 735
+        # of 20,000 IC50 values at their reported precision; in numpy float64, ~2e-9 and 122 of them.
+        b0 = math.fsum([float(self.b)] + [float(v) for v in w[self.NF_PEP + qs * Q + ps[qs]]])
+        h = w[:self.NF_PEP].reshape(self.PEPP, Q)
+        # advanced indices on axes 1 and 3 are separated by a slice, so they land on axis 0
+        J = (w[self.NF_FIELD:].reshape(self.PEPP, self.PSP, Q, Q)[:, qs, :, ps[qs]] if len(qs)
+             else np.zeros((0, self.PEPP, Q)))
+        E = [[math.fsum([float(h[p, r])] + [float(v) for v in J[:, p, r]]) for r in range(Q)] + [0.0]
+             for p in range(self.PEPP)]
+        self._eff[key] = (b0, E, np.asarray(E))
+        return self._eff[key]
+
     def predict_y(self, peptide, allele) -> float:
         """log50k score (higher = stronger binder), or ``nan`` if the allele can't be resolved."""
         key = self._key(allele)
-        ps = self._psidx.get(key) if key else None
-        if ps is None:
+        if key is None or key not in self._psidx:
             return float("nan")
-        core = self._core(peptide, key)
-        pidx = self._pep_idx(core)
+        pidx = self._pep_idx(self._core(peptide, key))
         if pidx is None:
             return float("nan")
-        w, Q, NF_PEP, NF_FIELD, PSP = self.w, self.Q, self.NF_PEP, self.NF_FIELD, self.PSP
-        s = self.b
+        b0, E, _ = self._effective(key)
+        Q = self.Q
+        s = b0
         for p, r in enumerate(pidx):
-            if r >= 0:
-                s += w[p * Q + r]                                   # peptide field
-        for q, sx in enumerate(ps):
-            if sx >= 0:
-                s += w[NF_PEP + q * Q + sx]                         # pseudoseq field
-        for p, r in enumerate(pidx):
-            if r < 0:
-                continue
-            base = NF_FIELD + p * PSP * Q * Q
-            for q, sx in enumerate(ps):
-                if sx >= 0:
-                    s += w[base + (q * Q + r) * Q + sx]            # coupling J_pq(core_r, pocket_s)
-        return float(s)
+            s += E[p][r if r >= 0 else Q]
+        return s
+
+    def predict_y_batch(self, peptides, allele):
+        """:meth:`predict_y` over an iterable, as a numpy array -- one gather instead of a loop.
+
+        Peptides the model cannot score (unresolvable allele, a core shorter than the footprint)
+        come back ``nan`` **in place**, so the result lines up with the input and a caller never has
+        to reconcile two differently-filtered lists."""
+        import numpy as np
+        peps = list(peptides)
+        key = self._key(allele)
+        if key is None or key not in self._psidx:
+            return np.full(len(peps), float("nan"))
+        b0, _, E = self._effective(key)
+        R = np.full((len(peps), self.PEPP), self.Q, dtype=np.int64)
+        bad = np.zeros(len(peps), dtype=bool)
+        for i, p in enumerate(peps):
+            idx = self._pep_idx(self._core(p, key))
+            if idx is None:
+                bad[i] = True
+            else:
+                R[i] = [r if r >= 0 else self.Q for r in idx]
+        out = b0 + E[np.arange(self.PEPP)[None, :], R].sum(1)
+        out[bad] = float("nan")
+        return out
 
     def predict_ic50(self, peptide, allele) -> float:
         """Predicted IC50 in nM (``nan`` if the allele is unknown)."""
