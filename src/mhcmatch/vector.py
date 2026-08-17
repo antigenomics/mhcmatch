@@ -379,7 +379,7 @@ def screen(units, risk, lengths=JUNCTION_LENGTHS) -> tuple:
 
 
 def self_origin_risk(proteome, symbols, tissues=ESSENTIAL_TISSUES, min_tpm: float = 0.25,
-                     max_subs: int = 1):
+                     max_subs: int = 0):
     """A ``risk`` callable for :func:`screen`: **near-exact self origin, joined to tissue.**
 
     A register is risky when :meth:`mhcmatch.Proteome.find_source` places it within ``max_subs`` of a
@@ -419,9 +419,25 @@ def self_origin_risk(proteome, symbols, tissues=ESSENTIAL_TISSUES, min_tpm: floa
     peptide is native context by design and tolerance already covers it; without that exclusion the
     screen rejects every unit of every cassette.
 
-    **``max_subs=1`` rather than 0** so that a register one substitution from an unrelated protein
-    still counts — the mutation may have moved a peptide *onto* another gene's sequence. Set 0 for
-    coincidence only.
+    **``max_subs=0`` — exact coincidence — because the decision is per unit while the search is per
+    register, and that multiplies.** A 27-mer carries ~70 class-I registers and is withdrawn if any
+    one of them fires, so a per-register false-positive rate that reads as small is not the rate a
+    cassette experiences. Measured on six random 27-mers that carry no hazard, plus one burying the
+    real titin epitope (``bench/results/vector_screen_radius.md``) — **units falsely withdrawn, out
+    of the six**:
+
+    ============ ======== ======== ==========
+    ``max_subs`` 9-mers   9-11     8-11
+    ============ ======== ======== ==========
+    0            0        0        0
+    1            1        1        **4**
+    ============ ======== ======== ==========
+
+    Radius 0 is clean at every length set. Radius 1 is not clean anywhere, and collapses once 8-mers
+    enter: an 8-mer plus its 152 one-substitution neighbours is ~153 of 20\\ :sup:`8` sequences
+    against the proteome's ~68 M windows, so a chance hit per register is expected and the ~20 8-mer
+    registers in a unit make it near-certain. **Every setting still catches the titin unit**, so what
+    radius 1 buys is nothing and what it costs is most of the cassette.
 
     **``min_tpm`` defaults to 0.25 because the two precedents disagree by two orders of magnitude and
     the lower one is what has to be caught.** Titin is 64.4 TPM in heart left ventricle and 351.4 in

@@ -538,6 +538,19 @@ def test_the_target_gene_clause_fires_without_any_register_match(monkeypatch):
     assert risk(vector.Unit("W" * 27, 13, "MAGEA3", "A", 0.8), ["WWWWWWWWW"]) == []
 
 
+def test_the_default_radius_is_exact_coincidence():
+    """Per-unit, not per-register: a 27-mer carries ~70 registers and any one withdraws it.
+
+    Measured (`bench/results/vector_screen_radius.md`): at `max_subs=1` over 8-11mers, 3 of 6
+    random 27-mers are withdrawn by chance -- an 8-mer plus its 152 neighbours is ~153 of 20^8
+    against 68 M proteome windows. Radius 0 is clean at every length and still catches titin.
+    """
+    import inspect
+
+    r = inspect.signature(vector.self_origin_risk).parameters["max_subs"].default
+    assert r == 0, "raising this needs 8-mers dropped from `lengths` in the same change"
+
+
 def test_the_default_floor_catches_the_lower_of_the_two_fatal_precedents():
     """A screen tuned to the cardiac case alone would have passed the neurological one.
 

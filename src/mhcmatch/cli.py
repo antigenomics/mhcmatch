@@ -1205,8 +1205,11 @@ def main(argv=None):
                     help="essential-tissue expression floor for --screen. 0.25 because MAGE-A12 sits "
                          "at 0.33 TPM in brain and killed two patients; a conventional 5 would pass "
                          "it")
-    vc.add_argument("--max-subs", type=int, default=1, metavar="N",
-                    help="self-origin search radius for --screen (0 = coincidence only)")
+    vc.add_argument("--max-subs", type=int, default=0, metavar="N",
+                    help="self-origin search radius for --screen. 0 = exact coincidence, which is "
+                         "the default because the decision is per unit while the search is per "
+                         "register: at radius 1 over 8-11mers, 3 of 6 random 27-mers get withdrawn "
+                         "by chance. Raise it only together with dropping 8-mers")
     vc.add_argument("--objective", default="sum", choices=("sum", "rate"),
                     help="junction cost: `sum` of the strongest binder per junction (pVACvector's "
                          "logic, biased toward the shortest spacer), or `rate` = binders per "
