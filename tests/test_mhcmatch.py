@@ -1149,12 +1149,16 @@ def test_kidera_degeneracy_is_specific_to_the_uniform_alphabet_measure():
 
 
 def test_precursor_self_check():
-    """Run mhcmatch.precursor's demo() when the optional vdjtools extra is present.
+    """Run mhcmatch.precursor's demo() when the optional precursor extra is present.
 
     Skipped rather than failed without it: precursor is an optional extra ([precursor]), so a
     plain install must not be red because the recombination model is absent.
+
+    Guarded on **vdjmatch**, not vdjtools: since 0.12.0 the module re-exports
+    ``vdjmatch.precursor``, and anyone upgrading from 0.11.0 has vdjtools already but not vdjmatch
+    -- which is precisely the state where a vdjtools guard passes and the import then fails.
     """
-    pytest.importorskip("vdjtools", reason="mhcmatch[precursor] not installed")
+    pytest.importorskip("vdjmatch", reason="mhcmatch[precursor] not installed")
     from mhcmatch import precursor
     precursor.demo()
 
@@ -1163,6 +1167,7 @@ def test_precursor_rejects_cdr3_that_is_not_a_junction():
     """CDR3 != junction, and the failure is silent: an anchor-stripped IMGT CDR3 scores exactly
     0.0 with no error, so a mis-typed input reports a precursor frequency of zero. check_junctions
     is the trust boundary that catches it before scoring."""
+    pytest.importorskip("vdjmatch", reason="mhcmatch[precursor] not installed")
     from mhcmatch.precursor import check_junctions
     ok, bad = check_junctions(["CASSLAPGATNEKLFF", "ASSLAPGATNEKL", "CASSQDRDTQYW", ""])
     assert ok == ["CASSLAPGATNEKLFF", "CASSQDRDTQYW"]

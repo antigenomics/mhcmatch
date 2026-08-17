@@ -1,7 +1,8 @@
 """Unit tests for mhcmatch.precursor -- T-cell precursor frequency estimators.
 
-Needs the optional ``vdjtools`` dependency (the recombination model) and the compiled seqtree core;
-both are present in the dev venv. The whole module skips cleanly without vdjtools.
+Needs the optional ``[precursor]`` extra (``vdjmatch``, which pulls the ``vdjtools`` recombination
+model) and the compiled seqtree core; both are present in the dev venv. The whole module skips
+cleanly without them.
 
 The load-bearing tests are the **ground-truth** ones: a degenerate motif over a handful of positions
 has a cognate set small enough to enumerate exhaustively, so `F` is known by construction and every
@@ -13,7 +14,7 @@ import math
 
 import pytest
 
-pytest.importorskip("vdjtools", reason="mhcmatch.precursor needs the optional vdjtools extra")
+pytest.importorskip("vdjmatch", reason="mhcmatch.precursor needs the optional [precursor] extra")
 
 from mhcmatch import precursor as P                                          # noqa: E402
 

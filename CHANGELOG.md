@@ -80,6 +80,13 @@ move to the repertoire library that owns them.
   coefficients. It now raises, with `allow_missing=True` to accept that deliberately.
 - **A bare `|r|` in the `mimicry` module docstring** was an undefined RST substitution and failed the
   `-W` docs build.
+- **The precursor tests guarded on `vdjtools` while the import is now `vdjmatch`** — backwards for
+  the one case that matters, since anyone upgrading from 0.11.0 with the `[precursor]` extra has
+  vdjtools already and vdjmatch not yet, so the guard passed and the import then failed. Guarded on
+  the module actually imported.
+- **The vendored anchor models are regenerated under 0.12.0.** They are version-stamped and a stale
+  one is ignored and refitted at runtime (~200 s); the staleness test exists to fail a version bump
+  that forgets them, and on this bump it did.
 
 ## [0.11.0] - 2026-08-17
 
