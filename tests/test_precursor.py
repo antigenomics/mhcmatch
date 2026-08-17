@@ -73,9 +73,19 @@ def test_shell_profile_default_alpha_is_between_observed_and_union(model):
     assert P.observed_mass(model, seqs) < prof["retained"] < prof["union"]
 
 
-def test_shell_profile_memory_guard(model):
+def test_shell_profile_has_no_memory_ceiling_since_the_move_to_vdjmatch(model):
+    """r=2 used to need ~9.9M materialised strings for 300 junctions; now nothing enumerates.
+
+    The guard moved to ``union_mass``, where it applies **per connected component** -- the only
+    place enumeration still happens, and only for the multiply-covered members.
+    """
+    seqs = ["CASSLAPGATNEKLFF", "CASSLAPGATNEKLYF"]
+    prof = P.shell_profile(model, seqs, r=2)
+    assert [s["r"] for s in prof["shells"]] == [0, 1, 2]
+    assert prof["union"] > prof["shells"][0]["mass"] > 0
+
     with pytest.raises(MemoryError) as e:
-        P.shell_profile(model, ["CASSLAPGATNEKLFF"], r=2, max_members=100)
+        P.union_mass(model, seqs, r=2, max_members=100)
     assert "max_members" in str(e.value)
 
 

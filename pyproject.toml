@@ -27,7 +27,7 @@ pmhc = ["pandas"]                    # convenience IO for large tables
 docs = ["sphinx", "pydata-sphinx-theme"]
 viz = ["networkx"]                   # allele similarity / promiscuity graph (needs Graphviz `dot`)
 structure = ["tcren>=2.8"]           # optional: structure-based MJ ΔΔG head (mhcmatch.structure)
-precursor = ["vdjtools>=3.9"]        # optional: TCR generation probability (mhcmatch.precursor)
+precursor = ["vdjmatch[precursor]>=0.2.0"]  # mhcmatch.precursor re-exports vdjmatch.precursor
 notebooks = ["marimo"]               # worked examples in notebooks/ (pure-Python marimo notebooks)
 
 [project.scripts]
