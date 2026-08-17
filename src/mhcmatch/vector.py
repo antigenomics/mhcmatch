@@ -416,6 +416,67 @@ def order(units, binder, spacers=SPACERS, lengths=JUNCTION_LENGTHS,
                     junctions=js, cost=float(total))
 
 
+#: Codons synonymous with ``TTT`` (phenylalanine). ``TTC`` is the only alternative, which is what
+#: makes :func:`deslip` a one-line fix rather than a codon-optimisation problem.
+_PHE = ("TTT", "TTC")
+
+
+def slippery_sites(cds: str) -> list:
+    """Codon positions where N1-methylpseudouridine drives **+1 ribosomal frameshifting**.
+
+    Returns ``[{codon_index, nt_offset, codon, next_codon}, ...]``.
+
+    m1Ψ is not translationally neutral. Mulroney et al. (*Nature* 2024, PMID 38057663) measured **+1
+    frameshifting at ~8% of the in-frame product** in m1Ψ mRNA, localised to a slippery motif —
+    ``m1Ψ m1Ψ m1Ψ X`` with ``X`` = m1Ψ or C at the **first position of the following codon**, i.e. a
+    ``TTT`` codon followed by a codon starting ``T`` or ``C``. **Six such sites sit in the BNT162b2
+    spike coding sequence**, and BNT162b2-vaccinated humans mounted a significantly higher IFN-γ
+    response against the +1 frameshifted product than controls.
+
+    **This matters far more for a designed polyepitope than for a natural ORF**, for two reasons.
+    A concatemer has many more codon-boundary junctions per kilobase, and the residues at those
+    junctions are the designer's choice — glycine/serine linkers are encoded by ``GGN``/``AGY``/``TCN``,
+    which is exactly how U-runs end up at seams. And the consequence is worse: a frameshift inside a
+    polyepitope does not merely lose protein, it translates an entire downstream out-of-frame
+    cassette that is itself presented, so the construct delivers a second, unintended and unscreened
+    antigen payload.
+
+    Scanning is therefore **mandatory for any m1Ψ construct** and pointless for an unmodified-uridine
+    one — BioNTech's cancer platform deliberately uses unmodified uridine, so which applies depends
+    on the platform, not the sequence.
+
+    Only the codon-aligned motif as published is reported. Whether non-codon-aligned U-runs also
+    induce slippage was not characterised in that work, so it is not guessed at here.
+    """
+    s = cds.strip().upper().replace("U", "T")
+    out = []
+    for i in range(0, len(s) - 5, 3):
+        codon, nxt = s[i:i + 3], s[i + 3:i + 6]
+        if codon == "TTT" and nxt[:1] in ("T", "C"):
+            out.append({"codon_index": i // 3, "nt_offset": i,
+                        "codon": codon, "next_codon": nxt})
+    return out
+
+
+def deslip(cds: str) -> tuple:
+    """``(cds, n_fixed)`` — remove every :func:`slippery_sites` motif synonymously.
+
+    ``TTT`` and ``TTC`` both encode phenylalanine, so rewriting the *upstream* codon breaks the U-run
+    without touching the protein and without disturbing the downstream codon's own optimisation.
+    This is the fix Mulroney et al. validated: single ``U*187C`` / ``U*208C`` substitutions strongly
+    reduced frameshifting and the double mutant produced none detectable.
+
+    Idempotent — a second call finds nothing to do.
+    """
+    s = list(cds.strip().upper().replace("U", "T"))
+    n = 0
+    for site in slippery_sites("".join(s)):
+        i = site["nt_offset"]
+        s[i:i + 3] = list("TTC")
+        n += 1
+    return "".join(s), n
+
+
 def store_binder(store, alleles, cls: str = "mhc1"):
     """A ``binder`` callable over a :class:`~mhcmatch.store.Store`: ``-log10(%rank)`` of the best
     allele, so higher means a stronger predicted binder.

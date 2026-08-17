@@ -248,6 +248,60 @@ def test_rebuild_keeps_the_payload_and_relays_it():
     assert good.worst_junction < bad.worst_junction
 
 
+# ------------------------------------------------- m1-pseudouridine frameshifting
+
+def _translate(cds):
+    """Minimal codon table, enough to assert deslip is synonymous."""
+    import itertools
+    bases = "TCAG"
+    aas = ("FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG")
+    tab = {"".join(c): a for c, a in zip(itertools.product(bases, repeat=3), aas)}
+    return "".join(tab[cds[i:i + 3]] for i in range(0, len(cds) - 2, 3))
+
+
+def test_slippery_sites_finds_the_published_motif_and_nothing_else():
+    """TTT followed by a codon starting T or C (Mulroney 2024, PMID 38057663)."""
+    #        0:AAA 1:TTT 2:TGG 3:TTT 4:CAA 5:TTT 6:AAA 7:GGG
+    cds = "AAA" "TTT" "TGG" "TTT" "CAA" "TTT" "AAA" "GGG"
+    hits = vector.slippery_sites(cds)
+    assert [h["codon_index"] for h in hits] == [1, 3], "TTT+A must not count"
+    assert [h["next_codon"][0] for h in hits] == ["T", "C"]
+    assert hits[0]["nt_offset"] == 3
+
+
+def test_slippery_sites_accepts_rna_and_is_case_insensitive():
+    assert vector.slippery_sites("aaauuuugg") == vector.slippery_sites("AAATTTTGG")
+
+
+def test_slippery_sites_ignores_a_ttt_run_that_is_not_codon_aligned():
+    """Only the codon-aligned motif was characterised, so only it is reported."""
+    assert vector.slippery_sites("ATT" "TTG" "GGG") == []
+
+
+def test_deslip_removes_every_site_synonymously_and_is_idempotent():
+    cds = "AAA" "TTT" "TGG" "TTT" "CAA" "TTT" "AAA"
+    fixed, n = vector.deslip(cds)
+    assert n == 2
+    assert vector.slippery_sites(fixed) == []
+    assert _translate(fixed) == _translate(cds), "the fix must not change the protein"
+    again, n2 = vector.deslip(fixed)
+    assert n2 == 0 and again == fixed, "idempotent"
+
+
+def test_deslip_leaves_a_clean_sequence_untouched():
+    cds = "AAAGGGCCC"
+    assert vector.deslip(cds) == (cds, 0)
+
+
+def test_a_gly_ser_linker_can_manufacture_a_slippery_site():
+    """The concrete reason this belongs in a cassette module: linker codons put U-runs at seams."""
+    # ...Phe | Gly-Ser linker starting TCN -> TTT followed by TCT
+    cds = "GCA" "TTT" "TCT" "GGA" "AGC"
+    assert len(vector.slippery_sites(cds)) == 1
+    fixed, n = vector.deslip(cds)
+    assert n == 1 and _translate(fixed) == _translate(cds)
+
+
 def test_store_binder_reads_a_field_restriction_actually_has():
     """`store_binder` reaches into `Restriction`, so a rename there must fail here and not in a
     four-minute analysis run. (It did: the first version read `percent_rank`, which does not exist.)"""
