@@ -9,6 +9,8 @@ See the theory appendix §5 (near-exact source identification).
 from __future__ import annotations
 
 import gzip
+from array import array
+from bisect import bisect_right
 from dataclasses import dataclass
 
 from seqtree import Index, SearchParams
@@ -44,6 +46,30 @@ class SourceHit:
     mutations: tuple    # ((pos_in_peptide, query_aa, ref_aa), ...)
 
 
+class _Meta:
+    """``ref_id -> (protein, position, window)`` for one window length, stored as two int arrays.
+
+    A list of tuples is the obvious representation and it does not fit: see :meth:`Proteome._index`.
+    ``starts[k]`` is the first ``ref_id`` belonging to protein ``names[k]``, so the owning protein is
+    a bisect and the window is a slice of the sequence the object already holds."""
+
+    __slots__ = ("seqs", "names", "starts", "pos", "L")
+
+    def __init__(self, seqs, names, starts, pos, L):
+        self.seqs, self.names, self.L = seqs, names, L
+        self.starts = array("l", starts)
+        self.pos = pos if isinstance(pos, array) else array("l", pos)
+
+    def __len__(self):
+        return len(self.pos)
+
+    def __getitem__(self, ref_id):
+        k = bisect_right(self.starts, ref_id) - 1
+        name = self.names[k]
+        i = self.pos[ref_id]
+        return name, i, self.seqs[name][i:i + self.L].upper()
+
+
 class Proteome:
     """A reference proteome with lazily-built per-length window indices."""
 
@@ -64,15 +90,34 @@ class Proteome:
         return cls.from_fasta(fetch_proteome(name))
 
     def _index(self, L):
+        """``(Index, meta)`` for length ``L``, built once and cached.
+
+        ``meta`` is a ``_Meta``, not a list of ``(protein, pos, window)`` tuples, and on a whole
+        proteome that is the difference between usable and not. The human proteome has **68,389,335**
+        9-mer windows -- every position of every protein, not distinct sequences, because the point
+        of this index is *where* a peptide comes from. One Python tuple per window holding a name
+        reference, an int and a fresh 9-character string costs ~200 bytes: **~14 GB per length**, so
+        a query set spanning 8-11 asked for ~55 GB of metadata alone. An ``array("l")`` of positions
+        plus the protein names already in :attr:`seqs` costs 8 bytes per window and reconstructs the
+        same triple on demand.
+
+        What remains is inherent: the window list handed to ``Index.build`` and the index itself.
+        Measured on the human proteome, 12.6 GB peak for the first length and ~3.6 GB for each
+        further one. **Ask for the lengths you need** -- :meth:`find_sources` builds one index per
+        distinct query length, so a mixed 8-11 query set builds four."""
         if L not in self._cache:
-            windows, meta = [], []
+            names, starts, pos = [], [], array("l")
+            windows = []
             for name, seq in self.seqs.items():
                 s = seq.upper()
+                names.append(name)
+                starts.append(len(windows))
                 for i in range(len(s) - L + 1):
                     w = s[i:i + L]
                     if all(c in _AA for c in w):
                         windows.append(w)
-                        meta.append((name, i, w))
+                        pos.append(i)
+            meta = _Meta(self.seqs, names, starts, pos, L)
             self._cache[L] = (Index.build(windows, alphabet="aa") if windows else None, meta)
         return self._cache[L]
 

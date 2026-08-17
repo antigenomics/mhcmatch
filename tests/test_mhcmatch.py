@@ -1167,3 +1167,18 @@ def test_precursor_rejects_cdr3_that_is_not_a_junction():
     ok, bad = check_junctions(["CASSLAPGATNEKLFF", "ASSLAPGATNEKL", "CASSQDRDTQYW", ""])
     assert ok == ["CASSLAPGATNEKLFF", "CASSQDRDTQYW"]
     assert bad == ["ASSLAPGATNEKL", ""]
+
+
+def test_proteome_meta_reconstructs_the_tuple_it_replaced():
+    """`_Meta` is an int-array stand-in for a list of (protein, pos, window) tuples -- 68 M of them
+    on the human proteome, which does not fit. It has to return exactly the same triples, including
+    across proteins that contribute no windows at all."""
+    from mhcmatch import Proteome
+    seqs = {"P1": "MKTAYIAKQ", "EMPTY": "AB", "P2": "QRQISFVKS", "XONLY": "XXXXXXXXX"}
+    pm = Proteome(seqs)
+    _, meta = pm._index(9)
+    got = [meta[i] for i in range(len(meta))]
+    # P1 and P2 each contribute exactly one 9-mer; EMPTY is too short and XONLY is all non-standard
+    assert got == [("P1", 0, "MKTAYIAKQ"), ("P2", 0, "QRQISFVKS")]
+    for name, pos, w in got:
+        assert seqs[name][pos:pos + 9] == w
