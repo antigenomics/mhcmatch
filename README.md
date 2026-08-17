@@ -148,9 +148,9 @@ letter per parameter, in a fixed canonical order:
 
 | letter | parameter | from | what it is |
 |---|---|---|---|
-| `P` | presentation | `AnchorModel` | `-log10` of the per-allele `%rank` |
+| `P` | presentation | `AnchorModel` | `-log10` of the per-allele `%rank`; fitted on **observed ligands** |
 | `B` | binder score | `predict.binder_score` | `-log10` of the calibrated combined `%rank` (Fisher of `P` and `A`) |
-| `A` | affinity | `PottsAffinity` | `-log10` of the Potts IC50 `%rank` |
+| `A` | affinity | `PottsAffinity` | `-log10` of the Potts IC50 `%rank`; fitted on **measured IC50** |
 | `D` | differential agretopicity | `PottsAffinity.dai` | `log10(Kd_WT / Kd_MT)` vs the recovered wild type |
 | `E` | expression | `mhcmatch.expression` | `log1p(TPM)`, observed or reference-imputed |
 | `V` | vanilla physicochemistry | `mhcmatch.ipred` | the 13-parameter calibrated log-odds |
@@ -167,13 +167,21 @@ replaced it — the same axis at two generations, with `ipred` a strict special 
 Naming the letter after the generation rather than the module makes `BDEVF` legible as "the old
 model" at a glance.
 
+**`P` is not a second affinity term.** Both end up as a `%rank` against the same kind of background,
+so the mechanism doesn't separate them — the training data and the target do. `A` is a Potts model
+fitted on **measured IEDB IC50**, targeting `Kd`: the biophysics of the groove. `P` is the
+AnchorModel fitted on the **observed ligand panel**, targeting how *ligand-like* a peptide is, which
+carries processing, transport and abundance signal that binding alone does not. That is the field's
+binding-affinity vs eluted-ligand split, and the two are measurably not redundant — on TESLA-608
+`A` scores 0.757 AUROC, `P` 0.763, and their Fisher combination `B` **0.786**. A combination cannot
+beat both parents by that margin on the same measurement twice.
+
 **`P` is a rank, not a similarity search** — worth stating because the name invites the other
-reading. It is the AnchorModel's score as a `%rank` against a random-peptide background (10,000
-peptides matched to the corpus's amino-acid and length distribution). Nothing is retrieved: no
-reference peptide is looked up and no anchor-matched protein is searched for. `A` and `B` are the
-same, so the whole presentation side is **scoring, not retrieval**. The searches are `restriction`
-(the epitope panel, anchor-masked — not in any acronym), `M` (thymic/viral/proteome windows) and `F`
-(the viral ligandome). A design carrying `P` says nothing about similarity to anything.
+reading. It is a score against a random-peptide background (10,000 peptides matched to the corpus's
+amino-acid and length distribution). Nothing is retrieved: no reference peptide is looked up and no
+anchor-matched protein is searched for. `A` and `B` are the same, so the whole presentation side is
+**scoring, not retrieval**. The searches are `restriction` (the epitope panel, anchor-masked — not in
+any acronym), `M` (thymic/viral/proteome windows) and `F` (the viral ligandome).
 
 ## Python
 

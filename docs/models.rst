@@ -22,7 +22,7 @@ One letter per parameter, in a fixed canonical order — presentation, then reco
    * - ``P``
      - presentation
      - :class:`mhcmatch.AnchorModel`
-     - ``-log10`` of the per-allele ``%rank``. **A model score, not a search**
+     - ``-log10`` of the per-allele ``%rank``. Fitted on **observed ligands**
    * - ``B``
      - binder score
      - :func:`mhcmatch.predict.binder_score`
@@ -30,7 +30,7 @@ One letter per parameter, in a fixed canonical order — presentation, then reco
    * - ``A``
      - affinity
      - :class:`mhcmatch.PottsAffinity`
-     - ``-log10`` of the Potts IC50 ``%rank``
+     - ``-log10`` of the Potts IC50 ``%rank``. Fitted on **measured IC50**
    * - ``D``
      - differential agretopicity
      - :meth:`mhcmatch.affinity.PottsAffinity.dai`
@@ -64,6 +64,36 @@ it — the same axis at two generations, with ``ipred`` a strict special case of
 Naming the letter after the module would have hidden that. Naming it after the generation makes
 ``BDEVF`` legible as "the old model" at a glance, and ``V`` and ``C`` are not summed into one design
 without saying why.
+
+``P`` is not a second affinity term
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Both ``P`` and ``A`` end up as a ``%rank`` against the same kind of random-peptide background, so the
+mechanism does not tell them apart. What does is the data each is fitted to and the quantity it
+targets.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 16 42 42
+
+   * -
+     - ``A`` — affinity
+     - ``P`` — presentation
+   * - model
+     - :class:`mhcmatch.PottsAffinity` — fields plus peptide×pocket couplings
+     - :class:`mhcmatch.AnchorModel`, with cross-allele pseudosequence diffusion
+   * - fitted on
+     - **measured IEDB IC50**
+     - the **observed ligand panel** (``Store.from_pmhc(tier="full")``)
+   * - targets
+     - binding affinity, ``Kd`` in nM — the biophysics of the groove
+     - how *ligand-like* the peptide is, which carries processing, transport and abundance signal
+       that binding alone does not
+
+This is the field's binding-affinity vs eluted-ligand split, and the two are **measurably not
+redundant**: on TESLA-608, ``A`` scores 0.757 AUROC, ``P`` 0.763, and their Fisher combination ``B``
+**0.786**. A combination cannot beat both parents by that margin if it is being handed the same
+measurement twice.
 
 ``P`` is a rank, not a similarity search
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
