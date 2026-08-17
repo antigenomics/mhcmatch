@@ -51,10 +51,16 @@ diffusion model, and the downstream predictors.
 | Tuned ROC/PR thresholds; FDR over proteome scans | — | Phase 1 |
 | Core → full presented ligand span (observed / modeled / fixed) | `mhcmatch.ligand` | **v0.3** (validated, `bench/bench_spans.py`) |
 | Binding affinity (IC50 nM) + neoantigen amplitude/DAI; structure MJ ΔΔG | `mhcmatch.PottsAffinity`, `mhcmatch.structure` | **v0.4**, weights refit v0.7.1 (`bench/affinity/`; open issues in §6c) |
-| Physicochemical epitope featurization (Kidera/VHSE/MJ + run structure) | `mhcmatch.immuno` | **v0.9-dev** (§5a) |
-| Vendored AA property tables (17 families, 102 components, 45 hydrophobicity scales) | `mhcmatch.data.aa_tables` | **v0.9-dev** (§5a) |
-| Immunogenicity classifier; TCR precursor frequency | — | Phase 2 (§5a) |
-| Stability / expression | — | Phase 2 |
+| Physicochemical epitope featurization (Kidera/VHSE/MJ + run structure) | `mhcmatch.immuno` | **v0.9.0** (§5a) |
+| Vendored AA property tables (17 families, 102 components, 45 hydrophobicity scales) | `mhcmatch.data.aa_tables` | **v0.9.0** (§5a) |
+| Calibrated physicochemical `log P(immunogenic)`, 13 parameters | `mhcmatch.ipred` | **v0.9.0** (§5a) |
+| Position-role naive Bayes over residue identity (prior-free LLR) | `mhcmatch.posbayes` | **v0.9.0** (§5a) |
+| **Complementarity** — six feature blocks, linear head, vectorised | `mhcmatch.complement` | **v0.10-dev** (§5b) |
+| TCR precursor frequency (six estimators) | `mhcmatch.precursor` | **v0.9.0**, validation open (§5a) |
+| Reference expression by GTEx tissue / TCGA tumour type | `mhcmatch.expression` | **v0.9.0** |
+| Neoantigen ranking: noisy-AND gate over presentation × recognition | `mhcmatch.rank` | **v0.10-dev** (§5b) |
+| Mimicry scan (thymus / viral / neoag references) | `mhcmatch.mimics` | **v0.9.0**, on the slow search path (§6c) |
+| Stability | — | Phase 2 |
 | NetMHCpan / MixMHCpred head-to-head benchmark + paper | separate repo | Phase 3 |
 
 ## 2. Data
@@ -345,6 +351,50 @@ Already bumped in `pyproject.toml`, not pending: `seqtree>=0.7.0` (hard; `precur
 day it did not, and the failure mode was worse than it looks: `seqtree` is a **hard** dependency, so
 an unreleased floor broke the whole install rather than just an extra.
 
+## 5b. Complementarity and the neoantigen ranker (v0.10-dev, 2026-08-17)
+
+Analysis in `2026-mhcmatch-benchmark` (`bench/results/complementarity.md`, `neoag_aggregate.md`,
+`neoag_gate.md`). This section records only what landed **in the library**.
+
+**`mhcmatch.complement` — the recognition axis, shipped.** Six blocks: `ipred`'s physicochemistry
+and length; the same components split MHC-facing vs TCR-facing; MJ1996 on the anchors and TCRen
+marginalised over 28M real CDR3 loops on the TCR face; contiguous-hydrophobic-run motifs; per-role
+residue log-odds; adjacent TCR-facing dipeptides. Prior-free log-odds, `posterior()` for a
+probability at the caller's own base rate.
+
+- **`posbayes` is a strict special case.** The `aa` block's two columns sum to `posbayes.llr`
+  exactly — asserted in `tests/test_complement.py`, not merely intended. So the block ablation
+  measures what the other five add to a model that already ships.
+- **Wins all four corpus arms × both hosts** (chowell/human 0.7125 vs 0.7111, chowell/mouse 0.7633
+  vs 0.7582, kesmir/human 0.6480 vs 0.6369). Gains are small and the bootstrap CIs overlap.
+- **The head is linear, and that is measured.** A diagonal-covariance Gaussian cannot represent a
+  summed log-odds, so the EM fit pays for the physicochemical blocks out of a worse fit to the term
+  carrying most of the signal (0.657 vs 0.711 on `aa` alone). Both Gaussian parameter sets ship in
+  `complement_mhc1.json` so the comparison stays re-checkable.
+- **Vectorised**: 511,301 rows in 0.93 s. The pair block is a sparse `(code, row)` list, not a dense
+  `(n, 400)` matrix — the difference between that and 1.5 GB of temporaries per pass.
+
+**`rank.GATE` carried a real defect, now fixed.** The fitting script z-scored both axes and never
+wrote the standardizer out, so `GATE` held `mu = 0, sd = 1` placeholders and `gate_probability`
+applied z-score coefficients to a raw `-log10(%rank)` and a raw log-odds. A product of two sigmoids
+is **not** rank-preserving under a monotone rescaling of one axis, so this moved the ordering, not
+merely the calibration. Refitted with the standardizer recorded: every cohort improves — TESLA 0.597
+vs 0.473, Neopep 0.802 vs 0.662, Gfeller 0.782 vs 0.702.
+
+**`store.fetch_file`** so a worked example runs on a whole published deposit; `mhcmatch bootstrap
+--reference` pre-stages all six in one call. `mhcmatch complement` scores peptides or a whole TSV.
+
+**Open in the library:**
+
+1. **The vendored parameters are the human arm only.** `posbayes` still carries a per-species table;
+   `complement.score` does not, and accepts `species` nowhere. Fit the mouse arm and key on it.
+2. **Class II returns `NaN` by design** — the register floats, so the class-I role split labels the
+   wrong residues. A class-II `complement` needs `store.anchor_indices` in the encoder.
+3. **`mimics.scan` is on the slow search path** — see §6c.
+4. **The gate is fitted where presentation is weak** (`IEDB_ligandome`, 0.610), so its `a`
+   under-weights presentation for screens where presentation is strong. Presentation alone still
+   leads the LODO mean (0.707 vs 0.698).
+
 ## 6. Phase 3 — benchmark & paper
 
 **Head-to-head harness — built** (`bench/compare/`, results in `bench/results/compare_*.md`, provenance
@@ -592,6 +642,15 @@ groove positions). Worth evaluating against:
 NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2).
 
 ## 6c. Known issues
+
+- **`mimics.scan` is 4,300× slower than it needs to be, measured.** It routes every binder through
+  `seqtree.pmhc.find_mimics`, i.e. `KmerIndex.seed_and_gather` one query at a time in a Python loop:
+  **55 queries/s** against **237,000/s** for `seqtree.Index.search_batch` with the `seqtm` engine, on
+  identical counts and distances (`bench/results/neighbour_search_speed.md`). That is why
+  `bench/neoag/features.py` spends ~20 minutes on its viral-distance term, while the same block over
+  332,728 peptides against two references takes **2 seconds** on the batch path. The per-allele
+  presentation-aware E-value genuinely needs the k-mer/allele index, so the fix is a second entry
+  point — a batched plain-neighbour scan — not a replacement.
 
 - ~~**The MHC-II binder gate is a length detector**~~ — **fixed**. `restriction(diffuse=True)` gated on `anchor_score > 0.0`, a max over register frames, so it grew with peptide length even on noise (a random 21-mer passed 98% of the time). It now gates on `percent_rank(..., length=len(peptide)) <= 2`: the null is random peptides at the query's own length, so it takes the same frame-max and the bias cancels. Class-gated to MHC-II — MHC-I is end-anchored and its length preference is real biology a length-conditional null would delete; `restriction(cls="mhc1")` is byte-identical. `bench/results/binder_gate_length_bias.md`.
 - **`restriction(diffuse=True)` ranks on a cross-allele-incomparable raw score.** The diffused anchor log-odds carries a per-allele offset and (from shrinkage) a per-allele scale, so a raw-score argmax systematically buries rare alleles. `calibrated=True` already ranks by per-allele %rank and is the cross-allele-comparable mode. Making %rank the *default* ranker was measured and **deliberately not shipped**: through the shipped `footprint="anchor"` path it is a redistribution, not a win (MHC-I top-1 allele-recovery rare +5.9 / medium +2.3 / frequent −3.5 / overall −1.1 pt). A leave-one-out ligand null was also measured and dropped — redundant under %rank.
