@@ -63,6 +63,17 @@ def fetch_reference(path: str | None = None) -> str:
     return hf_hub_download(repo_id=PMHC_REPO, repo_type="dataset", filename=REFERENCE_FILE)
 
 
+@functools.lru_cache(maxsize=8)
+def _resolve(path: str | None, _env: str | None) -> str:
+    """:func:`fetch_reference`, memoized on ``(path, $MHCMATCH_EXPRESSION)``.
+
+    With neither set, ``fetch_reference`` goes through ``hf_hub_download``, which is a cache lookup
+    and costs ~0.5 s -- fine once, ruinous per call, and :func:`safety_profile` is called once per
+    gene inside a loop. ``_env`` is in the key rather than read inside so that changing the
+    environment re-resolves instead of returning the previous file."""
+    return fetch_reference(path)
+
+
 @functools.lru_cache(maxsize=4)
 def load(path: str | None = None) -> dict:
     """``{(key_type, key, context): {median_tpm, q25_tpm, q75_tpm, n, source}}``, read once and cached.
@@ -204,4 +215,4 @@ def safety_profile(gene: str, top: int = 10, path: str | None = None) -> list[tu
 
     The safety read: a target expressed only in the tumour's lineage is very different from one
     expressed in heart and lung too, and the ranking score alone does not show that."""
-    return _by_gene(fetch_reference(path)).get(gene, [])[:top]
+    return _by_gene(_resolve(path, os.environ.get("MHCMATCH_EXPRESSION"))).get(gene, [])[:top]
