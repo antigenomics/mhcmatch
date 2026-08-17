@@ -1,14 +1,24 @@
-"""Assembling a polyepitope vaccine cassette: how many units, in what order, joined by what.
+"""Assembling a polyepitope vaccine cassette: what to refuse, how many units, in what order,
+joined by what.
 
 Candidate *selection* — which mutations are worth targeting — is :mod:`mhcmatch.rank` and the
 immunogenicity stack behind it. This module is the step after: given ranked candidates with
-calibrated probabilities, decide **how many to carry, how to lay them out, and what to put between
-them**. Those are three separate questions with three different literatures, and none of them is
-answered by the candidate score.
+calibrated probabilities, decide **what to withdraw on safety grounds, how many to carry, how to lay
+them out, and what to put between them**. Those are four separate questions with four different
+literatures, and none of them is answered by the candidate score.
 
 Selection and assembly are kept apart because the assembly answer depends on the *set*, not the
 candidate: whether to carry a 12th epitope depends on what the first eleven already cover, and the
 cost of a junction depends on which two units sit either side of it.
+
+**What to refuse — an exclusion, and it runs first.** :func:`screen` withdraws a unit whose own
+target gene is transcribed in a tissue that must not be attacked, or one of whose registers coincides
+with a self peptide from an unrelated essential-tissue gene. It excludes rather than down-ranks: the
+second-best cassette is cheap and myocarditis is not, and capacity spent on a unit that has to be
+withdrawn is capacity not spent on a safe one. Two patients died of cardiogenic shock and two of
+necrotising leukoencephalopathy in the trials that define this problem; the references, the shape of
+each event, and the measurement that chose this screen over the more obvious mimicry-similarity one
+are in :func:`screen` and :func:`self_origin_risk`.
 
 **How many — a per-allotype stopping rule, not a constant.**
 
