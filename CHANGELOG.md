@@ -28,6 +28,17 @@ The step after ranking: assembling a cassette, and refusing one.
   every unit of every cassette. A mimicry-similarity screen was built and measured first and fires on
   almost everything, because anchor-masked similarity to a presented reference is presentation rather
   than recognition (`bench/results/vector_safety_screen.md`).
+- **`mhcmatch vector`** — the whole cassette pipeline in one call:
+  `--candidates units.tsv --n0 8 [--screen] [--fasta out.fa]`. Its input is a table of **long
+  windows**, not `rank`'s minimal epitopes, and the reader says so when a column is missing rather
+  than silently building the tolerising configuration. `--n0` is required with no default, matching
+  the library: nothing in the public record fits per-allotype capacity. `--screen` is opt-in because
+  it costs a whole-proteome index per register length — **without it no safety check runs at all.**
+  The report names every withdrawal, every allotype's spend, every unselected candidate with the
+  threshold it missed, and every junction.
+- **`mhcmatch deslip`** — the m1Ψ +1-frameshift scan as its own command, since it takes nucleotides
+  rather than peptides. `--fix` writes the repaired CDS, `TTT` → `TTC` upstream, protein unchanged.
+  On a clean sequence it says so *and* says the check only applies to an m1Ψ construct.
 - **`proteome.gene_symbols`** — `{name|accession: gene}` from the UniProt `GN=` field. Closes the
   join between deposits naming sources as accessions and `expression.safety_profile`, which is keyed
   on HGNC symbols. `mimicry.safety` takes it as `symbols=` and now returns a resolved `gene` beside

@@ -106,6 +106,69 @@ def test_threads_flag_is_only_offered_where_it_does_something(capsys):
         assert ("--threads" in capsys.readouterr().out) is has, cmd
 
 
+# ------------------------------------------------------------------ vector / deslip
+
+def _units(tmp_path, rows, header="peptide\tgene\tallele\tp\tmutation_index\n"):
+    p = tmp_path / "units.tsv"
+    p.write_text(header + "".join("\t".join(r) + "\n" for r in rows))
+    return str(p)
+
+
+def test_read_units_defaults_the_mutation_index_to_the_centre(tmp_path):
+    path = _units(tmp_path, [("A" * 27, "G1", "HLA-A*02:01", "0.4", "13"),
+                             ("C" * 27, "G2", "HLA-B*07:02", "0.3", "")])
+    us = cli._read_units(path)
+    assert [u.gene for u in us] == ["G1", "G2"]
+    assert [u.mutation_index for u in us] == [13, 13], "blank falls back to the window centre"
+    assert us[0].p == 0.4 and us[0].cls == "mhc1"
+
+
+def test_read_units_names_every_missing_column_at_once(tmp_path):
+    """A table missing two columns should say so once, not one error per re-run."""
+    path = _units(tmp_path, [("A" * 27, "G1")], header="peptide\tgene\n")
+    with pytest.raises(SystemExit) as e:
+        cli._read_units(path)
+    assert "allele" in str(e.value) and "p" in str(e.value)
+    assert "minimal epitope" in str(e.value), "the message has to say which peptide it wants"
+
+
+def test_vector_rejects_the_rate_objective_without_its_threshold(tmp_path):
+    """Caught before the panel is built -- `order` raises too, but ~10 s later."""
+    path = _units(tmp_path, [("A" * 27, "G1", "HLA-A*02:01", "0.4", "13")])
+    with pytest.raises(SystemExit) as e:
+        cli.main(["vector", "--candidates", path, "--n0", "3", "--objective", "rate"])
+    assert "--binder-threshold" in str(e.value)
+
+
+def test_vector_requires_a_stated_capacity(capsys):
+    """`--n0` has no default in the library and must not acquire one at the CLI."""
+    with pytest.raises(SystemExit):
+        cli.main(["vector", "--help"])
+    usage = capsys.readouterr().out.split("\n\n")[0]
+    assert "--n0 F" in usage and "[--n0" not in usage, "n0 must be required, not optional"
+
+
+def test_deslip_finds_the_published_motif_and_repairs_it(tmp_path, capsys):
+    out, fix = tmp_path / "sites.tsv", tmp_path / "fixed.fasta"
+    # GGC TTT TCA GGC TTT GCA -- only the first TTT is followed by a T/C-starting codon
+    cli.main(["deslip", "GGCTTTTCAGGCTTTGCA", "--out", str(out), "--fix", str(fix)])
+    rows = out.read_text().strip().split("\n")
+    assert rows[0].split("\t") == ["codon_index", "nt_offset", "codon", "next_codon"]
+    assert len(rows) == 2, "one site, not two -- GCA does not start with T or C"
+    assert rows[1].split("\t")[:3] == ["1", "3", "TTT"]
+
+    fixed = fix.read_text().strip().split("\n")[1]
+    assert fixed == "GGCTTCTCAGGCTTTGCA", "synonymous TTT -> TTC upstream, nothing else touched"
+    assert "1 slippery site" in capsys.readouterr().err
+
+
+def test_deslip_says_when_there_is_nothing_to_do_and_why_it_might_not_matter(capsys):
+    cli.main(["deslip", "GGCGCAGGC"])
+    err = capsys.readouterr().err
+    assert "0 slippery site" in err
+    assert "unmodified uridine" in err, "a clean scan must say which platform it applies to"
+
+
 def test_every_batch_capable_command_makes_its_positional_optional(capsys):
     """Regression: `explain --peptides f.tsv` was a usage error because the positional stayed
     required, which the CLI benchmark caught and the unit tests did not."""

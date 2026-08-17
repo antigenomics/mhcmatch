@@ -448,6 +448,17 @@ class _Hit:
         self.protein, self.n_subs, self.position = protein, n_subs, position
 
 
+class _Proteome:
+    """Stands in for `Proteome.find_sources` -- the batch form, which is what `risk` must call."""
+
+    def __init__(self, per_peptide):
+        self.per_peptide, self.calls = per_peptide, 0
+
+    def find_sources(self, peptides, max_subs=1, **kw):
+        self.calls += 1
+        return {p: [h for h in self.per_peptide(p) if h.n_subs <= max_subs] for p in peptides}
+
+
 def _stub_expression(monkeypatch):
     """TTN's real GTEx profile; everything else silent."""
     from mhcmatch import expression as EX
@@ -460,14 +471,12 @@ def _stub_expression(monkeypatch):
 def test_self_origin_risk_joins_an_unrelated_source_hit_to_its_tissue(monkeypatch):
     """The whole join, with the proteome and the expression table stubbed at their real values."""
     _stub_expression(monkeypatch)
+    p = _Proteome(lambda pep: [_Hit("sp|Q8WZ42|TITIN_HUMAN")] if pep == TITIN else [])
 
-    class _P:
-        def find_source(self, pep):
-            return [_Hit("sp|Q8WZ42|TITIN_HUMAN")] if pep == TITIN else []
-
-    risk = vector.self_origin_risk(_P(), {"Q8WZ42": "TTN"})
+    risk = vector.self_origin_risk(p, {"Q8WZ42": "TTN"})
     u = vector.Unit("K" * 9 + TITIN + "K" * 9, 4, "MAGEA3", "HLA-A*01:01", 0.9)
     hits = risk(u, [MAGEA3, TITIN])
+    assert p.calls == 1, "one batch query for the whole register list, not one per register"
     assert {h["tissue"] for h in hits} == {"Muscle - Skeletal", "Heart - Left Ventricle"}
     assert "Testis" not in {h["tissue"] for h in hits}, "1.51 TPM in testis is not the hazard"
     assert all(h["clause"] == "unrelated self origin" and h["gene"] == "TTN" for h in hits)
@@ -482,25 +491,37 @@ def test_a_units_own_parent_protein_is_native_context_not_a_hazard(monkeypatch):
     gene, and tolerance already covers them.
     """
     _stub_expression(monkeypatch)
+    # every register traces back to one protein, the unit's own parent
+    parent = _Proteome(lambda pep: [_Hit("sp|P00000|KRAS_HUMAN", n_subs=0 if pep != TITIN else 1)])
 
-    class _P:                     # every register traces back to one protein, the unit's own parent
-        def find_source(self, pep):
-            return [_Hit("sp|P00000|KRAS_HUMAN", n_subs=0 if pep != TITIN else 1)]
-
-    risk = vector.self_origin_risk(_P(), {"P00000": "KRAS", "Q8WZ42": "TTN"})
+    risk = vector.self_origin_risk(parent, {"P00000": "KRAS", "Q8WZ42": "TTN"})
     own = vector.Unit("K" * 9 + TITIN + "K" * 9, 4, "KRAS", "HLA-A*01:01", 0.9)
     assert risk(own, [MAGEA3, TITIN]) == [], "its own parent is native context, at 0 subs and at 1"
 
     # the same registers under a unit from a different gene: now the match is unrelated, and KRAS
     # being silent is what keeps this test about the parent exclusion rather than about tissue.
-    class _PT(_P):
-        def find_source(self, pep):
-            return [_Hit("sp|Q8WZ42|TITIN_HUMAN")] if pep == TITIN else []
-
-    unrelated = vector.self_origin_risk(_PT(), {"Q8WZ42": "TTN"})
+    titin = _Proteome(lambda pep: [_Hit("sp|Q8WZ42|TITIN_HUMAN")] if pep == TITIN else [])
+    unrelated = vector.self_origin_risk(titin, {"Q8WZ42": "TTN"})
     other = vector.Unit("K" * 9 + TITIN + "K" * 9, 4, "MAGEA3", "HLA-A*01:01", 0.9)
     assert unrelated(other, [MAGEA3, TITIN]), "a MAGE-A3 unit matching titin still fires"
     assert vector.screen([own], risk)[0] == [own]
+
+
+def test_max_subs_is_pushed_into_the_search_not_filtered_after(monkeypatch):
+    """Searching at the library default and discarding is the same answer for twice the work."""
+    _stub_expression(monkeypatch)
+    seen = {}
+
+    class _P(_Proteome):
+        def find_sources(self, peptides, max_subs=1, **kw):
+            seen["max_subs"] = max_subs
+            return super().find_sources(peptides, max_subs, **kw)
+
+    p = _P(lambda pep: [_Hit("sp|Q8WZ42|TITIN_HUMAN", n_subs=1)])
+    risk = vector.self_origin_risk(p, {"Q8WZ42": "TTN"}, max_subs=0)
+    hits = risk(vector.Unit("W" * 27, 13, "G", "A", 0.5), [TITIN])
+    assert seen["max_subs"] == 0
+    assert hits == [], "a 1-substitution hit must not survive max_subs=0"
 
 
 def test_the_target_gene_clause_fires_without_any_register_match(monkeypatch):
@@ -510,11 +531,7 @@ def test_the_target_gene_clause_fires_without_any_register_match(monkeypatch):
                         lambda g, **kw: [("Brain - Caudate (basal ganglia)", 0.33)]
                         if g == "MAGEA12" else [])
 
-    class _P:
-        def find_source(self, pep):
-            return []
-
-    risk = vector.self_origin_risk(_P(), {"x": "y"})
+    risk = vector.self_origin_risk(_Proteome(lambda pep: []), {"x": "y"})
     hits = risk(vector.Unit("W" * 27, 13, "MAGEA12", "A", 0.8), ["WWWWWWWWW"])
     assert [h["clause"] for h in hits] == ["target gene"]
     assert hits[0]["tpm"] == 0.33 and "register" not in hits[0]

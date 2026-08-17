@@ -104,6 +104,16 @@ panel or any download, and a caller who wants a different presentation model jus
 
 A ``binder`` returns one number per peptide, **higher meaning a stronger predicted binder**;
 ``-log10(%rank)`` is the natural choice and is what :func:`store_binder` builds.
+
+From the command line, where the whole pipeline is one call::
+
+    mhcmatch vector --candidates units.tsv --n0 8 --screen --fasta cassette.fasta
+
+``units.tsv`` carries ``peptide``, ``gene``, ``allele``, ``p`` and optionally ``mutation_index`` —
+and ``peptide`` is the **long window**, not ``rank``'s minimal epitope. ``--screen`` is opt-in
+because it builds a whole-proteome index; without it no safety check runs at all and the cassette
+carries whatever it was handed. ``mhcmatch deslip <cds> --fix out.fasta`` is the
+:func:`slippery_sites` half, which takes nucleotides rather than peptides and so is its own command.
 """
 from __future__ import annotations
 
@@ -430,13 +440,15 @@ def self_origin_risk(proteome, symbols, tissues=ESSENTIAL_TISSUES, min_tpm: floa
     transcribed where it was assumed silent.
 
     ``symbols`` is ``{accession: gene}`` from
-    :func:`mhcmatch.proteome.gene_symbols(path, key="accession")`; ``find_source`` names proteins as
+    :func:`mhcmatch.proteome.gene_symbols(path, key="accession")`; the search names proteins as
     ``sp|P43357|MAGA3_HUMAN`` and :func:`mhcmatch.expression.safety_profile` is keyed on ``MAGEA3``.
     It is required rather than defaulted because a missing map resolves nothing and so returns "no
     risk" for every peptide — the one wrong answer this must never give quietly.
 
-    Cost is ``find_source``'s: a whole-proteome index per register length, built once and cached on
-    ``proteome``. Screen the whole candidate list in one pass.
+    ``proteome`` needs :meth:`~mhcmatch.Proteome.find_sources`, the **batch** form: a unit's ~70
+    registers go through one threaded C++ query per length rather than 70 Python-level ones. Cost is
+    a whole-proteome index per register length (~12 GB peak, minutes), built once and cached on the
+    object — so screen the whole candidate list in one process, never one unit per invocation.
     """
     from . import expression as EX
 
@@ -453,11 +465,13 @@ def self_origin_risk(proteome, symbols, tissues=ESSENTIAL_TISSUES, min_tpm: floa
         out = []
         for tissue, tpm in _essential(unit.gene):           # clause 1: the target gene itself
             out.append({"clause": "target gene", "gene": unit.gene, "tissue": tissue, "tpm": tpm})
-        for pep in registers:                               # clause 2: an unrelated self origin
+        # clause 2: an unrelated self origin. `find_sources`, not `find_source` per register --
+        # one threaded C++ batch query per length instead of ~70 Python-level ones per unit, which
+        # is the entry point that module's own docstring says to use for anything but one lookup.
+        hits = proteome.find_sources(registers, max_subs=max_subs)
+        for pep in registers:
             seen = set()
-            for h in proteome.find_source(pep) or []:
-                if h.n_subs > max_subs:
-                    continue
+            for h in hits.get(pep) or []:
                 parts = h.protein.split("|")
                 gene = symbols.get(parts[1] if len(parts) >= 3 else h.protein)
                 # The unit's own parent is native context, not a hazard: its flanks are self by

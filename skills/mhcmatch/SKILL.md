@@ -88,8 +88,12 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 ## CLI
 
 `decompose`, `restriction`, `affinity`, `binder`, `scan`, `source`, `logo`, `span`, `predict`,
-`rank`, `explain`, `complement`, `mimics`, `mimicry`, `neoag`, `expression`, `bootstrap`.
+`rank`, `explain`, `complement`, `mimics`, `mimicry`, `neoag`, `expression`, `vector`, `deslip`,
+`bootstrap`.
 `mhcmatch binder <peptide> --alleles ... --cls mhc1` ranks alleles by the generalized binder score.
+`mhcmatch vector --candidates units.tsv --n0 8 [--screen]` assembles a cassette; its input is
+**long windows**, not `rank`'s minimal epitopes, and `--screen` is opt-in because it costs a
+whole-proteome index. Without it no safety check runs at all.
 
 **Pass `--peptides FILE`, never loop the shell.** The setup a per-peptide invocation re-pays is the
 whole cost: the presentation/affinity calibrators ~5 s, a human-proteome length index ~70 s. One

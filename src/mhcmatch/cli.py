@@ -4,6 +4,10 @@ Commands: ``decompose`` (no data needed), ``restriction``, ``scan``, ``logo`` (n
 table via ``--pmhc`` or ``$MHCMATCH_PMHC``), ``source`` (needs a proteome FASTA), and ``span``
 (core -> full presented ligand; the panel is optional, and only supplies the observed-ligand tier).
 
+Two commands are not peptide-keyed and take neither ``--peptides`` nor a positional peptide:
+``vector`` consumes a **table of cassette units** (long windows, not minimal epitopes) and emits one
+cassette, and ``deslip`` consumes a **coding sequence** in nucleotides.
+
 **Every peptide-keyed command takes ``--peptides FILE`` and emits TSV**, because the expensive part
 of almost all of them is setup that a per-peptide invocation pays again every time: the presentation
 and affinity calibrators are ~5 s, the binder calibrator ~45 s, and a human-proteome length index
@@ -775,6 +779,164 @@ REFERENCE_FILES = (
 )
 
 
+def _read_units(path):
+    """``[Unit]`` from a TSV with ``peptide``/``gene``/``allele``/``p`` (+ optional
+    ``mutation_index``, ``cls``).
+
+    Deliberately not the `rank` table read directly. `rank` emits **minimal epitopes**, and a unit is
+    the long peptide around one mutation -- injecting a 9-mer would build the tolerising
+    configuration (see :func:`mhcmatch.vector.unit`). The caller joins `rank`'s output back to the
+    variant's protein context, which is the step that knows where the mutation sits, and this reads
+    the result.
+    """
+    from .vector import Unit
+
+    op = gzip.open if str(path).endswith(".gz") else open
+    fh = sys.stdin if path == "-" else op(path, "rt")
+    try:
+        cols = fh.readline().rstrip("\n").split("\t")
+        need = ("peptide", "gene", "allele", "p")
+        missing = [c for c in need if c not in cols]
+        if missing:
+            raise SystemExit(f"{path}: missing column(s) {', '.join(missing)}; a unit table needs "
+                             f"{', '.join(need)} (+ optional mutation_index, cls). `rank` gives you "
+                             "gene, allele and a score -- peptide must be the long window around the "
+                             "mutation, not the minimal epitope")
+        ix = {c: cols.index(c) for c in cols}
+        units = []
+        for line in fh:
+            f = line.rstrip("\n").split("\t")
+            if not f or not f[ix["peptide"]].strip():
+                continue
+            pep = f[ix["peptide"]].strip().upper()
+            mi = (int(f[ix["mutation_index"]]) if "mutation_index" in ix
+                  and len(f) > ix["mutation_index"] and f[ix["mutation_index"]].strip()
+                  else len(pep) // 2)
+            units.append(Unit(peptide=pep, mutation_index=mi, gene=f[ix["gene"]].strip(),
+                              allele=f[ix["allele"]].strip(), p=float(f[ix["p"]]),
+                              cls=(f[ix["cls"]].strip() if "cls" in ix and len(f) > ix["cls"]
+                                   else "mhc1")))
+        return units
+    finally:
+        if path != "-":
+            fh.close()
+
+
+def cmd_vector(a):
+    """Screen, select, order: a polyepitope cassette from a table of candidate units."""
+    from . import vector as V
+
+    # Checked before anything expensive: `order` raises on this too, but only after the panel and
+    # the calibrators have been built, which is ~10 s spent to learn about a typo.
+    if a.objective == "rate" and a.binder_threshold is None:
+        raise SystemExit("--objective rate needs --binder-threshold: the rate is binders per "
+                         "register, so something has to say what counts as a binder")
+    # One register vocabulary for the whole command. A class-II core is 9 residues read out of a
+    # longer span, so screening it at class-I lengths would look at windows no MHC-II ever presents.
+    lengths = V.JUNCTION_LENGTHS if a.cls == "mhc1" else V.MHC2_JUNCTION_LENGTHS
+    units = _read_units(a.candidates)
+    print(f"# {len(units)} candidate unit(s) over "
+          f"{len({u.allele for u in units})} allotype(s)", file=sys.stderr)
+
+    rejected = []
+    if a.screen:
+        from .proteome import gene_symbols
+        from .store import fetch_proteome
+        print(f"# screening: one whole-proteome index per register length ({len(lengths)} for "
+              f"{a.cls}), ~12 GB peak each and a few minutes apiece. Paid once for the whole "
+              "candidate list, so screen everything in one call", file=sys.stderr, flush=True)
+        fa = fetch_proteome(a.species)
+        risk = V.self_origin_risk(Proteome.from_fasta(fa), gene_symbols(fa, key="accession"),
+                                  min_tpm=a.min_tpm, max_subs=a.max_subs)
+        units, rejected = V.screen(units, risk, lengths=lengths)
+        print(f"# withdrawn: {len({id(u) for u, _, _ in rejected})} unit(s), "
+              f"{len(rejected)} reason(s); {len(units)} remain", file=sys.stderr)
+
+    sel = V.select(units, n0=a.n0, cls=a.cls if a.cls_filter else None)
+    print(f"# selected {len(sel.units)} of {len(units)}, expected yield "
+          f"{sel.expected_yield:.2f} at n0={a.n0}", file=sys.stderr)
+
+    cas = None
+    if len(sel.units) >= 2:
+        store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
+        alleles = _read_alleles(a.alleles) or sorted({u.allele for u in sel.units if u.allele})
+        binder = V.store_binder(store, alleles, cls=a.cls)
+        cas = V.order(sel.units, binder=binder, lengths=lengths, alleles=alleles,
+                      objective=a.objective,
+                      binder_threshold=a.binder_threshold, threshold=a.threshold)
+    elif sel.units:
+        # One unit has no junctions, so `order` returns before it ever calls `binder` -- building the
+        # panel and its calibrators here would be ~10 s spent to lay out a cassette of one.
+        cas = V.order(sel.units, binder=None)
+
+    o = _Out(a, "row")
+    try:
+        o.header("section", "i", "key", "value", "detail")
+        # One row per (unit, register, source gene), carrying that gene's worst tissue. `screen`
+        # returns a reason per tissue, and a gene is transcribed in many -- on one 7-unit test that
+        # was 2,121 rows for 4 withdrawals, which is a table nobody reads. The full set is still
+        # what the library returns; this is the presentation.
+        worst = {}
+        for u, reg, why in rejected:
+            k = (id(u), reg, why.get("gene", ""))
+            if k not in worst or why.get("tpm", 0) > worst[k][2].get("tpm", 0):
+                worst[k] = (u, reg, why)
+        for u, reg, why in worst.values():
+            sub = f" {why['subs']}sub" if "subs" in why else ""
+            o.row("withdrawn", "", u.gene, why.get("clause", ""),
+                  f"{why.get('gene', '')}{sub} {why.get('tissue', '')} "
+                  f"{why.get('tpm', 0):.1f}".strip() + (f" via {reg}" if reg else ""))
+        for allele, (n, s, y) in sel.per_allele().items():
+            o.row("allotype", n, allele, f"{y:.4f}", f"sum p = {s:.4f}")
+        for t in sel.trace:
+            if not t["kept"]:
+                o.row("not selected", "", t["gene"], f"{t['p']:.4f}",
+                      f"{t['allele']} threshold {t['threshold']:.4f}")
+        if cas:
+            for i, (u, (lo, hi)) in enumerate(zip(cas.units, cas.boundaries), 1):
+                o.row("unit", i, u.gene, u.allele, f"{lo}-{hi} p={u.p:.4f}")
+            for j in cas.junctions:
+                o.row("junction", j["left"] + 1, f"{j['left'] + 1}|{j['right'] + 1}",
+                      f"{j['score']:.4f}", f"{j['peptide']} at {j['offset']}")
+            o.row("cassette", len(cas.units), f"spacer={cas.spacer}", f"{cas.cost:.4f}",
+                  f"{len(cas.sequence)} aa, worst junction {cas.worst_junction:.4f}")
+            o.row("sequence", "", "", cas.sequence, "")
+    finally:
+        o.close()
+
+    if cas and a.fasta:
+        with open(a.fasta, "w") as fh:
+            fh.write(f">cassette units={len(cas.units)} spacer={cas.spacer} "
+                     f"objective={a.objective}\n{cas.sequence}\n")
+        print(f"# wrote {a.fasta}", file=sys.stderr)
+
+
+def cmd_deslip(a):
+    """Scan a cassette CDS for the m1-pseudouridine +1 frameshift motif, and optionally repair it."""
+    from . import vector as V
+
+    cds = _read_seq(a.cds)
+    sites = V.slippery_sites(cds)
+    o = _Out(a, "site")
+    try:
+        o.header("codon_index", "nt_offset", "codon", "next_codon")
+        for s in sites:
+            o.row(s["codon_index"], s["nt_offset"], s["codon"], s["next_codon"])
+    finally:
+        o.close()
+    print(f"# {len(sites)} slippery site(s) in {len(cds)} nt "
+          f"({len(cds) // 3} codons)", file=sys.stderr)
+    if not sites:
+        print("# nothing to repair. Note this motif only matters for an m1-pseudouridine construct; "
+              "on unmodified uridine the scan is not the relevant check", file=sys.stderr)
+    if a.fix:
+        fixed, n = V.deslip(cds)
+        with open(a.fix, "w") as fh:
+            fh.write(f">deslipped n_fixed={n}\n{fixed}\n")
+        print(f"# wrote {a.fix}: {n} codon(s) rewritten TTT -> TTC, protein unchanged",
+              file=sys.stderr)
+
+
 def cmd_bootstrap(a):
     from .store import PMHC_REPO, fetch_file, fetch_pmhc, fetch_proteome
     tiers = ("full", "shortlist") if a.tier == "all" else (a.tier,)
@@ -1017,6 +1179,59 @@ def main(argv=None):
     _add_batch_opts(mi)
     _add_thread_opt(mi)
     mi.set_defaults(fn=cmd_mimics)
+
+    vc = sub.add_parser("vector",
+                        help="assemble a polyepitope cassette: withdraw on safety, choose how many "
+                             "units per allotype, order them, pick a spacer")
+    vc.add_argument("--candidates", required=True, metavar="FILE",
+                    help="TSV of units: peptide, gene, allele, p (+ optional mutation_index, cls). "
+                         "`peptide` is the LONG window around the mutation, not the minimal epitope "
+                         "-- a minimal peptide loads onto any cell without costimulation and is the "
+                         "tolerising configuration. `-` = stdin")
+    vc.add_argument("--n0", type=float, required=True, metavar="F",
+                    help="per-allotype capacity, the one free parameter of the stopping rule. "
+                         "REQUIRED and with no default on purpose: nothing in the public record fits "
+                         "it, so the value is yours to defend and it is recorded in the output")
+    vc.add_argument("--alleles", help="the recipient's allotypes for junction scoring "
+                                      "(comma-separated or a file); default = those in the table")
+    vc.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
+    vc.add_argument("--cls-filter", action="store_true",
+                    help="select only units whose own `cls` matches --cls")
+    vc.add_argument("--screen", action="store_true",
+                    help="withdraw units on essential-tissue risk BEFORE selecting. Costs a "
+                         "whole-proteome index (minutes, several GB); without it no safety check "
+                         "runs at all and the cassette carries whatever it was handed")
+    vc.add_argument("--min-tpm", type=float, default=0.25, metavar="F",
+                    help="essential-tissue expression floor for --screen. 0.25 because MAGE-A12 sits "
+                         "at 0.33 TPM in brain and killed two patients; a conventional 5 would pass "
+                         "it")
+    vc.add_argument("--max-subs", type=int, default=1, metavar="N",
+                    help="self-origin search radius for --screen (0 = coincidence only)")
+    vc.add_argument("--objective", default="sum", choices=("sum", "rate"),
+                    help="junction cost: `sum` of the strongest binder per junction (pVACvector's "
+                         "logic, biased toward the shortest spacer), or `rate` = binders per "
+                         "register, which is length-neutral and needs --binder-threshold. The two "
+                         "disagree on real payloads, so choose")
+    vc.add_argument("--binder-threshold", type=float, metavar="F",
+                    help="-log10(%%rank) above which a junction window counts as a binder; "
+                         "required by --objective rate")
+    vc.add_argument("--threshold", type=float, metavar="F",
+                    help="stop at the first spacer whose worst junction falls at or below this, "
+                         "instead of trying them all and taking the cheapest")
+    vc.add_argument("--fasta", metavar="FILE", help="also write the cassette sequence as FASTA")
+    _add_store_opts(vc)
+    vc.add_argument("--out", metavar="FILE", help="write the report TSV here instead of stdout")
+    vc.set_defaults(fn=cmd_vector)
+
+    ds = sub.add_parser("deslip",
+                        help="find (and repair) the m1-pseudouridine +1 frameshift motif in a "
+                             "cassette coding sequence")
+    ds.add_argument("cds", help="coding sequence, or a FASTA path (T or U, case-insensitive)")
+    ds.add_argument("--fix", metavar="FILE",
+                    help="write the repaired CDS here: every TTT before a T/C-starting codon becomes "
+                         "TTC, which is synonymous, so the protein is unchanged")
+    ds.add_argument("--out", metavar="FILE", help="write the site TSV here instead of stdout")
+    ds.set_defaults(fn=cmd_deslip)
 
     xp = sub.add_parser("expression", help="reference expression by normal tissue or tumour type")
     xp.add_argument("key", nargs="?", default="", help="gene symbol (with --tissue) or peptide "
