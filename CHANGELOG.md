@@ -6,7 +6,7 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
-## [Unreleased]
+## [0.11.0] - 2026-08-17
 
 A CLI that can be pointed at a file, a length-aware recognition model, and mimic categories that say
 what they mean.
@@ -37,6 +37,25 @@ what they mean.
   of windows, which now raises rather than swapping.
 - **`affinity --peptides` reads a `wt_peptide` column**, so agretopicity comes out of the same pass
   instead of a second run joined back on a peptide string that is not a key.
+- **`expression.TUMOR_TISSUE` and `matched_tissues()`** — each of the 19 tumour types now maps to its
+  matched normal tissue, and `expression --list-contexts` prints the pairing instead of two unrelated
+  lists. The safety read previously required the caller to already know that melanoma pairs with
+  skin. Both vocabularies are named in the docs because **neither is clinical**: `--tumor` takes
+  **TCGA study abbreviations** (NCI GDC), `--tissue` takes **GTEx `SMTSD`** names, so a pipeline
+  needing ICD-O-3, SNOMED CT or OncoTree must bring its own crosswalk. `CRC` is flagged as not a TCGA
+  code (TCGA has `COAD` and `READ` separately; the source table merged them) and `HNSC` as
+  approximate (GTEx has no head-and-neck mucosa). A test asserts all 19 resolve, so a tissue name
+  that rots fails loudly rather than silently emptying the safety read.
+- **`pseudoseq.class2_report(key, mode)` and `--mhc2-report {pair,beta,isotype}`** on the five
+  commands that *choose* an allele (`restriction`, `binder`, `scan`, `predict`, `rank`). A class-II
+  key does not lead with the same chain at every isotype: DRA is monomorphic so DR is keyed by its
+  **beta** (`DRB1_0101`), while DP and DQ are keyed by the alpha–beta pair and lead with the
+  **alpha** (`HLA-DQA10501-DQB10301`). Anything that compares two callers by the leading gene is
+  therefore matching DR's beta against DP/DQ's alpha, and splitting DR against itself whenever the
+  DRB gene differs. Measured on a 10,402-row class-II concordance: leading-gene agreement 0.401,
+  true DR/DP/DQ agreement **0.527**, the gap being 1,318 DR-vs-DR pairs. `pair` is the default and
+  its output is unchanged; commands *handed* an allele still echo what the caller typed, and class-I
+  and mouse keys come back untouched rather than reduced to a stub.
 
 ### Changed
 
