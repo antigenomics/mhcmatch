@@ -98,8 +98,60 @@ def _hamming(a: str, b: str) -> int:
     return sum(x != y for x, y in zip(a, b)) if len(a) == len(b) else 1 << 30
 
 
+def neighbours(peptides, ref_sets, max_subs: int = 2, threads: int = 0) -> dict:
+    """``{peptide: {category: [(n_subs, ref_peptide), ...]}}`` -- same-length mimics, in batch.
+
+    The Hamming half of :func:`scan`, and **4,300x faster than the path :func:`scan` used to take**.
+    One :class:`seqtree.Index` per (category, length), queried with ``search_batch`` in parallel C++
+    with the GIL released: measured at **237,000 queries/s** against 55 for one
+    :func:`~seqtree.pmhc.find_mimics` call per peptide, returning identical counts and distances
+    (benchmark repo, ``bench/results/neighbour_search_speed.md``).
+
+    What it does not give is the per-allele presentation-aware **E-value** -- that genuinely needs
+    the k-mer/allele index :func:`find_mimics` builds, which is why this is a second entry point and
+    not a replacement. Use it when the question is *how close is the nearest reference peptide*, and
+    :func:`scan` with ``evalue=True`` when the *significance* of the match is the question.
+
+    Hits are nearest-first and **exclude the query itself** (distance 0); same length only, which is
+    what Hamming distance means.
+
+    **Reference peptides are deduplicated, and that is a fix.** The compendia repeat a peptide once
+    per allele/source-organism it was reported under -- the viral IEDB set is 57,331 rows over
+    **26,640 distinct peptides** -- so counting rows makes ``n_near`` a function of how often a
+    sequence was deposited rather than of the sequence neighbourhood. On 400 Chowell peptides this
+    changes exactly one result (``AAAAATMAL`` had ``n_near = 3``, all three the same peptide
+    ``EAAAATCAL``); ``top_mimic`` and ``top_subs`` are unaffected either way.
+
+        >>> neighbours(["GILGFVFTL"], {"viral": ["GILGFVFTA", "DDDDDDDDD"]})
+        {'GILGFVFTL': {'viral': [(1, 'GILGFVFTA')]}}
+    """
+    from seqtree import Index, SearchParams
+
+    peps = sorted({p.strip().upper() for p in peptides if p})
+    out: dict = {p: {} for p in peps}
+    by_len: dict[int, list[str]] = {}
+    for p in peps:
+        by_len.setdefault(len(p), []).append(p)
+
+    params = SearchParams(max_subs=max_subs, engine="seqtm")
+    for cat, refs in ref_sets.items():
+        rl: dict[int, list[str]] = {}
+        for r in {x.strip().upper() for x in refs if x}:
+            rl.setdefault(len(r), []).append(r)
+        for L, qs in by_len.items():
+            pool = sorted(rl.get(L) or ())
+            if not pool:
+                continue
+            index = Index.build(pool, alphabet="aa")
+            for q, hits in zip(qs, index.search_batch(qs, params, threads)):
+                near = sorted((h.score, pool[h.ref_id]) for h in hits if h.score >= 1)
+                if near:
+                    out[q][cat] = near
+    return out
+
+
 def scan(binders, self_set, foreign_sets, cls="mhc1", max_subs=2, near_subs=2, self_name="thymus",
-         exclude_query=False):
+         exclude_query=False, evalue=True, threads=0):
     """Mimic-scan an iterable of ``(peptide, allele)`` binders. Returns ``list[MimicResult]`` (one
     per binder × category with >=1 same-length reference peptide within ``near_subs`` substitutions).
 
@@ -120,23 +172,51 @@ def scan(binders, self_set, foreign_sets, cls="mhc1", max_subs=2, near_subs=2, s
     IEDB ligand set, and a foreignness term built that way scored 0.714 AUROC there against **0.554**
     once self-matches were excluded (``bench/results/gfeller_contamination.md``). With
     ``exclude_query=True`` a peptide is never its own mimic and only genuine neighbours at
-    1..``near_subs`` substitutions contribute."""
+    1..``near_subs`` substitutions contribute.
+
+    **``evalue=False`` is the fast path and is what you want at corpus scale.** ``e_value`` and
+    ``n_hits`` come out ``nan`` / the near-hit count, and every other field is identical -- but the
+    search runs through :func:`neighbours` (one batched, threaded index query per category and
+    length) instead of one :func:`find_mimics` call per binder, which is **4,300x** the throughput
+    on measured identical answers. Keep ``evalue=True`` when the per-allele presentation-aware
+    significance is the point; drop it when the question is only how close the nearest reference
+    peptide is."""
     self_exact = set(self_set)
     foreign_exact = {k: set(v) for k, v in foreign_sets.items()}
+    binders = list(binders)
+
+    if not evalue:
+        cats = {"self": self_set, **foreign_sets}
+        near_all = neighbours((p for p, _ in binders), cats, max_subs=max_subs, threads=threads)
+
     out = []
     for pep, allele in binders:
-        res = find_mimics(pep, self_set, bacterial_sets=foreign_sets, cls=cls, max_subs=max_subs)
-        for cat, d in res.items():
+        if evalue:
+            res = find_mimics(pep, self_set, bacterial_sets=foreign_sets, cls=cls,
+                              max_subs=max_subs)
+            per_cat = {c: sorted((dd, h.epitope) for h in d.get("hits", [])
+                                 for dd in (_hamming(pep, h.epitope),) if 1 <= dd <= near_subs)
+                       for c, d in res.items()}
+            evals = {c: (d.get("E", float("nan")), len(d.get("hits", []))) for c, d in res.items()}
+        else:
+            got = near_all.get(pep.strip().upper(), {})
+            per_cat = {c: [(d, r) for d, r in v if d <= near_subs] for c, v in got.items()}
+            evals = {c: (float("nan"), len(v)) for c, v in per_cat.items()}
+            # a category with no near hit still needs a row when the query matches it exactly
+            for c in cats:
+                per_cat.setdefault(c, [])
+                evals.setdefault(c, (float("nan"), 0))
+
+        for cat, near in per_cat.items():
             name = self_name if cat == "self" else cat
             exact_set = self_exact if cat == "self" else foreign_exact.get(cat, set())
             n_exact = 0 if exclude_query else (1 if pep in exact_set else 0)
-            near = sorted((dd, h.epitope) for h in d.get("hits", [])
-                          for dd in (_hamming(pep, h.epitope),) if 1 <= dd <= near_subs)
             if n_exact == 0 and not near:
                 continue
             top_subs, top = (0, pep) if n_exact else near[0]
+            e, n_hits = evals.get(cat, (float("nan"), 0))
             out.append(MimicResult(pep, allele, name, n_exact, len(near), top, top_subs,
-                                   d.get("E", float("nan")), len(d.get("hits", [])), significant=True))
+                                   e, n_hits, significant=True))
     return out
 
 

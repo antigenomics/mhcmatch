@@ -51,3 +51,35 @@ if __name__ == "__main__":
 
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+def test_neighbours_batches_and_excludes_the_query():
+    """The fast path: same-length hits within max_subs, nearest first, query never its own mimic."""
+    got = M.neighbours(["GILGFVFTL", "SIINFEKL"],
+                       {"viral": ["GILGFVFTL", "GILGFVFTA", "AALGFVFTL", "DDDDDDDDD",
+                                  "SIINFEKL", "SIINFEKA"]})
+    assert got["GILGFVFTL"]["viral"] == [(1, "GILGFVFTA"), (2, "AALGFVFTL")]
+    assert got["SIINFEKL"]["viral"] == [(1, "SIINFEKA")]      # 9-mers cannot match an 8-mer
+    # a peptide with no neighbour gets an empty dict, not a missing key
+    assert M.neighbours(["WWWWWWWWW"], {"viral": ["DDDDDDDDD"]}) == {"WWWWWWWWW": {}}
+
+
+def test_neighbours_deduplicates_reference_rows():
+    """The compendia repeat a peptide once per allele it was deposited under. Counting rows makes
+    n_near a function of deposit frequency rather than of the sequence neighbourhood -- the defect
+    the batch path fixes (viral IEDB: 57,331 rows, 26,640 distinct peptides)."""
+    got = M.neighbours(["AAAAATMAL"], {"viral": ["EAAAATCAL"] * 3})
+    assert got["AAAAATMAL"]["viral"] == [(2, "EAAAATCAL")]
+
+
+def test_scan_fast_path_agrees_with_find_mimics():
+    """evalue=False must change only e_value/n_hits -- every other field is the same question."""
+    self_set = ["GILGFVFTA", "AILGFVFTL", "DDDDDDDDD", "SIINFEKL"]
+    foreign = {"viral": ["GILGFVFTL", "GILGFVFTM", "KKKKKKKKK"]}
+    binders = [("GILGFVFTL", "HLA-A*02:01")]
+    key = lambda r: (r.binder, r.category, r.n_exact, r.n_near, r.top_mimic, r.top_subs)
+    slow = sorted(key(r) for r in M.scan(binders, self_set, foreign, evalue=True))
+    fast = sorted(key(r) for r in M.scan(binders, self_set, foreign, evalue=False))
+    assert slow == fast
+    assert all(r.e_value != r.e_value                      # nan, i.e. not computed
+               for r in M.scan(binders, self_set, foreign, evalue=False))

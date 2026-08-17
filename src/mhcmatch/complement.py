@@ -53,7 +53,9 @@ not minutes. Pass a list, not a loop.
     >>> complement.score(["GILGFVFTL", "SIINFEKL"])            # doctest: +SKIP
     array([1.79, 0.42])
 
-Parameters are vendored in ``mhcmatch/data/complement_mhc1.json`` and never refitted at import.
+Parameters are vendored per species in ``mhcmatch/data/complement_mhc1_{human,mouse}.json`` and
+never refitted at import. The two hosts are **never pooled**: different MHC, different thymic
+repertoires, so one fit across them is fitting a mixture. ``score(peps, species="mouse")`` selects.
 Provenance, the block-by-block cross-validation, the corpus-transfer matrix and the size-matched
 cross-species transfer are in the benchmark repo (``bench/results/complementarity.md``).
 
@@ -76,8 +78,9 @@ import numpy as np
 from . import ipred
 from .data import aa_tables
 
-__all__ = ["AA", "ANCHORS", "PARATOPE", "PARAMS", "BLOCKS", "encode", "feature_names",
-           "features", "score", "posterior", "parameters"]
+__all__ = ["AA", "ANCHORS", "PARATOPE", "PARAMS", "TABLES", "SPECIES", "BLOCKS", "table",
+           "encode", "apply_log_odds", "design", "feature_names", "features", "score",
+           "posterior", "parameters"]
 
 AA = "ACDEFGHIKLMNPQRSTVWY"
 _AAI = {a: i for i, a in enumerate(AA)}
@@ -110,29 +113,46 @@ BLOCKS = {
 #: ``feature -> which count matrix it weights``.
 FITTED = {"aa_anchor": "anchor", "aa_tcr": "tcr", "kmer_llr": "pair"}
 
-_SRC = "complement_mhc1.json"
+_SRC = "complement_mhc1_{species}.json"
+#: Species with a fitted table. Both are the ``chowell_rebuilt`` arm of their own host -- human
+#: 464,161 rows / 14,712 immunogenic, mouse 47,140 / 5,154 -- never pooled, because the two hosts
+#: have different MHC and different thymic repertoires and a fit across them is fitting a mixture.
+SPECIES = ("human", "mouse")
 
 
-def _load() -> dict:
-    with resources.files("mhcmatch.data").joinpath(_SRC).open() as fh:
+def _load(species: str = "human") -> dict:
+    if species not in SPECIES:
+        raise ValueError(f"unknown species {species!r} (expected one of {SPECIES})")
+    src = _SRC.format(species=species)
+    with resources.files("mhcmatch.data").joinpath(src).open() as fh:
         p = json.load(fh)
     k = len(p["features"])
     if len(p["logistic"]["coef"]) != k:
-        raise ValueError(f"{_SRC}: {len(p['logistic']['coef'])} coefficients for {k} features")
+        raise ValueError(f"{src}: {len(p['logistic']['coef'])} coefficients for {k} features")
     if len(p["standardizer"]["mean"]) != k or len(p["standardizer"]["std"]) != k:
-        raise ValueError(f"{_SRC}: standardizer does not cover {k} features")
+        raise ValueError(f"{src}: standardizer does not cover {k} features")
     if not 0.0 < p["prevalence"] < 1.0:
-        raise ValueError(f"{_SRC}: prevalence {p['prevalence']!r} is not a base rate")
-    for name, src in p["log_odds_source"].items():
-        want = {"anchor": 20, "tcr": 20, "pair": 400}[src]
+        raise ValueError(f"{src}: prevalence {p['prevalence']!r} is not a base rate")
+    for name, s in p["log_odds_source"].items():
+        want = {"anchor": 20, "tcr": 20, "pair": 400}[s]
         if len(p["log_odds"][name]) != want:
-            raise ValueError(f"{_SRC}: {name} has {len(p['log_odds'][name])} cells, want {want}")
+            raise ValueError(f"{src}: {name} has {len(p['log_odds'][name])} cells, want {want}")
     return p
 
 
-#: The frozen model: standardizer, linear head, the two fitted log-odds tables, and the EM /
-#: supervised Gaussian parameters kept for comparison.
-PARAMS: dict = _load()
+#: The frozen models, one per species: standardizer, linear head, the fitted log-odds tables, and
+#: the EM / supervised Gaussian parameters kept for comparison.
+TABLES: dict = {s: _load(s) for s in SPECIES}
+#: The human table, for callers that predate the species split.
+PARAMS: dict = TABLES["human"]
+
+
+def table(species: str = "human") -> dict:
+    """The fitted parameters for ``"human"`` or ``"mouse"``."""
+    t = TABLES.get(species)
+    if t is None:
+        raise ValueError(f"unknown species {species!r} (expected one of {SPECIES})")
+    return t
 
 
 def _scale_vec(tab: dict) -> np.ndarray:
@@ -163,14 +183,14 @@ BASIS = _basis()
 KD_THRESHOLD = float(median(aa_tables.HYDROPHOBICITY["KyteDoolittle"].values()))
 
 
-def feature_names() -> list[str]:
+def feature_names(species: str = "human") -> list[str]:
     """Column order of the design matrix, matching the vendored coefficients."""
-    return list(PARAMS["features"])
+    return list(table(species)["features"])
 
 
-def parameters() -> dict:
+def parameters(species: str = "human") -> dict:
     """The fitted model as a plain dict (a copy of the vendored file)."""
-    return json.loads(json.dumps(PARAMS))
+    return json.loads(json.dumps(table(species)))
 
 
 def encode(peptides) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
@@ -274,21 +294,22 @@ def apply_log_odds(counts: dict, source: str, weights) -> np.ndarray:
     return counts[source] @ w
 
 
-def design(peptides) -> np.ndarray:
+def design(peptides, species: str = "human") -> np.ndarray:
     """The (n, k) design matrix in :func:`feature_names` order, before standardization."""
+    t = table(species)
     feats, counts = encode(peptides)
-    cols = [apply_log_odds(counts, FITTED[c], PARAMS["log_odds"][c]) if c in FITTED else feats[c]
-            for c in feature_names()]
+    cols = [apply_log_odds(counts, FITTED[c], t["log_odds"][c]) if c in FITTED else feats[c]
+            for c in t["features"]]
     return np.column_stack(cols)
 
 
-def features(peptide: str) -> dict[str, float]:
+def features(peptide: str, species: str = "human") -> dict[str, float]:
     """The feature vector for one peptide, as a name -> value dict. For inspection; use
     :func:`score` (which takes a list) for anything at scale."""
-    return dict(zip(feature_names(), design([peptide])[0].tolist()))
+    return dict(zip(feature_names(species), design([peptide], species)[0].tolist()))
 
 
-def score(peptides) -> np.ndarray:
+def score(peptides, species: str = "human") -> np.ndarray:
     """Log-odds of immunogenic vs not, one per peptide. **Carries no prior.**
 
     Larger is more immunogenic. The training corpus's own base rate is divided out, so this is
@@ -301,15 +322,16 @@ def score(peptides) -> np.ndarray:
     peptides = list(peptides)
     if not peptides:
         return np.empty(0)
-    X = design(peptides)
-    st = PARAMS["standardizer"]
+    t = table(species)
+    X = design(peptides, species)
+    st = t["standardizer"]
     Z = (X - np.asarray(st["mean"])) / np.asarray(st["std"])
-    lo = PARAMS["logistic"]
-    prev = PARAMS["prevalence"]
+    lo = t["logistic"]
+    prev = t["prevalence"]
     return Z @ np.asarray(lo["coef"]) + lo["intercept"] - math.log(prev / (1.0 - prev))
 
 
-def posterior(peptides, prior: float) -> np.ndarray:
+def posterior(peptides, prior: float, species: str = "human") -> np.ndarray:
     """``P(immunogenic | peptide)`` at an explicit ``prior``. Exact, because :func:`score` has none.
 
     ``prior`` has no default on purpose. The training corpus runs at ~3.2% positives, a viral
@@ -317,7 +339,7 @@ def posterior(peptides, prior: float) -> np.ndarray:
     setting's base rate for every caller and overstate the rest by up to 75x."""
     if not 0.0 < prior < 1.0:
         raise ValueError(f"prior must be in (0, 1), got {prior!r}")
-    z = score(peptides) + math.log(prior / (1.0 - prior))
+    z = score(peptides, species) + math.log(prior / (1.0 - prior))
     return 1.0 / (1.0 + np.exp(-np.clip(z, -60, 60)))
 
 
@@ -370,6 +392,19 @@ def demo() -> None:
     b = np.concatenate([score(peps[:2]), score(peps[2:])])
     assert np.allclose(a, b)
 
+    # Both species tables load, are the same shape, and are genuinely different fits.
+    for sp in SPECIES:
+        assert len(table(sp)["logistic"]["coef"]) == len(feature_names(sp))
+    assert feature_names("human") == feature_names("mouse")
+    assert not np.allclose(score(peps, "human"), score(peps, "mouse"))
+    for bad in ("rat", "Human", ""):
+        try:
+            score(peps, bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"score accepted species {bad!r}")
+
     # A lower prior lowers every posterior without touching the ranking.
     hi, lo = posterior(peps, PARAMS["prevalence"]), posterior(peps, 3.0e-3)
     assert (hi > lo).all() and (lo > 0).all()
@@ -380,7 +415,7 @@ def demo() -> None:
     assert score(["AAAIIIIAA"])[0] > score(["AAADDDDAA"])[0]
 
     print(f"ok - {len(feature_names())} features over {len(BLOCKS)} blocks, "
-          f"fitted on {PARAMS['n']:,} rows ({PARAMS['arm']}); "
+          + " / ".join(f"{s}: {table(s)['n']:,} rows" for s in SPECIES) + "; "
           f"score(GILGFVFTL) = {score(['GILGFVFTL'])[0]:+.4f}, "
           f"P@corpus = {posterior(['GILGFVFTL'], PARAMS['prevalence'])[0]:.4f}")
 

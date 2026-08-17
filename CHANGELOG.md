@@ -6,6 +6,62 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.10.0] - 2026-08-17
+
+The recognition axis, grown up: a six-block complementarity score with a per-species table, a
+neoantigen ranker that no longer applies its coefficients to the wrong scale, built-in known-epitope
+lookup, and a batched mimic search that is three orders of magnitude faster than the one it replaces.
+
+### Added
+
+- **`mhcmatch.complement`** — complementarity, i.e. how well a presented peptide complements a TCR
+  repertoire. Six feature blocks: `ipred`'s PC1/PC2 and length; the same components split
+  **MHC-facing vs TCR-facing**; **MJ1996** on the anchors and **TCRen marginalised over 28,250,990
+  real TRB CDR3 loops** on the TCR face; contiguous-hydrophobic-run motifs; per-role **residue
+  log-odds**; adjacent TCR-facing dipeptides. Emits a prior-free log-odds, with `posterior()` for a
+  probability at the caller's own base rate.
+  - The `aa` block's two columns sum to `posbayes.llr` **exactly** (asserted in the test suite), so
+    that model is a strict special case and the block ablation measures what the other five add.
+  - Beats it on all four deposited corpus arms × both hosts (chowell/human 0.7125 vs 0.7111,
+    chowell/mouse 0.7633 vs 0.7582, kesmir/human 0.6480 vs 0.6369).
+  - **Per species, never pooled**: `score(peps, species="mouse")` uses the 47,140-row mouse arm.
+    Different MHC, different thymic repertoires — one fit across them is fitting a mixture.
+  - The head is linear because a diagonal-covariance Gaussian **cannot represent a summed
+    log-odds**; the EM and supervised Gaussian parameters ship alongside so the comparison stays
+    re-checkable.
+  - Vectorised: **511,301 peptides in 0.93 s**. The dipeptide block is a sparse `(code, row)` list,
+    not a dense `(n, 400)` matrix.
+- **`mhcmatch.known`** — five built-in reference sets for exact-match lookup, assembled from the
+  public deposits: `neoantigen` (23,299 confirmed immunogenic tumour neoantigens from NCI/Gartner,
+  the epitope-resolution screens and the aggregated cohorts), `neoantigen_neg` (468,220 screened and
+  found non-immunogenic — the one label that says this exact peptide was tried and did not work),
+  `immunogenic` (15,889), `self` (53,878 thymic), `viral` (44,993). `rank` uses them by default.
+- **`mhcmatch.mimics.neighbours`** — batched same-length mimic search, and `scan(evalue=False)` to
+  route through it. **237,000 queries/s against 55** for the per-query `find_mimics` path it
+  replaces, on measured identical counts and distances.
+- **`mhcmatch complement`** CLI — scores peptides or a whole TSV, `--features` to take a score
+  apart, `--prior` for a probability, `--species`.
+- **`store.fetch_file`** — any file of the public dataset by repo-relative path, so a worked example
+  can run on a whole published deposit; `bootstrap --reference` pre-stages all six in one call.
+- `docs/complementarity.rst`, `notebooks/06_complementarity.py`, `tests/test_complement.py`.
+
+### Fixed
+
+- **`rank.GATE` applied z-score coefficients to raw axes.** The fitting script standardizes both
+  axes and never wrote the standardizer out, so `GATE` carried `mu = 0, sd = 1` placeholders. A
+  product of two sigmoids is **not** rank-preserving under a monotone rescaling of one axis, so this
+  moved the ranking and not merely the calibration. Refitted with the standardizer recorded: every
+  cohort improves — TESLA 0.597 vs 0.473, Neopep 0.802 vs 0.662, Gfeller 0.782 vs 0.702 AUROC.
+- **`mimics` `n_near` counted deposit rows, not peptides.** The compendia repeat a peptide once per
+  allele/source it was reported under (the viral set is 57,331 rows over 26,640 distinct), so the
+  count was a function of deposit frequency rather than of the sequence neighbourhood. The batch
+  path deduplicates; `top_mimic` and `top_subs` are unaffected.
+
+### Changed
+
+- **`rank`'s recognition axis is now `complement.score`**, not `posbayes.llr` — measured on
+  peptide-grouped CV over every corpus arm and host. `mhcmatch explain` prints both, plus `ipred`.
+
 ## [0.9.0] - 2026-08-16
 
 Three new public modules on the recognition side of the problem — physicochemical featurization, a

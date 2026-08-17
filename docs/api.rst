@@ -144,6 +144,20 @@ for comparison. **Vectorised** — pass a list, not a loop. See :doc:`complement
    :undoc-members:
    :show-inheritance:
 
+mhcmatch.known module
+---------------------
+
+Built-in known-epitope reference sets for exact-match lookup, assembled from the public deposits:
+confirmed tumour neoantigens, peptides the screens tested and found **negative**, IEDB-immunogenic
+epitopes, the thymic self-immunopeptidome and the viral ligandome. An exact match is stronger
+evidence than any model output, so :mod:`mhcmatch.rank` reports it as a flag and never folds it
+into the score.
+
+.. automodule:: mhcmatch.known
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 mhcmatch.expression module
 --------------------------
 

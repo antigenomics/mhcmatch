@@ -59,8 +59,14 @@ development plan is in [`ROADMAP.md`](ROADMAP.md).
     MJ1996 on the anchors and **TCRen marginalised over 28M real CDR3 loops** on the TCR-facing
     side; contiguous-hydrophobic-run motifs; per-role **residue log-odds** (whose two columns
     reproduce `mhcmatch.posbayes` exactly, so that model is a strict special case); and adjacent
-    TCR-facing dipeptides. Emits a prior-free log-odds. **Vectorised** — a whole published corpus
-    scores in seconds, so pass a list rather than looping.
+    TCR-facing dipeptides. Emits a prior-free log-odds, **per species** (human and mouse tables,
+    never pooled). **Vectorised** — a whole published corpus scores in seconds, so pass a list
+    rather than looping.
+11. **Known-epitope lookup** (`mhcmatch.known`) — five reference sets built from the public
+    deposits: confirmed tumour neoantigens, peptides the screens tested and found non-immunogenic,
+    IEDB-immunogenic epitopes, the thymic self-immunopeptidome, and the viral ligandome. An exact
+    match is stronger evidence than any model output, so `mhcmatch.rank` reports it as a flag and
+    floats those candidates into a tier of their own instead of folding it into the score.
 
 ## Install
 

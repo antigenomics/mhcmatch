@@ -219,7 +219,9 @@ def _load_refs(spec):
 def cmd_rank(a):
     """Rank neoantigen candidates from a window FASTA or an already-scored table."""
     from . import rank as R
-    refs = _load_refs(getattr(a, "refs", None))
+    # None -> mhcmatch.known's built-in sets; --no-known-refs -> {} -> lookup off
+    refs = _load_refs(getattr(a, "refs", None)) if getattr(a, "refs", None) else \
+        ({} if getattr(a, "no_known_refs", False) else None)
     if a.mode == "fasta":
         store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
         rows = R.rank_fasta(store, a.input, _read_alleles(a.alleles), cls=a.cls,
@@ -278,7 +280,7 @@ def cmd_explain(a):
         # The log-odds carries no prior, so the base rate is the caller's to supply -- a screen at
         # 4.2e-4 and the training corpus at 3.2e-2 differ by ~75x.
         print(f"    P at prior {a.prior:g}   "
-              f"{CM.posterior([a.peptide], a.prior)[0]:.6g}")
+              f"{CM.posterior([a.peptide], a.prior, a.species)[0]:.6g}")
     if a.wt:
         from .affinity import AffinityModel
         am = AffinityModel.load(store.anchor_model(a.cls), store.corpus(a.cls), a.cls)
@@ -298,19 +300,19 @@ def cmd_complement(a):
     peps = _read_peptides(a.peptides, a.input)
     if not peps:
         raise SystemExit("no peptides: pass them as arguments or with --peptides FILE")
-    s = CM.score(peps)
+    s = CM.score(peps, a.species)
     out = open(a.out, "w") if a.out else sys.stdout
     try:
         if a.features:
-            names = CM.feature_names()
+            names = CM.feature_names(a.species)
             print("\t".join(["peptide", "score"] + names), file=out)
-            X = CM.design(peps)
+            X = CM.design(peps, a.species)
             for p, v, row in zip(peps, s, X):
                 print("\t".join([p, f"{v:.6g}"] + [f"{x:.6g}" for x in row]), file=out)
         else:
             head = ["peptide", "score"] + (["posterior"] if a.prior else [])
             print("\t".join(head), file=out)
-            post = CM.posterior(peps, a.prior) if a.prior else None
+            post = CM.posterior(peps, a.prior, a.species) if a.prior else None
             for i, (p, v) in enumerate(zip(peps, s)):
                 cells = [p, f"{v:.6g}"] + ([f"{post[i]:.6g}"] if a.prior else [])
                 print("\t".join(cells), file=out)
@@ -320,7 +322,8 @@ def cmd_complement(a):
             print(f"# wrote {a.out}: {len(peps)} peptide(s)", file=sys.stderr)
     if not a.prior:
         print("# score is a log-odds and carries NO prior; pass --prior to get a probability "
-              f"(training corpus prevalence {CM.PARAMS['prevalence']:.4g})", file=sys.stderr)
+              f"(training corpus prevalence {CM.table(a.species)['prevalence']:.4g})",
+              file=sys.stderr)
 
 
 def _read_peptides(path, inline):
@@ -499,7 +502,11 @@ def main(argv=None):
     rk.add_argument("--tissue", help="GTEx tissue for reference expression, e.g. 'Skin - Sun "
                                      "Exposed (Lower leg)' (the safety read)")
     rk.add_argument("--tumor", help="TCGA cancer_type for tumour expression, e.g. SKCM (melanoma)")
-    rk.add_argument("--refs", help="known-epitope sets for the exact-match flag: "
+    rk.add_argument("--no-known-refs", action="store_true",
+                    help="switch the exact-match flag off entirely (default: the built-in sets "
+                         "from mhcmatch.known -- confirmed neoantigens, screened-negative "
+                         "neoantigens, IEDB-immunogenic, thymic self, viral)")
+    rk.add_argument("--refs", help="override the built-in known-epitope sets: "
                                    "name=path[,name=path]; one peptide per line or TSV col 1")
     rk.add_argument("--rank-threshold", type=float, default=2.0,
                     help="keep binders with presentation %%rank <= this (mode=fasta)")
@@ -533,6 +540,8 @@ def main(argv=None):
     cm.add_argument("--prior", type=float,
                     help="base rate of the setting being scored, e.g. 4.2e-4 for the NCI screen. "
                          "Without it only the prior-free log-odds is printed, on purpose")
+    cm.add_argument("--species", default="human", choices=("human", "mouse"),
+                    help="which fitted table to score with; the two hosts are never pooled")
     cm.add_argument("--features", action="store_true", help="emit the full design matrix too")
     cm.add_argument("--out", help="write TSV here instead of stdout")
     cm.set_defaults(fn=cmd_complement)

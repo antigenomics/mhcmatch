@@ -26,6 +26,12 @@ known immunogenic neoantigen, that is far stronger evidence than any model outpu
 a weighted sum would let a mediocre model score dilute it. :func:`rank_fasta` reports it in
 ``known_epitope`` and sorts those candidates into a top tier of their own, with the model score still
 shown so the two can be compared.
+
+The reference sets are built in by default (:mod:`mhcmatch.known`): confirmed tumour neoantigens
+from NCI/Gartner, the epitope-resolution screens and the aggregated cohorts; peptides those screens
+tested and found **negative**; IEDB-immunogenic epitopes; the thymic self-immunopeptidome; and the
+viral ligandome. A ``neoantigen_neg`` hit is as informative as a ``neoantigen`` one and is reported
+the same way -- it is the only label that says this exact peptide was tried and did not work.
 """
 from __future__ import annotations
 
@@ -119,9 +125,8 @@ def _recognition(peptide: str, species: str = "human", cls: str = "mhc1") -> flo
     kesmir/human 0.6480 vs 0.6369). ``ipred``'s figures on that corpus are *in-sample*, since it is
     its training set.
 
-    ``species`` is accepted for signature compatibility and currently unused: the vendored
-    complementarity parameters are the human-arm fit. :func:`mhcmatch.posbayes.llr` still takes a
-    per-species table if a mouse-specific recognition term is what you want.
+    ``species`` selects the fitted table: ``"human"`` (464,161 rows) or ``"mouse"`` (47,140). The
+    two hosts are never pooled -- different MHC, different thymic repertoires.
 
     One peptide at a time, because :class:`Ranked` is per-candidate. For a corpus call
     :func:`mhcmatch.complement.score` with the whole list -- it is vectorised and roughly three
@@ -129,7 +134,7 @@ def _recognition(peptide: str, species: str = "human", cls: str = "mhc1") -> flo
     if cls != "mhc1":
         return float("nan")
     from . import complement
-    return float(complement.score([peptide])[0])
+    return float(complement.score([peptide], species)[0])
 
 
 def _expression_for(gene: str, observed, tissue: str | None, tumor: str | None,
@@ -161,8 +166,18 @@ def _expression_for(gene: str, observed, tissue: str | None, tumor: str | None,
 
 
 def _known(peptide: str, refs: dict | None) -> str:
-    """Name of the first reference set containing this peptide exactly, else ``""``."""
-    for name, s in (refs or {}).items():
+    """Name of the first reference set containing this peptide exactly, else ``""``.
+
+    ``refs=None`` uses the built-in sets from :mod:`mhcmatch.known` (confirmed neoantigens,
+    screened-negative neoantigens, IEDB-immunogenic, thymic self, viral), fetched from the public
+    dataset on first use. Pass ``refs={}`` to switch the lookup off entirely."""
+    if refs is None:
+        from . import known
+        try:
+            return known.lookup(peptide)
+        except (OSError, ValueError):                    # offline / no cache: not a fatal error
+            return ""
+    for name, s in refs.items():
         if peptide in s:
             return name
     return ""
@@ -189,7 +204,8 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
     ``store`` is a :class:`mhcmatch.Store`; ``alleles`` the donor's HLA types in pipeline form.
     ``tissue`` (GTEx) and/or ``tumor`` (TCGA ``cancer_type``, ``SKCM`` for melanoma) supply reference
     expression where the FASTA header carries none. ``refs`` maps a reference-set name to a set of
-    peptides for the exact-match flag.
+    peptides for the exact-match flag; **``None`` uses the built-in sets** from
+    :mod:`mhcmatch.known`, and ``{}`` disables the lookup.
 
     The wild type comes from :func:`mhcmatch.predict.predict_fasta`, which recovers the
     position-aligned WT k-mer from the window's own wild-type sequence; where the header has none,
