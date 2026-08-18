@@ -456,6 +456,67 @@ within-screen.
    open benchmark question; the columns exist so that question can be answered on real candidate
    tables without having pre-committed to an answer.
 
+## 5d. Cassette assembly (`mhcmatch.vector`) — shipped v0.13.0/v0.14.0, V1–V4 planned (2026-08-18)
+
+Selection is `rank`. This is the step after, and it is four separate questions with four different
+literatures: **what to withdraw, how many units to carry, in what order, joined by what.**
+
+| piece | state |
+|---|---|
+| `screen` / `self_origin_risk` — exclude on essential-tissue risk, before capacity is spent | shipped |
+| `select` — per-allotype saturating rule; diversification falls out of the arithmetic, not a quota | shipped, `n0` unfitted **by design** |
+| `order` / `scan_junctions` — spacer + layout minimising junctional binding, `None` tried first | shipped |
+| `unit` / `units_from_context` — 27-mer centred on the mutation | shipped |
+| `back_translate` / `slippery_sites` / `deslip` — the m1Ψ +1-frameshift motif, synonymously removed | shipped |
+| `mhcmatch vector` / `mhcmatch deslip` | shipped |
+
+**The plan is `design/vector_roadmap.md`**, from an audit against a PubMed scan recorded in
+`design/vector_evidence.md` (every claim tiered experimental / observational / **in-silico-only** /
+open) and a gap list in `design/vector_audit.md`. The in-silico tier is the point: `AAY` between CTL
+epitopes, `GPGPG` between helper epitopes, `KK` between B-cell epitopes and `EAAAK` to fuse an
+adjuvant recur across the multi-epitope design literature, and almost none of those papers tests a
+linker against an alternative. **Convention repeated is not evidence, and this module must not treat
+it as such.**
+
+Four findings from that scan drive V1–V4:
+
+1. **The one head-to-head MHC-I processing assay favours alanine-based spacers over `GGGS`, and found
+   peptide position and flanking regions had minimal impact** (PMID 36820900). Every `GPGPG` rescue
+   result is class II or antibody (PMID 12023344). So the spacer default is **class-conditional**, and
+   this module's docstring — which argues for Gly/Pro-rich spacers from ligand-flanking *composition*
+   — has to be restated per class and cite the assay.
+2. **Ordering is constraint satisfaction, not optimisation.** Junction-free layouts are
+   "astronomically" abundant (PMID 20033850) and no retrieved experiment distinguishes them. The
+   deterministic greedy + 2-opt is the right amount of effort for the first objective; the freedom
+   left over should buy a *second* one, not a better search for the first.
+3. **CD4 and CD8 payloads belong in one molecule.** The same two components delivered as separate
+   constructs produced no antitumour immunity where the fusion worked (PMID 15270727), and
+   help-dependence is per-epitope rather than per-cassette (PMID 21810614). This closes the
+   link-versus-separate-formulation fork and makes mixed-class assembly the first thing to build.
+4. **TAP prefers N-terminally extended precursors** — several real epitopes are poor TAP substrates as
+   minimals (PMID 9764810) and flanking effects can be absolute (PMID 9029109). PolyCTLDesigner
+   (PMID 24107711) already does TAP-aware flanking *plus* cleavage-aware joining *plus* junction
+   minimisation; `order` implements only the third.
+
+**Releases.** V1 class-aware assembly (per-junction register vocabulary — today it is one tuple per
+cassette from a single `--cls`, `cli.py:862`; per-class binder alleles; class-conditional spacers;
+mixed-class `select` with its own class-II `n0`). V2 flanking and processing (TAP-aware N-terminal
+extension into **native context only**, a liberation term beside junctional binding). V3 the helper
+layer (per-unit help-dependence, a declared PADRE-style slot outside the budget, duplication only
+with a mandatory flexible separator). V4 layout freedom and the backbone (enumerate the clean set and
+choose within it; cap/UTR/Kozak/signal/MITD/poly(A) as *recorded, swappable* choices, since a
+head-to-head of tPA, ubiquitin and LAMP-1 found all three beat untagged while **none steered the arm
+it was chosen for**, PMID 19356616).
+
+**Deliberately not scheduled:** a processing predictor of our own; nesting geometry (distant help
+worked as well as nested, and position inside the nest did not matter); duplication as a default (a
+centred 27-mer already carries every register spanning the mutation).
+
+**The four measurements that would settle it** are named in `design/vector_roadmap.md` and belong in
+the benchmark repo, not here. The first is the cheapest and closes a convention the whole field
+uses: **`AAY` versus `AAA` in one processing assay** — the alanine result compared alanine-based
+against `GGGS`, never tyrosine against alanine.
+
 ## 6. Phase 3 — benchmark & paper
 
 **Head-to-head harness — built** (`bench/compare/`, results in `bench/results/compare_*.md`, provenance
