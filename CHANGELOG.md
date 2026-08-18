@@ -6,7 +6,7 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
-## [Unreleased]
+## [0.13.0] - 2026-08-18
 
 The step after ranking: assembling a cassette, and refusing one.
 
@@ -22,12 +22,21 @@ The step after ranking: assembling a cassette, and refusing one.
   matters more for a concatemer than for a natural ORF. Scoring is injected (`binder`, `risk`), so
   the layout and policy logic are testable with no panel, no proteome and no download.
 - **`vector.self_origin_risk`** — the shipped exclusion policy, two clauses: the unit's own target
-  gene transcribed in an essential tissue (the MAGE-A12 shape), and a register coinciding within one
-  substitution of an **unrelated** protein that is (the titin shape). Hits to the unit's own parent
-  are excluded — a 27-mer is native context by design, and without that exclusion the screen rejects
-  every unit of every cassette. A mimicry-similarity screen was built and measured first and fires on
-  almost everything, because anchor-masked similarity to a presented reference is presentation rather
-  than recognition (`bench/results/vector_safety_screen.md`).
+  gene transcribed in an essential tissue (the MAGE-A12 shape), and a register **exactly** coinciding
+  with an **unrelated** protein that is (the titin shape). Hits to the unit's own parent are excluded
+  — a 27-mer is native context by design, and without that exclusion the screen rejects every unit of
+  every cassette. Two defaults are measured rather than assumed:
+  - `min_tpm=0.25`, not the conventional 5, because the two fatal precedents differ by two orders of
+    magnitude and the lower one is what has to be caught — titin 64.4 TPM in heart left ventricle,
+    MAGE-A12 **0.33** in brain caudate.
+  - `max_subs=0`, because the decision is per unit while the search is per register and a 27-mer
+    carries ~70 of them. At radius 1, 1 of 6 hazard-free random 27-mers is withdrawn at 9-mers and
+    **4 of 6** across 8–11mers; radius 0 is clean at every length and still catches the titin unit
+    (`bench/results/vector_screen_radius.md`).
+
+  A mimicry-similarity screen was built and measured first and fires on almost everything — FPR
+  0.693 against 0.020 at equal sensitivity — because anchor-masked similarity to a presented
+  reference is presentation rather than recognition (`bench/results/vector_safety_screen.md`).
 - **`mhcmatch vector`** — the whole cassette pipeline in one call:
   `--candidates units.tsv --n0 8 [--screen] [--fasta out.fa]`. Its input is a table of **long
   windows**, not `rank`'s minimal epitopes, and the reader says so when a column is missing rather
