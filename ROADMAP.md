@@ -779,6 +779,10 @@ NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2)
 
 ## 8. Pointers
 
+- **Vector assembly plan: `design/vector_roadmap.md`** — where `mhcmatch.vector` goes next (V1 class-aware
+  assembly, V2 flanking/processing, V3 helper layer, V4 layout freedom + backbone), with
+  `design/vector_audit.md` (shipped vs thin) and `design/vector_evidence.md` (the PubMed scan of
+  2026-08-18, every claim tiered experimental / observational / in-silico-only / open).
 - Theory & derivations: `../../manuscripts/2026-mhcmatch/appendix/mhcmatch.tex` (manuscript repo).
 - Substrate contract & E-value theory: `../seqtree/ROADMAP.md` §3, `../seqtree/appendix/evalue.tex`.
 - Validated reverse-problem benchmark: `../seqtree/bench/bench_mhc_guess.py`.
