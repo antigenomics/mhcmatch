@@ -768,8 +768,9 @@ def cmd_expression(a):
 #: ``mhcmatch bootstrap --reference`` pre-stages a container or an offline run in one call, rather
 #: than each page discovering its own download on first use.
 REFERENCE_FILES = (
-    "immunogenicity/chowell_rebuilt.tsv.gz",      # immunogenic vs presented self
-    "immunogenicity/kesmir_rebuilt.tsv.gz",       # immunogenic vs presented non-self
+    "immunogenicity/chowell_iedb_full.tsv.gz",    # the rebuilt corpus recognition is fitted on
+    "immunogenicity/chowell_rebuilt.tsv.gz",      # immunogenic vs presented self (legacy)
+    "immunogenicity/kesmir_rebuilt.tsv.gz",       # immunogenic vs presented non-self (legacy)
     "thymus/thymus_immunopeptidome.tsv.gz",       # tolerance reference for mimicry
     "ligandome/viral_foreign_iedb.tsv.gz",        # foreign reference for mimicry
     "expression/reference_expression.tsv.gz",     # GTEx tissue + TCGA tumour medians (~105 MB)

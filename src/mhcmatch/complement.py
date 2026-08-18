@@ -355,7 +355,7 @@ def kidera_names() -> list[str]:
     return [f"kf{i}_{r}" for i in range(1, 11) for r in ("anchor", "tcr", "all")]
 
 
-def kidera_design(peptides) -> np.ndarray:
+def kidera_design(peptides, anchors=None, roles=None) -> np.ndarray:
     """All ten Kidera factors, each summed over the anchors, the TCR face and the whole peptide.
 
     The fitted model uses one of the ten -- ``kf4_anchor`` and ``kf4_tcr``, the hydropathy axis --
@@ -373,7 +373,10 @@ def kidera_design(peptides) -> np.ndarray:
     out = np.zeros((len(peptides), 30))
     for n, p in enumerate(peptides):
         L = len(p)
-        anc = {a % L for a in ANCHORS}
+        if roles is not None:
+            anc = {j for j in range(L) if roles[n][j]}
+        else:
+            anc = {a % L for a in (ANCHORS if anchors is None else anchors)}
         code = np.array([idx[c] for c in p])
         a_i = np.array([code[j] for j in range(L) if j in anc], dtype=int)
         t_i = np.array([code[j] for j in range(L) if j not in anc], dtype=int)

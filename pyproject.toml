@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mhcmatch"
-version = "0.14.0"
+version = "0.15.0"
 description = "Peptide-MHC presentation, cross-reactivity and motif tools on the seqtree substrate"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -29,6 +29,7 @@ viz = ["networkx"]                   # allele similarity / promiscuity graph (ne
 structure = ["tcren>=2.8"]           # optional: structure-based MJ ΔΔG head (mhcmatch.structure)
 precursor = ["vdjmatch[precursor]>=0.2.0"]  # mhcmatch.precursor re-exports vdjmatch.precursor
 notebooks = ["marimo"]               # worked examples in notebooks/ (pure-Python marimo notebooks)
+esm = ["torch>=2.2", "transformers>=4.40"]   # ESM2 embeddings for mhcmatch.recognition; ~2.4 GB checkpoint on first use
 
 [project.scripts]
 mhcmatch = "mhcmatch.cli:main"

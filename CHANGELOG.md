@@ -6,6 +6,37 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.15.0] - 2026-08-19
+
+### Added
+
+- **`mhcmatch.recognition` — the definitive recognition head.** 105 features: amino-acid counts,
+  length, the ten Kidera factors summed separately over the MHC-facing and TCR-facing residues, and
+  32 principal components each of ESM2 embeddings mean-pooled over those same two faces. Fitted per
+  species on the rebuilt Chowell corpus, never pooled.
+  It takes what the caller knows at whatever resolution they know it: peptide with both masks given,
+  peptide with an MHC (masks from the allele's layout), or peptide alone (the class-I default).
+  `roles=` accepts an explicit per-residue mask, which is the hook for a class-II register or a
+  measured contact set.
+- `complement.kidera_design(peptides, anchors=..., roles=...)` — all ten Kidera factors by role. The
+  fitted model uses KF4 because that is the axis the role split was established on; of the thirty
+  candidate columns it is the two strongest, `kf4_anchor` (|z| 23.6, significant on all eight
+  benchmark arms) and `kf4_tcr` (19.6, six arms), against 10.8 for the next factor.
+- `tools/build_recognition.py`, a self-contained PEP 723 script carrying its own ESM2 environment,
+  so the heavy dependency is never needed just to import the package.
+- Optional extra `mhcmatch[esm]` (torch, transformers). `recognition.score` raises if it is absent
+  rather than dropping a third of the design.
+- `bootstrap --reference` now fetches `immunogenicity/chowell_iedb_full.tsv.gz`, the rebuilt corpus.
+- A `PROVENANCE.md` entry for `complement_mhc1_*.json`, which had none.
+
+### Notes
+
+- `mhcmatch.complement` is unchanged and still shipped. `recognition` is an addition, not a
+  replacement, and the recorded AUROCs for `complement` continue to belong to the arms it was
+  fitted on.
+- Resampling the training negatives to match population HLA usage was measured and **loses**
+  (-0.019 human, -0.058 mouse against held-out published deposits), so the unmatched arm ships.
+
 ## [0.14.0] - 2026-08-18
 
 The cassette gets a nucleotide half, the pipeline gets the rest of the library.

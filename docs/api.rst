@@ -186,6 +186,11 @@ head, because
 a diagonal Gaussian cannot represent a summed log-odds; the EM Gaussian parameters ship alongside
 for comparison. **Vectorised** — pass a list, not a loop. See :doc:`complementarity`.
 
+.. automodule:: mhcmatch.recognition
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 .. automodule:: mhcmatch.complement
    :members:
    :undoc-members:

@@ -290,3 +290,170 @@ rank so the aggregate can be taken apart.
    is anchored by the P1/P4/P6/P9 core of a 9-mer register floating inside a longer peptide, so
    applying this scheme to it labels the wrong residues as anchors and returns a confident, wrong
    number. :func:`mhcmatch.rank._recognition` returns ``NaN`` for class II rather than guessing.
+
+Shipping it: :mod:`mhcmatch.recognition`
+----------------------------------------
+
+:mod:`mhcmatch.complement` is the six-block model this page describes, and it is unchanged. What
+ships as the **definitive** recognition head is :mod:`mhcmatch.recognition`, which keeps the part of
+that design the audit found to be carrying it -- length and the Kidera factors split by role -- and
+replaces the fitted amino-acid log-odds tables with ESM2 components pooled over the same two faces.
+
+It takes what the caller knows, at whatever resolution they know it:
+
+.. code-block:: python
+
+   from mhcmatch import recognition as rec
+
+   # 1. peptide, MHC and both masks -- nothing is guessed
+   rec.score(["GILGFVFTL"], anchors=[(0, 1, 2, -2, -1)])
+
+   # 2. peptide and MHC -- the masks come from the allele's own anchor layout
+   from mhcmatch import Store
+   store = Store.from_pmhc(None)
+   rec.score(["GILGFVFTL"], mhc="HLA-A*02:01", store=store)
+
+   # 3. peptide alone -- the class-I default split
+   rec.score(["GILGFVFTL"])
+
+   # a probability needs a prior for the set being scored, and the score is not one
+   rec.posterior(["GILGFVFTL"], prior=0.03)
+
+``anchors`` may be one tuple for every peptide or one per peptide; ``roles=`` takes an explicit
+per-residue boolean mask, which is the hook for a class-II register or a measured contact set. The
+mask that was used is always recoverable with :func:`~mhcmatch.recognition.roles_for`.
+
+.. code-block:: console
+
+   pip install 'mhcmatch[esm]'      # torch + transformers; the checkpoint is ~2.4 GB on first use
+
+The ESM block is not optional at runtime: :func:`~mhcmatch.recognition.score` raises if the extra is
+absent rather than dropping a third of the design and returning a number that looks fine.
+
+The design, and why it is this one
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+105 features: 20 amino-acid counts, length, the ten Kidera factors summed separately over the
+MHC-facing and TCR-facing residues (20 -- the whole-peptide aggregate is exactly their sum and is
+dropped), and 32 principal components each of ESM2 embeddings mean-pooled over those same two faces.
+Fitted per species, never pooled. Selection is recorded in ``bench/results/recognition_model.md``.
+
+Two results from that selection are worth carrying:
+
+* **The gain from ESM is positional, not linguistic.** Pooling over the whole peptide adds almost
+  nothing once composition is in the design; pooling over the anchors and the TCR face separately is
+  what moves the score. On one arm the whole-peptide pool is worth :math:`-0.0003` AUROC while each
+  role pool is worth :math:`+0.0397`.
+* **Resampling the negatives to match population HLA usage was measured, and loses.** It costs
+  :math:`0.019` AUROC on human and :math:`0.058` on mouse against held-out published deposits. The
+  unmatched arm ships.
+
+Read every AUROC on these corpora as an increment over a 20-way composition baseline, which alone
+reaches 0.68--0.74 on the Chowell arms under the same folds -- not against 0.5. The corpus
+construction rules, the arm counts and the selection tree are ``bench/results/corpus_arms.md``.
+
+Exactly what ships, and how it works
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Artifacts**, all vendored in ``mhcmatch/data/``:
+
+===================================== ==========================================================
+``recognition_mhc1_human.json``       105 coefficients, standardizer, and the fitting record
+``recognition_mhc1_mouse.json``       the same for mouse, fitted separately and never pooled
+``recognition_esm_pca.npz``           the PCA basis: mean and 32 components for each of the two faces
+===================================== ==========================================================
+
+**The pipeline, per peptide:**
+
+1. **Resolve the two faces.** Explicit ``anchors``/``roles`` if given; else the allele's own layout
+   through a :class:`~mhcmatch.store.Store`; else the class-I default ``(0, 1, 2, -2, -1)``. Every
+   later step reads this mask, so it is the one thing worth getting right.
+2. **Count and measure.** 20 amino-acid counts; length; the ten Kidera factors summed over the
+   MHC-facing residues and again over the TCR-facing residues (20 columns).
+3. **Embed.** ESM2-650M over the peptide, mean-pooled separately over each face, each pooled vector
+   projected onto 32 principal components of the vendored basis (64 columns).
+4. **Standardize and combine.** ``(x - mean) / sd`` with the fitted moments, then a dot product with
+   the coefficients. The result is a log-odds; :func:`~mhcmatch.recognition.posterior` turns it into
+   a probability given a prior for the set being scored.
+
+105 features: 20 + 1 + 20 + 32 + 32.
+
+**Why these features and not others.** Held-out on the published Chowell deposit, with its peptides
+removed from the training arm:
+
+============ ========== ========== ==============
+design       features   human      mouse
+============ ========== ========== ==============
+physchem      51         0.7845     0.6990
+ESM2          64         0.7975     0.7217
+**both**      **115**    **0.8061** **0.7406**
+============ ========== ========== ==============
+
+ESM2 adds :math:`+0.022` (human) and :math:`+0.042` (mouse) over the physicochemical design;
+the physicochemical features add :math:`+0.009` and :math:`+0.019` over ESM2 alone. Neither
+subsumes the other, so both ship.
+
+**Permutation importance** — mean AUROC lost over 20 shuffles of a block in the held-out matrix,
+nothing refitted:
+
+============== ============ ============
+block          human        mouse
+============== ============ ============
+``esm_anchor``  **0.2686**   **0.1925**
+``esm_tcr``      0.1879      0.1915
+``kf_tcr``       0.1012      0.0684
+``comp20``       0.0649      0.0903
+``kf_anchor``    0.0370      0.0558
+``kf_all``       0.0165      0.0012
+``length``      -0.0016      0.0010
+============== ============ ============
+
+Two of those rows decided the shipped design. The Kidera factors summed over the **whole** peptide
+(``kf_all``) cost essentially nothing to remove, because they are exactly the sum of the two
+role-split columns -- so the aggregate is not shipped, only the split. And ``length`` is free to
+keep and free to lose, the composition counts already summing to it; it stays because it costs one
+column and makes the design legible. The single strongest hand-built feature is ``kf4_tcr``, the
+hydropathy of the TCR-facing residues, which is the fourth most important feature overall on human
+and the only non-ESM feature in that top ten.
+
+The full tables are ``bench/results/feature_importance.md`` and ``recognition_model.md``.
+
+Class II: what this is and what it is not
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. warning::
+
+   **There is no fitted class-II recognition model, and**
+   :func:`~mhcmatch.recognition.score_mhc2` **is not one.** No class-II immunogenicity corpus with a
+   usable negative set exists here to fit against: every arm in this work pairs T-cell-assay
+   positives with eluted *self* ligands as negatives, and that construction has not been built for
+   class II. What the function does is apply the **MHC-I-trained coefficients** to the class-II
+   binding core, with the groove-facing positions redefined as P1/P4/P6/P9 of the register-anchored
+   9-mer instead of the class-I P2/P\ :math:`\Omega` pattern. It emits a ``UserWarning`` the first
+   time it is called.
+
+   Use it to **rank class-II peptides against each other**. Do not compare the values with class-I
+   scores, do not read them as calibrated probabilities, and do not report a number from it without
+   saying which model produced it.
+
+.. code-block:: python
+
+   from mhcmatch import recognition as rec
+
+   rec.mhc2_core(["PKYVKQNTLKLAT"])          # (['YVKQNTLKL'], [2]) -- the register-anchored core
+   rec.score_mhc2(["PKYVKQNTLKLAT"])         # ranks; nan where no 9-mer core can be assigned
+
+Two things make it worth more than nothing. The design is mostly interface geometry -- Kidera
+factors and ESM2 embeddings pooled over the groove-facing and the TCR-facing residues -- and that
+split is defined for class II as well. And the score is taken on the **core**, not the whole peptide,
+which keeps every feature inside the range the model was fitted on: nine residues, composition
+summing to nine, length fixed. Scoring a 15-mer directly would place ``length`` roughly five standard
+deviations outside the fitted range and scale all twenty counts with it.
+
+Two things should keep you sceptical of it. The coefficients were fitted where the groove-facing
+residues are the two termini and the TCR-facing residues are a contiguous middle; in class II the
+groove-facing positions are interior and the two faces interleave, so a coefficient learned on one
+geometry is being read on another. And the register is a heuristic unless one is supplied, so an
+error in the frame moves every residue from one face to the other. Pass ``register_start=`` from
+:meth:`mhcmatch.diffusion.AnchorModel.best_register` when a per-allele register is available.
+
