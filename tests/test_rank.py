@@ -275,3 +275,22 @@ def test_aggregate_carries_the_fit_provenance_a_reader_needs():
     assert a["generator"].endswith("hier.py")
     # the Luksza shape parameters are part of the model, not of the caller's taste
     assert a["luksza"] == {"k": 1.0, "a0": 24.0}
+
+
+def test_written_tables_use_unix_line_endings(tmp_path):
+    """A TSV that ends its lines with CRLF breaks the last column for every line-oriented tool.
+
+    The csv module defaults to the excel dialect, whose terminator is CRLF; nothing in this
+    codebase wants that, and the collaborator tables these files sit beside are LF. Shipped wrong
+    from 0.8.0 until 0.14.1, where `awk -F'\\t'` on the final column started failing.
+    """
+    from mhcmatch import predict as P
+
+    pred = P.Prediction(source="chr1:1:A:T", peptide="SIINFEKL", allele="H2-Kb",
+                        offset=0, cls="mhc1", percent_rank=0.5, p_present=0.9, band="strong",
+                        anchors="S...L", tcr_facing="XIINFEKX")
+    native, scored = tmp_path / "n.tsv", tmp_path / "s.csv"
+    P.write_native([pred], str(native))
+    P.write_scored_csv([pred], str(scored))
+    for p in (native, scored):
+        assert b"\r" not in p.read_bytes(), f"{p.name} carries CR"
