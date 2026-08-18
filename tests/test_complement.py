@@ -174,3 +174,22 @@ def test_a_length_binned_table_only_sees_its_own_rows():
         assert np.allclose(part, np.where(c["bin"] == b, full, 0.0))
     # and they sum back to the pooled column, which is what makes the pooled model a special case
     assert np.allclose(sum(CM.apply_log_odds(c, f"anchor@{b}", w) for b in CM.LENGTH_BINS), full)
+
+
+def test_kidera_design_shape_and_decomposition():
+    """All ten factors, three roles each, and the whole-peptide column is the sum of the two roles."""
+    peps = ["GILGFVFTL", "SIINFEKL", "AAFDRKSDAK", "KLGGALQAKV"]
+    X = CM.kidera_design(peps)
+    assert X.shape == (len(peps), 30)
+    assert len(CM.kidera_names()) == 30
+    # every peptide is partitioned into anchors and TCR face with nothing double-counted
+    assert np.allclose(X[:, 2::3], X[:, 0::3] + X[:, 1::3])
+
+
+def test_kidera_design_matches_the_fitted_kf4_columns():
+    """kf4 by role is the axis the shipped model fits, so it must agree with the fitted encoder."""
+    peps = ["GILGFVFTL", "SIINFEKL", "AAFDRKSDAK"]
+    X = CM.kidera_design(peps)
+    feats, _ = CM.encode(peps)
+    assert np.allclose(X[:, 9], feats["kf4_anchor"])
+    assert np.allclose(X[:, 10], feats["kf4_tcr"])

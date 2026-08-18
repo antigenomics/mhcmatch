@@ -178,6 +178,22 @@ What it scores
 Peptide-grouped 5-fold CV on the deposited corpus arms — peptides are the grouping unit, so no
 peptide appears in both a train and a test fold (``complementarity.md``).
 
+.. important::
+
+   **What the corpus is, and how to read a number on it.** Positives are peptides with at least one
+   positive T-cell assay; negatives are eluted **self** ligands that appear in no positive T-cell
+   assay. The label belongs to the ``(peptide, host)`` pair, never to an assay row, and rows are
+   aggregated to one per ``(peptide, allele group, host)``. Class I only, 8–11-mers over the
+   canonical twenty, hosts human and mouse kept separate throughout. The full rule set, the arm
+   counts and the selection tree are in ``bench/results/corpus_arms.md`` in the benchmark
+   repository and in the ``isalgo/pmhc_data`` dataset's ``immunogenicity/SOURCES.md``.
+
+   Two consequences worth carrying into any use of these numbers. The negatives are **inferred** —
+   an eluted ligand nobody has tested is assumed non-immunogenic, and some fraction of that
+   assumption is wrong. And the corpora carry composition artefacts, cysteine most of all, so a
+   20-way composition logistic alone reaches 0.68–0.74 on the Chowell arms under these same folds;
+   an AUROC here is meaningful as an increment over that baseline, not against 0.5.
+
 .. list-table::
    :header-rows: 1
    :widths: 34 12 12 14 14 14
