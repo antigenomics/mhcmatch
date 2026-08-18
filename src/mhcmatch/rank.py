@@ -35,11 +35,115 @@ the same way -- it is the only label that says this exact peptide was tried and 
 """
 from __future__ import annotations
 
+import json
 import math
 import os
 from dataclasses import dataclass, field
+from importlib import resources
 
-__all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability"]
+__all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
+           "BASE_COLUMNS", "MIMICRY_PAIRS", "EXTENDED_COLUMNS", "ANNOTATE_COLUMNS", "columns",
+           "aggregate", "aggregate_score", "AGGREGATE_FEATURES"]
+
+#: The `mhcmatch rank` output schema, one source of truth. It lives here rather than inline in the
+#: CLI because a *consumer* -- a pipeline module's stub, a downstream join -- has to be able to name
+#: the columns without running the command, and a schema typed out a second time is a schema that
+#: drifts. That is not hypothetical: the nextflow module's stub carried an 18-column header against
+#: a 57-column table until 2026-08-18.
+BASE_COLUMNS: tuple = ("rank", "peptide", "allele", "gene", "score", "presentation",
+                       "agretopicity", "physchem", "expression", "expr_imputed", "wt_peptide",
+                       "known_epitope")
+#: (reference, channel) in the order the mimicry columns are emitted.
+MIMICRY_PAIRS: tuple = tuple((c, ch) for c in ("viral", "self", "thymus")
+                             for ch in ("anchor", "tcr"))
+#: Appended by ``--extended``: the fitted aggregate and its six signed channels.
+EXTENDED_COLUMNS: tuple = ("mimicry_logodds", "autoimmune") + tuple(
+    f"{c}_{ch}" for c, ch in MIMICRY_PAIRS)
+#: Appended by ``--annotate``: what each channel's nearest reference peptide actually was, then the
+#: tested-neoantigen lookup. Prior evidence, reported and never fitted (``MODELS.md``).
+ANNOTATE_COLUMNS: tuple = tuple(
+    f"{k}_{c}_{ch}" for c, ch in MIMICRY_PAIRS for k in ("nearest", "source", "subs")
+) + ("neoag_distance", "neoag_nearest", "neoag_n_within")
+
+
+def columns(extended: bool = False, annotate: bool = False) -> list:
+    """The exact `mhcmatch rank` header for a given flag combination."""
+    out = list(BASE_COLUMNS)
+    if extended:
+        out += list(EXTENDED_COLUMNS)
+    if annotate:
+        out += list(ANNOTATE_COLUMNS)
+    return out
+
+# --------------------------------------------------------------- the fitted aggregate (BDECRT)
+
+#: Cached ``aggregate_mhc1.json``. Loaded once, on first use.
+_AGG: dict | None = None
+
+#: The features the shipped aggregate expects, in order. Read it rather than typing the list.
+AGGREGATE_FEATURES: tuple = ("binder", "dai", "expr", "expr_missing", "complement",
+                             "viral_R", "viral_tcr", "self_tcr", "thymus_tcr")
+
+
+def aggregate() -> dict:
+    """The fitted ``BDECRT`` artifact: features, coefficients, and the standardizer.
+
+    Fitted by ``bench/neoag/hier.py`` over all seven neoantigen screens (337,972 rows / 1,719
+    positive) as a partially-pooled Bayesian logistic regression with a **per-screen intercept**.
+    ``MODELS.md`` names the terms: B binder, D differential agretopicity, E expression,
+    C complementarity, R the Luksza ``Z/(1+Z)`` recognition term, T the TCR-facing mimicry channels.
+
+    **There is no intercept and that is deliberate.** Each screen was given its own, unpenalised,
+    precisely so prevalence and candidate generation stayed out of the slopes; no single intercept
+    transfers, and a new cohort has its own base rate. What ships is a **ranking**. A probability
+    needs a named corpus -- the seven screens behind this fit run from 0.048% to 46.8% positive.
+    """
+    global _AGG
+    if _AGG is None:
+        with resources.files("mhcmatch.data").joinpath("aggregate_mhc1.json").open() as fh:
+            _AGG = json.load(fh)
+    return _AGG
+
+
+def aggregate_score(features) -> "np.ndarray":
+    """Rank-score candidates with the fitted aggregate. ``features`` is ``{name: sequence}``.
+
+    Every column in :data:`AGGREGATE_FEATURES` is standardized with the mu and sigma it was
+    **fitted** with, then weighted. A missing column, or a non-finite value inside one, becomes the
+    training mean -- the same convention the fit used, so a candidate that lacks a wild type or a
+    gene expression value is scored on the terms it does have rather than dropped. Higher is better.
+
+    Two things the caller owns, because getting them wrong is silent:
+
+    * **Compute each feature the way the fit did.** ``binder`` is ``-log10`` of the calibrated
+      combined %rank, ``dai`` is ``log10(Kd_WT / Kd_MT)``, ``expr`` is ``log1p(TPM)``,
+      ``complement`` is :func:`mhcmatch.complement.score`, and the three mimicry channels are
+      ``log1p`` of a per-million window density at radius 1.
+    * **``viral_R`` is on a 1e-8 scale** -- its fitted sigma is 3.8e-8, because the Boltzmann sum
+      saturates near zero for almost every peptide. The standardizer is therefore specific to the
+      reference set and radius it was fitted with, and an ``R`` computed against a different viral
+      ligandome is not on the same axis. Omit the column rather than supply an incomparable one; it
+      then contributes its mean, which is what "no information" should do.
+
+    >>> import numpy as np
+    >>> s = aggregate_score({"binder": [2.0, 0.1], "complement": [1.5, -1.0]})
+    >>> bool(s[0] > s[1])
+    True
+    """
+    import numpy as np
+
+    a = aggregate()
+    n = max((len(v) for v in features.values()), default=0)
+    out = np.zeros(n, dtype=float)
+    for name, coef, mu, sg in zip(a["features"], a["coef"], a["mu"], a["sigma"]):
+        v = np.asarray(features.get(name, []), dtype=float)
+        if v.size != n:
+            v = np.full(n, np.nan)
+        z = (v - mu) / (sg or 1.0)
+        z[~np.isfinite(z)] = 0.0
+        out += coef * z
+    return out
+
 
 #: Noisy-AND coefficients **and the standardizer they were fitted with**, from
 #: ``bench/neoag/gate_fit.py`` on the presentation-matched IEDB-ligandome corpus (44,904 rows, 811

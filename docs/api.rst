@@ -123,6 +123,20 @@ own expected yield per slot, and diversification follows from the arithmetic ins
 own allotypes and picks the spacer and ordering that minimise predicted junctional binding, trying
 **no spacer first**.
 
+The two ends of that pipeline are joins to the rest of the library.
+:func:`~mhcmatch.vector.units_from_context` closes the front: :func:`~mhcmatch.rank.rank_fasta`
+emits *minimal epitopes* while a unit is the long window around the mutation, and where that
+mutation sits is in the FASTA header rather than in the ranking, so the two are combined rather than
+either being guessed at -- and rows are grouped by **variant**, since twenty registers of one
+mutation are twenty rows in a ranking and one thing to put in a cassette.
+:func:`~mhcmatch.vector.back_translate` closes the back, turning
+:attr:`~mhcmatch.vector.Cassette.sequence` into a coding sequence. It is not a codon optimiser: it
+fixes the two failure modes specific to a *concatemer* -- the m1-pseudouridine +1-frameshift motif
+(:func:`~mhcmatch.vector.slippery_sites`, whose seams the designer chooses) and synthesis-hostile
+homopolymers (which spacers like ``AAA`` manufacture directly) -- and leaves GC content, secondary
+structure and CpG to a manufacturer's own tooling. :func:`~mhcmatch.vector.translate` exists so
+"synonymous" stays checkable rather than asserted.
+
 .. automodule:: mhcmatch.vector
    :members:
    :undoc-members:

@@ -6,6 +6,58 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.14.0] - 2026-08-18
+
+The cassette gets a nucleotide half, the pipeline gets the rest of the library.
+
+### Added
+
+- **`vector.back_translate`** — the coding sequence for a cassette. Highest-usage human codon per
+  residue from :data:`vector.CODON_USAGE_HUMAN` (Kazusa, *Homo sapiens* [gbpri], 93,487 CDSs /
+  40,662,582 codons), backing off to the next synonymous codon whenever the first would extend a
+  homopolymer past :data:`vector.MAX_HOMOPOLYMER`, then `deslip`. `mhcmatch vector --fasta-nt`.
+
+  This is **not** a codon optimiser and does not claim to be. It fixes the two things that make a
+  *polyepitope* fail where a natural ORF would not — the m1Ψ +1-frameshift motif, which a concatemer
+  hits far more often because the designer chooses the seam residues, and synthesis-hostile
+  homopolymers, which spacers like `AAA` manufacture directly. GC content, secondary structure,
+  splice sites and CpG are untouched; a manufacturer's own optimiser should be preferred where there
+  is one. The backoff is greedy, so `max_run` is a **target rather than a bound**: measured over
+  5,000 random 20–60mers, longest run 6 and 84% at or below 4, against 13 for
+  most-frequent-codon alone. Poly-proline pins the floor — all four proline codons begin `CC`, so
+  consecutive prolines cannot be brought below a 5-run by any synonymous choice.
+- **`vector.translate`** — so "synonymous" is checkable rather than asserted, by `deslip`,
+  `back_translate` and by a caller supplying their own table.
+- **`vector.units_from_context`** and **`mhcmatch vector --context windows.fasta`** — the join from
+  `rank` to a unit table, which was the open item that made cassette assembly a manual step. `rank`
+  emits minimal epitopes and a unit is the long window around the mutation; where that mutation sits
+  lives in the FASTA header, so neither side alone can build one. Rows are grouped by **variant, not
+  by register** — twenty registers of one mutation are one thing to put in a cassette, and `select`
+  spends capacity per unit.
+- **`rank.BASE_COLUMNS` / `EXTENDED_COLUMNS` / `ANNOTATE_COLUMNS` / `columns()`** — the `mhcmatch
+  rank` schema as data, so a consumer can name the columns without running the command. Hoisted out
+  of the CLI because a schema typed a second time is a schema that drifts.
+
+### Changed
+
+- **The nextflow integration covers the library, not just `predict`.** Four new processes —
+  `MHCMATCH_RANK`, `MHCMATCH_NEOAG`, `MHCMATCH_MIMICRY`, `MHCMATCH_VECTOR` — plus
+  `subworkflows/mhcmatch.nf` chaining all five, and a README written around each one's input and
+  output contract. The image now bakes `bootstrap --reference`, because `rank`/`neoag`/`mimicry`
+  read the known-epitope sets, mimicry references and expression tables and would otherwise reach
+  for HuggingFace from a compute node.
+
+### Fixed
+
+- **The nextflow stubs emitted the wrong schema** — an 18-column `scored.csv` header against the
+  real 57 and a 5-column `native.tsv` header against the real 27, so `-stub-run` produced files that
+  did not match the ones a real run makes. No stub types a header any more: each asks the installed
+  library for its own, and cannot drift again.
+- Version pins in the nextflow module (`main.nf`, `Dockerfile`, `environment.yml`, README) were
+  three minors behind at 0.10.0.
+- The source-tree `__version__` fallback said `0.12.0`. It is what every `versions.yml` in the
+  nextflow module reports, so a stale value mislabels a pipeline run.
+
 ## [0.13.0] - 2026-08-18
 
 The step after ranking: assembling a cassette, and refusing one.

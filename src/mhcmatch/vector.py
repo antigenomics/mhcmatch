@@ -261,6 +261,58 @@ def unit(context: str, mutation_offset: int, length: int = 27,
     return Unit(peptide=window, mutation_index=mutation_offset - start, **kw)
 
 
+def units_from_context(rows, records, length: int = 27, cls: str = "mhc1") -> list:
+    """``[Unit]`` from ranked **minimal epitopes** plus the window FASTA they were called on.
+
+    This is the join between :func:`mhcmatch.rank.rank_fasta` and this module. ``rank`` emits
+    minimal epitopes and a score; a unit is the long window around the mutation, and where that
+    mutation sits is in the FASTA header rather than in ``rank``'s output -- so neither side alone
+    can build one. ``rows`` are dicts carrying ``peptide`` (the minimal epitope), ``gene``,
+    ``allele`` and ``p``; ``records`` is :func:`mhcmatch.predict.parse_fasta`'s output for the very
+    FASTA ``rank`` was pointed at.
+
+    **One unit per variant, not per epitope.** Twenty registers of one mutation are twenty rows in
+    ``rank`` and one thing to put in a cassette, and :func:`select` spends capacity per unit -- so
+    rows are grouped by their source window and the group's best-scoring row supplies the allotype
+    and the score. Anything whose epitope matches no window is returned to the caller's attention by
+    being absent; counts are the caller's to report.
+
+    Only ``Somatic:`` windows carry a marked mutation, so fusion and CNV records are skipped: their
+    headers use different internal delimiters and there is no single mutated residue to centre on.
+    """
+    from .predict import _strip_marker, parse_variant_header
+
+    contexts = []
+    for header, _seq in records:
+        var = parse_variant_header(header)
+        marked = var.get("mut_window") or ""
+        if var.get("type") != "Somatic" or "(" not in marked:
+            continue
+        contexts.append((header, var, _strip_marker(marked), marked.index("(")))
+
+    best: dict = {}
+    for r in rows:
+        pep = str(r.get("peptide", "")).strip().upper()
+        if not pep:
+            continue
+        gene = str(r.get("gene", "")).strip()
+        hit = next((c for c in contexts if pep in c[2] and (not gene or c[1]["gene_name"] == gene)),
+                   None) or next((c for c in contexts if pep in c[2]), None)
+        if hit is None:
+            continue
+        p = float(r.get("p", 0.0) or 0.0)
+        if hit[0] not in best or p > best[hit[0]][0]:
+            best[hit[0]] = (p, r, hit)
+
+    out = []
+    for p, r, (_h, var, context, offset) in best.values():
+        out.append(unit(context, offset, length=length,
+                        gene=var["gene_name"] or str(r.get("gene", "")).strip(),
+                        allele=str(r.get("allele", "")).strip(), p=p,
+                        cls=str(r.get("cls", "") or cls)))
+    return out
+
+
 def junction_windows(left: str, right: str, spacer: str | None = None,
                      lengths=JUNCTION_LENGTHS) -> list:
     """Every ``lengths``-mer that spans the ``left``/``right`` boundary, as ``(peptide, offset)``.
@@ -717,6 +769,126 @@ def deslip(cds: str) -> tuple:
         s[i:i + 3] = list("TTC")
         n += 1
     return "".join(s), n
+
+
+#: Homo sapiens codon usage as ``{codon: (amino acid, occurrences per thousand codons)}``.
+#: Kazusa Codon Usage Database (https://www.kazusa.or.jp/codon/), *Homo sapiens* [gbpri] --
+#: 93,487 CDSs, 40,662,582 codons; retrieved 2026-08-18.
+#:
+#: Stored as the **measured frequencies**, not as a pre-reduced "best codon per residue" map, so
+#: :func:`back_translate`'s choice is derived from data under a stated rule and can be re-derived
+#: under a different one. Substituting a host's own table is then a one-argument change.
+CODON_USAGE_HUMAN: dict = {
+    "TTT": ("F", 17.6), "TTC": ("F", 20.3), "TTA": ("L", 7.7),  "TTG": ("L", 12.9),
+    "CTT": ("L", 13.2), "CTC": ("L", 19.6), "CTA": ("L", 7.2),  "CTG": ("L", 39.6),
+    "ATT": ("I", 16.0), "ATC": ("I", 20.8), "ATA": ("I", 7.5),  "ATG": ("M", 22.0),
+    "GTT": ("V", 11.0), "GTC": ("V", 14.5), "GTA": ("V", 7.1),  "GTG": ("V", 28.1),
+    "TCT": ("S", 15.2), "TCC": ("S", 17.7), "TCA": ("S", 12.2), "TCG": ("S", 4.4),
+    "AGT": ("S", 12.1), "AGC": ("S", 19.5),
+    "CCT": ("P", 17.5), "CCC": ("P", 19.8), "CCA": ("P", 16.9), "CCG": ("P", 6.9),
+    "ACT": ("T", 13.1), "ACC": ("T", 18.9), "ACA": ("T", 15.1), "ACG": ("T", 6.1),
+    "GCT": ("A", 18.4), "GCC": ("A", 27.7), "GCA": ("A", 15.8), "GCG": ("A", 7.4),
+    "TAT": ("Y", 12.2), "TAC": ("Y", 15.3), "TAA": ("*", 1.0),  "TAG": ("*", 0.8),
+    "CAT": ("H", 10.9), "CAC": ("H", 15.1), "CAA": ("Q", 12.3), "CAG": ("Q", 34.2),
+    "AAT": ("N", 17.0), "AAC": ("N", 19.1), "AAA": ("K", 24.4), "AAG": ("K", 31.9),
+    "GAT": ("D", 21.8), "GAC": ("D", 25.1), "GAA": ("E", 29.0), "GAG": ("E", 39.6),
+    "TGT": ("C", 10.6), "TGC": ("C", 12.6), "TGA": ("*", 1.6),  "TGG": ("W", 13.2),
+    "CGT": ("R", 4.5),  "CGC": ("R", 10.4), "CGA": ("R", 6.2),  "CGG": ("R", 11.4),
+    "AGA": ("R", 12.2), "AGG": ("R", 12.0),
+    "GGT": ("G", 10.8), "GGC": ("G", 22.2), "GGA": ("G", 16.5), "GGG": ("G", 16.5),
+}
+
+#: Run of one nucleotide past which :func:`back_translate` reaches for a rarer synonymous codon.
+#: Homopolymers are a **synthesis** constraint, not a translation one: vendors reject or
+#: mis-assemble long single-base runs, and a spacered concatemer manufactures them directly
+#: (``AAA`` and ``GPGPG`` are both in :data:`SPACERS`). Four is the conventional screening floor.
+#:
+#: It is a **target, not a guarantee**, because the choice is greedy and per-codon. Measured over
+#: 5,000 random 20-60mers under the default table: longest run 6, and 84% of sequences at or below
+#: 4; the same peptides back-translated by most-frequent-codon alone reach 13, with 6% above 6.
+MAX_HOMOPOLYMER: int = 4
+
+
+def _synonyms(usage: dict) -> dict:
+    """``{amino acid: (codon, ...)}`` ordered by descending usage, then codon for determinism."""
+    out: dict = {}
+    for codon, (aa, freq) in usage.items():
+        out.setdefault(aa, []).append((freq, codon))
+    return {aa: tuple(c for _, c in sorted(v, key=lambda t: (-t[0], t[1]))) for aa, v in out.items()}
+
+
+def _longest_run(seq: str) -> int:
+    """Longest run of one repeated nucleotide anywhere in ``seq``."""
+    best = run = 0
+    last = ""
+    for ch in seq:
+        run = run + 1 if ch == last else 1
+        last = ch
+        best = max(best, run)
+    return best
+
+
+def translate(cds: str) -> str:
+    """Amino-acid sequence of a coding sequence, ``*`` for a stop.
+
+    Exists so "synonymous" is checkable rather than asserted -- :func:`deslip` and
+    :func:`back_translate` both claim it, and a caller who supplies their own codon table needs the
+    same check. ``U`` is read as ``T``; a trailing partial codon is ignored.
+    """
+    s = cds.strip().upper().replace("U", "T")
+    return "".join(CODON_USAGE_HUMAN.get(s[i:i + 3], ("X", 0.0))[0] for i in range(0, len(s) - 2, 3))
+
+
+def back_translate(peptide: str, usage: dict = None, *, avoid_slip: bool = True,
+                   max_run: int = MAX_HOMOPOLYMER) -> str:
+    """Coding sequence for ``peptide`` -- the cassette's nucleotide half.
+
+    **Highest-usage synonymous codon per residue**, backing off to the next one whenever the first
+    would extend a single-nucleotide run past ``max_run``, then :func:`deslip` to remove the m1-psi
+    +1-frameshift motif. Deterministic: the same peptide and table always give the same CDS.
+
+    The backoff is greedy, so ``max_run`` is a target rather than a bound -- see
+    :data:`MAX_HOMOPOLYMER` for what it is measured to be worth.
+
+    What this is *not* is a codon optimiser. It fixes the two things that make a **polyepitope**
+    construct fail where a natural ORF would not -- the frameshift motif (:func:`slippery_sites`,
+    which a concatemer hits far more often because the designer chooses the seam residues) and
+    synthesis-hostile homopolymers (which spacers like ``AAA`` manufacture directly). It does not
+    touch GC content, secondary structure, splice sites or CpG, and a manufacturer's own optimiser
+    should be preferred where one is available; this exists so a cassette ships with a usable CDS
+    rather than none.
+
+    Emits the epitope cassette only -- no start codon, no stop, no leader, no trafficking domain --
+    matching :attr:`Cassette.sequence`, because those flanks are the vector's, not the payload's.
+
+    >>> cds = back_translate("SIINFEKL")
+    >>> translate(cds)
+    'SIINFEKL'
+    >>> slippery_sites(cds)
+    []
+    """
+    table = usage or CODON_USAGE_HUMAN
+    syn = _synonyms(table)
+    out: list = []
+    seq = ""
+    for aa in peptide.strip().upper():
+        options = syn.get(aa)
+        if not options:
+            raise ValueError(f"no codon for residue {aa!r} in the supplied usage table")
+        # The run a codon creates can sit *inside* it, so the whole junction window is checked and
+        # not just the trailing run -- ...AAA + AAG ends in G but carries AAAAA across the seam.
+        # Two tiers: the most-used codon that stays within ``max_run``, and failing that the one
+        # that makes the shortest run at all. The second tier is not hypothetical -- proline's four
+        # codons all begin ``CC``, so consecutive prolines cannot be brought below a 5-run by any
+        # synonymous choice, and the rule degrades to "as short as this residue allows".
+        tail = seq[-max_run:]
+        runs = [(_longest_run(tail + c), i, c) for i, c in enumerate(options)]
+        within = [t for t in runs if t[0] <= max_run]
+        pick = min(within or runs, key=lambda t: t[1] if within else (t[0], t[1]))[2]
+        out.append(pick)
+        seq += pick
+    cds = "".join(out)
+    return deslip(cds)[0] if avoid_slip else cds
 
 
 def store_binder(store, alleles, cls: str = "mhc1"):
