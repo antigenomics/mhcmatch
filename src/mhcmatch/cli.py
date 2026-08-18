@@ -421,7 +421,7 @@ def _load_refs(spec):
 
 
 #: The six (component, channel) pairs of the mimicry aggregate, in artifact order.
-_MIM_PAIRS = [(c, ch) for c in ("viral", "self", "thymus") for ch in ("anchor", "tcr")]
+from .rank import MIMICRY_PAIRS as _MIM_PAIRS      # noqa: E402  (the emitted-column order)
 
 
 def _mimicry_scores(peptides, cls: str, no_self: bool):
@@ -456,8 +456,7 @@ def cmd_rank(a):
         rows = R.rank_table(a.input, tissue=a.tissue, tumor=a.tumor, refs=refs,
                             store=store, cls=a.cls)
     rows = rows[:a.top] if a.top else rows
-    cols = ["rank", "peptide", "allele", "gene", "score", "presentation", "agretopicity",
-            "physchem", "expression", "expr_imputed", "wt_peptide", "known_epitope"]
+    cols = list(R.BASE_COLUMNS)
     # The mimicry columns are appended, never folded into `score`. Whether mimicry belongs inside
     # the gate is a benchmark question that is not settled, and quietly moving the ranking on an
     # unvalidated term is the failure mode worth avoiding -- so the ordering is identical with and
@@ -466,13 +465,11 @@ def cmd_rank(a):
     if a.extended or a.annotate:
         mim = _mimicry_scores([r.peptide for r in rows], a.cls, a.no_self)
     if a.extended:
-        cols += ["mimicry_logodds", "autoimmune"] + [f"{c}_{ch}" for c, ch in _MIM_PAIRS]
+        cols += list(R.EXTENDED_COLUMNS)
     if a.annotate:
         from . import mimicry as MM
         ann = MM.annotate([r.peptide for r in rows], cls=a.cls)
-        cols += [f"{k}_{c}_{ch}" for c, ch in _MIM_PAIRS
-                 for k in ("nearest", "source", "subs")]
-        cols += ["neoag_distance", "neoag_nearest", "neoag_n_within"]
+        cols += list(R.ANNOTATE_COLUMNS)
     out = open(a.out, "w") if a.out else sys.stdout
     try:
         print("\t".join(cols), file=out)
@@ -822,6 +819,35 @@ def _read_units(path):
             fh.close()
 
 
+def _read_unit_rows(path):
+    """``[dict]`` from the same TSV :func:`_read_units` reads, without the long-window contract.
+
+    Used only with ``--context``, where ``peptide`` is deliberately a *minimal* epitope and the long
+    window is rebuilt from the FASTA instead -- so the check that belongs here is that the columns
+    exist, not that the peptide is long.
+    """
+    op = gzip.open if str(path).endswith(".gz") else open
+    fh = sys.stdin if path == "-" else op(path, "rt")
+    try:
+        cols = fh.readline().rstrip("\n").split("\t")
+        need = ("peptide", "gene", "allele", "p")
+        missing = [c for c in need if c not in cols]
+        if missing:
+            raise SystemExit(f"{path}: missing column(s) {', '.join(missing)}; with --context a "
+                             f"candidate table needs {', '.join(need)}, which is what `rank` emits "
+                             "(rename its `score` column to `p`)")
+        rows = []
+        for line in fh:
+            f = line.rstrip("\n").split("\t")
+            if len(f) < len(cols) or not f[cols.index("peptide")].strip():
+                continue
+            rows.append(dict(zip(cols, f)))
+        return rows
+    finally:
+        if path != "-":
+            fh.close()
+
+
 def cmd_vector(a):
     """Screen, select, order: a polyepitope cassette from a table of candidate units."""
     from . import vector as V
@@ -834,7 +860,15 @@ def cmd_vector(a):
     # One register vocabulary for the whole command. A class-II core is 9 residues read out of a
     # longer span, so screening it at class-I lengths would look at windows no MHC-II ever presents.
     lengths = V.JUNCTION_LENGTHS if a.cls == "mhc1" else V.MHC2_JUNCTION_LENGTHS
-    units = _read_units(a.candidates)
+    if a.context:
+        from .predict import parse_fasta
+        rows = _read_unit_rows(a.candidates)
+        records = parse_fasta(a.context)
+        units = V.units_from_context(rows, records, length=a.unit_length, cls=a.cls)
+        print(f"# --context: {len(rows)} ranked row(s) over {len(records)} window(s) -> "
+              f"{len(units)} unit(s), one per variant", file=sys.stderr)
+    else:
+        units = _read_units(a.candidates)
     print(f"# {len(units)} candidate unit(s) over "
           f"{len({u.allele for u in units})} allotype(s)", file=sys.stderr)
 
@@ -909,6 +943,14 @@ def cmd_vector(a):
             fh.write(f">cassette units={len(cas.units)} spacer={cas.spacer} "
                      f"objective={a.objective}\n{cas.sequence}\n")
         print(f"# wrote {a.fasta}", file=sys.stderr)
+
+    if cas and a.fasta_nt:
+        cds = V.back_translate(cas.sequence)
+        with open(a.fasta_nt, "w") as fh:
+            fh.write(f">cassette_cds units={len(cas.units)} spacer={cas.spacer} "
+                     f"nt={len(cds)}\n{cds}\n")
+        print(f"# wrote {a.fasta_nt}: {len(cds)} nt, "
+              f"{len(V.slippery_sites(cds))} slippery site(s) remaining", file=sys.stderr)
 
 
 def cmd_deslip(a):
@@ -1188,6 +1230,14 @@ def main(argv=None):
                          "`peptide` is the LONG window around the mutation, not the minimal epitope "
                          "-- a minimal peptide loads onto any cell without costimulation and is the "
                          "tolerising configuration. `-` = stdin")
+    vc.add_argument("--context", metavar="FILE",
+                    help="the window FASTA `rank` was run on. With it, --candidates may be `rank`'s "
+                         "own output of MINIMAL epitopes: each is joined back to its source window "
+                         "and re-centred as a long unit, one per variant rather than one per "
+                         "register. Without it --candidates must already carry long windows")
+    vc.add_argument("--unit-length", type=int, default=27, metavar="N",
+                    help="unit window length for --context (default 27, the BioNTech backbone "
+                         "configuration; see mhcmatch.vector.unit)")
     vc.add_argument("--n0", type=float, required=True, metavar="F",
                     help="per-allotype capacity, the one free parameter of the stopping rule. "
                          "REQUIRED and with no default on purpose: nothing in the public record fits "
@@ -1222,6 +1272,11 @@ def main(argv=None):
                     help="stop at the first spacer whose worst junction falls at or below this, "
                          "instead of trying them all and taking the cheapest")
     vc.add_argument("--fasta", metavar="FILE", help="also write the cassette sequence as FASTA")
+    vc.add_argument("--fasta-nt", metavar="FILE",
+                    help="also write the cassette CODING SEQUENCE as FASTA -- highest-usage human "
+                         "codon per residue, backed off to avoid homopolymers, then deslipped. "
+                         "Epitope cassette only: no start, no stop, no leader, no trafficking "
+                         "domain")
     _add_store_opts(vc)
     vc.add_argument("--out", metavar="FILE", help="write the report TSV here instead of stdout")
     vc.set_defaults(fn=cmd_vector)

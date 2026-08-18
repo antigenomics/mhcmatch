@@ -224,3 +224,54 @@ def test_every_tumour_type_has_a_matched_normal_that_resolves():
     assert EX.matched_tissues("skcm") == EX.matched_tissues("SKCM")     # case-insensitive
     assert EX.matched_tissues("ZZZZ") == ()                            # unknown -> empty, not a guess
     assert set(EX.TUMOR_TISSUE_APPROXIMATE) <= tumors
+
+
+# ------------------------------------------------------------- the fitted BDECRT aggregate
+
+def test_aggregate_artifact_is_self_consistent():
+    """Coefficients are meaningless without the standardizer they were fitted with.
+
+    That pairing was dropped once on the way out of a fitting script and `neoag_gate.md` records
+    what it cost -- coefficients on z-scores applied to raw axes, which moved the *ranking* and not
+    merely the calibration. So the artifact is checked as a unit: one mu and one sigma per feature,
+    per coefficient, and no sigma of exactly zero (which would divide by the clamp instead).
+    """
+    a = R.aggregate()
+    n = len(a["features"])
+    assert a["model"] == "BDECRT"
+    assert len(a["coef"]) == n and len(a["mu"]) == n and len(a["sigma"]) == n
+    assert tuple(a["features"]) == R.AGGREGATE_FEATURES
+    assert all(s > 0 for s in a["sigma"])
+    # no intercept, on purpose: every screen was fitted its own, so none transfers
+    assert a["intercept"] is None
+    assert a["fit"]["per_screen_intercept"] is True
+
+
+def test_aggregate_score_is_monotone_in_binder_and_tolerates_missing_columns():
+    """A candidate with no wild type or no expression is scored on what it has, not dropped.
+
+    The fit used the same convention (`neoclf._std` sends non-finite to the training mean), so a
+    missing column has to contribute its mean here too -- not NaN, which would poison the whole
+    ranking, and not zero on the raw scale, which is a different peptide.
+    """
+    import math
+
+    s = R.aggregate_score({"binder": [2.0, 0.1, -1.0]})
+    assert all(math.isfinite(v) for v in s)
+    assert s[0] > s[1] > s[2]
+
+    # a NaN inside a supplied column behaves the same as omitting the value
+    with_nan = R.aggregate_score({"binder": [1.0, 1.0], "dai": [0.5, float("nan")]})
+    without = R.aggregate_score({"binder": [1.0, 1.0]})
+    assert with_nan[1] == pytest.approx(without[1])
+    assert with_nan[0] != pytest.approx(without[0])
+
+
+def test_aggregate_carries_the_fit_provenance_a_reader_needs():
+    """A shipped scorer that cannot say what it was fitted on is not reproducible."""
+    a = R.aggregate()
+    assert a["fit"]["rows"] == 337972 and a["fit"]["positives"] == 1719
+    assert len(a["fit"]["screens"]) == 7
+    assert a["generator"].endswith("hier.py")
+    # the Luksza shape parameters are part of the model, not of the caller's taste
+    assert a["luksza"] == {"k": 1.0, "a0": 24.0}

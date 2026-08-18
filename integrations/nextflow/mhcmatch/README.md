@@ -1,112 +1,216 @@
 # mhcmatch as a Nextflow module
 
-`mhcmatch predict` replaces the neoantigen pipeline's binding predictors (MHCflurry class I, TLimmuno2
-class II) with a single presentation model. It emits both mhcmatch's **native** table and a
-pipeline-compatible **`.scored.csv`** (the `--scored-csv` mode). This directory is a self-contained
-nf-core-style module (`main.nf` + `nextflow.config` + `environment.yml` + `Dockerfile`), laid out like
-[`arda`'s integration](../../../../arda/integrations/nextflow/arda/). These artifacts are **templates
-for review** — adjust the pins, registry, and wiring to the ISPRAS infra before use.
+Five nf-core-style processes plus a subworkflow that chains them. `mhcmatch predict` replaces the
+neoantigen pipeline's binding predictors (MHCflurry class I, TLimmuno2 class II); the other four
+cover the steps that come after and have no incumbent in the pipeline at all — ranking, prior
+evidence, safety, and cassette assembly.
 
 ```
 integrations/nextflow/mhcmatch/
-  main.nf            the MHCMATCH_PREDICT process
-  nextflow.config    per-process config: species (from params.genome), publishDir, tier/rank params
-  environment.yml    conda env (pip: mhcmatch, which pulls seqtree) for -profile conda
-  Dockerfile         image (mhcmatch + seqtree + baked panel) for -profile docker
+  main.nf                  MHCMATCH_{PREDICT,RANK,NEOAG,MIMICRY,VECTOR}
+  subworkflows/mhcmatch.nf MHCMATCH — the five wired end to end
+  nextflow.config          per-process config: species, publishDir, every params.mhcmatch_*
+  environment.yml          conda env (pip: mhcmatch, which pulls seqtree) for -profile conda
+  Dockerfile               image (mhcmatch + seqtree + every baked reference) for -profile docker
 ```
 
-## What mhcmatch fills (and what it does not)
+These artifacts are **templates for review** — adjust the pins, registry and wiring to the ISPRAS
+infra before use.
 
-mhcmatch is a **presentation** model — per-allele **%rank / P(present) / band** (the NetMHCpan
-`%Rank_EL` analogue) — plus a **Potts affinity head** (`mhcmatch.PottsAffinity`). In the `.scored.csv`
-export it fills the variant-annotation columns (from the FASTA header), `best_allele`,
-`affinity_percentile` (= %rank), **`affinity` (nM)** from the affinity head, and — for k-mers that span
-the somatic mutation — **`agretopicity`** (Kd_MT/Kd_WT vs the position-aligned wild-type peptide; the
-native table also carries the Łuksza amplitude and DAI). It leaves expression, `CDR3`/`TCR-score`, and
-the composite `score` columns to their own pipeline modules.
+## The pipeline
 
-The **native** table additionally carries the **generalized binder score** — `affinity_rank` (Potts
-%rank), `binder_rank` (the calibrated combined %rank fusing presentation × affinity via Fisher's
-method), and `binder_band`. These are mhcmatch-specific columns, so they ride in the native table only;
-the `.scored.csv` keeps the fixed 57-column pipeline schema untouched. `binder_rank` is the recommended
-single-number binder index (a soft-AND: strong only when a peptide is both presented and binds).
+```
+windows.fasta ─► PREDICT ─► scored.csv + native.tsv
+              └► RANK ────► ranked.tsv ─┬─► NEOAG   ─► neoag.tsv      prior evidence
+                                        ├─► MIMICRY ─► mimicry.tsv    safety channels
+                                        └─► VECTOR  ─► cassette .tsv / .faa / .fna
+```
 
-Concordance with NetMHCpan on the public TESLA1 sample (the trust check for this swap) is in
-`bench/results/concordance_tesla1_*.md`: class I pooled Spearman ρ ≈ 0.73–0.76, best-allele agreement
-71–82%; class II good for DRB, weaker for DP/DQ heterodimers.
+`VECTOR` takes **both** `ranked.tsv` (as `--candidates`) and the original `windows.fasta` (as
+`--context`). That is not redundancy: `rank` emits **minimal epitopes** and a vaccine unit is the
+long window around the mutation, so neither side alone can build one. Injecting a minimal epitope is
+not a smaller version of the right thing — a 9-mer loads onto any cell without costimulation and is
+the tolerising configuration (PMID 17911588), so the reader refuses a table it cannot tell apart
+rather than guessing.
+
+---
+
+## Input and output, per process
+
+### `MHCMATCH_PREDICT`
+
+| | |
+|---|---|
+| **in** | `tuple val(meta), path(fasta), val(alleles), val(cls)` — `cls ∈ {mhc1, mhc2}`; `alleles` comma-separated |
+| **out** | `scored` → `${prefix}.${cls}.mhcmatch.scored.csv` · `native` → `${prefix}.${cls}.mhcmatch.native.tsv` · `versions` |
+
+Drop-in for `MHCFLURRY_PREDICT_SCAN` (class I) and the `MHCII_BINDING` subworkflow (class II):
+same input channel shape, and `cls` rides in the tuple so one process serves both classes —
+instantiate it twice, mirroring `MERGE_FASTAS_MHCI`/`_MHCII`.
+
+**`scored.csv` is the fixed 57-column pipeline schema** (`mhcmatch.predict.SCORED_COLUMNS`), so it
+drops into whatever consumed MHCflurry's. mhcmatch fills the variant annotation from the FASTA
+header plus `best_allele`, `affinity` (nM, from the Potts head), `affinity_percentile` (= the
+presentation %rank) and — for k-mers spanning the somatic mutation — `agretopicity` (Kd_MT/Kd_WT
+against the position-aligned wild type). It leaves expression, `CDR3`/`TCR-score` and the composite
+`score*` columns to their own modules.
+
+**`native.tsv` is mhcmatch's own 27 columns** (`mhcmatch.predict.NATIVE_COLUMNS`), which the fixed
+schema has nowhere to put:
+
+`source · type · gene_name · chrom · pos · ref · alt · peptide · offset · best_allele · cls ·
+percent_rank · p_present · band · affinity_nm · affinity_rank · **binder_rank** · binder_band ·
+wt_peptide · wt_affinity_nm · agretopicity · amplitude · dai · synth_peptide · model_peptide ·
+anchors · tcr_facing`
+
+`binder_rank` is the recommended single-number binder index — a calibrated combined %rank fusing
+presentation × affinity through Fisher's method, i.e. a soft AND: strong only when a peptide is both
+presented and binds. Rank class-I candidates by it, **not** by raw `affinity_nm`.
+
+### `MHCMATCH_RANK`
+
+| | |
+|---|---|
+| **in** | `tuple val(meta), path(input), val(alleles), val(cls)` — `input` is a window FASTA (`params.mhcmatch_rank_mode = 'fasta'`) or a scored table (`'table'`) |
+| **out** | `ranked` → `${prefix}.${cls}.mhcmatch.ranked.tsv` · `versions` |
+
+The fitted aggregate, one ordered table. Base columns (`mhcmatch.rank.BASE_COLUMNS`):
+
+`rank · peptide · allele · gene · score · presentation · agretopicity · physchem · expression ·
+expr_imputed · wt_peptide · known_epitope`
+
+`params.mhcmatch_rank_extended` appends the fitted mimicry aggregate and its six signed channels;
+`params.mhcmatch_rank_annotate` appends what each channel's nearest reference peptide actually was,
+then the tested-neoantigen lookup. **Neither changes the ordering** — they are reported beside
+`score`, never folded into it, because whether mimicry belongs inside the score is a benchmark
+question that is not settled and quietly moving a ranking on an unvalidated term is the failure mode
+worth avoiding.
+
+**Set `params.mhcmatch_tumor`.** Without it `expression` is the GTEx cross-tissue median, which
+answers *is this gene expressed anywhere* when the question is *is it expressed in this tumour*.
+`mhcmatch expression --list-contexts` prints the 19 TCGA↔GTEx pairings.
+
+### `MHCMATCH_NEOAG`
+
+| | |
+|---|---|
+| **in** | `tuple val(meta), path(peptides), val(cls)` — any TSV with a `peptide` column |
+| **out** | `neoag` → `${prefix}.${cls}.mhcmatch.neoag.tsv` · `versions` |
+
+Every input column is carried through, plus `neoag_distance` (0–2, or 3 for nothing found),
+`neoag_nearest`, `neoag_n_within`, `known`.
+
+**Use the fuzzy distance, not exact matching.** Held out honestly — the database rebuilt without the
+test screen's peptides — matching at ≤2 substitutions roughly doubles to triples the recall of a
+fresh cohort's true positives over exact lookup. A hit is **prior evidence, not a prediction**: it
+is only meaningful for a cohort that did not contribute to the database, and it is never fitted as a
+term.
+
+### `MHCMATCH_MIMICRY`
+
+| | |
+|---|---|
+| **in** | `tuple val(meta), path(peptides), val(cls)` |
+| **out** | `mimicry` → `${prefix}.${cls}.mhcmatch.mimicry.tsv` · `versions` |
+
+Carries every input column through and adds `logodds`, `autoimmune`, and the six channels
+`{viral,self,thymus}_{anchor,tcr}`.
+
+**Read the two channel families separately; they have opposite signs.** Anchor similarity to a
+presented reference *is* presentation. TCR-face similarity is a repertoire statement and is
+negative — resembling what the repertoire has already met, across the face a receptor actually
+reads, goes with *less* immunogenicity. A conventional whole-peptide distance averages the two and
+lands near zero. The actionable one is the **TCR-facing self/thymus channel**: it is simultaneously
+a deprioritisation signal and the autoimmunity flag, so report it, do not bury it in a sum.
+
+### `MHCMATCH_VECTOR`
+
+| | |
+|---|---|
+| **in** | `tuple val(meta), path(candidates), path(context), val(alleles), val(cls)` — `context` may be `NO_FILE` if `candidates` already carries long windows |
+| **out** | `report` → `${prefix}.cassette.tsv` · `protein` → `.cassette.faa` · `cds` → `.cassette.fna` · `versions` |
+
+Screen → select → order → back-translate. The report is long-form (`section, i, key, value, detail`)
+with sections `withdrawn`, `allotype`, `not selected`, `unit`, `junction`, `cassette`, `sequence`.
+
+- **`params.mhcmatch_vector_n0` is required and has no default.** Per-allotype capacity is not
+  fitted by anything in the public record, so the value is yours to defend; it is recorded in the
+  output. The process fails fast rather than picking one.
+- **`params.mhcmatch_vector_screen` defaults to `true` here** (the library default is opt-in).
+  Without it *no safety check runs at all* and the cassette carries whatever it was handed. It costs
+  one whole-proteome index per register length — ~12 GB peak each, a few minutes apiece, four for
+  class I — which is why `nextflow.config` gives this process its own memory and time.
+- **`.cassette.fna` is the epitope cassette only** — no start codon, no stop, no leader, no
+  trafficking domain, because those flanks belong to the vector rather than the payload. Codons are
+  the highest-usage human ones, backed off to shorten homopolymers, then deslipped so no `TTT`
+  precedes a T/C-starting codon: an m1Ψ construct that +1-frameshifts does not merely lose protein,
+  it translates an entire downstream out-of-frame cassette that is itself presented (PMID 38057663).
+
+---
 
 ## Species — follows `params.genome`, no extra parameter
 
-`mhcmatch predict` takes `--species human|mouse` (human & mouse share one engine; the panel and
-pseudosequences cover both). The module's `nextflow.config` maps the pipeline's iGenomes assembly key
-to it via `ext.args`, **exactly as the ARDA module does**, so mhcmatch follows the assembly the rest of
-the pipeline already runs on:
+`GRCm39 -> --species mouse`, anything else (`GRCh38`, …) `-> --species human`, mapped in
+`nextflow.config` via `ext.args` exactly as the ARDA module does. Override in your own config if you
+need a different mapping; allele names (HLA vs H-2) also imply the species, so a human run with HLA
+alleles is unaffected by the default.
 
-```
-GRCm39 -> --species mouse        anything else (GRCh38, ...) -> --species human
-```
+## Every parameter
 
-Override in your own config if you need a different mapping; the allele names (HLA vs H-2) also imply
-the species, so a human run with HLA alleles is unaffected by the default.
+| param | default | what it does |
+|---|---|---|
+| `mhcmatch_tier` | `full` | reference panel tier |
+| `mhcmatch_rank_threshold` | `2.0` | %rank below which `predict` emits a row |
+| `mhcmatch_rank_mode` | `fasta` | `rank` input kind: `fasta` or `table` |
+| `mhcmatch_tumor` | `null` | TCGA study code for tumour-matched expression — **set this** |
+| `mhcmatch_rank_extended` | `false` | append the six mimicry channels to `ranked.tsv` |
+| `mhcmatch_rank_annotate` | `false` | append nearest-reference and known-neoantigen columns |
+| `mhcmatch_neoag_max_subs` | `2` | `neoag` search radius |
+| `mhcmatch_mimicry_annotate` | `false` | append the nearest reference peptide per channel |
+| `mhcmatch_vector_n0` | `null` | **required** per-allotype capacity |
+| `mhcmatch_vector_screen` | `true` | run the essential-tissue / self-origin exclusion |
 
-## 1. Build the image (only for `-profile docker`)
-
-No data staging needed — the build runs `mhcmatch bootstrap`, which fetches the reference panel
-(`pmhc/pmhc_{full,shortlist}.tsv.gz`) from the public HF dataset `isalgo/pmhc_data` into the image's
-`huggingface_hub` cache, so the container resolves the panel offline at runtime.
+## Build the image (only for `-profile docker`)
 
 ```zsh
-docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.10.0 \
-    --build-arg MHCMATCH_VERSION=0.10.0 \
+docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.14.0 \
+    --build-arg MHCMATCH_VERSION=0.14.0 \
     integrations/nextflow/mhcmatch/
-docker push <ISPRAS_REGISTRY>/mhcmatch:0.10.0
+docker push <ISPRAS_REGISTRY>/mhcmatch:0.14.0
 ```
 
-Point `container` at it (in `main.nf` or, better, an override in `conf/containers.config`):
+No data staging: the build runs `mhcmatch bootstrap --reference`, which fetches the ligand panel
+**and** the known-epitope sets, mimicry references and expression tables (~115 MB total) from the
+public HF dataset `isalgo/pmhc_data` into the image's `huggingface_hub` cache. `--reference` is not
+optional now that `rank`, `neoag` and `mimicry` exist: without it those three reach for HuggingFace
+from a compute node and fail there rather than at build time.
+
+## Wiring it in
 
 ```groovy
-withName: MHCMATCH_PREDICT { container = '<ISPRAS_REGISTRY>/mhcmatch:0.10.0' }
+include { MHCMATCH } from './integrations/nextflow/mhcmatch/subworkflows/mhcmatch.nf'
+
+ch_windows = ch_mhc1_fasta.map { meta, fa -> [ meta, fa, meta.alleles_mhc1, 'mhc1' ] }
+    .mix( ch_mhc2_fasta.map { meta, fa -> [ meta, fa, meta.alleles_mhc2, 'mhc2' ] } )
+
+MHCMATCH( ch_windows )
 ```
 
-(`-profile conda` needs none of this — it builds the env from `environment.yml`.)
+Or take a single process — `include { MHCMATCH_PREDICT } from '.../main.nf'` — if all you want is
+the predictor swap.
 
-## 2. Add the module
+## A note on the stubs
 
-Copy this directory to `modules/neoantigens_workflow/mhcmatch/` and `includeConfig` its
-`nextflow.config` from your workflow config. `main.nf` consumes the same
-`tuple val(meta), path(fasta), val(alleles)` channel the pipeline already builds (plus a `val(cls)`
-tag), so it honors the existing `.mhcI.txt` / `.mhcII.txt` allele strings from HLA-LA (and, later,
-OptiType — no change: OptiType just fills the same files).
+**No stub in this module types a column header.** Each asks the installed library for its own schema
+(`predict.SCORED_COLUMNS`, `predict.NATIVE_COLUMNS`, `rank.columns()`), so `-stub-run` produces
+files with exactly the real shape and cannot drift from it. That is a repair, not a flourish: this
+module shipped an 18-column `scored.csv` stub against a 57-column real table, and a 5-column
+`native.tsv` stub against 27, until 2026-08-18.
 
-## 3. Wire the `--predictor` toggle (non-destructive)
+## Concordance
 
-In `workflows/neoantigens/main.nf`, around the predictor seam (~lines 226–244), gate the mhcmatch
-path behind a param so the default pipeline is unchanged:
-
-```groovy
-include { MHCMATCH_PREDICT as MHCMATCH_MHCI  } from '../../modules/neoantigens_workflow/mhcmatch/main'
-include { MHCMATCH_PREDICT as MHCMATCH_MHCII } from '../../modules/neoantigens_workflow/mhcmatch/main'
-
-if (params.predictor == 'mhcmatch') {
-    MHCMATCH_MHCI ( MERGE_FASTAS_MHCI.out.sequences.join(mhcI_alleles).map  { m, f, a -> [m, f, a, 'mhc1'] } )
-    MHCMATCH_MHCII( MERGE_FASTAS_MHCII.out.sequences.join(mhcII_alleles).map { m, f, a -> [m, f, a, 'mhc2'] } )
-    // MHCMATCH_*.out.scored is the binding .scored.csv; .native is the richer table.
-} else {
-    MHCFLURRY_PREDICT_SCAN ( MERGE_FASTAS_MHCI.out.sequences.join(mhcI_alleles) )   // existing
-    MHCII_BINDING ( ... )                                                          // existing
-}
-```
-
-Add to `nextflow.config` `params {}`: `predictor = 'mhcflurry'` (default). The module's own
-`nextflow.config` already sets `mhcmatch_tier = 'full'` and `mhcmatch_rank_threshold = 2.0`.
-
-## Integration modes
-
-- **Standalone `.scored.csv` (this template).** `MHCMATCH_PREDICT` emits the binding-focused
-  `.scored.csv` directly — a fast endpoint that skips the pipeline's filtration/clustering/scoring
-  tail. Matches the "also report a `.scored.csv`-formatted file" requirement.
-- **Full-pipeline drop-in (follow-up, not built).** To keep the existing downstream
-  (EPITOPE_FILTRATION → clustering → immunogenicity → SCORE_EPITOPES) and stay byte-compatible with
-  the 57-column output, mhcmatch would emit the MHCflurry **intermediate** CSV instead (col 0 = FASTA
-  header, col 2 = peptide, MHCflurry column names). That is a small addition to `predict.py`
-  (a `--mhcflurry-csv` writer); open it if you want the full downstream to keep running unchanged.
+`mhcmatch` vs NetMHCpan on the public TESLA1 sample, the trust check for the predictor swap:
+class-I pooled Spearman ρ ≈ 0.73–0.76 on presentation %rank, best-allele agreement 71–82%. Class II
+is good for DRB and weaker for DP/DQ heterodimers — mhcmatch and ISP agree on the presenting locus
+for 52.7% of class-II rows against 78.1% for class I, which is why the subworkflow builds a cassette
+from class I only. Details in `bench/results/concordance_tesla1_*.md`.

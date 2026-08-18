@@ -63,4 +63,6 @@ __all__ = [
 try:
     __version__ = _version("mhcmatch")
 except PackageNotFoundError:  # running from a source tree without an install
-    __version__ = "0.12.0"
+    # Keep in step with pyproject.toml. It drifted to two minors behind once, and the value is what
+    # every `versions.yml` in the nextflow module reports, so a stale one mislabels a pipeline run.
+    __version__ = "0.14.0"

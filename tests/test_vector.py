@@ -573,3 +573,111 @@ def test_essential_tissues_are_real_gtex_names_and_cover_both_fatal_precedents()
     assert "Heart - Left Ventricle" in hit, "the titin/cardiac precedent (PMID 23770775)"
     assert "Brain - Cortex" in hit, "the MAGE-A12/brain precedent (PMID 23377668)"
     assert "Testis" not in hit, "cancer-testis antigens are the target class, not the hazard"
+
+
+# ------------------------------------------------------------------- back-translation
+
+AA20 = "ACDEFGHIKLMNPQRSTVWY"
+
+
+def test_back_translation_is_synonymous():
+    """The whole point: the CDS must encode the peptide it was built from, for every residue."""
+    import random
+
+    rng = random.Random(0)
+    for _ in range(200):
+        pep = "".join(rng.choice(AA20) for _ in range(rng.randint(8, 60)))
+        assert vector.translate(vector.back_translate(pep)) == pep
+
+
+def test_back_translation_leaves_no_slippery_site():
+    """A concatemer that frameshifts translates a second, unscreened antigen payload (PMID 38057663).
+
+    The default table cannot emit ``TTT`` at all -- ``TTC`` is the more used phenylalanine codon --
+    so this holds by construction and the deslip pass is there for a caller's own table. Asserted
+    rather than assumed, because a future table edit would break it silently.
+    """
+    import random
+
+    rng = random.Random(1)
+    for _ in range(200):
+        pep = "".join(rng.choice(AA20) for _ in range(rng.randint(8, 60)))
+        assert vector.slippery_sites(vector.back_translate(pep)) == []
+
+
+def test_back_translation_shortens_homopolymers_it_cannot_always_remove():
+    """`max_run` is a target, not a bound, and the test says which is which.
+
+    Poly-proline is the case that pins it: all four proline codons begin ``CC``, so no synonymous
+    choice brings consecutive prolines below a 5-run. What the backoff must do is beat the
+    most-frequent-codon baseline, which reaches 13 on the same peptides.
+    """
+    import random
+
+    syn = vector._synonyms(vector.CODON_USAGE_HUMAN)
+    rng = random.Random(2)
+    peps = ["".join(rng.choice(AA20) for _ in range(40)) for _ in range(300)]
+    ours = max(vector._longest_run(vector.back_translate(p)) for p in peps)
+    naive = max(vector._longest_run("".join(syn[a][0] for a in p)) for p in peps)
+    assert ours < naive, "the backoff must buy something"
+    assert ours <= 6
+    assert vector._longest_run(vector.back_translate("P" * 12)) == 5
+
+
+def test_codon_table_is_complete_and_is_the_standard_code():
+    """A missing or mistyped codon is a silently wrong protein, so the table is checked as a code."""
+    assert len(vector.CODON_USAGE_HUMAN) == 64
+    aas = {aa for aa, _ in vector.CODON_USAGE_HUMAN.values()}
+    assert aas == set(AA20) | {"*"}
+    # the three stops and the two single-codon residues, which pin the reading of the table
+    assert {c for c, (aa, _) in vector.CODON_USAGE_HUMAN.items() if aa == "*"} == {"TAA", "TAG", "TGA"}
+    assert [c for c, (aa, _) in vector.CODON_USAGE_HUMAN.items() if aa == "M"] == ["ATG"]
+    assert [c for c, (aa, _) in vector.CODON_USAGE_HUMAN.items() if aa == "W"] == ["TGG"]
+
+
+def test_back_translation_rejects_a_residue_it_has_no_codon_for():
+    with pytest.raises(ValueError):
+        vector.back_translate("SIINFEKLX")
+
+
+# ------------------------------------------------------------- the rank -> unit join
+
+def _record(gene, ctx, mut_at, tpm="1.0"):
+    marked = ctx[:mut_at] + "(" + ctx[mut_at] + ")" + ctx[mut_at + 1:]
+    header = (f"Somatic:chr1:100:C:T:missense_variant:{marked}:{marked}:{tpm}:"
+              f"ENSG0:ENST0:{gene}:P0:0.9:1:1")
+    return header, ctx[mut_at - 4:mut_at + 5]
+
+
+def test_units_from_context_recentres_minimal_epitopes_on_their_mutation():
+    ctx = "".join("ACDEFGHIKLMNPQRSTVWY"[i % 20] for i in range(55))
+    header, epitope = _record("GENE1", ctx, 27)
+    units = vector.units_from_context(
+        [{"peptide": epitope, "gene": "GENE1", "allele": "HLA-A*02:01", "p": "0.7"}],
+        [(header, epitope)])
+    assert len(units) == 1
+    u = units[0]
+    assert len(u.peptide) == 27
+    assert u.peptide[u.mutation_index] == ctx[27]
+    assert u.gene == "GENE1" and u.allele == "HLA-A*02:01" and u.p == 0.7
+
+
+def test_units_from_context_collapses_registers_of_one_variant_to_one_unit():
+    """Twenty registers of one mutation are one thing to put in a cassette, and `select` spends
+    capacity per unit -- so the group must collapse, keeping its best-scoring row's allotype."""
+    ctx = "".join("ACDEFGHIKLMNPQRSTVWY"[i % 20] for i in range(55))
+    header, _ = _record("GENE1", ctx, 27)
+    rows = [{"peptide": ctx[27 - k:27 + 9 - k], "gene": "GENE1",
+             "allele": f"HLA-A*02:0{k + 1}", "p": str(0.1 * (k + 1))} for k in range(4)]
+    units = vector.units_from_context(rows, [(header, "")])
+    assert len(units) == 1
+    assert units[0].p == pytest.approx(0.4)
+    assert units[0].allele == "HLA-A*02:04"
+
+
+def test_units_from_context_skips_windows_with_no_marked_mutation():
+    """Fusion and CNV headers use different delimiters and have no single mutated residue."""
+    units = vector.units_from_context(
+        [{"peptide": "SIINFEKL", "gene": "X", "allele": "H2-Kb", "p": "0.9"}],
+        [("Fusion:A--B:INFRAME:SIINFEKLSIINFEKL|X:E1--E2:G1--G2:--:0.3:1:0", "SIINFEKL")])
+    assert units == []

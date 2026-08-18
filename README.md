@@ -1,10 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/mhcmatch_dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="assets/mhcmatch_light.svg">
-    <!-- Absolute PNG fallback: PyPI strips <picture>/<source> and cannot render a relative or
-         raw-served SVG, so the logo must be an absolute-URL raster here. GitHub uses the SVG sources. -->
-    <img alt="mhcmatch" src="https://raw.githubusercontent.com/antigenomics/mhcmatch/master/assets/mhcmatch_dark.png" width="340">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/antigenomics/mhcmatch/master/assets/mhcmatch_dark.png">
+    <img alt="mhcmatch" src="https://raw.githubusercontent.com/antigenomics/mhcmatch/master/assets/mhcmatch_light.png" width="340">
   </picture>
 </p>
 
@@ -155,6 +152,20 @@ expected yield per slot, so diversification falls out of the arithmetic instead 
 `order()` tries **no spacer first** and picks the layout minimising the strongest predicted binder
 spanning each junction; `slippery_sites()`/`deslip()` remove the m1Ψ +1-frameshift motif, which
 matters more for a concatemer than for a natural ORF.
+
+Both ends join to the rest of the library. `--context windows.fasta` takes `rank`'s **minimal
+epitopes** and rebuilds them as long units against the FASTA they were called on, one per variant
+rather than one per register — a minimal peptide loads onto any cell without costimulation and is
+the tolerising configuration, so the reader will not take one. `--fasta-nt` writes the coding
+sequence: highest-usage human codon per residue, backed off to shorten homopolymers, then deslipped.
+It is **not a codon optimiser** — it fixes the two things that break a concatemer specifically and
+leaves GC, structure and CpG to the manufacturer's tooling.
+
+```zsh
+mhcmatch rank fasta windows.fasta --alleles "$HLA" --out ranked.tsv
+mhcmatch vector --candidates ranked.tsv --context windows.fasta --n0 8 --screen \
+    --fasta cassette.faa --fasta-nt cassette.fna
+```
 
 ⚠️ **`mimicry` is a scoring term, not a safety screen.** Flagging candidates by "resembles a
 tolerance-side reference" fires on almost everything — influenza `GILGFVFTL` drew 14
