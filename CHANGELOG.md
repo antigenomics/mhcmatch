@@ -10,32 +10,43 @@ versioning is [SemVer](https://semver.org).
 
 ### Added
 
-- **`mhcmatch.recognition` — the definitive recognition head.** 105 features: amino-acid counts,
-  length, the ten Kidera factors summed separately over the MHC-facing and TCR-facing residues, and
-  32 principal components each of ESM2 embeddings mean-pooled over those same two faces. Fitted per
-  species on the rebuilt Chowell corpus, never pooled.
-  It takes what the caller knows at whatever resolution they know it: peptide with both masks given,
-  peptide with an MHC (masks from the allele's layout), or peptide alone (the class-I default).
-  `roles=` accepts an explicit per-residue mask, which is the hook for a class-II register or a
-  measured contact set.
-- `complement.kidera_design(peptides, anchors=..., roles=...)` — all ten Kidera factors by role. The
-  fitted model uses KF4 because that is the axis the role split was established on; of the thirty
-  candidate columns it is the two strongest, `kf4_anchor` (|z| 23.6, significant on all eight
-  benchmark arms) and `kf4_tcr` (19.6, six arms), against 10.8 for the next factor.
-- `tools/build_recognition.py`, a self-contained PEP 723 script carrying its own ESM2 environment,
-  so the heavy dependency is never needed just to import the package.
-- Optional extra `mhcmatch[esm]` (torch, transformers). `recognition.score` raises if it is absent
-  rather than dropping a third of the design.
-- `bootstrap --reference` now fetches `immunogenicity/chowell_iedb_full.tsv.gz`, the rebuilt corpus.
+- **`mhcmatch.recognition` — the recognition head, as three models rather than one.** Each is
+  fitted alone so their fit criteria are comparable and each score is readable on its own terms.
+  The default is whichever wins BIC, currently `posbayes` for both species.
+
+  | head | parameters | what it is |
+  |---|--:|---|
+  | `posbayes` | 3 | naive Bayes over amino-acid identity conditioned on **face**, scored as a summed log-likelihood ratio. Two 20-cell tables. Pure numpy |
+  | `physchem_glm` | 23 | raw Kidera sums per face; `KF0` is the constant 1, so its face sums are the face sizes and length is never a separate feature |
+  | `esm64_glm` | 65 | 64 components of a whole-peptide ESM2 pool. Most accurate on mouse, least explainable |
+
+  **The default head needs no optional dependency.** A user who never installs `mhcmatch[esm]` gets
+  a complete fitted model, not a degraded one.
+
+- The split is by **face**, not by absolute position, because peptide length is not fixed and a
+  model conditioned on position is not well defined across an 8-mer and an 11-mer.
+- `recognition.log_odds_table()` prints the whole of `posbayes` — forty numbers.
+- `score_mhc2` applies the MHC-I coefficients to the class-II binding core with P1/P4/P6/P9 as
+  groove-facing. There is no fitted class-II model and no corpus to fit one on; it warns at runtime
+  and the docs say so in a box. Scoring the core rather than the whole peptide keeps the face sizes
+  inside the fitted range.
+- `complement.kidera_design(peptides, anchors=…, roles=…)` — all ten Kidera factors by role.
+- `tools/build_recognition.py`, carrying its own PEP 723 environment.
+- Optional extra `mhcmatch[esm]`; the `esm64_glm` head raises if it is absent rather than dropping
+  its features silently.
+- `bootstrap --reference` fetches `immunogenicity/chowell_iedb_full.tsv.gz`.
 - A `PROVENANCE.md` entry for `complement_mhc1_*.json`, which had none.
 
 ### Notes
 
-- `mhcmatch.complement` is unchanged and still shipped. `recognition` is an addition, not a
-  replacement, and the recorded AUROCs for `complement` continue to belong to the arms it was
-  fitted on.
-- Resampling the training negatives to match population HLA usage was measured and **loses**
-  (-0.019 human, -0.058 mouse against held-out published deposits), so the unmatched arm ships.
+- Coefficients come from `chowell_iedb_full_matched` — the rebuilt corpus with negatives resampled
+  so the allele group carries no signal about the label. Measured cost against the unmatched arm,
+  stated once: about 0.02 (human) and 0.06 (mouse) held-out AUROC.
+- `mhcmatch.complement` is unchanged and still shipped. `recognition` is an addition; the recorded
+  AUROCs for `complement` still belong to the arms it was fitted on.
+- On the matched arm the two `posbayes` face tables correlate +0.94 (human) and +0.86 (mouse), with
+  3/20 and 2/20 residues differing in sign. The face split is what makes the model length-agnostic,
+  but on this corpus the two faces largely agree.
 
 ## [0.14.0] - 2026-08-18
 

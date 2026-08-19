@@ -1,28 +1,32 @@
-"""Recognition score for MHC-I epitopes: what a T-cell repertoire is likely to see.
+"""Recognition score for MHC epitopes: how immunogenic a peptide looks, given how it is presented.
 
-This is the definitive recognition head. It answers one question -- given a peptide, and as much as
-is known about how it is presented, how immunogenic does it look -- and it takes that knowledge at
-whatever resolution the caller has:
+Three heads, each fitted alone so that their fit criteria are comparable and each score is readable
+on its own terms. The default is whichever wins BIC on the training arm, which is currently
+``posbayes`` for both species:
 
-* **peptide, MHC and both masks.** Nothing is guessed. Use this when the interface is measured, or
-  when a class-II register or a structure says which residues face the groove.
-* **peptide and MHC.** The masks are derived from the allele, through the same anchor layout the
-  presentation model uses.
-* **peptide alone.** The class-I default split ``(0, 1, 2, -2, -1)`` is applied. Pass a
-  :class:`~mhcmatch.store.Store` as ``store=`` to have the best-presenting allele chosen first and
-  its own layout used instead.
+``posbayes``
+    Naive Bayes over amino-acid identity conditioned on **face** -- MHC-facing or TCR-facing --
+    scored as a summed log-likelihood ratio. Two 20-cell tables, three parameters. Conditioning on
+    the face rather than on absolute position is what keeps it well defined when peptide length
+    varies, and it is why the two tables can disagree in sign without anything being told to flip.
+    Pure numpy, no optional dependency, and the whole model prints in forty numbers.
 
-The design is 105 features: 20 amino-acid counts, length, the ten Kidera factors summed separately
-over the MHC-facing and TCR-facing residues, and 32 principal components each of ESM2 embeddings
-mean-pooled over those same two faces. Fitted per species on the rebuilt Chowell corpus, never
-pooled. Selection of both the feature set and the training arm is recorded in
-``bench/results/recognition_model.md`` of the benchmark repository -- in particular, resampling the
-negatives to match population HLA usage was measured and **loses** (-0.019 human, -0.058 mouse on
-held-out published deposits), so the unmatched arm is what ships.
+``physchem_glm``
+    Raw sums of the Kidera factors over each face. Length is not a separate feature: summing a
+    constant-1 factor over a face gives that face's size, so it enters as :math:`KF_0` and the two
+    face sizes add to the peptide length. 22 features, all interpretable.
 
-The ESM components need ``torch`` and ``transformers``; everything else is numpy. Install with
-``pip install 'mhcmatch[esm]'``. :func:`score` raises a clear error rather than silently dropping
-the block, because a model missing a third of its design is not the model that was validated.
+``esm64_glm``
+    64 principal components of a whole-peptide ESM2 pool. The most accurate head on mouse and the
+    least explainable; needs ``pip install 'mhcmatch[esm]'``.
+
+All three take what the caller knows, at whatever resolution they know it: peptide with both masks
+given, peptide with an MHC (masks from the allele's layout), or peptide alone (the class-I default).
+
+Coefficients come from ``chowell_iedb_full_matched`` -- the rebuilt Chowell corpus with negatives
+resampled so the allele group carries no signal about the label, so no coefficient can be paid for
+recognising which allele happened to be typed. Selection, transfer and the full metric matrix are in
+``bench/results/shipped_models.md``.
 """
 
 from __future__ import annotations
@@ -33,13 +37,14 @@ import os
 
 import numpy as np
 
-__all__ = ["SPECIES", "PARAMS", "table", "feature_names", "roles_for", "design", "score",
-           "posterior", "embed", "mhc2_core", "score_mhc2", "MHC2_ANCHORS"]
+__all__ = ["HEADS", "SPECIES", "table", "default_head", "feature_names", "roles_for", "design",
+           "score", "posterior", "embed", "mhc2_core", "score_mhc2", "MHC2_ANCHORS",
+           "log_odds_table"]
 
-_SRC = "recognition_mhc1_{}.json"
-_PCA = "recognition_esm_pca.npz"
 SPECIES = ("human", "mouse")
+HEADS = ("posbayes", "physchem_glm", "esm64_glm")
 ESM_MODEL = "facebook/esm2_t33_650M_UR50D"
+KIDERA = tuple(f"KF{i}" for i in range(1, 11))
 #: 0-based P1/P4/P6/P9 within the register-anchored 9-mer core.
 MHC2_ANCHORS = (0, 3, 5, 8)
 
@@ -48,41 +53,54 @@ def _data(name: str) -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", name)
 
 
-def _load(species: str) -> dict:
-    with open(_data(_SRC.format(species))) as fh:
+@functools.lru_cache(maxsize=None)
+def table(head: str = None, species: str = "human") -> dict:
+    """Fitted parameters for one head. ``head=None`` resolves to the BIC-chosen default."""
+    if species not in SPECIES:
+        raise KeyError(f"no recognition table for {species!r}; have {', '.join(SPECIES)}")
+    head = head or default_head(species)
+    if head not in HEADS:
+        raise KeyError(f"unknown head {head!r}; have {', '.join(HEADS)}")
+    with open(_data(f"recognition_{head}_mhc1_{species}.json")) as fh:
         p = json.load(fh)
     k = len(p["features"])
-    for key in ("coef", "blocks"):
-        if len(p[key]) != k:
-            raise ValueError(f"recognition/{species}: {key} has {len(p[key])} of {k} entries")
-    for key in ("mean", "std"):
-        if len(p["standardizer"][key]) != k:
-            raise ValueError(f"recognition/{species}: standardizer {key} does not match features")
+    if len(p["coef"]) != k or len(p["standardizer"]["mean"]) != k:
+        raise ValueError(f"recognition/{head}/{species}: coefficients do not match features")
     return p
 
 
-PARAMS = {s: _load(s) for s in SPECIES}
+@functools.lru_cache(maxsize=1)
+def _defaults() -> dict:
+    with open(_data("recognition_default.json")) as fh:
+        return json.load(fh)
 
 
-def table(species: str = "human") -> dict:
-    if species not in PARAMS:
-        raise KeyError(f"no recognition table for {species!r}; have {', '.join(SPECIES)}")
-    return PARAMS[species]
+def default_head(species: str = "human") -> str:
+    """The head with the lowest BIC on the training arm, which is what ``score`` uses by default."""
+    return _defaults()["default"][species]
 
 
-def feature_names(species: str = "human") -> list[str]:
-    return list(table(species)["features"])
+def feature_names(head: str = None, species: str = "human") -> list[str]:
+    return list(table(head, species)["features"])
 
+
+def log_odds_table(species: str = "human") -> dict:
+    """``posbayes``'s two 20-cell tables as ``{face: {residue: log-odds}}``. The whole model."""
+    t = table("posbayes", species)
+    aa = t["alphabet"]
+    return {face: dict(zip(aa, vals)) for face, vals in t["log_odds"].items()}
+
+
+# ------------------------------------------------------------------ faces
 
 def roles_for(peptides, mhc=None, anchors=None, store=None, cls="MHCI"):
     """Per-peptide boolean masks, ``True`` where the residue faces the MHC.
 
-    Resolution order is explicit ``anchors``, then the allele's own layout via ``store``, then the
-    class-I default. The returned masks are what :func:`design` splits on, so a caller that wants a
-    measured interface simply passes it here.
+    Resolution order is explicit ``anchors``, then the allele's layout via ``store``, then the
+    class-I default. Everything downstream reads this, so it is the one thing worth getting right.
     """
     out = []
-    default = tuple(table("human")["anchors"])
+    default = tuple(table("posbayes")["anchors"])
     for i, p in enumerate(peptides):
         L = len(p)
         if anchors is not None:
@@ -97,14 +115,53 @@ def roles_for(peptides, mhc=None, anchors=None, store=None, cls="MHCI"):
     return out
 
 
+# ------------------------------------------------------------------ the three designs
+
+@functools.lru_cache(maxsize=1)
+def _kidera_basis():
+    from .data import aa_tables
+    from . import complement as CM
+    tab = aa_tables.DESCRIPTORS["KIDERA"]
+    # KF0 is the constant 1: summed over a face it is that face's size, so length is not separate
+    return np.vstack([np.ones(20), [[tab[k][a] for a in CM.AA] for k in KIDERA]])
+
+
+def _codes(peptides):
+    from . import complement as CM
+    ix = {a: i for i, a in enumerate(CM.AA)}
+    return [np.array([ix[c] for c in p]) for p in peptides]
+
+
+def _posbayes(peptides, roles, t):
+    X = np.zeros((len(peptides), 2))
+    tab = {0: np.asarray(t["log_odds"]["tcr"]), 1: np.asarray(t["log_odds"]["anchor"])}
+    for n, (code, m) in enumerate(zip(_codes(peptides), roles)):
+        for j, c in enumerate(code):
+            f = 1 if m[j] else 0
+            X[n, f] += tab[f][c]
+    return X
+
+
+def _physchem(peptides, roles):
+    vec = _kidera_basis()
+    X = np.zeros((len(peptides), 22))
+    for n, (code, m) in enumerate(zip(_codes(peptides), roles)):
+        m = np.asarray(m)
+        a_i, t_i = code[m], code[~m]
+        for j in range(11):
+            X[n, 2 * j] = vec[j][a_i].sum() if a_i.size else 0.0
+            X[n, 2 * j + 1] = vec[j][t_i].sum() if t_i.size else 0.0
+    return X
+
+
 @functools.lru_cache(maxsize=2)
 def _esm():
     try:
         import torch
         from transformers import AutoTokenizer, EsmModel
-    except ImportError as e:                                   # pragma: no cover - env dependent
-        raise ImportError(
-            "the recognition score needs ESM2 embeddings: pip install 'mhcmatch[esm]'") from e
+    except ImportError as e:                              # pragma: no cover - env dependent
+        raise ImportError("the esm64_glm head needs ESM2 embeddings: "
+                          "pip install 'mhcmatch[esm]'. The default head does not.") from e
     dev = "mps" if torch.backends.mps.is_available() else (
         "cuda" if torch.cuda.is_available() else "cpu")
     tok = AutoTokenizer.from_pretrained(ESM_MODEL)
@@ -112,86 +169,70 @@ def _esm():
     return torch, tok, mdl, dev
 
 
-def embed(peptides, roles, batch: int = 256) -> tuple[np.ndarray, np.ndarray]:
-    """Mean-pooled ESM2 embeddings over the MHC-facing and the TCR-facing residues.
+def embed(peptides, batch: int = 256) -> np.ndarray:
+    """Whole-peptide mean-pooled ESM2 embeddings, ``(n, 1280)``.
 
-    Returns ``(anchor, tcr)``, each ``(n, 1280)``. Batched by length so no padding is needed and the
-    mask is one slice per batch.
+    Batched **within** length groups: slicing batches out of a length-sorted list and keeping only
+    what matches the batch's first length silently leaves the rest unembedded.
     """
     torch, tok, mdl, dev = _esm()
-    n = len(peptides)
-    dim = mdl.config.hidden_size
-    A = np.zeros((n, dim), dtype=np.float32)
-    T = np.zeros((n, dim), dtype=np.float32)
-    # Group by length first, then batch inside each group. Batching a length-sorted list and
-    # keeping only the entries matching the batch's first length leaves the rest unembedded.
+    out = np.zeros((len(peptides), mdl.config.hidden_size), dtype=np.float32)
     by_len: dict[int, list[int]] = {}
     for i, p in enumerate(peptides):
         by_len.setdefault(len(p), []).append(i)
     for L, group in sorted(by_len.items()):
-        for start in range(0, len(group), batch):
-            idx = group[start:start + batch]
+        for s in range(0, len(group), batch):
+            idx = group[s:s + batch]
             enc = tok([peptides[i] for i in idx], return_tensors="pt",
                       add_special_tokens=True, padding=True).to(dev)
             with torch.no_grad():
-                h = mdl(**enc).last_hidden_state[:, 1:L + 1, :]     # strip BOS/EOS
-            for row, i in enumerate(idx):
-                anc = [j for j in range(L) if roles[i][j]]
-                tcr = [j for j in range(L) if not roles[i][j]]
-                if anc:
-                    A[i] = h[row, anc, :].mean(0).float().cpu().numpy()
-                if tcr:
-                    T[i] = h[row, tcr, :].mean(0).float().cpu().numpy()
-    return A, T
+                h = mdl(**enc).last_hidden_state[:, 1:L + 1, :]
+            out[idx] = h.mean(1).float().cpu().numpy()
+    return out
 
 
-def design(peptides, species: str = "human", *, mhc=None, anchors=None, store=None,
-           cls: str = "MHCI", roles=None) -> np.ndarray:
-    """The ``(n, 105)`` design matrix in :func:`feature_names` order, before standardization."""
-    from . import complement as CM
-    t = table(species)
+def _esm64(peptides, t):
+    pca = np.load(_data("recognition_esm_pca.npz"))
+    n = t["esm"]["n_components"]
+    if pca["all_components"].shape[0] < n:
+        raise ValueError(f"recognition_esm_pca.npz carries "
+                         f"{pca['all_components'].shape[0]} components, the head needs {n}")
+    return (embed(peptides) - pca["all_mean"]) @ pca["all_components"][:n].T
+
+
+def design(peptides, species: str = "human", head: str = None, *, mhc=None, anchors=None,
+           store=None, cls: str = "MHCI", roles=None) -> np.ndarray:
+    """The design matrix for one head, in :func:`feature_names` order, before standardization."""
+    head = head or default_head(species)
+    t = table(head, species)
     peptides = list(peptides)
     if roles is None:
         roles = roles_for(peptides, mhc=mhc, anchors=anchors, store=store, cls=cls)
-
-    aa = CM.AA
-    ix = {a: i for i, a in enumerate(aa)}
-    comp = np.zeros((len(peptides), len(aa)))
-    for n, p in enumerate(peptides):
-        for c in p:
-            comp[n, ix[c]] += 1
-    length = np.array([[len(p)] for p in peptides], float)
-
-    kid = CM.kidera_design(peptides, roles=roles)
-    keep = [i for i, c in enumerate(CM.kidera_names()) if not c.endswith("_all")]
-    kid = kid[:, keep]
-
-    A, T = embed(peptides, roles)
-    pca = np.load(_data(_PCA))
-    npc = t["esm"]["n_components"]
-    ea = (A - pca["anchor_mean"]) @ pca["anchor_components"][:npc].T
-    et = (T - pca["tcr_mean"]) @ pca["tcr_components"][:npc].T
-    return np.column_stack([comp, length, kid, ea, et])
+    if head == "posbayes":
+        return _posbayes(peptides, roles, t)
+    if head == "physchem_glm":
+        return _physchem(peptides, roles)
+    return _esm64(peptides, t)
 
 
-def score(peptides, species: str = "human", **kw) -> np.ndarray:
-    """Recognition log-odds, on the scale the model was fitted on.
+def score(peptides, species: str = "human", head: str = None, **kw) -> np.ndarray:
+    """Recognition log-odds. Higher is more likely to be immunogenic.
 
-    Higher is more likely to be immunogenic. The value is **not** a probability -- pass it through
-    :func:`posterior` with a prior appropriate to the set being scored.
+    Not a probability -- pass it through :func:`posterior` with a prior for the set being scored.
     """
-    t = table(species)
-    X = design(peptides, species, **kw)
+    head = head or default_head(species)
+    t = table(head, species)
+    X = design(peptides, species, head, **kw)
     m = np.asarray(t["standardizer"]["mean"])
     s = np.asarray(t["standardizer"]["std"])
-    return ((X - m) / s) @ np.asarray(t["coef"])
+    return float(t["intercept"]) + ((X - m) / s) @ np.asarray(t["coef"])
 
 
-def posterior(peptides, prior: float, species: str = "human", **kw) -> np.ndarray:
+def posterior(peptides, prior: float, species: str = "human", head: str = None, **kw):
     """``sigmoid(score + logit(prior))``. ``prior`` is the immunogenic rate expected of the set."""
     if not 0.0 < prior < 1.0:
         raise ValueError("prior must be a probability")
-    z = score(peptides, species, **kw) + float(np.log(prior / (1.0 - prior)))
+    z = score(peptides, species, head, **kw) + float(np.log(prior / (1.0 - prior)))
     return 1.0 / (1.0 + np.exp(-z))
 
 
@@ -201,19 +242,12 @@ _WARNED = False
 
 
 def mhc2_core(peptides, register_start=None):
-    """The register-anchored 9-mer core of each class-II peptide, and where it starts.
-
-    Uses the one-pass heuristic register in :mod:`mhcmatch.store` unless ``register_start`` pins the
-    frame -- pass :meth:`mhcmatch.diffusion.AnchorModel.best_register` to annotate with the same
-    frame a per-allele model scored on. Peptides shorter than nine residues yield ``(None, None)``.
-    """
+    """The register-anchored 9-mer core of each class-II peptide, and where it starts."""
     from .store import _mhc2_register
     cores, starts = [], []
     for i, p in enumerate(peptides):
-        if register_start is not None:
-            s = register_start[i] if isinstance(register_start, (list, tuple)) else register_start
-        else:
-            s = _mhc2_register(p)
+        s = (register_start[i] if isinstance(register_start, (list, tuple)) else register_start) \
+            if register_start is not None else _mhc2_register(p)
         if s is None or not 0 <= s <= len(p) - 9:
             cores.append(None)
             starts.append(None)
@@ -223,39 +257,31 @@ def mhc2_core(peptides, register_start=None):
     return cores, starts
 
 
-def score_mhc2(peptides, species: str = "human", *, register_start=None, warn: bool = True):
-    """Recognition score for class-II peptides, on an **MHC-I-trained model**. Read this first.
+def score_mhc2(peptides, species: str = "human", head: str = None, *, register_start=None,
+               warn: bool = True):
+    """Class-II score on an **MHC-I-fitted model**. Read this before using the number.
 
-    There is no fitted class-II recognition model here, and this is not one. There is no class-II
-    immunogenicity corpus with a usable negative set to fit against: the negatives every arm in this
-    work uses are eluted self ligands paired with T-cell-assay positives, and that construction has
-    not been built for class II. What this function does is apply the class-I coefficients to the
-    class-II binding core, with the groove-facing positions redefined as P1/P4/P6/P9 of the
-    register-anchored 9-mer rather than the class-I P2/P|Omega| pattern.
+    There is no fitted class-II recognition model here, and this is not one: no class-II
+    immunogenicity corpus with a usable negative set exists to fit against. This applies the class-I
+    coefficients to the class-II binding core, with the groove-facing positions redefined as
+    P1/P4/P6/P9 of the register-anchored 9-mer.
 
-    Two reasons that is worth something rather than nothing. The design is mostly interface geometry
-    -- Kidera factors and ESM embeddings pooled over the groove-facing and TCR-facing residues -- and
-    that split is defined for class II too. And scoring the **core** rather than the whole peptide
-    keeps every feature in the range the model was fitted on: nine residues, composition summing to
-    nine, length fixed. Scoring a 15-mer directly would put `length` five standard deviations outside
-    the fitted range and scale every count with it.
+    Scoring the **core** rather than the whole peptide keeps every feature in the range the model was
+    fitted on -- nine residues, face sizes of four and five. Scoring a 15-mer directly would put the
+    face sizes far outside it. But the coefficients were fitted where the groove-facing residues are
+    the termini and the TCR-facing ones a contiguous middle, and in class II the two faces
+    interleave, so a coefficient learned on one geometry is being read on another. The register is
+    also a heuristic unless supplied, and an error in the frame moves every residue between faces.
 
-    Two reasons to distrust the number anyway. The coefficients were fitted where the groove-facing
-    residues are the termini and the TCR-facing ones are a contiguous middle; in class II the
-    groove-facing positions are interior and the faces interleave, so a coefficient learned on one
-    geometry is being read on another. And the class-II register is itself a heuristic here, so an
-    error in the frame moves every residue between the two faces.
-
-    Use it to rank class-II peptides against each other. Do not compare the values to class-I scores,
-    do not read them as calibrated, and do not report them without saying which model produced them.
-
-    Returns ``nan`` for any peptide with no assignable 9-mer core.
+    Rank class-II peptides against each other with it. Do not compare the values with class-I
+    scores, do not read them as calibrated, and say which model produced any number you report.
+    ``nan`` where no 9-mer core can be assigned.
     """
     global _WARNED
     if warn and not _WARNED:
         import warnings
         warnings.warn(
-            "recognition.score_mhc2 applies MHC-I-trained coefficients to a class-II core: there is "
+            "recognition.score_mhc2 applies MHC-I-fitted coefficients to a class-II core: there is "
             "no fitted class-II model and no class-II corpus to fit one on. Ranking only.",
             UserWarning, stacklevel=2)
         _WARNED = True
@@ -267,6 +293,5 @@ def score_mhc2(peptides, species: str = "human", *, register_start=None, warn: b
         return out
     sub = [cores[i] for i in ok]
     roles = [[j in MHC2_ANCHORS for j in range(9)] for _ in sub]
-    out[ok] = score(sub, species, roles=roles)
+    out[ok] = score(sub, species, head, roles=roles)
     return out
-
