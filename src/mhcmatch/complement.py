@@ -19,13 +19,17 @@ block         what it adds
               **TCRen marginalised over a real CDR3 repertoire** on the TCR-facing
               residues. TCRen is only 3.29% one-body, so no per-residue scale can be
               extracted from it and the unknown receptor side is integrated out instead.
-``motif``     Contiguity: longest run, number of runs and above-median fraction of
-              hydrophobic TCR-facing residues. A run of 3-4 is a different object from
-              the same residues scattered, and **no sum can express the difference**.
-``aa``        Residue **identity** as a log-odds per amino acid per role, and the block
-              that knows the peptide's **length**: a pooled anchor/TCR pair whose sum is
-              exactly :func:`mhcmatch.posbayes.llr`, one pair per length bin (8/9/10/11+),
-              and the TCR face in relative thirds.
+``motif``     Contiguity of the **hydropathy stretch**: longest run, number of runs and
+              above-threshold fraction of hydrophobic TCR-facing residues. A run of 3-4 is
+              a different object from the same residues scattered, and **no sum can express
+              the difference**. :data:`KD_THRESHOLD` defines "hydrophobic" and
+              :func:`encode` defines what breaks a run.
+``aa``        Residue **identity** as a log-odds per amino acid per role, and the block that
+              knows the peptide's **geometry**: a pooled anchor/TCR pair whose sum is exactly
+              :func:`mhcmatch.posbayes.llr`, one pair per length bin, and a position key.
+              Same shape in both classes; the length bins are 8/9/10/11+ at class I and
+              quartiles of 11-25 at class II, and the position key is relative thirds of the
+              TCR face at class I and **register zones** at class II.
 ``kmer``      The same over **adjacent TCR-facing residue pairs** -- a preference for a
               specific dipeptide that no marginal composition feature can express.
 ============  =========================================================================
@@ -60,17 +64,22 @@ repertoires, so one fit across them is fitting a mixture. ``score(peps, species=
 Provenance, the block-by-block cross-validation, the corpus-transfer matrix and the size-matched
 cross-species transfer are in the benchmark repo (``bench/results/complementarity.md``).
 
-.. warning::
+**Both classes, and they are two fits rather than one with a parameter.** ``score(peps)`` is class
+I: the role split is P1-P3, PΩ-1, PΩ at fixed peptide positions. ``score(peps, cls="mhc2")`` takes
+the anchors from the P1/P4/P6/P9 core of the floating 9-mer register
+(:func:`mhcmatch.store.anchor_indices`) and reads its own vendored tables, fitted on 603,781 human
+and 50,258 mouse class-II peptides from the IEDB export. Passing a class-II ligand to the class-I
+path labels the wrong residues as anchors and returns a confident, wrong number, so the class is an
+argument and never inferred from the length.
 
-   **Class I only.** The role split is the class-I one (P1-P3, PΩ-1, PΩ). A class-II ligand is
-   anchored by the P1/P4/P6/P9 core of a 9-mer register floating inside a longer peptide
-   (:func:`mhcmatch.store.anchor_indices`), so applying this scheme to it labels the wrong residues
-   as anchors and returns a confident, wrong number.
+Parameters per class and species in ``complement_{mhc1,mhc2}_{human,mouse}.json``. Validation is in
+``bench/results/complementarity.md`` and ``complementarity_mhc2.md``.
 """
 from __future__ import annotations
 
 import json
 import math
+from functools import lru_cache
 from importlib import resources
 from statistics import median
 
@@ -79,7 +88,10 @@ import numpy as np
 from . import ipred
 from .data import aa_tables
 
-__all__ = ["AA", "ANCHORS", "PARATOPE", "PARAMS", "TABLES", "SPECIES", "BLOCKS", "table",
+__all__ = ["AA", "ANCHORS", "PARATOPE", "PARAMS", "TABLES", "SPECIES", "CLASSES", "BLOCKS",
+           "BLOCKS_MHC2", "FITTED", "FITTED_MHC2", "ZONES", "MHC2_ZONES", "LENGTH_BINS",
+           "MHC2_LEN_EDGES", "mhc2_length_bin",
+           "blocks", "fitted", "mhc2_anchors", "table",
            "encode", "apply_log_odds", "design", "feature_names", "features", "score", "kidera_design", "kidera_names",
            "posterior", "parameters"]
 
@@ -101,13 +113,40 @@ PARATOPE = {
     "T": (0.1307, 0.3778), "D": (0.1813, 0.5419), "C": (0.1994, 0.5024), "H": (0.2189, 0.5621),
 }
 
-#: Length bins for the ``aa`` block: 8, 9, 10 and **11+**. Closed at both ends, which is a
+#: The two MHC classes, which are two different constructions and not one with a parameter.
+CLASSES = ("mhc1", "mhc2")
+
+#: Length bins for the class-I ``aa`` block: 8, 9, 10 and **11+**. Closed at both ends, which is a
 #: shippability property and not only a variance one -- a model with one table per *observed* length
 #: cannot score a 12-mer at all, and real inputs contain those.
 LENGTH_BINS = (8, 9, 10, 11)
-#: Relative thirds of the TCR-facing face. The same cell means the same fraction along the peptide
-#: at every length, which is what the contact profile already does for its per-position weights.
+#: Relative thirds of the class-I TCR-facing face. The same cell means the same fraction along the
+#: peptide at every length, which is what the contact profile already does for its per-position
+#: weights.
 TCR_THIRDS = ("tcr_n", "tcr_m", "tcr_c")
+#: Register-relative zones for class II: the residues **before** the 9-mer core, the non-anchor
+#: residues **inside** it, and the residues **after** it.
+#:
+#: This was built as the class-II *replacement* for :data:`LENGTH_BINS`, on the reasoning that a
+#: floating core makes total length uninformative. **The measurement says join, not replace**
+#: (``bench/results/complementarity_mhc2.md``): the zones earn +0.0029 human / +0.0034 mouse AUROC
+#: over the pooled pair, total length earns +0.0070 / +0.0159, and carrying both beats either on
+#: both hosts and both metrics. The reasoning was right about the core and wrong about the ligand --
+#: an 18-mer and a 13-mer with the same core do present the same residues, but a class-II ligand's
+#: length is the length of its **flanks**, which is its own covariate and not a register question.
+MHC2_ZONES = ("nflank", "core", "cflank")
+#: Class-II total-length quartile edges, from the corpus's own distribution (11-25, median 15).
+#: :data:`LENGTH_BINS` cannot be reused: it clamps to 11 and would put every class-II ligand in one
+#: bin.
+MHC2_LEN_EDGES = (14, 16, 19)
+
+
+def mhc2_length_bin(L) -> int:
+    """Which class-II length quartile (0-3) a ligand of length ``L`` falls in. Closed both ends."""
+    return int(sum(int(L) >= e for e in MHC2_LEN_EDGES))
+#: Which zone matrices a class partitions its TCR-facing face into. The pooled ``tcr`` matrix is
+#: their sum in both cases, so the split costs no extra pass and ``posbayes`` stays recoverable.
+ZONES = {"mhc1": TCR_THIRDS, "mhc2": MHC2_ZONES}
 
 
 def length_bin(L) -> int:
@@ -115,15 +154,32 @@ def length_bin(L) -> int:
     return min(max(int(L), LENGTH_BINS[0]), LENGTH_BINS[-1])
 
 
-#: Feature blocks, in the order the benchmark's cumulative ablation adds them.
-BLOCKS = {
+#: Blocks shared by both classes, in the order the benchmark's cumulative ablation adds them. Only
+#: ``aa`` differs between the classes, because only ``aa`` is keyed on peptide geometry.
+_SHARED_BLOCKS = {
     "phys": ["pc1", "pc2", "length"],
     "role": ["pc1_anchor", "pc2_anchor", "pc1_tcr", "pc2_tcr", "kf4_anchor", "kf4_tcr"],
     "pot": ["mj_anchor", "mj_tcr", "para_tcr", "para_sd_tcr"],
     "motif": ["kd_run_max", "kd_run_n", "kd_run_frac"],
+}
+#: Class-I feature blocks. ``BLOCKS`` keeps its name and its contents: it is the class-I layout and
+#: every vendored class-I artifact is written against it.
+BLOCKS = {
+    **_SHARED_BLOCKS,
     "aa": (["aa_anchor", "aa_tcr"]
            + [f"aa_{r}{b}" for b in LENGTH_BINS for r in ("anchor", "tcr")]
            + [f"aa_{t}" for t in TCR_THIRDS]),
+    "kmer": ["kmer_llr"],
+}
+#: Class-II feature blocks. The ``aa`` block has the same **shape** as class I's -- the pooled role
+#: pair, a position key, and a length key -- and differs only in what the position key is: relative
+#: thirds of the TCR face at class I, register zones at class II. See :func:`encode`.
+BLOCKS_MHC2 = {
+    **_SHARED_BLOCKS,
+    "aa": (["aa_anchor", "aa_tcr"]
+           + [f"aa_{z}" for z in MHC2_ZONES]
+           + [f"aa_{r}L{b}" for b in range(len(MHC2_LEN_EDGES) + 1)
+              for r in ("anchor", "tcr")]),
     "kmer": ["kmer_llr"],
 }
 #: Columns computed from a fitted log-odds table rather than from the peptide alone:
@@ -132,19 +188,49 @@ BLOCKS = {
 FITTED = {"aa_anchor": "anchor", "aa_tcr": "tcr", "kmer_llr": "pair",
           **{f"aa_{r}{b}": f"{r}@{b}" for b in LENGTH_BINS for r in ("anchor", "tcr")},
           **{f"aa_{t}": t for t in TCR_THIRDS}}
+#: The class-II equivalent. ``<matrix>@<bin>`` here indexes :func:`mhc2_length_bin`, not
+#: :func:`length_bin` -- :func:`encode` writes the right one into ``counts["bin"]`` per class.
+FITTED_MHC2 = {"aa_anchor": "anchor", "aa_tcr": "tcr", "kmer_llr": "pair",
+               **{f"aa_{z}": z for z in MHC2_ZONES},
+               **{f"aa_{r}L{b}": f"{r}@{b}" for b in range(len(MHC2_LEN_EDGES) + 1)
+                  for r in ("anchor", "tcr")}}
 
-_SRC = "complement_mhc1_{species}.json"
+
+def blocks(cls: str = "mhc1") -> dict:
+    """The feature blocks of one class: :data:`BLOCKS` or :data:`BLOCKS_MHC2`."""
+    _check_cls(cls)
+    return BLOCKS if cls == "mhc1" else BLOCKS_MHC2
+
+
+def fitted(cls: str = "mhc1") -> dict:
+    """The fitted-column map of one class: :data:`FITTED` or :data:`FITTED_MHC2`."""
+    _check_cls(cls)
+    return FITTED if cls == "mhc1" else FITTED_MHC2
+
+
+def _check_cls(cls: str) -> None:
+    if cls not in CLASSES:
+        raise ValueError(f"unknown cls {cls!r} (expected one of {CLASSES})")
+
+_SRC = "complement_{cls}_{species}.json"
 #: Species with a fitted table. Both are the ``chowell_rebuilt`` arm of their own host -- human
 #: 464,161 rows / 14,712 immunogenic, mouse 47,140 / 5,154 -- never pooled, because the two hosts
 #: have different MHC and different thymic repertoires and a fit across them is fitting a mixture.
 SPECIES = ("human", "mouse")
 
 
-def _load(species: str = "human") -> dict:
+def _load(species: str = "human", cls: str = "mhc1") -> dict:
     if species not in SPECIES:
         raise ValueError(f"unknown species {species!r} (expected one of {SPECIES})")
-    src = _SRC.format(species=species)
-    with resources.files("mhcmatch.data").joinpath(src).open() as fh:
+    _check_cls(cls)
+    src = _SRC.format(cls=cls, species=species)
+    ref = resources.files("mhcmatch.data").joinpath(src)
+    if not ref.is_file():
+        raise FileNotFoundError(
+            f"no fitted {cls} / {species} complementarity model: {src} is not vendored. "
+            f"Rebuild it with bench/neoag/complement{'' if cls == 'mhc1' else '_mhc2'}.py in the "
+            f"benchmark repo, or use cls='mhc1', which always ships.")
+    with ref.open() as fh:
         p = json.load(fh)
     k = len(p["features"])
     if len(p["logistic"]["coef"]) != k:
@@ -158,24 +244,37 @@ def _load(species: str = "human") -> dict:
         if len(p["log_odds"][name]) != want:
             raise ValueError(f"{src}: {name} has {len(p['log_odds'][name])} cells, want {want}")
         base = s.split("@")[0]
-        if base not in ("anchor", "tcr", "pair", *TCR_THIRDS):
+        if base not in ("anchor", "tcr", "pair", *ZONES[cls]):
             raise ValueError(f"{src}: {name} weights unknown count matrix {s!r}")
+    if list(p["features"]) != [c for b in blocks(cls).values() for c in b]:
+        raise ValueError(f"{src}: feature list is not the {cls} block layout")
     return p
 
 
-#: The frozen models, one per species: standardizer, linear head, the fitted log-odds tables, and
-#: the EM / supervised Gaussian parameters kept for comparison.
-TABLES: dict = {s: _load(s) for s in SPECIES}
-#: The human table, for callers that predate the species split.
+#: The frozen **class-I** models, one per species: standardizer, linear head, the fitted log-odds
+#: tables, and the EM / supervised Gaussian parameters kept for comparison. Class-I artifacts are
+#: loaded eagerly because every caller that predates the class split expects them present at import.
+TABLES: dict = {s: _load(s, "mhc1") for s in SPECIES}
+#: The human class-I table, for callers that predate the species split.
 PARAMS: dict = TABLES["human"]
+#: ``(cls, species) -> parameters``, filled on first use. Class II is loaded lazily so that a
+#: missing class-II artifact is an error at the call that wanted it, naming the class, rather than
+#: an ImportError on ``import mhcmatch``.
+_TABLES2: dict = {}
 
 
-def table(species: str = "human") -> dict:
-    """The fitted parameters for ``"human"`` or ``"mouse"``."""
-    t = TABLES.get(species)
-    if t is None:
-        raise ValueError(f"unknown species {species!r} (expected one of {SPECIES})")
-    return t
+def table(species: str = "human", cls: str = "mhc1") -> dict:
+    """The fitted parameters for one ``(species, cls)``."""
+    _check_cls(cls)
+    if cls == "mhc1":
+        t = TABLES.get(species)
+        if t is None:
+            raise ValueError(f"unknown species {species!r} (expected one of {SPECIES})")
+        return t
+    key = (cls, species)
+    if key not in _TABLES2:
+        _TABLES2[key] = _load(species, cls)
+    return _TABLES2[key]
 
 
 def _scale_vec(tab: dict) -> np.ndarray:
@@ -196,8 +295,9 @@ def _basis() -> dict[str, np.ndarray]:
 
 
 BASIS = _basis()
-#: The "hydrophobic" cut for the run features: the median of the Kyte-Doolittle scale itself, so it
-#: is a property of the scale rather than a tuned constant. Same rule as
+#: The "hydrophobic" cut for the ``motif`` run features: the median of the Kyte-Doolittle scale
+#: itself over the 20 standard residues (**-0.85**), so it is a property of the scale rather than a
+#: constant tuned on any corpus. It admits ``ACFGILMSTV`` and excludes the other ten. Same rule as
 #: :func:`mhcmatch.immuno._aggregate`.
 #:
 #: Taken from the plain dict with the stdlib rather than from :data:`BASIS` with ``numpy``, because
@@ -206,68 +306,146 @@ BASIS = _basis()
 KD_THRESHOLD = float(median(aa_tables.HYDROPHOBICITY["KyteDoolittle"].values()))
 
 
-def feature_names(species: str = "human") -> list[str]:
+def feature_names(species: str = "human", cls: str = "mhc1") -> list[str]:
     """Column order of the design matrix, matching the vendored coefficients."""
-    return list(table(species)["features"])
+    return list(table(species, cls)["features"])
 
 
-def parameters(species: str = "human") -> dict:
+def parameters(species: str = "human", cls: str = "mhc1") -> dict:
     """The fitted model as a plain dict (a copy of the vendored file)."""
-    return json.loads(json.dumps(table(species)))
+    return json.loads(json.dumps(table(species, cls)))
 
 
-def encode(peptides) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+@lru_cache(maxsize=1 << 16)
+def mhc2_anchors(peptide: str, register: int | None = None) -> tuple:
+    """0-based P1/P4/P6/P9 of a class-II ligand's 9-mer core, memoised.
+
+    Delegates to :func:`mhcmatch.store.anchor_indices`, so the register is the same one
+    ``decompose``, the logos and the signatures use. ``register`` pins the frame -- pass
+    :meth:`mhcmatch.diffusion.AnchorModel.best_register` to annotate with the frame the model
+    actually scored with, rather than the allele-agnostic heuristic.
+
+    The heuristic register is an argmax over up to seventeen offsets **per peptide** and is the only
+    non-vectorised step in :func:`encode`, so it is cached: a corpus repeats its peptides across
+    alleles and folds, and the register does not depend on either.
+    """
+    from .store import anchor_indices
+    return anchor_indices(peptide, "mhc2", register)
+
+
+def _layout(peps, cls: str, registers) -> dict:
+    """``(length, anchor indices) -> row numbers``: rows that share a residue layout.
+
+    For class I the anchors are a function of the length alone, so this is exactly a grouping by
+    length. For class II the register moves *within* a length, so each ``(length, register)`` is its
+    own group -- which is why the grouping key is the anchor tuple and not the length.
+    """
+    groups: dict = {}
+    for i, p in enumerate(peps):
+        L = len(p)
+        if L < 3:
+            continue
+        if cls == "mhc1":
+            key = (L, tuple(sorted(a % L for a in ANCHORS)))
+        else:
+            key = (L, mhc2_anchors(p, None if registers is None else registers[i]))
+        groups.setdefault(key, []).append(i)
+    return groups
+
+
+def _zone_positions(L: int, anc: np.ndarray, anchor_idx: tuple, cls: str) -> list:
+    """The TCR-facing positions of one layout, partitioned into that class's :data:`ZONES`."""
+    tcr_pos = [j for j in range(L) if not anc[j]]
+    if cls == "mhc1":
+        # Relative thirds: the same cell means the same fraction along the peptide at every length.
+        k = len(tcr_pos)
+        return [tcr_pos[int(k * f):int(k * g)] for f, g in ((0, 1 / 3), (1 / 3, 2 / 3), (2 / 3, 1))]
+    # Register-relative: before the core, inside it, after it. A ligand too short to carry a core
+    # has no anchors and no flanks, and every residue is filed under `core`.
+    s = anchor_idx[0] if anchor_idx else 0
+    return [[j for j in tcr_pos if j < s],
+            [j for j in tcr_pos if s <= j < s + 9],
+            [j for j in tcr_pos if j >= s + 9]]
+
+
+def encode(peptides, cls: str = "mhc1", registers=None) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
     """``(features, counts)`` for an iterable of peptides -- the vectorised feature builder.
 
     Everything additive is a matrix product against a residue vector, so the peptide-side feature
     set is two (n, 20) count matrices (one per role) times seven property vectors. Run statistics
-    need position order and use a loop over **positions** (at most 11 iterations), never over
-    peptides. Peptides are grouped by length so each group is one batch of array operations.
+    need position order and use a loop over **positions** (at most 25 iterations), never over
+    peptides. Peptides are grouped by residue layout so each group is one batch of array operations.
 
     ``counts`` carries ``anchor`` and ``tcr`` (n, 20) -- the matrices the ``aa`` log-odds tables
-    weight -- plus the adjacent TCR-facing residue pairs as a **sparse pair list**, ``pair_code``
-    (which of 400 pairs) and ``pair_row`` (which peptide). A 9-mer has at most 3 such pairs, so a
-    dense (n, 400) matrix would be 99% zeros and would cost 1.5 GB of temporaries per pass on a
-    500k-peptide corpus; :func:`apply_log_odds` sums the sparse form instead.
+    weight -- plus that class's :data:`ZONES` matrices and the adjacent TCR-facing residue pairs as
+    a **sparse pair list**, ``pair_code`` (which of 400 pairs) and ``pair_row`` (which peptide). A
+    9-mer has at most 3 such pairs, so a dense (n, 400) matrix would be 99% zeros and would cost
+    1.5 GB of temporaries per pass on a 500k-peptide corpus; :func:`apply_log_odds` sums the sparse
+    form instead.
 
-    Non-standard residues (``X`` masks, ``B``/``J``/``O``/``U``/``Z``) contribute to no count and
-    break no run, but still count toward ``length``.
+    **The two classes differ in one place and it is deliberate.** Class I is anchored at fixed
+    peptide positions (:data:`ANCHORS`), so its geometry is a function of the peptide's *length*:
+    the ``aa`` block carries one table per :data:`LENGTH_BINS` bin, and the TCR face is split into
+    relative thirds. A class-II ligand is anchored by a 9-mer core that **floats** inside an
+    11--25-mer, so its total length is the length of its flanking regions and carries no register
+    information -- an 18-mer and a 13-mer with the same core present the same residues to the
+    receptor. Binning a class-II table on total length would therefore split it on a variable that
+    says nothing about the object being modelled. The class-II construction bins on the register
+    instead (:data:`MHC2_ZONES`): before the core, inside it, after it. That both classes reach the
+    same ``aa_anchor`` / ``aa_tcr`` pooled pair on top of it is what keeps
+    :func:`mhcmatch.posbayes.llr` a strict special case of either.
+
+    ``registers`` (class II only) pins each peptide's core to an explicit frame, element for element
+    with ``peptides``; ``None`` uses the allele-agnostic heuristic register.
+
+    **The hydropathy stretch, exactly.** A residue enters the ``motif`` block when all three hold:
+    it is **TCR-facing** (an anchor is buried in the groove and is not part of any stretch the
+    receptor reads), it is one of the 20 standard residues, and its **Kyte-Doolittle** value exceeds
+    :data:`KD_THRESHOLD`. ``kd_run_max`` is then the longest run of consecutive such positions,
+    ``kd_run_n`` the number of runs (counted as rising edges, so ``IIDI`` is two runs and ``IIDD``
+    is one), and ``kd_run_frac`` the above-threshold count divided by the number of TCR-facing
+    positions. An anchor **breaks** a run rather than bridging it: two stretches either side of a
+    buried residue are two stretches.
+
+    Non-standard residues (``X`` masks, ``B``/``J``/``O``/``U``/``Z``) contribute to no count matrix
+    and to no property sum, but they still count toward ``length`` -- and in the ``motif`` block they
+    behave exactly like a below-threshold residue rather than like a gap. A mask **breaks a run**
+    (``AAAIIXIAA`` gives ``kd_run_max = 2``, the same as ``AAAIIDIAA``, not the 3 it would give if
+    the mask were transparent) and it sits in ``kd_run_frac``'s denominator while never entering its
+    numerator. That is the conservative reading of an unknown residue -- it is not evidence of a
+    continued hydrophobic stretch -- and it is stated here because the opposite was once claimed.
     """
+    _check_cls(cls)
     peps = [str(p).strip().upper() for p in peptides]
     n = len(peps)
+    zone_names = ZONES[cls]
     c_anc = np.zeros((n, 20))
-    c_third = {t: np.zeros((n, 20)) for t in TCR_THIRDS}
-    bins = np.array([length_bin(len(p)) for p in peps], dtype=np.int16)
+    c_zone = {z: np.zeros((n, 20)) for z in zone_names}
+    # The `<matrix>@<bin>` machinery is shared; what `bin` MEANS is per class. Class I bins on the
+    # peptide length clamped to 8-11; class II on the quartile of the 11-25 ligand range, because
+    # LENGTH_BINS would put every class-II ligand in one bin.
+    _bin = length_bin if cls == "mhc1" else mhc2_length_bin
+    bins = np.array([_bin(len(p)) for p in peps], dtype=np.int16)
     pair_code: list = []
     pair_row: list = []
     out = {k: np.zeros(n) for k in ("kd_run_max", "kd_run_n", "kd_run_frac")}
     out["length"] = np.array([len(p) for p in peps], dtype=float)
 
-    by_len: dict[int, list[int]] = {}
-    for i, p in enumerate(peps):
-        by_len.setdefault(len(p), []).append(i)
-
-    for L, idx in by_len.items():
-        if L < 3:
-            continue
+    for (L, anchor_idx), idx in _layout(peps, cls, registers).items():
         rows = np.array(idx)
         code = np.array([[_AAI.get(ch, -1) for ch in peps[i]] for i in rows], dtype=np.int16)
         anc = np.zeros(L, dtype=bool)
-        for a in ANCHORS:
-            anc[a % L] = True
+        anc[list(anchor_idx)] = True
         valid = code >= 0
         safe = np.where(valid, code, 0)
 
-        # The TCR face is accumulated in relative thirds; the pooled `tcr` matrix is their sum, so
-        # the split costs no extra pass and the pooled model stays exactly recoverable from it.
-        tcr_pos = [j for j in range(L) if not anc[j]]
-        k = len(tcr_pos)
-        thirds = [tcr_pos[int(k * f):int(k * g)] for f, g in ((0, 1 / 3), (1 / 3, 2 / 3), (2 / 3, 1))]
+        # The TCR face is accumulated per zone; the pooled `tcr` matrix is their sum, so the split
+        # costs no extra pass and the pooled model stays exactly recoverable from it.
         masks = [("anchor", anc, c_anc)]
-        for name, cols in zip(TCR_THIRDS, thirds):
+        for name, cols in zip(zone_names, _zone_positions(L, anc, anchor_idx, cls)):
             m = np.zeros(L, dtype=bool)
             m[cols] = True
-            masks.append((name, m, c_third[name]))
+            masks.append((name, m, c_zone[name]))
         for _, mask, mat in masks:
             sel = valid & mask[None, :]
             if sel.any():
@@ -297,7 +475,7 @@ def encode(peptides) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
             pair_code.append(code2[ok])
             pair_row.append(np.repeat(rows, L - 1)[ok.ravel()])
 
-    c_tcr = sum(c_third[t] for t in TCR_THIRDS)
+    c_tcr = sum(c_zone[z] for z in zone_names)
     c_all = c_anc + c_tcr
     out["pc1"] = c_all @ BASIS["pc1"]
     out["pc2"] = c_all @ BASIS["pc2"]
@@ -311,7 +489,7 @@ def encode(peptides) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
     out["para_sd_tcr"] = (c_tcr @ BASIS["para_sd"]) / ntcr
     cat = np.concatenate
     empty = np.empty(0, dtype=np.int64)
-    return out, {"anchor": c_anc, "tcr": c_tcr, **c_third, "bin": bins, "n": n,
+    return out, {"anchor": c_anc, "tcr": c_tcr, **c_zone, "bin": bins, "n": n,
                  "pair_code": cat(pair_code) if pair_code else empty,
                  "pair_row": cat(pair_row) if pair_row else empty}
 
@@ -338,11 +516,12 @@ def apply_log_odds(counts: dict, source: str, weights) -> np.ndarray:
     return counts[source] @ w
 
 
-def design(peptides, species: str = "human") -> np.ndarray:
+def design(peptides, species: str = "human", cls: str = "mhc1", registers=None) -> np.ndarray:
     """The (n, k) design matrix in :func:`feature_names` order, before standardization."""
-    t = table(species)
-    feats, counts = encode(peptides)
-    cols = [apply_log_odds(counts, FITTED[c], t["log_odds"][c]) if c in FITTED else feats[c]
+    t = table(species, cls)
+    fit = fitted(cls)
+    feats, counts = encode(peptides, cls, registers)
+    cols = [apply_log_odds(counts, fit[c], t["log_odds"][c]) if c in fit else feats[c]
             for c in t["features"]]
     return np.column_stack(cols)
 
@@ -388,13 +567,13 @@ def kidera_design(peptides, anchors=None, roles=None) -> np.ndarray:
     return out
 
 
-def features(peptide: str, species: str = "human") -> dict[str, float]:
+def features(peptide: str, species: str = "human", cls: str = "mhc1") -> dict[str, float]:
     """The feature vector for one peptide, as a name -> value dict. For inspection; use
     :func:`score` (which takes a list) for anything at scale."""
-    return dict(zip(feature_names(species), design([peptide], species)[0].tolist()))
+    return dict(zip(feature_names(species, cls), design([peptide], species, cls)[0].tolist()))
 
 
-def score(peptides, species: str = "human") -> np.ndarray:
+def score(peptides, species: str = "human", cls: str = "mhc1", registers=None) -> np.ndarray:
     """Log-odds of immunogenic vs not, one per peptide. **Carries no prior.**
 
     Larger is more immunogenic. The training corpus's own base rate is divided out, so this is
@@ -407,8 +586,8 @@ def score(peptides, species: str = "human") -> np.ndarray:
     peptides = list(peptides)
     if not peptides:
         return np.empty(0)
-    t = table(species)
-    X = design(peptides, species)
+    t = table(species, cls)
+    X = design(peptides, species, cls, registers)
     st = t["standardizer"]
     Z = (X - np.asarray(st["mean"])) / np.asarray(st["std"])
     lo = t["logistic"]
@@ -416,7 +595,7 @@ def score(peptides, species: str = "human") -> np.ndarray:
     return Z @ np.asarray(lo["coef"]) + lo["intercept"] - math.log(prev / (1.0 - prev))
 
 
-def posterior(peptides, prior: float, species: str = "human") -> np.ndarray:
+def posterior(peptides, prior: float, species: str = "human", cls: str = "mhc1") -> np.ndarray:
     """``P(immunogenic | peptide)`` at an explicit ``prior``. Exact, because :func:`score` has none.
 
     ``prior`` has no default on purpose. The training corpus runs at ~3.2% positives, a viral
@@ -424,7 +603,7 @@ def posterior(peptides, prior: float, species: str = "human") -> np.ndarray:
     setting's base rate for every caller and overstate the rest by up to 75x."""
     if not 0.0 < prior < 1.0:
         raise ValueError(f"prior must be in (0, 1), got {prior!r}")
-    z = score(peptides, species) + math.log(prior / (1.0 - prior))
+    z = score(peptides, species, cls) + math.log(prior / (1.0 - prior))
     return 1.0 / (1.0 + np.exp(-np.clip(z, -60, 60)))
 
 

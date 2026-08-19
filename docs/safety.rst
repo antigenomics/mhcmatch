@@ -13,6 +13,23 @@ tell you nothing; on a fresh patient's variants they are the most informative co
    :local:
    :depth: 1
 
+.. important::
+
+   **Everything on this page is class I — CD8 epitopes — and deliberately so.** Both the safety
+   screen and the near-exact known-antigen lookup are built on a CD8 mechanism: a register that *is*
+   an essential-tissue self peptide killing the cell that presents it, and a minimal epitope close
+   enough to a confirmed neoantigen that the same clonotype could see both.
+
+   Neither transfers to class II by rewriting the length range. A class-II ligand's hazard is not
+   direct cytotoxicity — CD4 self-reactivity runs through help, hypersensitivity and allergy, which
+   is a different question with a different literature and different thresholds, and none of it has
+   been measured here. Reusing these numbers on class-II ligands would assert an equivalence nobody
+   has established.
+
+   So: run ``vector``, ``neoag`` and the ``rank`` annotation on ``--cls mhc1``. ``mhcmatch vector``
+   accepts ``--cls mhc2`` for the *register vocabulary* used in junction scanning and claims nothing
+   beyond that; the shipped Nextflow subworkflow filters all three to class I.
+
 
 The safety screen: two clauses, and it excludes rather than down-ranks
 ----------------------------------------------------------------------
@@ -120,18 +137,6 @@ and costs most of the cassette.
    never in it, and four TCR-facing substitutions separate the two — no distance threshold reaches
    one from the other. The affinity-enhanced TCR was the cause. What this catches is the adjacent
    and commoner failure.
-
-
-.. note::
-
-   **This screen is class I, and deliberately.** The two clauses are built on a CD8 mechanism: a
-   register that *is* an essential-tissue self peptide, and a target gene transcribed where it was
-   assumed silent. The class-II analogue is not the same question rewritten for longer peptides ---
-   CD4 self-reactivity runs through help, hypersensitivity and allergy rather than through direct
-   cytotoxicity, and a screen that reused these thresholds on class-II ligands would be asserting an
-   equivalence nobody has measured. ``mhcmatch vector`` accepts ``--cls mhc2`` for the *register
-   vocabulary* used in junction scanning; it does not claim the exclusion policy transfers, and the
-   shipped subworkflow builds a cassette from class I only.
 
 
 Prior evidence: near-exact matches to known antigens
