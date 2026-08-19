@@ -35,15 +35,15 @@ and every model that ships by default runs on it.
 | `mhcmatch[precursor]` | `vdjmatch` | precursor-frequency estimates |
 | `mhcmatch[notebooks]` | `marimo` | the worked examples in `notebooks/` |
 
-`torch` is **not** required to score recognition. The default head (`posbayes`, three parameters) is
-pure numpy, so a user who never installs `[esm]` gets a complete fitted model rather than a degraded
-one — `mhcmatch.recognition.score()` just works. Asking for the ESM head without the extra raises a
+`torch` is **not** required to score recognition. The default head is the six-block `complement`
+score, which is pure numpy, so a user who never installs `[esm]` gets a complete fitted model rather
+than a degraded one — `mhcmatch.recognition.score()` just works. Asking for the ESM head without the extra raises a
 named error telling you which extra to install; it never silently drops features and returns a
 number that looks fine.
 
 ```python
 from mhcmatch import recognition as rec
-rec.default_head("human")            # 'posbayes' -- no torch involved
+rec.default_head("human")            # 'complement' -- no torch involved
 rec.score(peps)                      # works on the base install
 rec.score(peps, head="esm64_glm")    # ImportError unless mhcmatch[esm] is installed
 ```

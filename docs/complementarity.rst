@@ -440,7 +440,8 @@ head                  k     what it is
 
    from mhcmatch import recognition as rec
 
-   rec.default_head("human")                  # 'posbayes'
+   rec.default_head("human")                  # 'complement' -- the six-block score
+   rec.lowest_bic_head("human")               # 'posbayes' -- the parsimony winner of the three
    rec.score(peps)                            # the default head, pure numpy, no extra needed
    rec.score(peps, head="esm64_glm")          # needs pip install 'mhcmatch[esm]'
 
