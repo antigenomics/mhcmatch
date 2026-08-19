@@ -293,7 +293,7 @@ pm.find_sources(peptides, max_subs=1, threads=0)     # batch; find_source() is t
 pm.wildtype("NLVPMVATV")                             # the WT counterpart, for agretopicity
 ```
 
-Full API: [antigenomics.github.io/mhcmatch](https://antigenomics.github.io/mhcmatch/). Seven
+Full API: [antigenomics.github.io/mhcmatch](https://antigenomics.github.io/mhcmatch/). Eight
 [marimo](https://marimo.io) notebooks in [`notebooks/`](notebooks/README.md) run the workflows end to
 end on whole published deposits (`pip install 'mhcmatch[notebooks]'`).
 

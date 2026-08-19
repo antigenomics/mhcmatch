@@ -62,6 +62,12 @@ versioning is [SemVer](https://semver.org).
 
 - Container tag and conda pin moved from the 0.14.0 the module still named.
 
+- **Notebook 8 — `08_ranking_and_cassette.py`**, the applied pipeline end to end on a **mock scored
+  table**: `rank_table` recomputing presentation rather than re-sorting an upstream column, why a
+  cassette unit is the 27-mer window and not `rank`'s 9-mer, `screen` withdrawing before capacity is
+  spent, `select`'s explicit `n0`, `order` choosing no spacer at all, and `epitope_map` marking the
+  three junction-spanning epitopes that belong to no gene. Runs in ~18 s with no cohort data.
+
 ### Fixed
 
 - **`fetch_pmhc` ignored the local mirror.** It called `hf_hub_download` directly, so

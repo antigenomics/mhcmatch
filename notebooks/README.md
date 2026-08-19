@@ -20,6 +20,7 @@ fresh `pip install mhcmatch` is enough to run them. No local paths, no pre-stage
 | [`05_position_role_bayes.py`](05_position_role_bayes.py) | `mhcmatch.posbayes` | anchor vs TCR-facing amino-acid evidence, the residues whose two roles carry opposite signs, and why the score carries no prior | ~2 s |
 | [`06_complementarity.py`](06_complementarity.py) | `mhcmatch.complement` | the six feature blocks of the recognition axis; arrangement vs composition; that the `aa` block *is* `posbayes`; scoring a whole 511k-row corpus in one call | ~30 s |
 | [`07_mimicry_risk.py`](07_mimicry_risk.py) | `mhcmatch.mimicry` | notebook 4's scan in fitted form — three references × two channels as signed log-odds; that the channels partition the peptide; pooled vs within-screen AUROC; why the tested-neoantigen database is an annotation and never a fitted term | ~5 s |
+| [`08_ranking_and_cassette.py`](08_ranking_and_cassette.py) | `mhcmatch.rank`, `mhcmatch.vector` | the applied pipeline on a **mock scored table** — recompute rather than re-sort; why a unit is the 27-mer and not the 9-mer; safety exclusion before capacity; the spacer as a result; junction-spanning epitopes that belong to no gene | ~18 s |
 
 Runtimes are warm-cache, single core on an M-series Mac. The first run of each notebook also
 downloads its reference data (~4 MB for the pmhc panel, ~10 MB for VDJdb, ~30 MB for the three
