@@ -10,10 +10,54 @@ scale/offset-free and therefore comparable across alleles and directly usable as
 from __future__ import annotations
 
 import bisect
+import hashlib
+import json
+import os
 import random
+import tempfile
 from collections import Counter
 
 _AA = "ACDEFGHIKLMNPQRSTVWY"
+
+#: Directory for the on-disk per-allele calibration cache. Set ``MHCMATCH_CALIBRATION_CACHE`` to a
+#: shared path to let a SLURM array or a Nextflow run reuse each other's work. Unset = no cache.
+CACHE_ENV = "MHCMATCH_CALIBRATION_CACHE"
+
+
+def cache_dir() -> str | None:
+    """The configured cache directory, or ``None``. Created on first use."""
+    d = os.environ.get(CACHE_ENV)
+    if not d:
+        return None
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _write_atomic(path: str, payload: dict) -> None:
+    """Write JSON to ``path`` so no reader can ever observe a partial file.
+
+    A temporary file in the SAME directory, then :func:`os.replace`, which is atomic on POSIX
+    (and on a POSIX-compliant network mount such as CephFS): a concurrent reader sees either the
+    old file or the new one, never a half-written one, and never a torn read of a partial array.
+
+    Two workers that compute the same allele at the same time both write, and the second rename
+    wins. That is safe rather than merely tolerable: the contents are a deterministic function of
+    the cache key, so the two payloads are byte-identical and last-writer-wins cannot introduce a
+    disagreement. It costs duplicated work, never a corrupt or inconsistent cache -- which is why
+    there is no lock file here. A lock would serialise the fleet to buy nothing.
+    """
+    d = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(payload, fh)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def corpus_stats(peptides):
@@ -86,7 +130,7 @@ class RankCalibrator:
     ``"uniform"`` is the right null for MHC-I once the score carries a length prior."""
 
     def __init__(self, model, alleles, corpus, n: int = 10000, seed: int = 0, positives=None,
-                 length_bg: str = "corpus"):
+                 length_bg: str = "corpus", fingerprint: str | None = None):
         rng = random.Random(seed)
         aa, lens = corpus_stats(corpus)
         self._model = model
@@ -98,12 +142,54 @@ class RankCalibrator:
         self._bg = {}      # allele -> sorted background scores (lazy)
         self._bg_len = {}  # (allele, L) -> sorted length-conditional background scores (lazy)
         self._iso = {}     # allele -> isotonic (xs, ys) (lazy)
+        self._fp = self._key(fingerprint, length_bg, corpus)
+
+    def _key(self, fingerprint, length_bg, corpus):
+        """Hash of everything the cached numbers depend on, or ``None`` to disable caching.
+
+        A cache that is keyed on too little is worse than no cache: it serves a background drawn
+        against a different model, corpus or null as though it were this one. ``fingerprint`` is
+        the caller's statement of which scoring model this is (:func:`mhcmatch.predict.build_scorer`
+        supplies the class, footprint, background, panel and library version); the rest of the key
+        covers the draw itself. If the caller gives no fingerprint the cache stays off, because
+        this module cannot identify ``model`` on its own.
+        """
+        if fingerprint is None or cache_dir() is None:
+            return None
+        h = hashlib.sha256()
+        for part in (fingerprint, str(self._n), str(self._seed), length_bg,
+                     str(len(self._rands)), self._rands[0] if self._rands else "",
+                     self._rands[-1] if self._rands else ""):
+            h.update(part.encode())
+            h.update(b"\x00")
+        # the positives feed the isotonic fit, so they are part of the key
+        h.update(str(sorted((a, len(v)) for a, v in self._positives.items())).encode())
+        return h.hexdigest()[:32]
+
+    def _cache_path(self, allele: str, length: int | None = None):
+        d = cache_dir()
+        if d is None or self._fp is None:
+            return None
+        safe = "".join(c if c.isalnum() or c in "-._" else "_" for c in allele)
+        tag = f"{safe}" if length is None else f"{safe}.L{length}"
+        return os.path.join(d, f"{self._fp}.{tag}.json")
 
     def _ensure(self, allele: str):
         """Compute and cache the allele's background (and isotonic P) on first use -- so a query over
         a few alleles never pays to calibrate the whole panel."""
         if allele in self._bg:
             return
+        path = self._cache_path(allele)
+        if path and os.path.exists(path):
+            try:
+                with open(path) as fh:
+                    d = json.load(fh)
+                self._bg[allele] = d["bg"]
+                if d.get("iso"):
+                    self._iso[allele] = (d["iso"][0], d["iso"][1])
+                return
+            except (OSError, ValueError, KeyError):
+                pass          # a damaged or half-written cache entry is recomputed, never trusted
         bg = sorted(s for s in (self._model.score(p, allele) for p in self._rands)
                     if s != float("-inf"))
         self._bg[allele] = bg
@@ -112,6 +198,9 @@ class RankCalibrator:
             ps = [s for s in (self._model.score(p, allele) for p in pos) if s != float("-inf")]
             if ps:
                 self._iso[allele] = _isotonic([(s, 1) for s in ps] + [(s, 0) for s in bg])
+        if path:
+            iso = self._iso.get(allele)
+            _write_atomic(path, {"bg": bg, "iso": [list(iso[0]), list(iso[1])] if iso else None})
 
     def _ensure_len(self, allele: str, length: int):
         """Background of random peptides of **exactly** ``length`` for ``allele`` (lazy, per (a, L)).
@@ -125,11 +214,21 @@ class RankCalibrator:
         key = (allele, length)
         if key in self._bg_len:
             return
+        path = self._cache_path(allele, length)
+        if path and os.path.exists(path):
+            try:
+                with open(path) as fh:
+                    self._bg_len[key] = json.load(fh)["bg"]
+                return
+            except (OSError, ValueError, KeyError):
+                pass
         rng = random.Random(f"{self._seed}:{length}")   # per-length stream, deterministic
         res, rw = zip(*self._aa.items())
         peps = ["".join(rng.choices(res, rw, k=length)) for _ in range(self._n)]
         self._bg_len[key] = sorted(s for s in (self._model.score(p, allele) for p in peps)
                                    if s != float("-inf"))
+        if path:
+            _write_atomic(path, {"bg": self._bg_len[key]})
 
     def percent_rank(self, allele: str, score: float, length: int | None = None) -> float:
         """Percentile of ``score`` in the allele's background: % of random peptides scoring higher

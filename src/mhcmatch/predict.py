@@ -144,6 +144,20 @@ def tile(seq: str, lengths) -> list:
 
 
 # ----------------------------------------------------------------- scoring ---
+def _fingerprint(store, cls, background, footprint, head):
+    """Identity of a scoring model, for the on-disk calibration cache key.
+
+    Everything here changes the numbers a calibrator produces, so everything here must be in the
+    key: the class, the null the score is measured against, the footprint, which of the three
+    heads it is, the panel it was built from, and the library version -- the anchor and affinity
+    artifacts are vendored and are rebuilt on version bumps.
+    """
+    from . import __version__
+    panel = store._panel[cls]
+    return "|".join([__version__, cls, background, footprint, head,
+                     str(len(panel.epitopes)), str(len(set(panel.alleles)))])
+
+
 def build_scorer(store, cls, background="proteome", footprint="adaptive", seed=0, n_bg=10000):
     """``(model, calibrator, affinity)`` for ``cls``: an :class:`AnchorModel`, a per-allele %rank
     calibrator, and the quantitative IC50 head (:class:`PottsAffinity`), or ``None`` if unavailable.
@@ -166,7 +180,8 @@ def build_scorer(store, cls, background="proteome", footprint="adaptive", seed=0
     pos = defaultdict(list)
     for ep, a in zip(panel.epitopes, panel.alleles):
         pos[a].append(ep)
-    cal = RankCalibrator(model, list(pos), panel.epitopes, n=n_bg, seed=seed, positives=pos)
+    cal = RankCalibrator(model, list(pos), panel.epitopes, n=n_bg, seed=seed, positives=pos,
+                         fingerprint=_fingerprint(store, cls, background, footprint, "presentation"))
     try:
         aff = store.affinity_model(cls)
     except Exception:
@@ -197,7 +212,9 @@ def _affinity_calibrator(store, cls, aff, seed=0, n_bg=10000):
         for ep, a in zip(panel.epitopes, panel.alleles):
             pos[a].append(ep)
         cache[cls] = RankCalibrator(_AffinityAsScore(aff), list(pos), panel.epitopes,
-                                    n=n_bg, seed=seed, positives=pos)
+                                    n=n_bg, seed=seed, positives=pos,
+                                    fingerprint=_fingerprint(store, cls, "proteome", "adaptive",
+                                                             "affinity"))
     return cache[cls]
 
 
@@ -244,7 +261,9 @@ def _binder_calibrator(store, cls, model, aff, pcal, acal, seed=0, n_bg=10000):
         for ep, a in zip(panel.epitopes, panel.alleles):
             pos[a].append(ep)
         cache[cls] = RankCalibrator(_CombinedScore(model, aff, pcal, acal), list(pos),
-                                    panel.epitopes, n=n_bg, seed=seed, positives=pos)
+                                    panel.epitopes, n=n_bg, seed=seed, positives=pos,
+                                    fingerprint=_fingerprint(store, cls, "proteome", "adaptive",
+                                                             "binder"))
     return cache[cls]
 
 

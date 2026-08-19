@@ -79,6 +79,30 @@ mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor 
 peptide can top one and not the other — `NLVPMVATV` is unambiguously A\*02:01-restricted yet bands
 mid-pack against A\*02:01's own ligands.
 
+## Caching calibration across jobs
+
+Scoring a peptide needs the allele's random-peptide background: 10,000 draws scored through the
+model, plus an isotonic fit. That costs ~0.2-3 s **per allele**, once, after which peptides score
+at ~80,000/s. In one process it is amortised automatically. Across a SLURM array or a Nextflow
+run, every task otherwise repeats it.
+
+```bash
+export MHCMATCH_CALIBRATION_CACHE=/shared/scratch/mhcmatch-cal
+```
+
+Tasks then share the work: measured **15x** on a 25-allele sweep (13.3 s to 0.9 s). Entries are
+written to a temporary file in the same directory and moved into place with `os.replace`, which is
+atomic on POSIX and on POSIX-compliant network mounts, so a concurrent reader never sees a partial
+file. Two tasks that compute the same allele simultaneously both write and the second rename wins,
+which is safe rather than merely tolerated: the payload is a deterministic function of the cache
+key, so the racing writers produce identical bytes. There is no lock -- a lock would serialise the
+fleet to buy nothing.
+
+The key covers the library version, class, background, footprint, head, panel size, draw count,
+seed and the positives feeding the isotonic fit. A cache keyed on less than that would be worse
+than none, because it would serve a background drawn against a different model as though it were
+this one. Unset the variable and nothing is cached; the directory is disposable.
+
 ## Batch and threads — read this before scripting a loop
 
 **Pass `--peptides FILE` to any peptide-keyed command.** The expensive part of most of them is setup

@@ -9,8 +9,8 @@
 A release-time task, like tools/build_anchor_models.py. Run it on a version bump or when the
 immunogenicity corpus on `isalgo/pmhc_data` changes, then commit what it writes:
 
-    src/mhcmatch/data/recognition_mhc1_human.json
-    src/mhcmatch/data/recognition_mhc1_mouse.json
+    src/mhcmatch/data/recognition_{head}_mhc1_human.json
+    src/mhcmatch/data/recognition_{head}_mhc1_mouse.json
     src/mhcmatch/data/recognition_esm_pca.npz
 
 Self-contained by design -- it carries its own environment through PEP 723, because the ESM2
