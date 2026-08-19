@@ -193,3 +193,86 @@ def test_kidera_design_matches_the_fitted_kf4_columns():
     feats, _ = CM.encode(peps)
     assert np.allclose(X[:, 9], feats["kf4_anchor"])
     assert np.allclose(X[:, 10], feats["kf4_tcr"])
+
+
+# --------------------------------------------------------------------------- class II
+
+MHC2_PEPS = ["PKYVKQNTLKLAT", "AAYSDQATPLLLSPR", "KVKQNTLKLATGMRNVPEKQT",
+             "NMFMFRASLDLKLIFLDSRVTEVTGYE"]
+
+
+def test_class_i_is_byte_identical_after_the_class_split():
+    """The class argument defaults to mhc1 and nothing about that path moved."""
+    peps = ["GILGFVFTL", "SIINFEKL", "NLVPMVATV", "KRWIILGLNK"]
+    assert np.allclose(CM.score(peps), CM.score(peps, "human", "mhc1"))
+    f_default, c_default = CM.encode(peps)
+    f_explicit, c_explicit = CM.encode(peps, "mhc1")
+    for k in f_default:
+        assert np.allclose(f_default[k], f_explicit[k]), k
+    for k in ("anchor", "tcr", "bin", *CM.TCR_THIRDS):
+        assert np.allclose(c_default[k], c_explicit[k]), k
+
+
+def test_class_ii_anchors_come_from_the_register_not_from_the_ends():
+    """A class-II ligand's anchors are P1/P4/P6/P9 of the floating core, so they move with it."""
+    from mhcmatch.store import anchor_indices
+    for p in MHC2_PEPS[:3]:
+        want = anchor_indices(p, "mhc2")
+        assert CM.mhc2_anchors(p) == want
+        # ...and they are NOT the class-I positions, which is the whole point of the class argument.
+        assert set(want) != {a % len(p) for a in CM.ANCHORS}
+
+
+def test_class_ii_zones_partition_the_tcr_face_exactly():
+    _, c = CM.encode(MHC2_PEPS, "mhc2")
+    zones = sum(c[z] for z in CM.MHC2_ZONES)
+    assert np.allclose(c["tcr"], zones)
+    # anchor + tcr is every standard residue, and these peptides carry only standard residues.
+    f, _ = CM.encode(MHC2_PEPS, "mhc2")
+    assert np.allclose(c["anchor"].sum(1) + c["tcr"].sum(1), f["length"])
+
+
+def test_class_ii_bins_on_the_ligand_quartile_not_the_class_i_length_bin():
+    """LENGTH_BINS clamps to 11 and would put every class-II ligand in one bin."""
+    assert [CM.mhc2_length_bin(L) for L in (11, 13, 14, 16, 17, 19, 25)] == [0, 0, 1, 2, 2, 3, 3]
+    _, c = CM.encode(MHC2_PEPS, "mhc2")
+    assert c["bin"].tolist() == [CM.mhc2_length_bin(len(p)) for p in MHC2_PEPS]
+    assert len(set(c["bin"].tolist())) > 1, "the four probes must not collapse into one bin"
+
+
+def test_class_ii_block_layout_matches_the_vendored_features():
+    for sp in CM.SPECIES:
+        t = CM.table(sp, "mhc2")
+        assert t["features"] == [c for b in CM.BLOCKS_MHC2.values() for c in b]
+        assert len(t["logistic"]["coef"]) == len(t["features"])
+        assert set(t["log_odds"]) <= set(CM.FITTED_MHC2)
+
+
+def test_class_ii_scores_and_is_a_different_fit_from_class_i():
+    a = CM.score(MHC2_PEPS, "human", "mhc2")
+    assert a.shape == (len(MHC2_PEPS),) and np.isfinite(a).all()
+    assert not np.allclose(a, CM.score(MHC2_PEPS, "mouse", "mhc2"))
+
+
+def test_class_ii_register_can_be_pinned():
+    """A caller who scored with a per-allele register annotates with the same frame."""
+    p = "KVKQNTLKLATGMRNVPEKQT"
+    heuristic = CM.score([p], "human", "mhc2")
+    pinned = CM.score([p], "human", "mhc2", registers=[0])
+    assert np.isfinite(pinned).all()
+    assert not np.allclose(heuristic, pinned), "pinning a different frame must move the score"
+    assert np.allclose(CM.score([p], "human", "mhc2", registers=[CM.mhc2_anchors(p)[0]]), heuristic)
+
+
+def test_an_unknown_class_is_refused_rather_than_guessed():
+    for bad in ("mhc3", "MHC1", "", "i"):
+        with pytest.raises(ValueError, match="unknown cls"):
+            CM.score(["GILGFVFTL"], cls=bad)
+
+
+def test_a_class_ii_length_binned_table_only_sees_its_own_rows():
+    _, c = CM.encode(MHC2_PEPS, "mhc2")
+    w = np.arange(20, dtype=float) / 20.0
+    full = CM.apply_log_odds(c, "anchor", w)
+    parts = [CM.apply_log_odds(c, f"anchor@{b}", w) for b in range(len(CM.MHC2_LEN_EDGES) + 1)]
+    assert np.allclose(sum(parts), full)

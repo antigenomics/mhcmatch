@@ -945,6 +945,29 @@ def cmd_vector(a):
                      f"objective={a.objective}\n{cas.sequence}\n")
         print(f"# wrote {a.fasta}", file=sys.stderr)
 
+    if cas and (a.map_tsv or a.map_json):
+        alleles1 = _read_alleles(a.alleles) or sorted({u.allele for u in cas.units if u.allele})
+        s1 = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=("mhc1",))
+        r1 = V.store_ranker(s1, alleles1, cls="mhc1")
+        r2 = None
+        a2 = _read_alleles(a.map_alleles_mhc2)
+        if a2:
+            s2 = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=("mhc2",))
+            r2 = V.store_ranker(s2, a2, cls="mhc2")
+        else:
+            print("# no --map-alleles-mhc2: the map is class I only, so `self_help` -- whether a "
+                  "unit's CD8 epitope has overlapping CD4 help from the same unit -- is not "
+                  "computed", file=sys.stderr)
+        feats = V.epitope_map(cas, r1, r2, threshold=a.map_threshold)
+        summ = V.write_map(cas, feats, tsv_path=a.map_tsv, json_path=a.map_json)
+        print(f"# map: {summ['n_mhc1']} class-I and {summ['n_mhc2']} class-II epitope(s) over "
+              f"{summ['length_aa']} aa, {summ['n_junction_spanning']} spanning a junction; "
+              f"{summ['n_units_with_self_help']}/{summ['n_units']} unit(s) carry their own "
+              f"class-II help", file=sys.stderr)
+        for path in (a.map_tsv, a.map_json):
+            if path:
+                print(f"# wrote {path}", file=sys.stderr)
+
     if cas and a.fasta_nt:
         cds = V.back_translate(cas.sequence)
         with open(a.fasta_nt, "w") as fh:
@@ -1278,6 +1301,22 @@ def main(argv=None):
                          "codon per residue, backed off to avoid homopolymers, then deslipped. "
                          "Epitope cassette only: no start, no stop, no leader, no trafficking "
                          "domain")
+    vc.add_argument("--map", metavar="FILE", dest="map_tsv",
+                    help="also write the cassette MAP as TSV: one row per unit, linker and "
+                         "predicted epitope, with 1-based coordinates over the cassette, the "
+                         "presenting allele, and which class-I and class-II epitopes overlap each "
+                         "other. A peptide presented by two of the recipient's alleles gets TWO "
+                         "rows -- at a heterozygous locus those are two presentation events")
+    vc.add_argument("--map-json", metavar="FILE",
+                    help="the same map as JSON, plus the per-unit summary and the sequence, which "
+                         "is what a viewer needs to draw the cassette without recomputing anything")
+    vc.add_argument("--map-threshold", type=float, default=2.0, metavar="F",
+                    help="%%rank at or below which a window enters the map (default 2.0)")
+    vc.add_argument("--map-alleles-mhc2", metavar="LIST",
+                    help="the recipient's class-II allotypes (comma-separated or a file). Without "
+                         "them the map carries class I only, and a unit's `self_help` column -- "
+                         "whether its CD8 epitope has overlapping CD4 help from the SAME unit -- "
+                         "cannot be computed")
     _add_store_opts(vc)
     vc.add_argument("--out", metavar="FILE", help="write the report TSV here instead of stdout")
     vc.set_defaults(fn=cmd_vector)

@@ -70,14 +70,98 @@ Each answers something the block above it cannot express.
    discriminate sharply between receptors.
 
 ``motif``
-   Contiguity — longest run, number of runs, above-median fraction of hydrophobic TCR-facing
-   residues. A masked anchor **breaks** a run rather than bridging it:
+   Contiguity of the **hydropathy stretch** — three features, all of them read off the TCR-facing
+   residues only, because an anchor is buried in the groove and is not part of any stretch the
+   receptor sees.
+
+   A position enters the block when all three hold: it is TCR-facing, it carries one of the 20
+   standard residues, and its **Kyte–Doolittle** value exceeds ``complement.KD_THRESHOLD``. That
+   threshold is the **median of the Kyte–Doolittle scale itself** over the 20 amino acids,
+   ``-0.85`` — a property of the scale rather than a constant tuned on a corpus — and it admits
+   ``ACFGILMSTV``.
+
+   ==================  =========================================================================
+   feature             what it counts
+   ==================  =========================================================================
+   ``kd_run_max``      the longest run of consecutive qualifying positions
+   ``kd_run_n``        how many runs there are, counted as rising edges
+   ``kd_run_frac``     qualifying positions divided by the number of TCR-facing positions
+   ==================  =========================================================================
+
+   Composition is held fixed in the example below and only the arrangement changes, which is the
+   thing no sum over residues can express:
 
    .. code-block:: python
 
       f, _ = complement.encode(["AAAIIDDAA", "AAAIDIDAA"])
       f["kd_run_max"], f["kd_run_n"]
       # (array([2., 1.]), array([1., 2.]))     same composition, different arrangement
+
+   **An anchor breaks a run rather than bridging it.** Two stretches either side of a buried
+   residue are two stretches, not one.
+
+   **A non-standard residue also breaks a run**, and behaves like a below-threshold residue rather
+   than like a gap — it is not evidence that a hydrophobic stretch continued through it:
+
+   .. code-block:: python
+
+      f, _ = complement.encode(["AAAIIXIAA", "AAAIIDIAA", "AAAIIIIAA"])
+      f["kd_run_max"]                # array([2., 2., 4.])   the mask breaks it, exactly as D does
+      f["kd_run_frac"]               # array([0.75, 0.75, 1.])  the mask stays in the denominator
+
+   So a mask costs a candidate ``kd_run_frac`` without ever being able to earn it back. That is the
+   conservative reading and it is deliberate.
+
+   **What the three columns buy.** Added on top of ``phys+role+pot`` under the same peptide-grouped
+   folds and the same linear head, the block gains AUROC on **all eight corpus arms**, median
+   ``+0.0060``, and AUPRC on all eight as well (``bench/results/complementarity.md`` §1, read from
+   ``tsv/complement_cv.tsv``):
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 44 22 17 17
+
+      * - arm
+        - AUROC
+        - ΔAUROC
+        - ΔAUPRC
+      * - ``chowell_rebuilt/human``
+        - 0.6367 → 0.6426
+        - +0.0060
+        - +0.0028
+      * - ``chowell_rebuilt/mouse``
+        - 0.7019 → 0.7045
+        - +0.0026
+        - +0.0031
+      * - ``chowell_rebuilt_hla_matched/human``
+        - 0.6072 → 0.6210
+        - **+0.0138**
+        - +0.0048
+      * - ``chowell_rebuilt_hla_matched/mouse``
+        - 0.6909 → 0.6952
+        - +0.0042
+        - +0.0051
+      * - ``kesmir_rebuilt/human``
+        - 0.5720 → 0.5846
+        - +0.0126
+        - +0.0139
+      * - ``kesmir_rebuilt/mouse``
+        - 0.6099 → 0.6159
+        - +0.0060
+        - +0.0056
+      * - ``kesmir_rebuilt_hla_matched/human``
+        - 0.5607 → 0.5743
+        - **+0.0135**
+        - **+0.0141**
+      * - ``kesmir_rebuilt_hla_matched/mouse``
+        - 0.6099 → 0.6159
+        - +0.0060
+        - +0.0056
+
+   Three columns for that, and it is the block that is largest where composition carries least — the
+   two HLA-matched human arms, where the negatives were resampled so the allele group says nothing
+   about the label, gain ``+0.0138`` and ``+0.0135`` against ``+0.0060`` and ``+0.0126`` unmatched.
+   A feature riding a composition artefact moves the other way.
 
 ``aa``
    Residue **identity**, as a log-odds per amino acid per role. Every block above projects the
