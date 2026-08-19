@@ -142,6 +142,18 @@ structure and CpG to a manufacturer's own tooling. :func:`~mhcmatch.vector.trans
    :undoc-members:
    :show-inheritance:
 
+mhcmatch.portfolio module
+-------------------------
+
+The composition layer above :func:`~mhcmatch.vector.select`: objective-space geometry (Pareto front,
+crowding, hull membership, Chebyshev scalarization) and the block response model that says what a
+proposed cassette is worth. Narrative and worked examples: :doc:`portfolio`.
+
+.. automodule:: mhcmatch.portfolio
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 mhcmatch.immuno module
 ----------------------
 

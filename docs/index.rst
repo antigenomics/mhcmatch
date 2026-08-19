@@ -75,6 +75,7 @@ Capabilities
    immunogenicity
    complementarity
    safety
+   portfolio
    models
    property_basis
    api

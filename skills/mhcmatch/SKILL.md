@@ -83,6 +83,7 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 | `mhcmatch.mimics` | `neighbours`, `KINDS`, `DEFAULT_REFS` | the raw scan, per category, **never summed** — each category argues something different |
 | `mhcmatch.mimicry` | `score`, `probability`, `annotate`, `safety`, `masks` | the *fitted* form: `viral`/`self`/`thymus` × `anchor`/`tcr` as signed log-odds. `probability` demands a **named** corpus. `annotate` (tested-neoantigen DB) is prior evidence and **never a fitted term** |
 | `mhcmatch.vector` | `screen`, `self_origin_risk`, `select`, `order`, `slippery_sites`, `epitope_map`, `write_map` | **cassette assembly**, the step after `rank`: withdraw on safety, then how many units per allotype, in what order, joined by what. `screen` **excludes**, never down-ranks. Scoring is injected (`binder`, `risk`), so the layout logic needs no panel. `epitope_map`/`write_map` (v0.16.0) emit the TSV/JSON cassette map — unit, linker and epitope rows with 1-based coordinates, the class-II core, cross-class overlaps and per-unit `self_help`; **one row per (peptide, allele)**, so a heterozygote is duplicated by construction |
+| `mhcmatch.portfolio` | `pareto_front`, `linearly_supported`, `chebyshev_score`, `corner`, `p_at_least`, `n_effective`, `dispersion`, `betabinom_rho` | **cassette composition**, the layer above `vector.select`. Fits nothing: it says what a proposed *set* is worth. `vector.select` now takes `block=` (a callable `Unit -> hashable`, default the allotype) so the budget can saturate against allotype **x** mechanism; `Selection.expected_yield` follows whatever partition the rule used, and `per_block()` reports it. `linearly_supported` is exact (LP), the sampled searches in the benchmark repo are not. SciPy is a **lazy** import — `linearly_supported` and `betabinom_rho` need it, nothing else does |
 | `mhcmatch.luksza` | `viral_r`, `r_term`, `counts_by_distance`, `shape` | the Łuksza `R = Z/(1+Z)` term (v0.17.0). `viral_R` is one of the fitted aggregate's nine features and used to be computable only in the benchmark repo. `k`/`a0` are **read from the artifact**, never hardcoded. The neighbour search is 98.6% of the runtime — do not micro-optimise the rest |
 | `mhcmatch.precursor` | re-export of `vdjmatch.precursor` | moved there; **optional `[precursor]` extra** |
 
@@ -166,6 +167,22 @@ in the benchmark repo. **Open**: expression is GTEx cross-tissue median everywhe
 tumour-matched refit across all eight cohorts at once (ROADMAP §6).
 
 ## Traps
+
+- **Composition is not ranking, and a better scorer does not fix it.** Top-`m` by *any* pointwise
+  score maximises `sum_i s_i`, a **modular** set function; `P(>= k | S)` is submodular once two units
+  share a block, so no model capacity reaches it — the limit is in the *rule*, not the *scorer*.
+  Separately: a weighted sum can only ever rank first what sits on the **upper convex hull** of the
+  objective cloud (45 of 161 Pareto-efficient validated neoantigens are reachable by no `beta >= 0`).
+  `chebyshev_score` reaches the whole front and its optimal weights are closed-form,
+  `lambda_k ∝ 1/(z*_k - z_k)`. Measured: 0/45 for the weighted sum, 45/45 for Chebyshev.
+- **`p_at_least` raises rather than clips.** A unit cannot respond more often than its block is live,
+  so `p_i > q` is not representable; silently clipping would understate exactly the strongest units.
+  Pick `q` above your largest `p`.
+- **Keep the zero-response patients** when measuring dispersion. They carry most of the information,
+  and a minimum-pool-size filter deletes precisely them. `betabinom_rho`'s p-value is *conservative*
+  at these cohort sizes (realised type-I error 0.022 at nominal 0.05 for 13 patients x 20 units).
+- **`portfolio.corner` is a proxy, not a latent variable.** It reports which objective a candidate is
+  relatively strongest on. That is a defensible stand-in for *why* it might work and nothing more.
 
 - **Two MHC-II registers coexist by design — never merge them.** The *heuristic* register
   (`store._mhc2_register`, allele-agnostic) backs signatures/`decompose`/logos; the *model* register
