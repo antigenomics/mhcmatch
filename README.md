@@ -139,8 +139,10 @@ numpy product and a thread pool would buy nothing, so the flag is absent rather 
 ## The two axes
 
 Presentation is necessary and not sufficient: most presented peptides are ignored. mhcmatch keeps
-the two questions apart and combines them with a **gate** (a product of sigmoids), not a sum, so a
-candidate that fails either one cannot be rescued by the other.
+the two questions apart and scores them with the fitted **`BOECRT`** aggregate, whose `C` term is
+the recognition axis (z +4.24) and whose `B`/`O` terms are the presentation one. The older
+**gate** — a product of sigmoids rather than a sum, so a candidate failing either axis cannot be
+rescued by the other — is still reachable as `mhcmatch rank --score gate`.
 
 **Presentation** — per-allele %rank / `P(present)` / band from a learned anchor model with
 cross-allele **pseudosequence diffusion** (rare alleles borrow from groove-similar frequent ones), a

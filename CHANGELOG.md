@@ -19,9 +19,17 @@ versioning is [SemVer](https://semver.org).
 - **The vendored aggregate is `BOECRT`,** refitted on the cleaned grand corpus (see
   `bench/results/neoag_aggregate_boecrt.md`). `O` (occupancy) replaces `D` (agretopicity): the
   ratio does not resolve in any of seven parameterisations, and the one that appears to is 0.9955
-  correlated with mutant affinity. The corpus is the cleaned one — pathogen epitopes and unmutated
-  self windows removed, host keyed on the MHC genus, label conflicts counted, CEDAR and Gfeller held
-  out — rather than the older uncleaned set the previous artifact was fitted on.
+  correlated with mutant affinity. **Occupancy is the strongest term in the model at z +5.16**,
+  above `binder`'s +4.00 — the two share the affinity axis and the fit splits it between them, with
+  occupancy taking the larger share.
+
+  355,052 rows / 1,101 positive / 10 screens, within-screen median AUROC 0.6504. The corpus is the
+  cleaned one — pathogen epitopes and unmutated self windows removed, host keyed on the MHC genus,
+  label conflicts counted, CEDAR and Gfeller held out — rather than the uncleaned set the previous
+  artifact used, and the Łuksza shape is the refitted `tcr5`/k=2.25/a₀=20.0 rather than the
+  hardcoded 1.0/24.0. **`BOECRT` is therefore not comparable to the older `BECRT` record (0.6707 on
+  7 screens): different corpus, different population.** The generator refuses to write if a Sahin
+  peptide reaches the fit; it checked 8 and found 0.
 
 - **`Ranked.binder` is written explicitly.** `rank_fasta` set `presentation` from the presentation
   head while `rank_table` set the same field from the *binder* rank — two different quantities under

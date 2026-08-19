@@ -190,6 +190,11 @@ The models
    * - ``BECRT``
      - + the three TCR-facing mimicry channels
      - **best within-screen median (0.6707).** ``T``'s own coefficients do not resolve
+   * - ``BOECRT``
+     - binder, occupancy, expression, complementarity, Łuksza ``R``, TCR mimicry
+     - **the shipped scorer** (``data/aggregate_mhc1.json``, default since 0.19.0). Fitted on the
+       cleaned corpus: 355,052 rows / 1,101 positive / 10 screens, within-screen median 0.6504.
+       Not comparable to the ``BECRT`` row above — different corpus and screen count
    * - ``BDEVF``
      - binder, agretopicity, expression, vanilla physicochemistry, foreignness
      - the older design; folds presentation into ``B``

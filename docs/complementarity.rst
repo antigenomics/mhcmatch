@@ -358,13 +358,19 @@ length carries *which residue is preferred where*, not a global reweighting.
 Where it sits in the ranker
 ---------------------------
 
-:mod:`mhcmatch.rank` combines presentation and recognition as a **gate**, not a sum — the two axes
-are close to orthogonal, and a recognition term is worth almost nothing on a peptide that is not
-presented and a great deal on one that is::
+Recognition is the ``C`` term of the fitted ``BOECRT`` aggregate that :mod:`mhcmatch.rank` scores
+with — coefficient **+0.1790**, z **+4.24** on the cleaned corpus (:doc:`neoantigen`). It is one of
+the four terms whose direction is established.
+
+Before 0.19.0 the ranker instead combined presentation and recognition as a **gate**, a product of
+two sigmoids rather than a sum, on the argument that the axes are close to orthogonal and a
+recognition term is worth almost nothing on a peptide that is not presented::
 
     P(immunogenic) = sigmoid(a * presentation + b) * sigmoid(c * recognition + d)
 
-``recognition`` there is this score. See :doc:`api` for
+That form is still reachable as ``mhcmatch rank --score gate`` and remains the right shape for the
+two-term question it was fitted for; it is no longer the default, because the fitted aggregate is
+the model the benchmark actually measured. See :doc:`api` for
 :func:`mhcmatch.rank.gate_probability` and ``mhcmatch explain``, which prints every component of a
 rank so the aggregate can be taken apart.
 

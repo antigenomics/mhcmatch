@@ -74,7 +74,9 @@ presented and binds. Rank class-I candidates by it, **not** by raw `affinity_nm`
 | **in** | `tuple val(meta), path(input), val(alleles), val(cls)` — `input` is a window FASTA (`params.mhcmatch_rank_mode = 'fasta'`) or a scored table (`'table'`) |
 | **out** | `ranked` → `${prefix}.${cls}.mhcmatch.ranked.tsv` · `versions` |
 
-The fitted aggregate, one ordered table. Base columns (`mhcmatch.rank.BASE_COLUMNS`):
+The fitted **`BOECRT`** aggregate, one ordered table. `params.mhcmatch_rank_score` selects
+`aggregate` (default) or `gate` (the pre-0.19.0 product-of-sigmoids). Base columns
+(`mhcmatch.rank.BASE_COLUMNS`):
 
 `rank · peptide · allele · gene · score · presentation · occupancy · agretopicity · physchem · expression ·
 expr_imputed · wt_peptide · known_epitope`
@@ -140,7 +142,7 @@ with sections `withdrawn`, `allotype`, `not selected`, `unit`, `junction`, `cass
   Without it *no safety check runs at all* and the cassette carries whatever it was handed. It costs
   one whole-proteome index per register length — ~12 GB peak each, a few minutes apiece, four for
   class I — which is why `nextflow.config` gives this process its own memory and time.
-- **The map (v0.18.0)** is one row per unit, linker and predicted epitope, in 1-based inclusive
+- **The map (v0.19.0)** is one row per unit, linker and predicted epitope, in 1-based inclusive
   coordinates over the cassette. It is emitted by default because it re-scores one short sequence
   and costs almost nothing next to the screen. Three properties are structural: a **heterozygote is
   duplicated by construction** (a row is a *(peptide, allele)* pair, which is what a coverage count
@@ -193,10 +195,10 @@ From `slurm.config` only:
 ## Build the image (only for `-profile docker`)
 
 ```zsh
-docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.18.0 \
-    --build-arg MHCMATCH_VERSION=0.18.0 \
+docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.19.0 \
+    --build-arg MHCMATCH_VERSION=0.19.0 \
     integrations/nextflow/mhcmatch/
-docker push <ISPRAS_REGISTRY>/mhcmatch:0.18.0
+docker push <ISPRAS_REGISTRY>/mhcmatch:0.19.0
 ```
 
 No data staging: the build runs `mhcmatch bootstrap --reference`, which fetches the ligand panel

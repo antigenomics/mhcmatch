@@ -3,7 +3,7 @@
 // Five processes, in pipeline order:
 //
 //   MHCMATCH_PREDICT   variant windows -> per-allele presentation, affinity, agretopicity
-//   MHCMATCH_RANK      candidates      -> the fitted aggregate, one ordered table
+//   MHCMATCH_RANK      candidates      -> the fitted BOECRT aggregate, one ordered table
 //                                        (carries `occupancy` alongside `agretopicity`)
 //   MHCMATCH_NEOAG     peptides        -> proximity to the tested-neoantigen database
 //   MHCMATCH_MIMICRY   peptides        -> the six signed self/viral/thymus channels + autoimmune
@@ -25,7 +25,7 @@ process MHCMATCH_PREDICT {
     label 'process_medium'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.18.0"
+    container "mhcmatch:0.19.0"
 
     input:
     tuple val(meta), path(fasta), val(alleles), val(cls)
@@ -80,7 +80,7 @@ process MHCMATCH_RANK {
     label 'process_medium'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.18.0"
+    container "mhcmatch:0.19.0"
 
     // `rank` reads the known-epitope sets, the mimicry references and the expression tables on top
     // of the ligand panel. The image bakes them (`bootstrap --reference`); a bare `bootstrap` image
@@ -101,6 +101,7 @@ process MHCMATCH_RANK {
     def mode   = params.mhcmatch_rank_mode ?: 'fasta'
     def tier   = params.mhcmatch_tier ?: 'full'
     def tumor  = params.mhcmatch_tumor ? "--tumor ${params.mhcmatch_tumor}" : ''
+    def score  = params.mhcmatch_rank_score ? "--score ${params.mhcmatch_rank_score} " : ''
     def extra  = (params.mhcmatch_rank_extended ? '--extended ' : '') +
                  (params.mhcmatch_rank_annotate ? '--annotate ' : '')
     """
@@ -108,7 +109,7 @@ process MHCMATCH_RANK {
         --alleles '${alleles}' \\
         --cls ${cls} \\
         --tier ${tier} \\
-        ${tumor} ${extra}${args} \\
+        ${tumor} ${score}${extra}${args} \\
         --out ${prefix}.${cls}.mhcmatch.ranked.tsv
 
     cat <<-END_VERSIONS > versions.yml
@@ -138,7 +139,7 @@ process MHCMATCH_NEOAG {
     label 'process_single'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.18.0"
+    container "mhcmatch:0.19.0"
 
     input:
     tuple val(meta), path(peptides), val(cls)
@@ -183,7 +184,7 @@ process MHCMATCH_MIMICRY {
     label 'process_medium'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.18.0"
+    container "mhcmatch:0.19.0"
 
     input:
     tuple val(meta), path(peptides), val(cls)
@@ -230,7 +231,7 @@ process MHCMATCH_VECTOR {
     label 'process_high'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.18.0"
+    container "mhcmatch:0.19.0"
 
     // `--screen` builds one whole-proteome index per register length: ~12 GB peak each and a few
     // minutes apiece, which is why this process carries `process_high` and why the flag is a param.

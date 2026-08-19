@@ -59,8 +59,9 @@ Capabilities
   fitted separately for **class I and class II** and for each host (:doc:`complementarity`).
 - **Mimicry as risk** — viral / self / thymus resemblance split by anchor and TCR-facing channel,
   as signed log-odds rather than a single distance.
-- **Neoantigen ranking** — presentation × recognition through a gate, with expression, agretopicity
-  and near-exact matches to already-tested neoantigens reported beside the score.
+- **Neoantigen ranking** — the fitted ``BOECRT`` aggregate: binder, equilibrium occupancy,
+  expression, complementarity, Łuksza recognition and TCR-face mimicry, with agretopicity and
+  near-exact matches to already-tested neoantigens reported beside the score.
 - **Cassette assembly** — withdraw unsafe units, size each allotype, order them, choose the spacer,
   back-translate, and emit a map of the result (:doc:`safety`).
 

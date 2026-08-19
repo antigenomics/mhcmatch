@@ -77,7 +77,7 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 | `mhcmatch.predict` | `predict_fasta`, `predict_windows` | variant-window scoring; native table carries `binder_rank`/`binder_band`/`affinity_rank` (the generalized binder score) alongside %rank/IC50/agretopicity. `.scored.csv` keeps the fixed 57-col pipeline schema |
 | `mhcmatch.structure` | `StructureScorer` | MJ ΔΔG; **optional `[structure]` extra** (needs `tcren`) |
 | `mhcmatch.complement` | `score`, `design`, `feature_names`, `posterior` | the recognition axis: six blocks, per species, **never pooled across hosts**. Vectorised — pass a list. `posbayes` and `ipred` are strict special cases. `cls="mhc2"` selects the separately fitted class-II table (v0.16.0), whose `aa` block is keyed on register zone **and** length; `recognition.score_mhc2` is a different, unfitted thing — do not confuse them |
-| `mhcmatch.rank` | `rank_fasta`, `rank_table`, `occupancy` | presentation × recognition through a **gate** (product of sigmoids), not a sum. Emits `occupancy` — equilibrium fraction of MHC held, `a/(1+a)` with `a = [P]/Kd` — which is **absolute** where the binder `%rank` is allele-relative, and is defined for a frameshift or fusion product that has no wild type. `agretopicity` is reported, not fitted: it does not resolve in any parameterisation tested. `rank --extended` appends the mimicry contributions and `--annotate` what each candidate resembles — **columns only, the ordering is unchanged** |
+| `mhcmatch.rank` | `rank_fasta`, `rank_table`, `occupancy` | scores with the fitted `BOECRT` aggregate since 0.19.0; `--score gate` is the pre-0.19.0 product-of-sigmoids. Emits `occupancy` — equilibrium fraction of MHC held, `a/(1+a)` with `a = [P]/Kd` — which is **absolute** where the binder `%rank` is allele-relative, and is defined for a frameshift or fusion product that has no wild type. `agretopicity` is reported, not fitted: it does not resolve in any parameterisation tested. `rank --extended` appends the mimicry contributions and `--annotate` what each candidate resembles — **columns only, the ordering is unchanged** |
 | `mhcmatch.known` | five built-in reference sets | exact-match lookup. An exact match outranks any model output, so `rank` flags it and never folds it into the score |
 | `mhcmatch.expression` | `lookup`, `safety_profile`, `matched_tissues`, `tumor_types`, `TUMOR_TISSUE` | GTEx `SMTSD` tissues and TCGA study abbreviations — **two vocabularies, never merged, neither clinical**. **Always pass the caller's own tumour type**; the benchmark's cross-tissue median exists for fit/holdout comparability, not as a default |
 | `mhcmatch.mimics` | `neighbours`, `KINDS`, `DEFAULT_REFS` | the raw scan, per category, **never summed** — each category argues something different |
@@ -108,6 +108,36 @@ whole cost: the presentation/affinity calibrators ~5 s, a human-proteome length 
 process over a list is the difference between seconds per peptide and thousands per second.
 `--threads` exists **only** on `source` and `mimics`, whose neighbour search runs in C++ with the GIL
 released; elsewhere it is absent rather than accepted and ignored.
+
+## The shipped scorer (2026-08-19)
+
+`BOECRT` — binder, **occupancy**, expression, complementarity, the refitted Łuksza `R`, and the
+three TCR-facing mimicry channels. Vendored at `data/aggregate_mhc1.json`; `mhcmatch rank` scores
+with it by default as of 0.19.0 (before that it scored with the two-term gate while this artifact
+sat uncalled). Fitted on the **cleaned** corpus: 355,052 rows / 1,101 positive / 10 screens,
+per-screen intercept, `tau = 0.25`. Within-screen median AUROC **0.6504**.
+
+| term | coefficient | z |
+|---|--:|--:|
+| `expr` | +0.3410 | +6.31 |
+| `expr_missing` | +0.0929 | +5.98 |
+| **`occupancy`** | +0.1050 | **+5.16** |
+| `complement` | +0.1790 | +4.24 |
+| `binder` | +0.1418 | +4.00 |
+| `self_tcr` | +0.3154 | +3.45 |
+| `viral_R` | +0.1020 | +1.41 |
+| `viral_tcr` | +0.0995 | +0.87 |
+| `thymus_tcr` | −0.0110 | −0.11 |
+
+- **`O` replaced `D`.** Agretopicity does not resolve in any of seven parameterisations, and the one
+  that appears to is 0.9955 correlated with mutant affinity — it improves by deleting itself.
+  Occupancy is what the binding equilibrium supplies instead, and it needs no wild type, so it is
+  defined for frameshift and fusion products. `bench/results/neoag_dai_terms.md`,
+  `neoag_occupancy.md`, `neoag_aggregate_boecrt.md`.
+- **Not comparable to the `BECRT` record below.** Different corpus (cleaned, pathogen epitopes and
+  unmutated self windows removed, Gfeller held out), different screen count (10 vs 7), fewer
+  positives (1,101 vs 1,719, because a good part of the old ones were not neoantigens). Neither
+  number supersedes the other; they measure different populations.
 
 ## Best recorded model (2026-08-17)
 

@@ -238,7 +238,7 @@ def test_aggregate_artifact_is_self_consistent():
     """
     a = R.aggregate()
     n = len(a["features"])
-    assert a["model"] == "BDECRT"
+    assert a["model"] == "BOECRT"
     assert len(a["coef"]) == n and len(a["mu"]) == n and len(a["sigma"]) == n
     assert tuple(a["features"]) == R.AGGREGATE_FEATURES
     assert all(s > 0 for s in a["sigma"])
@@ -261,7 +261,7 @@ def test_aggregate_score_is_monotone_in_binder_and_tolerates_missing_columns():
     assert s[0] > s[1] > s[2]
 
     # a NaN inside a supplied column behaves the same as omitting the value
-    with_nan = R.aggregate_score({"binder": [1.0, 1.0], "dai": [0.5, float("nan")]})
+    with_nan = R.aggregate_score({"binder": [1.0, 1.0], "occupancy": [0.5, float("nan")]})
     without = R.aggregate_score({"binder": [1.0, 1.0]})
     assert with_nan[1] == pytest.approx(without[1])
     assert with_nan[0] != pytest.approx(without[0])
@@ -270,11 +270,17 @@ def test_aggregate_score_is_monotone_in_binder_and_tolerates_missing_columns():
 def test_aggregate_carries_the_fit_provenance_a_reader_needs():
     """A shipped scorer that cannot say what it was fitted on is not reproducible."""
     a = R.aggregate()
-    assert a["fit"]["rows"] == 337972 and a["fit"]["positives"] == 1719
-    assert len(a["fit"]["screens"]) == 7
-    assert a["generator"].endswith("hier.py")
-    # the Luksza shape parameters are part of the model, not of the caller's taste
-    assert a["luksza"] == {"k": 1.0, "a0": 24.0}
+    # the CLEANED corpus: pathogen epitopes and unmutated self windows removed, host keyed on the
+    # MHC genus, CEDAR and Gfeller held out. Fewer positives than the 1,719 the previous artifact
+    # claimed, because a good part of those were not neoantigens.
+    assert a["fit"]["rows"] == 355052 and a["fit"]["positives"] == 1101
+    assert len(a["fit"]["screens"]) == 10
+    assert a["generator"].endswith("build_aggregate.py")
+    # the prospective set is checked, not assumed
+    assert a["fit"]["prospective"] == "Sahin_TNBC" and a["fit"]["leaked"] == 0
+    # the Luksza shape is REFITTED, not the hardcoded 1.0/24.0 the previous artifact carried
+    assert a["luksza"]["mask"] == "tcr5"
+    assert a["luksza"]["k"] == 2.25 and a["luksza"]["a0"] == 20.0
 
 
 def test_written_tables_use_unix_line_endings(tmp_path):
@@ -412,3 +418,30 @@ def test_known_epitopes_still_sort_first():
                    Ranked(peptide="CCCCCCCCC", allele="A", binder=0.0,
                           known_epitope="iedb")], None)
     assert out[0].peptide == "CCCCCCCCC"
+
+
+def test_artifact_and_library_agree_on_the_concentration():
+    """`occupancy` is fitted at one [P] and computed at another only if someone changes one and not
+    the other -- which would silently rescale the feature the coefficient was fitted for."""
+    from mhcmatch.rank import aggregate, PEPTIDE_NM
+    a = aggregate()
+    assert a["model"] == "BOECRT"
+    assert "occupancy" in a["features"]
+    assert "dai" not in a["features"]
+    assert abs(a["peptide_nm"] - PEPTIDE_NM) < 1e-12
+
+
+def test_aggregate_reproduces_the_benchmark_score():
+    """The artifact carries its own mu/sigma, so a caller reproduces the fitted linear predictor
+    exactly. Recomputed here by hand from the artifact rather than trusting aggregate_score."""
+    import numpy as np
+    from mhcmatch.rank import aggregate, aggregate_score
+    a = aggregate()
+    rng = np.random.default_rng(0)
+    cols = {f: rng.normal(mu, abs(sg) or 1.0, 64)
+            for f, mu, sg in zip(a["features"], a["mu"], a["sigma"])}
+    got = aggregate_score(cols)
+    want = np.zeros(64)
+    for f, c, mu, sg in zip(a["features"], a["coef"], a["mu"], a["sigma"]):
+        want += c * (cols[f] - mu) / (sg or 1.0)
+    assert np.max(np.abs(got - want)) < 1e-10

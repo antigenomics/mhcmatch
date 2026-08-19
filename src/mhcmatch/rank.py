@@ -75,18 +75,19 @@ def columns(extended: bool = False, annotate: bool = False) -> list:
         out += list(ANNOTATE_COLUMNS)
     return out
 
-# --------------------------------------------------------------- the fitted aggregate (BDECRT)
+# --------------------------------------------------------------- the fitted aggregate (BOECRT)
 
 #: Cached ``aggregate_mhc1.json``. Loaded once, on first use.
 _AGG: dict | None = None
 
-#: The features the shipped aggregate expects, in order. Read it rather than typing the list.
-AGGREGATE_FEATURES: tuple = ("binder", "dai", "expr", "expr_missing", "complement",
+#: The features the shipped aggregate expects, in order. Read it rather than typing the list --
+#: ``O`` replaced ``D`` in 0.19.0 and a hardcoded copy of this tuple would have gone stale silently.
+AGGREGATE_FEATURES: tuple = ("binder", "occupancy", "expr", "expr_missing", "complement",
                              "viral_R", "viral_tcr", "self_tcr", "thymus_tcr")
 
 
 def aggregate() -> dict:
-    """The fitted ``BDECRT`` artifact: features, coefficients, and the standardizer.
+    """The fitted ``BOECRT`` artifact: features, coefficients, and the standardizer.
 
     Fitted by ``bench/neoag/hier.py`` over all seven neoantigen screens (337,972 rows / 1,719
     positive) as a partially-pooled Bayesian logistic regression with a **per-screen intercept**.
