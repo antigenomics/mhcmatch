@@ -21,9 +21,17 @@ The mathematical and statistical theory lives in the technical appendix
        <h3>Immunogenicity features</h3>
        <p>Physicochemical featurization of an epitope, offline, in one second.</p>
      </a>
+     <a class="proj-card" href="cli.html">
+       <h3>Command line</h3>
+       <p>Nineteen commands grouped by what you are trying to do, and the two env vars a cluster needs.</p>
+     </a>
      <a class="proj-card" href="complementarity.html">
        <h3>Complementarity</h3>
-       <p>The recognition axis: six feature blocks, one score, a whole corpus in seconds.</p>
+       <p>The recognition axis: six feature blocks, one score, class I and class II.</p>
+     </a>
+     <a class="proj-card" href="safety.html">
+       <h3>Safety &amp; cassettes</h3>
+       <p>The self-origin screen before a cassette is built, and the map of the one you built.</p>
      </a>
      <a class="proj-card" href="api.html">
        <h3>API Reference</h3>
@@ -47,12 +55,21 @@ Capabilities
   schemes (:doc:`immunogenicity`), plus a shipped 13-parameter calibrated ``P(immunogenic)``.
 - **TCR precursor frequency** — six estimators of how much of a repertoire can recognise an epitope
   (optional ``[precursor]`` extra).
+- **Complementarity** — the recognition axis as one prior-free log-odds over six feature blocks,
+  fitted separately for **class I and class II** and for each host (:doc:`complementarity`).
+- **Mimicry as risk** — viral / self / thymus resemblance split by anchor and TCR-facing channel,
+  as signed log-odds rather than a single distance.
+- **Neoantigen ranking** — presentation × recognition through a gate, with expression, agretopicity
+  and near-exact matches to already-tested neoantigens reported beside the score.
+- **Cassette assembly** — withdraw unsafe units, size each allotype, order them, choose the spacer,
+  back-translate, and emit a map of the result (:doc:`safety`).
 
 .. toctree::
    :maxdepth: 2
    :hidden:
 
    getting-started
+   cli
    immunogenicity
    complementarity
    safety

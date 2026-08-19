@@ -73,6 +73,12 @@ mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor 
 | What does this allele's motif look like? | `mhcmatch logo 'HLA-A*02:01'` | `logo.motif` |
 | Which peptides in this protein are presented? | `mhcmatch scan p.fasta --correction bh` | `store.scan_protein` |
 | What is the full MHC-II ligand around this core? | `mhcmatch span CORE --protein p.fasta` | `ligand.presented_span` |
+| Build a vaccine cassette from ranked candidates | `mhcmatch vector --candidates units.tsv --n0 8 --screen` | `vector.select` / `vector.order` |
+| …and a map of it a viewer can draw | `mhcmatch vector ... --map c.tsv --map-json c.json` | `vector.epitope_map` |
+| Strip frameshift-prone motifs from the CDS | `mhcmatch deslip cassette.fa` | `vector.slippery_sites` |
+| Split a peptide into anchor / TCR-facing parts | `mhcmatch decompose PEP` | `store.decompose` |
+
+Full command reference, grouped by task: [the CLI page](https://antigenomics.github.io/mhcmatch/cli.html).
 
 `predict` is the presentation axis (**is it presented at all**, the NetMHCpan `%Rank_EL` analogue);
 `restriction` is the specificity axis (**which allele**). They answer different questions and a

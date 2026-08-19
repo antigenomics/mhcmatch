@@ -68,6 +68,12 @@ versioning is [SemVer](https://semver.org).
   spent, `select`'s explicit `n0`, `order` choosing no spacer at all, and `epitope_map` marking the
   three junction-spanning epitopes that belong to no gene. Runs in ~18 s with no cohort data.
 
+- **`docs/cli.rst`** — the CLI had no reference page anywhere in the docs, only a bare
+  comma-separated list in the skill and prose scattered through the README. Nineteen commands
+  grouped by task and by axis, the batch/`--threads` rule, the `predict` vs `restriction`
+  distinction, and the environment variables a cluster needs. Wired into the toctree with its own
+  landing card, alongside a card for the safety page which also had none.
+
 ### Fixed
 
 - **`fetch_pmhc` ignored the local mirror.** It called `hf_hub_download` directly, so

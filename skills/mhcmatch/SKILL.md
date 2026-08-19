@@ -87,9 +87,16 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 
 ## CLI
 
-`decompose`, `restriction`, `affinity`, `binder`, `scan`, `source`, `logo`, `span`, `predict`,
-`rank`, `explain`, `complement`, `mimics`, `mimicry`, `neoag`, `expression`, `vector`, `deslip`,
-`bootstrap`.
+Nineteen commands. Full reference: [docs/cli.rst](../../docs/cli.rst).
+
+| axis | commands |
+|---|---|
+| presentation | `predict` · `restriction` · `binder` · `affinity` · `scan` · `span` · `decompose` · `logo` |
+| recognition | `complement` · `mimics` · `mimicry` · `neoag` |
+| integration | `rank` · `explain` · `expression` · `source` |
+| cassette | `vector` · `deslip` |
+| setup | `bootstrap` |
+
 `mhcmatch binder <peptide> --alleles ... --cls mhc1` ranks alleles by the generalized binder score.
 `mhcmatch vector --candidates units.tsv --n0 8 [--screen]` assembles a cassette; its input is
 **long windows**, not `rank`'s minimal epitopes, and `--screen` is opt-in because it costs a
