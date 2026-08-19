@@ -25,6 +25,29 @@ pip install mhcmatch
 mhcmatch bootstrap                                   # pre-fetch the panel (optional; ~16 MB)
 ```
 
+**Optional extras.** The base install is `seqtree`, `numpy` and `huggingface_hub` — nothing heavy,
+and every model that ships by default runs on it.
+
+| extra | pulls | needed for |
+|---|---|---|
+| `mhcmatch[esm]` | `torch`, `transformers` | **only** the `esm64_glm` recognition head. Downloads a ~2.4 GB ESM2 checkpoint on first use |
+| `mhcmatch[structure]` | `tcren` | the structure-based ΔΔG head |
+| `mhcmatch[precursor]` | `vdjmatch` | precursor-frequency estimates |
+| `mhcmatch[notebooks]` | `marimo` | the worked examples in `notebooks/` |
+
+`torch` is **not** required to score recognition. The default head (`posbayes`, three parameters) is
+pure numpy, so a user who never installs `[esm]` gets a complete fitted model rather than a degraded
+one — `mhcmatch.recognition.score()` just works. Asking for the ESM head without the extra raises a
+named error telling you which extra to install; it never silently drops features and returns a
+number that looks fine.
+
+```python
+from mhcmatch import recognition as rec
+rec.default_head("human")            # 'posbayes' -- no torch involved
+rec.score(peps)                      # works on the base install
+rec.score(peps, head="esm64_glm")    # ImportError unless mhcmatch[esm] is installed
+```
+
 ```bash
 # rank a donor's neoantigen candidates end to end
 mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor SKCM --out ranked.tsv

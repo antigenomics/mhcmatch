@@ -225,3 +225,44 @@ Regenerate (from the `2026-mhcmatch-benchmark` repo, branch `ipred`):
 Evidence — eigenspectrum, leave-one-dataset-out parameter stability, bootstrap intervals, human↔mouse
 transfer, the summed-Kidera baseline and the cross-validated AUC — is in `bench/results/ipred_*.md` in
 that repo. Nothing in this package recomputes any of it.
+
+## `complement_mhc1_human.json` / `complement_mhc1_mouse.json`
+
+The parameters `mhcmatch.complement` scores with: a 30-feature design, its standardizer, fourteen
+fitted log-odds tables, and a linear head. One file per species, **never pooled** — the mouse arm is
+fitted on mouse rows only, because a pooled fit would let the larger human arm set the anchor and
+TCR-face tables for both.
+
+| part | what it is | provenance |
+|---|---|---|
+| `features` | the 30 column names, in the order `design()` builds them. **This list, not `complement.BLOCKS`, is the contract** — `_load()` fails on any length mismatch | **derived/computed** |
+| `standardizer` | column means and standard deviations of the fitting arm | **derived/computed** |
+| `log_odds` | thirteen 20-cell tables (amino-acid counts, by role and by length bin) and one 400-cell table (adjacent TCR-facing residue pairs) | **derived/computed** — fitted to experimental T-cell-assay labels |
+| `logistic` | intercept and 30 coefficients on the standardized scale, ridge `tau = 4.0`. **This is what `score()` uses** | **derived/computed** |
+| `fits.em`, `fits.supervised` | two class-conditional Gaussian fits, vendored so the comparison behind choosing the linear head stays re-checkable. **Not used at runtime** | **derived/computed** |
+| `paratope` | TCRen contact potential marginalised over 28,250,990 TRB CDR3 loops | **derived/computed**, label-free |
+| `anchors`, `alphabet`, `kd_threshold` | `(0, 1, 2, -2, -1)`, AA20, and the median Kyte–Doolittle value | **fixed** — `kd_threshold` is derived from the vendored `aa_tables` |
+
+Fitted arms, one per file: `chowell_rebuilt/human` (464,161 rows, 14,712 immunogenic, prevalence
+0.0317) and `chowell_rebuilt/mouse` (47,140 rows, 5,154 immunogenic, prevalence 0.1093), both from
+`immunogenicity/chowell_rebuilt.tsv.gz` on the `isalgo/pmhc_data` dataset, seed 20260817. Positives
+are peptides with a positive T-cell assay; negatives are eluted **self** ligands plus, for the human
+arm, the HLA Ligand Atlas thymus immunopeptidome. The `aa` and `kmer` tables are refitted inside
+every cross-validation fold so the reported AUROCs do not read their own labels back; the deposited
+tables here are the whole-arm fit.
+
+Regenerated in the benchmark repository, not here:
+
+    python bench/neoag/complement.py --fit chowell_rebuilt --tables all
+
+which writes `bench/neoag/complement_fit.json` and `complement_fit_mouse.json`; those are vendored
+to these two paths on a version bump. Evidence — the block ablation, the four estimators, corpus
+transfer and the size-matched cross-species comparison — is in `bench/results/complementarity.md`,
+and the corpus construction rules and arm counts are in `bench/results/corpus_arms.md`. Which
+features the model actually uses, including the nine Kidera factors it does **not** fit and an ESM2
+comparison, is in `bench/results/complement_audit.md`. Nothing in this package recomputes any of it.
+
+**Read the AUROCs as increments.** These corpora carry composition artefacts — cysteine marks the
+label in the Chowell construction and reverses sign in the Kešmir one — so a 20-way composition
+logistic alone reaches 0.68–0.74 on the Chowell arms under the same folds. `bench/results/
+corpus_composition.md` and `KEY_FINDINGS.md` record the measurement.

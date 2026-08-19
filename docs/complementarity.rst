@@ -178,6 +178,22 @@ What it scores
 Peptide-grouped 5-fold CV on the deposited corpus arms — peptides are the grouping unit, so no
 peptide appears in both a train and a test fold (``complementarity.md``).
 
+.. important::
+
+   **What the corpus is, and how to read a number on it.** Positives are peptides with at least one
+   positive T-cell assay; negatives are eluted **self** ligands that appear in no positive T-cell
+   assay. The label belongs to the ``(peptide, host)`` pair, never to an assay row, and rows are
+   aggregated to one per ``(peptide, allele group, host)``. Class I only, 8–11-mers over the
+   canonical twenty, hosts human and mouse kept separate throughout. The full rule set, the arm
+   counts and the selection tree are in ``bench/results/corpus_arms.md`` in the benchmark
+   repository and in the ``isalgo/pmhc_data`` dataset's ``immunogenicity/SOURCES.md``.
+
+   Two consequences worth carrying into any use of these numbers. The negatives are **inferred** —
+   an eluted ligand nobody has tested is assumed non-immunogenic, and some fraction of that
+   assumption is wrong. And the corpora carry composition artefacts, cysteine most of all, so a
+   20-way composition logistic alone reaches 0.68–0.74 on the Chowell arms under these same folds;
+   an AUROC here is meaningful as an increment over that baseline, not against 0.5.
+
 .. list-table::
    :header-rows: 1
    :widths: 34 12 12 14 14 14
@@ -274,3 +290,154 @@ rank so the aggregate can be taken apart.
    is anchored by the P1/P4/P6/P9 core of a 9-mer register floating inside a longer peptide, so
    applying this scheme to it labels the wrong residues as anchors and returns a confident, wrong
    number. :func:`mhcmatch.rank._recognition` returns ``NaN`` for class II rather than guessing.
+
+Shipping it: :mod:`mhcmatch.recognition`
+----------------------------------------
+
+:mod:`mhcmatch.complement` is the six-block model this page describes, and it is unchanged. What
+ships as the recognition head is :mod:`mhcmatch.recognition`, and it is **three models, not one**.
+Each is fitted alone, so their fit criteria are comparable and each score is readable on its own
+terms. The default is whichever wins BIC, currently ``posbayes`` for both species.
+
+===================== ===== ================================================================
+head                  k     what it is
+===================== ===== ================================================================
+``posbayes``          3     naive Bayes over amino-acid identity conditioned on **face**
+``physchem_glm``      23    raw Kidera sums per face; :math:`KF_0` carries the face size
+``esm64_glm``         65    64 components of a whole-peptide ESM2 pool
+===================== ===== ================================================================
+
+.. code-block:: python
+
+   from mhcmatch import recognition as rec
+
+   rec.default_head("human")                  # 'posbayes'
+   rec.score(peps)                            # the default head, pure numpy, no extra needed
+   rec.score(peps, head="esm64_glm")          # needs pip install 'mhcmatch[esm]'
+
+   rec.score(peps, anchors=[(0, 1, 2, -2, -1)])       # masks given
+   rec.score(peps, mhc="HLA-A*02:01", store=store)    # masks from the allele's layout
+   rec.score(peps, roles=mask)                        # explicit per-residue mask
+   rec.posterior(peps, prior=0.03)                    # a probability needs a prior
+
+**The default head needs no optional dependency.** The base install is ``seqtree``, ``numpy`` and
+``huggingface_hub``; ``posbayes`` and ``physchem_glm`` run on exactly that. Only ``esm64_glm``
+needs ``torch`` and ``transformers``:
+
+.. code-block:: console
+
+   pip install 'mhcmatch[esm]'      # ~2.4 GB ESM2 checkpoint on first use
+
+Asking for that head without the extra raises an :class:`ImportError` naming the extra. It never
+drops the features and returns a number that looks fine, which is the failure mode worth avoiding:
+a model missing its whole design is not the model that was validated.
+
+Why the split is by face and not by position
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Peptide length is not fixed, so a model conditioned on absolute position is not well defined across
+an 8-mer and an 11-mer. All three heads condition on the **face** instead --- MHC-facing or
+TCR-facing --- which is defined at any length. In ``posbayes`` this is what lets the two tables
+disagree in sign without anything being told to flip, and in ``physchem_glm`` it is why length never
+appears as a feature: :math:`KF_0` is the constant 1, so summed over a face it *is* that face's
+size, and the two face sizes add to the length.
+
+.. code-block:: python
+
+   rec.log_odds_table()["anchor"]["C"]     # +1.35 -- the whole model is forty numbers
+
+Where the coefficients come from
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``chowell_iedb_full_matched`` --- the rebuilt Chowell corpus with negatives resampled so the allele
+group carries no signal about the label. A coefficient fitted on the unmatched arm can be paid for
+recognising which allele happened to be typed, and that is not a coefficient about recognition. The
+measured cost of the choice, stated once: against the unmatched arm it loses roughly 0.02 (human)
+and 0.06 (mouse) held-out AUROC.
+
+Fit criteria on that arm, and performance on the published deposits, whose peptides are removed from
+every training arm first:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 13 13 13 13 13 13
+
+   * - head
+     - BIC human
+     - CV ROC
+     - Chowell
+     - Kešmir
+     - BIC mouse
+     - Chowell (m)
+   * - ``posbayes``
+     - **17693**
+     - 0.6935
+     - **0.7872**
+     - 0.5190
+     - **6871**
+     - 0.6399
+   * - ``physchem_glm``
+     - 18516
+     - 0.6586
+     - 0.7709
+     - **0.6096**
+     - 7405
+     - 0.6459
+   * - ``esm64_glm``
+     - 17988
+     - **0.7043**
+     - 0.7779
+     - 0.5412
+     - 7240
+     - **0.7084**
+
+Three things in that table are worth carrying. ``posbayes`` wins BIC on both species with three
+parameters and is also the best of the three on the human Chowell deposit. ``esm64_glm`` is the most
+accurate on mouse and in cross-validation, and the least explainable. And ``physchem_glm`` is the
+only head that transfers to the Kešmir deposit on human --- the corpus built with the opposite
+negative construction --- which is a reason to keep it rather than a rounding error.
+
+ROC AUC, PR AUC and F1 for every head, both species, both training arms, together with
+human↔mouse transfer and corpus-to-corpus in both directions, are in
+``bench/results/shipped_models.md``. Note that PR AUC is not comparable between the matched and
+unmatched arms: their prevalences are 50\% and about 3\%.
+
+Class II: what this is and what it is not
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. warning::
+
+   **There is no fitted class-II recognition model, and**
+   :func:`~mhcmatch.recognition.score_mhc2` **is not one.** No class-II immunogenicity corpus with a
+   usable negative set exists here to fit against: every arm in this work pairs T-cell-assay
+   positives with eluted *self* ligands as negatives, and that construction has not been built for
+   class II. What the function does is apply the **MHC-I-trained coefficients** to the class-II
+   binding core, with the groove-facing positions redefined as P1/P4/P6/P9 of the register-anchored
+   9-mer instead of the class-I P2/P\ :math:`\Omega` pattern. It emits a ``UserWarning`` the first
+   time it is called.
+
+   Use it to **rank class-II peptides against each other**. Do not compare the values with class-I
+   scores, do not read them as calibrated probabilities, and do not report a number from it without
+   saying which model produced it.
+
+.. code-block:: python
+
+   from mhcmatch import recognition as rec
+
+   rec.mhc2_core(["PKYVKQNTLKLAT"])          # (['YVKQNTLKL'], [2]) -- the register-anchored core
+   rec.score_mhc2(["PKYVKQNTLKLAT"])         # ranks; nan where no 9-mer core can be assigned
+
+Two things make it worth more than nothing. The design is mostly interface geometry -- Kidera
+factors and ESM2 embeddings pooled over the groove-facing and the TCR-facing residues -- and that
+split is defined for class II as well. And the score is taken on the **core**, not the whole peptide,
+which keeps every feature inside the range the model was fitted on: nine residues, composition
+summing to nine, length fixed. Scoring a 15-mer directly would place ``length`` roughly five standard
+deviations outside the fitted range and scale all twenty counts with it.
+
+Two things should keep you sceptical of it. The coefficients were fitted where the groove-facing
+residues are the two termini and the TCR-facing residues are a contiguous middle; in class II the
+groove-facing positions are interior and the two faces interleave, so a coefficient learned on one
+geometry is being read on another. And the register is a heuristic unless one is supplied, so an
+error in the frame moves every residue from one face to the other. Pass ``register_start=`` from
+:meth:`mhcmatch.diffusion.AnchorModel.best_register` when a per-allele register is available.
+

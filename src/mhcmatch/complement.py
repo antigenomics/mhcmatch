@@ -80,7 +80,7 @@ from . import ipred
 from .data import aa_tables
 
 __all__ = ["AA", "ANCHORS", "PARATOPE", "PARAMS", "TABLES", "SPECIES", "BLOCKS", "table",
-           "encode", "apply_log_odds", "design", "feature_names", "features", "score",
+           "encode", "apply_log_odds", "design", "feature_names", "features", "score", "kidera_design", "kidera_names",
            "posterior", "parameters"]
 
 AA = "ACDEFGHIKLMNPQRSTVWY"
@@ -345,6 +345,47 @@ def design(peptides, species: str = "human") -> np.ndarray:
     cols = [apply_log_odds(counts, FITTED[c], t["log_odds"][c]) if c in FITTED else feats[c]
             for c in t["features"]]
     return np.column_stack(cols)
+
+
+KIDERA = tuple(f"KF{i}" for i in range(1, 11))
+
+
+def kidera_names() -> list[str]:
+    """Column names of :func:`kidera_design`, in order."""
+    return [f"kf{i}_{r}" for i in range(1, 11) for r in ("anchor", "tcr", "all")]
+
+
+def kidera_design(peptides, anchors=None, roles=None) -> np.ndarray:
+    """All ten Kidera factors, each summed over the anchors, the TCR face and the whole peptide.
+
+    The fitted model uses one of the ten -- ``kf4_anchor`` and ``kf4_tcr``, the hydropathy axis --
+    because that is the factor the role split was established on, not because the other nine were
+    compared and rejected. This builds the full set so they can be. Label-free: it reads only the
+    vendored Kidera table and :data:`ANCHORS`, so it needs no fitted artifact and no per-fold refit.
+
+    >>> kidera_design(["GILGFVFTL"]).shape
+    (1, 30)
+    """
+    from .data import aa_tables
+    tab = aa_tables.DESCRIPTORS["KIDERA"]
+    vec = np.array([[tab[k][a] for a in AA] for k in KIDERA])      # (10, 20)
+    idx = {a: i for i, a in enumerate(AA)}
+    out = np.zeros((len(peptides), 30))
+    for n, p in enumerate(peptides):
+        L = len(p)
+        if roles is not None:
+            anc = {j for j in range(L) if roles[n][j]}
+        else:
+            anc = {a % L for a in (ANCHORS if anchors is None else anchors)}
+        code = np.array([idx[c] for c in p])
+        a_i = np.array([code[j] for j in range(L) if j in anc], dtype=int)
+        t_i = np.array([code[j] for j in range(L) if j not in anc], dtype=int)
+        for j in range(10):
+            v = vec[j]
+            out[n, 3 * j] = v[a_i].sum() if a_i.size else 0.0
+            out[n, 3 * j + 1] = v[t_i].sum() if t_i.size else 0.0
+            out[n, 3 * j + 2] = v[code].sum()
+    return out
 
 
 def features(peptide: str, species: str = "human") -> dict[str, float]:
