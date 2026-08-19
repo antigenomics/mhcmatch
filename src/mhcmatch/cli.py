@@ -448,13 +448,13 @@ def cmd_rank(a):
         store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
         rows = R.rank_fasta(store, a.input, _read_alleles(a.alleles), cls=a.cls,
                             tissue=a.tissue, tumor=a.tumor, refs=refs,
-                            rank_threshold=a.rank_threshold)
+                            rank_threshold=a.rank_threshold, score=a.score)
     else:
         store = None
         if a.recompute_presentation:
             store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
         rows = R.rank_table(a.input, tissue=a.tissue, tumor=a.tumor, refs=refs,
-                            store=store, cls=a.cls)
+                            store=store, cls=a.cls, score=a.score)
     rows = rows[:a.top] if a.top else rows
     cols = list(R.BASE_COLUMNS)
     # The mimicry columns are appended, never folded into `score`. Whether mimicry belongs inside
@@ -1147,6 +1147,11 @@ def main(argv=None):
     rk.add_argument("--recompute-presentation", action="store_true",
                     help="mode=table: rescore presentation with mhcmatch instead of trusting the "
                          "table's own columns")
+    rk.add_argument("--score", choices=("aggregate", "gate"), default="aggregate",
+                    help="`aggregate` (default) scores with the fitted model in "
+                         "data/aggregate_mhc1.json -- the one the benchmark fitted. `gate` is the "
+                         "two-term noisy-AND that was the default before 0.19.0, kept so a run can "
+                         "be compared against the old ordering")
     rk.add_argument("--extended", action="store_true",
                     help="append the mimicry aggregate: signed viral / self / thymus contributions "
                          "per anchor and TCR-facing channel, their sum, and the autoimmunity "

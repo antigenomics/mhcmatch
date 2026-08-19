@@ -369,3 +369,46 @@ def test_occupancy_needs_no_wild_type():
     assert r.occupancy == r.occupancy          # defined
     assert r.agretopicity != r.agretopicity    # absent, and stays absent
     assert r.wt_peptide == ""
+
+
+# ------------------------------------------------- the fitted aggregate is the score (0.19.0)
+
+def test_default_score_is_the_fitted_aggregate_not_the_gate():
+    """Until 0.19.0 `rank` scored with the two-term noisy-AND while the fitted aggregate sat
+    vendored with no internal caller -- the shipped ranking and the published coefficients were two
+    different models. This pins the default and keeps `gate` reachable."""
+    from mhcmatch.rank import Ranked, _finish, aggregate, aggregate_score
+    rows = [Ranked(peptide="SIINFEKL", allele="H2-Kb", binder=2.0, occupancy=0.9,
+                   physchem=1.5, expression=3.0),
+            Ranked(peptide="SIINFEKV", allele="H2-Kb", binder=0.1, occupancy=0.01,
+                   physchem=-1.0, expression=0.5)]
+    out = _finish([Ranked(**vars(r)) for r in rows], None)
+    want = aggregate_score({"binder": [2.0, 0.1], "occupancy": [0.9, 0.01],
+                            "expr": [3.0, 0.5], "expr_missing": [0.0, 0.0],
+                            "complement": [1.5, -1.0]})
+    assert [r.peptide for r in out] == ["SIINFEKL", "SIINFEKV"]
+    assert abs(out[0].score - float(want[0])) < 1e-10
+    assert out[0].components["model"] == aggregate()["model"]
+
+    gated = _finish([Ranked(**vars(r)) for r in rows], None, score="gate")
+    assert 0.0 <= gated[0].score <= 1.0        # the gate is a probability; the aggregate is log-odds
+
+
+def test_a_missing_feature_contributes_its_training_mean():
+    """A candidate with no expression, or a run without the mimicry channels, must be scored on the
+    terms it has -- not dropped, and not given a zero that the standardizer would read as extreme."""
+    from mhcmatch.rank import aggregate_score
+    both = aggregate_score({"binder": [1.0], "occupancy": [0.5], "expr": [2.0],
+                            "complement": [0.5]})
+    less = aggregate_score({"binder": [1.0], "occupancy": [0.5], "complement": [0.5]})
+    assert both[0] == both[0] and less[0] == less[0]      # neither is nan
+    assert abs(both[0] - less[0]) > 0                     # expression did contribute something
+
+
+def test_known_epitopes_still_sort_first():
+    """The ordering rule is unchanged by the scorer swap: a known epitope outranks a higher score."""
+    from mhcmatch.rank import Ranked, _finish
+    out = _finish([Ranked(peptide="AAAAAAAAA", allele="A", binder=5.0),
+                   Ranked(peptide="CCCCCCCCC", allele="A", binder=0.0,
+                          known_epitope="iedb")], None)
+    assert out[0].peptide == "CCCCCCCCC"

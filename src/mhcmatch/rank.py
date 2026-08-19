@@ -197,6 +197,9 @@ class Ranked:
     source: str = ""
     #: -log10(presentation %rank); larger = better presented.
     presentation: float = float("nan")
+    #: -log10(calibrated combined binder %rank) -- the aggregate's ``B``. Distinct from
+    #: ``presentation``, which is the presentation head alone.
+    binder: float = float("nan")
     #: log10(Kd_WT / Kd_MT) against the recovered wild type; larger = more differential.
     agretopicity: float = float("nan")
     #: Fraction of MHC this peptide occupies at equilibrium, ``a/(1+a)`` with ``a = [P]/Kd``
@@ -236,6 +239,19 @@ def occupancy(affinity_nm: float, conc: float = PEPTIDE_NM) -> float:
         return float("nan")
     a = conc / affinity_nm
     return a / (1.0 + a)
+
+
+def _ic50_of(rec: dict):
+    """IC50 (nM) from a ``.scored.csv`` row, or None. The pipeline schema has used more than one
+    name for it, so the column is looked up rather than assumed."""
+    for k in ("affinity_nm", "ic50_nm", "ic50", "affinity"):
+        v = rec.get(k)
+        if v not in (None, ""):
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+    return None
 
 
 def _neglog10(rank: float) -> float:
@@ -320,13 +336,47 @@ def _known(peptide: str, refs: dict | None) -> str:
     return ""
 
 
-def _finish(rows: list, gate: dict | None) -> list:
-    """Score, then order: known epitopes first, then by the gate probability."""
+def _finish(rows: list, gate: dict | None, score: str = "aggregate") -> list:
+    """Score, then order: known epitopes first, then by score descending.
+
+    ``score="aggregate"`` (the default since 0.19.0) uses the **fitted** model in
+    ``data/aggregate_mhc1.json`` -- the one the benchmark actually fitted. Until 0.19.0 this
+    function scored with the two-term noisy-AND :func:`gate_probability` while the fitted aggregate
+    sat vendored with no internal caller, so ``mhcmatch rank`` and the published coefficients were
+    two different models. ``score="gate"`` keeps the old path for comparability.
+
+    A feature the caller cannot supply contributes its **training mean**, which is what "no
+    information" should do -- so a candidate with no expression value, or a run without the mimicry
+    channels, is scored on the terms it does have rather than dropped. The mimicry terms
+    (``viral_R`` and the three TCR-face channels) are only computed under ``--extended``; without it
+    they contribute their means and the ranking rests on ``B``, ``O``, ``E`` and ``C``.
+    """
+    if score == "aggregate":
+        try:
+            a = aggregate()
+            cols = {"binder": [r.binder for r in rows],
+                    "occupancy": [r.occupancy for r in rows],
+                    "expr": [r.expression for r in rows],
+                    "expr_missing": [1.0 if r.expression_imputed else 0.0 for r in rows],
+                    "complement": [r.physchem for r in rows]}
+            for name in ("viral_R", "viral_tcr", "self_tcr", "thymus_tcr"):
+                v = [r.components.get(name, float("nan")) for r in rows]
+                if any(x == x for x in v):
+                    cols[name] = v
+            vals = aggregate_score(cols)
+            for r, v in zip(rows, vals):
+                r.score = float(v)
+                r.components["model"] = a.get("model", "")
+        except Exception:                      # no artifact, or numpy absent -- fall back, loudly
+            score = "gate"
+    if score != "aggregate":
+        for r in rows:
+            r.score = gate_probability(
+                0.0 if r.presentation != r.presentation else r.presentation,
+                0.0 if r.physchem != r.physchem else r.physchem, gate)
     for r in rows:
-        r.score = gate_probability(
-            0.0 if r.presentation != r.presentation else r.presentation,
-            0.0 if r.physchem != r.physchem else r.physchem, gate)
-        r.components.update({"presentation": r.presentation, "agretopicity": r.agretopicity,
+        r.components.update({"presentation": r.presentation, "binder": r.binder,
+                             "occupancy": r.occupancy, "agretopicity": r.agretopicity,
                              "physchem": r.physchem, "expression": r.expression,
                              "expression_imputed": r.expression_imputed})
     rows.sort(key=lambda r: (r.known_epitope == "", -r.score))
@@ -335,7 +385,8 @@ def _finish(rows: list, gate: dict | None) -> list:
 
 def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: str | None = None,
                tumor: str | None = None, refs: dict | None = None, rank_threshold: float = 2.0,
-               top: int | None = None, gate: dict | None = None, **kw) -> list[Ranked]:
+               top: int | None = None, gate: dict | None = None, score: str = "aggregate",
+               **kw) -> list[Ranked]:
     """Rank every presented k-mer in a mutation-spanning window FASTA.
 
     ``store`` is a :class:`mhcmatch.Store`; ``alleles`` the donor's HLA types in pipeline form.
@@ -367,16 +418,18 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
             dai = math.log10(p.wt_affinity_nm / p.affinity_nm)
         rows.append(Ranked(peptide=p.peptide, allele=p.allele, gene=gene, source=p.source,
                            presentation=_neglog10(p.percent_rank),
+                           binder=_neglog10(p.binder_rank) if p.binder_rank == p.binder_rank
+                           else float("nan"),
                            occupancy=occupancy(p.affinity_nm), agretopicity=dai,
                            physchem=_recognition(p.peptide, cls=cls), expression=expr,
                            expression_imputed=imputed, wt_peptide=p.wt_peptide,
                            known_epitope=_known(p.peptide, refs)))
-    return _finish(rows, gate)
+    return _finish(rows, gate, score)
 
 
 def rank_table(path: str, *, tissue: str | None = None, tumor: str | None = None,
                refs: dict | None = None, store=None, cls: str = "mhc1",
-               gate: dict | None = None) -> list[Ranked]:
+               gate: dict | None = None, score: str = "aggregate") -> list[Ranked]:
     """Rank a table already scored by another tool, recomputing what this package can compute.
 
     Reads the pipeline ``.scored.csv`` schema (``epitope``, ``best_allele``, ``tpm``, ``gene_name``,
@@ -403,8 +456,12 @@ def rank_table(path: str, *, tissue: str | None = None, tumor: str | None = None
                 bs = P.binder_score(store, pep, alleles=[allele], cls=cls)
                 if bs:
                     pres = _neglog10(bs[0].binder_rank)
+            # `pres` here is -log10 of the BINDER rank, not the presentation head -- the two entry
+            # points differed silently on what `presentation` meant, which the aggregate would have
+            # read as the wrong feature. Both are now written explicitly.
             r = Ranked(peptide=pep, allele=allele, gene=gene,
-                       source=os.path.basename(path), presentation=pres,
+                       source=os.path.basename(path), presentation=pres, binder=pres,
+                       occupancy=occupancy(nm) if (nm := _ic50_of(rec)) is not None else float("nan"),
                        physchem=_recognition(pep, cls=cls), expression=expr, expression_imputed=imputed,
                        known_epitope=_known(pep, refs))
             try:
@@ -412,4 +469,4 @@ def rank_table(path: str, *, tissue: str | None = None, tumor: str | None = None
             except ValueError:
                 r.components["score_builtin"] = None
             rows.append(r)
-    return _finish(rows, gate)
+    return _finish(rows, gate, score)

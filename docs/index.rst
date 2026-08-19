@@ -70,6 +70,7 @@ Capabilities
 
    getting-started
    cli
+   neoantigen
    immunogenicity
    complementarity
    safety

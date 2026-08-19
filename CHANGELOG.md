@@ -6,6 +6,35 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.19.0] - 2026-08-19
+
+### Changed
+
+- **`mhcmatch rank` now scores with the fitted model.** `rank._finish()` had always scored with the
+  two-term noisy-AND `gate_probability(presentation, physchem)` while the fitted aggregate sat in
+  `data/aggregate_mhc1.json` with **zero internal callers** — so the shipped ranking and the
+  published coefficients were two different models. The aggregate is now the default;
+  `--score gate` reproduces the old ordering for comparison.
+
+- **The vendored aggregate is `BOECRT`,** refitted on the cleaned grand corpus (see
+  `bench/results/neoag_aggregate_boecrt.md`). `O` (occupancy) replaces `D` (agretopicity): the
+  ratio does not resolve in any of seven parameterisations, and the one that appears to is 0.9955
+  correlated with mutant affinity. The corpus is the cleaned one — pathogen epitopes and unmutated
+  self windows removed, host keyed on the MHC genus, label conflicts counted, CEDAR and Gfeller held
+  out — rather than the older uncleaned set the previous artifact was fitted on.
+
+- **`Ranked.binder` is written explicitly.** `rank_fasta` set `presentation` from the presentation
+  head while `rank_table` set the same field from the *binder* rank — two different quantities under
+  one name, which the aggregate would have read as the wrong feature. Both now write `presentation`
+  and `binder` separately.
+
+### Added
+
+- **`docs/neoantigen.rst`** — the scorer documented end to end: every term, what it was fitted on,
+  why occupancy replaces agretopicity, how to read the output, and a limits section that states the
+  held-out numbers and the two mimicry terms whose direction is not established.
+- `mhcmatch rank --score {aggregate,gate}`.
+
 ## [0.18.0] - 2026-08-19
 
 ### Added
