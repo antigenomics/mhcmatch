@@ -19,7 +19,7 @@ NUMPY_HEADS = ("posbayes", "physchem_glm")
 
 
 @pytest.mark.parametrize("species", RC.SPECIES)
-@pytest.mark.parametrize("head", RC.HEADS)
+@pytest.mark.parametrize("head", RC.FITTED_HEADS)
 def test_artifact_is_self_consistent(head, species):
     t = RC.table(head, species)
     k = len(t["features"])
@@ -30,10 +30,32 @@ def test_artifact_is_self_consistent(head, species):
     assert np.isfinite(t["bic"]) and t["edf"] > 0
 
 
-def test_default_is_the_lowest_bic_head():
+def test_lowest_bic_head_is_still_reported():
+    """BIC picks the parsimony winner among the three separately fitted heads."""
     for species in RC.SPECIES:
-        bics = {h: RC.table(h, species)["bic"] for h in RC.HEADS}
-        assert RC.default_head(species) == min(bics, key=bics.get)
+        bics = {h: RC.table(h, species)["bic"] for h in RC.FITTED_HEADS}
+        assert RC.lowest_bic_head(species) == min(bics, key=bics.get)
+
+
+def test_default_head_is_the_six_block_complement():
+    """The default is the recognition term the integrated fit uses, not the BIC winner.
+
+    They answer different questions: BIC asks which head buys its parameters on one training arm,
+    the default asks which term to score with. Substituting a 3-parameter head for a 30-feature
+    one is a different claim, so the default names it explicitly rather than inheriting it.
+    """
+    from mhcmatch import complement as CM
+    for species in RC.SPECIES:
+        assert RC.default_head(species) == "complement"
+    peps = ["YLQPRTFLL", "SIINFEKLA", "KLGGALQAK"]
+    assert np.allclose(RC.score(peps), CM.score(peps))
+    assert not np.allclose(RC.score(peps), RC.score(peps, head="posbayes"))
+
+
+def test_complement_head_has_no_vendored_recognition_table():
+    """It is served by mhcmatch.complement, and asking for its table says so."""
+    with pytest.raises(KeyError, match="mhcmatch.complement"):
+        RC.table("complement", "human")
 
 
 def test_head_sizes_are_what_is_documented():

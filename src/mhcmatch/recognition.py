@@ -37,12 +37,22 @@ import os
 
 import numpy as np
 
-__all__ = ["HEADS", "SPECIES", "table", "default_head", "feature_names", "roles_for", "design",
+__all__ = ["HEADS", "FITTED_HEADS", "SPECIES", "table", "default_head", "lowest_bic_head", "feature_names", "roles_for", "design",
            "score", "posterior", "embed", "mhc2_core", "score_mhc2", "MHC2_ANCHORS",
            "log_odds_table"]
 
 SPECIES = ("human", "mouse")
-HEADS = ("posbayes", "physchem_glm", "esm64_glm")
+#: ``complement`` is the six-block, 30-feature model of :mod:`mhcmatch.complement` and is the
+#: **default**. The other three are fitted alone on one arm so their BIC is comparable to each
+#: other; ``posbayes`` wins that comparison at three parameters. That is a statement about
+#: parsimony on one corpus, not about which term to score with: in the integrated neoantigen fit
+#: it is the six-block form that carries the recognition signal, and a 3-parameter head is a
+#: different claim that must not be substituted for it silently. BIC across the three is still
+#: reported by :func:`table`.
+HEADS = ("complement", "posbayes", "physchem_glm", "esm64_glm")
+
+#: The three heads with their own vendored artifacts. ``complement`` is served by its own module.
+FITTED_HEADS = ("posbayes", "physchem_glm", "esm64_glm")
 ESM_MODEL = "facebook/esm2_t33_650M_UR50D"
 KIDERA = tuple(f"KF{i}" for i in range(1, 11))
 #: 0-based P1/P4/P6/P9 within the register-anchored 9-mer core.
@@ -59,6 +69,9 @@ def table(head: str = None, species: str = "human") -> dict:
     if species not in SPECIES:
         raise KeyError(f"no recognition table for {species!r}; have {', '.join(SPECIES)}")
     head = head or default_head(species)
+    if head == "complement":
+        raise KeyError("the 'complement' head has no vendored recognition table of its own; "
+                       "it is mhcmatch.complement -- use complement.parameters(species)")
     if head not in HEADS:
         raise KeyError(f"unknown head {head!r}; have {', '.join(HEADS)}")
     with open(_data(f"recognition_{head}_mhc1_{species}.json")) as fh:
@@ -76,7 +89,17 @@ def _defaults() -> dict:
 
 
 def default_head(species: str = "human") -> str:
-    """The head with the lowest BIC on the training arm, which is what ``score`` uses by default."""
+    """What :func:`score` uses when no head is named: the six-block ``complement`` model.
+
+    :func:`lowest_bic_head` still reports the parsimony winner among the three separately fitted
+    heads. They answer different questions -- BIC asks which head buys its parameters on one
+    training arm, and the default asks which recognition term to score with.
+    """
+    return "complement"
+
+
+def lowest_bic_head(species: str = "human") -> str:
+    """The lowest-BIC head among the three with their own fitted tables."""
     return _defaults()["default"][species]
 
 
@@ -221,6 +244,9 @@ def score(peptides, species: str = "human", head: str = None, **kw) -> np.ndarra
     Not a probability -- pass it through :func:`posterior` with a prior for the set being scored.
     """
     head = head or default_head(species)
+    if head == "complement":
+        from . import complement as _c
+        return _c.score(peptides, species=species)
     t = table(head, species)
     X = design(peptides, species, head, **kw)
     m = np.asarray(t["standardizer"]["mean"])
