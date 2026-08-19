@@ -6,6 +6,62 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.16.0] - 2026-08-19
+
+### Added
+
+- **`mhcmatch.complement` scores MHC class II.** It was class I only, because the class-I `aa` block
+  bins its log-odds tables on the peptide's *length* and a class-II ligand is a 9-mer core floating
+  inside an 11–25-mer. `score(peps, cls="mhc2")` takes its anchors from the P1/P4/P6/P9 core of the
+  register (`store.anchor_indices`, or a frame you pin with `registers=`) and reads its own vendored
+  tables, fitted on 603,781 human and 50,258 mouse class-II peptides. Class I is byte-identical and
+  asserted so; the class is an argument and never inferred from the length.
+
+  Which variable the block should be keyed on was measured rather than assumed, and the answer was
+  not the predicted one — AUROC over the pooled role pair:
+
+  | `aa` construction | human | mouse |
+  |---|--:|--:|
+  | register zones | +0.0029 | +0.0034 |
+  | total length | +0.0070 | +0.0159 |
+  | **both** | **+0.0102** | **+0.0185** |
+
+  A class-II ligand's length is the length of its *flanks*, which is a covariate in its own right
+  and not a register question. So both classes carry the same shape — pooled role pair, a length
+  key, a position key — differing only in the position key: relative thirds of the TCR face at
+  class I, register zones at class II.
+
+- **`mhcmatch.vector.epitope_map` / `write_map` — the cassette, described.** One row per unit,
+  linker and predicted epitope, 1-based over the cassette, as TSV and as JSON with a per-unit
+  summary. Units and linkers tile exactly; an epitope spanning a junction is marked `unit = 0`; the
+  class-II register core is resolved into cassette coordinates. **A peptide presented by two of the
+  recipient's alleles gets two rows** — at a heterozygous locus those are two presentation events.
+  `map_summary` reports per unit whether its class-I epitopes have overlapping class-II epitopes
+  (`self_help`), the configuration Kissick et al. showed can replace an exogenous helper outright
+  (PMID 24690990). CLI: `--map`, `--map-json`, `--map-threshold`, `--map-alleles-mhc2`.
+
+- **`integrations/nextflow/mhcmatch/slurm.config`** — executor, per-process resources, scheduler-kill
+  retries, and one shared `MHCMATCH_PMHC_DIR` / `MHCMATCH_CALIBRATION_CACHE` for the whole run.
+
+- **`docs/safety.rst`** — the exclusion policy, the prior-evidence columns and what `n0` means, with
+  the measurements behind each. Says two things that were nowhere written down: the prior-evidence
+  columns are self-fulfilling on our own corpora and informative only on fresh data; and the screen
+  is **class I / CD8 only** by design, CD4 self-reactivity being a different question.
+
+### Changed
+
+- **`complement`'s `motif` block is documented, and one claim in it was wrong.** A non-standard
+  residue **breaks** a hydropathy run rather than being transparent to it — `AAAIIXIAA` gives
+  `kd_run_max = 2`, exactly as `AAAIIDIAA` does — and it sits in `kd_run_frac`'s denominator without
+  ever entering the numerator. The threshold is the median of the Kyte–Doolittle scale itself
+  (−0.85, admitting `ACFGILMSTV`). The block's recorded gain is now in the docs: positive on all
+  eight corpus arms, median +0.0060 AUROC.
+
+- The Nextflow subworkflow runs `NEOAG`, `MIMICRY` and `VECTOR` on **class I only**, by design
+  rather than omission; `PREDICT` and `RANK` still serve both.
+
+- Container tag and conda pin moved from the 0.14.0 the module still named.
+
 ## [0.15.0] - 2026-08-19
 
 ### Added
