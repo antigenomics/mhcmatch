@@ -681,3 +681,114 @@ def test_units_from_context_skips_windows_with_no_marked_mutation():
         [{"peptide": "SIINFEKL", "gene": "X", "allele": "H2-Kb", "p": "0.9"}],
         [("Fusion:A--B:INFRAME:SIINFEKLSIINFEKL|X:E1--E2:G1--G2:--:0.3:1:0", "SIINFEKL")])
     assert units == []
+
+
+# --------------------------------------------------------------------------- the cassette map
+
+# The SIM2 27-mer from PMID 24690990: its HLA-A*02:01 9-mer and a class-II epitope overlap by
+# design, which is what let the long peptide replace an exogenous HBVcore helper outright.
+SIM2 = "NMFMFRASLDLKLIFLDSRVTEVTGYE"
+ERG = "AAYQIVGLVAVQEHVLKAMKQLGLSKD"
+SIM2_I, SIM2_II = "KLIFLDSRV", "LKLIFLDSRVTEVTG"
+
+
+def _map_cassette(spacer_first=None):
+    units = [vector.Unit(peptide=SIM2, mutation_index=13, gene="SIM2", allele="HLA-A*02:01", p=0.8),
+             vector.Unit(peptide=ERG, mutation_index=13, gene="ERG", allele="HLA-B*07:02", p=0.6)]
+    spacers = (spacer_first,) if spacer_first is not None else vector.SPACERS
+    return vector.order(units, binder=lambda peps, alleles=None: [0.0] * len(peps), spacers=spacers)
+
+
+def _r1(peps):
+    return [[("HLA-A*02:01", 0.31), ("HLA-B*07:02", 1.8)] if p == SIM2_I else [] for p in peps]
+
+
+def _r2(peps):
+    return [[("HLA-DRB1*01:01", 0.67)] if p == SIM2_II else [] for p in peps]
+
+
+def test_map_duplicates_an_epitope_per_presenting_allele():
+    """A heterozygote presents the same peptide on two molecules: two rows, not one."""
+    feats = vector.epitope_map(_map_cassette(), _r1, _r2)
+    hits = [f for f in feats if f.kind == "epitope" and f.seq == SIM2_I]
+    assert len(hits) == 2
+    assert sorted(f.allele for f in hits) == ["HLA-A*02:01", "HLA-B*07:02"]
+    assert {f.start for f in hits} == {(f.start for f in hits).__next__()}, "same span, two alleles"
+
+
+def test_map_finds_the_overlapping_class_i_and_class_ii_pair_both_ways():
+    feats = vector.epitope_map(_map_cassette(), _r1, _r2)
+    e1 = [f for f in feats if f.cls == "mhc1"]
+    e2 = [f for f in feats if f.cls == "mhc2"]
+    assert e1 and e2
+    for a in e1:
+        assert {f.id for f in e2} == set(a.overlaps)
+    for b in e2:
+        assert {f.id for f in e1} == set(b.overlaps)
+    # ...and the class-II core is resolved into cassette coordinates, 9 residues wide.
+    assert all(b.core_end - b.core_start == 8 for b in e2)
+    assert all(b.start <= b.core_start and b.core_end <= b.end for b in e2)
+
+
+def test_map_reports_which_units_carry_their_own_class_ii_help():
+    cas = _map_cassette()
+    s = vector.map_summary(cas, vector.epitope_map(cas, _r1, _r2))
+    assert s["n_units_with_self_help"] == 1
+    assert s["units"][0]["gene"] == "SIM2" and s["units"][0]["self_help"] is True
+    assert s["units"][1]["gene"] == "ERG" and s["units"][1]["self_help"] is False
+
+
+def test_map_without_a_class_ii_ranker_reports_no_help_rather_than_guessing():
+    cas = _map_cassette()
+    s = vector.map_summary(cas, vector.epitope_map(cas, _r1, None))
+    assert s["n_mhc2"] == 0 and s["n_units_with_self_help"] == 0
+
+
+def test_units_and_linkers_tile_the_cassette_exactly():
+    for spacer in (None, "GPGPG"):
+        cas = _map_cassette(spacer)
+        feats = vector.epitope_map(cas, None, None)
+        tiles = sorted((f.start, f.end, f.seq) for f in feats if f.kind in ("unit", "linker"))
+        assert "".join(t[2] for t in tiles) == cas.sequence
+        at = 1
+        for start, end, seq in tiles:
+            assert start == at and end == at + len(seq) - 1
+            at = end + 1
+        assert at == len(cas.sequence) + 1
+        if spacer:
+            assert [f.seq for f in feats if f.kind == "linker"] == [spacer]
+
+
+def test_map_coordinates_are_one_based_and_slice_back_to_the_peptide():
+    cas = _map_cassette("GPGPG")
+    for f in vector.epitope_map(cas, _r1, _r2):
+        assert cas.sequence[f.start - 1:f.end] == f.seq
+
+
+def test_an_epitope_spanning_a_junction_is_flagged_as_unit_zero():
+    cas = _map_cassette(None)
+    lo = cas.boundaries[0][1] - 4                     # straddles the unit-1/unit-2 boundary
+    junctional = cas.sequence[lo:lo + 9]
+    feats = vector.epitope_map(cas, lambda peps: [[("HLA-A*02:01", 0.4)] if p == junctional else []
+                                             for p in peps], None)
+    hits = [f for f in feats if f.kind == "epitope"]
+    assert hits and all(f.unit == 0 and f.gene == "" for f in hits)
+    assert vector.map_summary(cas, feats)["n_junction_spanning"] == len(hits)
+
+
+def test_write_map_round_trips_through_both_formats(tmp_path):
+    import csv
+    import json
+    cas = _map_cassette("GPGPG")
+    feats = vector.epitope_map(cas, _r1, _r2)
+    tsv, js = tmp_path / "m.tsv", tmp_path / "m.json"
+    summary = vector.write_map(cas, feats, str(tsv), str(js))
+    rows = list(csv.DictReader(tsv.open(), delimiter="\t"))
+    assert len(rows) == len(feats)
+    assert list(rows[0]) == list(vector.MAP_COLUMNS)
+    assert all(len(r) == len(vector.MAP_COLUMNS) for r in rows)          # one value per cell
+    blob = json.loads(js.read_text())
+    assert blob["sequence"] == cas.sequence and blob["summary"] == summary
+    assert len(blob["features"]) == len(feats)
+    ov = [r for r in rows if r["overlaps"]]
+    assert ov and all("," not in r["id"] for r in rows)

@@ -117,7 +117,7 @@ carries whatever it was handed. ``mhcmatch deslip <cds> --fix out.fasta`` is the
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 #: Spacers tried in order, ``None`` first. A clean junction needs no spacer, and pVACvector's
 #: default list is tried only when one is needed. See the module docstring for why ``AAY`` is a
@@ -932,3 +932,227 @@ def from_sequence(sequence: str, spacer: str, lengths=JUNCTION_LENGTHS) -> list:
     parts = [s for s in sequence.split(spacer) if s]
     return [Unit(peptide=s, mutation_index=len(s) // 2, gene=f"seg{k}", allele="", p=0.0)
             for k, s in enumerate(parts)]
+
+
+# ---------------------------------------------------------------------------- the cassette map
+
+#: Class-II ligand lengths scanned when mapping a cassette. Wider than
+#: :data:`MHC2_JUNCTION_LENGTHS`, which exists to score *junctions* and only needs the shortest
+#: windows a core can be read from: a map is annotating what a cassette actually presents, and a
+#: class-II ligand runs to 25.
+MHC2_MAP_LENGTHS: tuple = tuple(range(12, 21))
+
+
+@dataclass(frozen=True)
+class Feature:
+    """One annotated span of an assembled cassette, in **1-based inclusive** amino-acid coordinates.
+
+    ``kind`` is ``unit`` (a vaccine unit), ``linker`` (the spacer between two of them) or
+    ``epitope`` (a predicted binder). Units and linkers tile the cassette exactly; epitopes overlay
+    it and may span a junction, which is the case ``unit = 0`` marks.
+    """
+
+    id: str
+    kind: str
+    start: int
+    end: int
+    seq: str
+    cls: str = ""
+    allele: str = ""
+    rank: float = float("nan")
+    unit: int = 0
+    gene: str = ""
+    core_start: int = 0
+    core_end: int = 0
+    overlaps: tuple = ()
+
+    @property
+    def length(self) -> int:
+        return self.end - self.start + 1
+
+
+def store_ranker(store, alleles, cls: str = "mhc1", calibrated: bool = True):
+    """A ``ranker`` callable over a :class:`~mhcmatch.store.Store`: ``[(allele, %rank), ...]`` per
+    peptide, **one entry per allele that presents it**.
+
+    Distinct from :func:`store_binder`, which collapses to the best allele because a *layout* cost
+    only needs to know whether some binder forms. A map needs the allele: a heterozygote presents
+    the same peptide on two molecules, and that is two facts about the cassette rather than one.
+    """
+    def ranker(peptides):
+        out = []
+        for p in peptides:
+            r = store.restriction(p, cls=cls, alleles=list(alleles), calibrated=True)
+            out.append([(x.allele, float(x.rank)) for x in r if x.rank is not None])
+        return out
+    return ranker
+
+
+def _windows(seq: str, lengths) -> list:
+    return [(i, i + L, seq[i:i + L]) for L in lengths for i in range(len(seq) - L + 1)]
+
+
+def epitope_map(cassette: Cassette, ranker1=None, ranker2=None, threshold: float = 2.0,
+                lengths1=JUNCTION_LENGTHS, lengths2=MHC2_MAP_LENGTHS) -> list:
+    """Annotate an assembled cassette: units, linkers, predicted epitopes, and **which class-I and
+    class-II epitopes overlap each other**.
+
+    **Why the overlap is the point and not a decoration.** A cassette that carries a CD8 epitope and
+    borrows its CD4 help from an unrelated universal helper (PADRE, HBVcore) raises no T-cell
+    response against the tumour antigen on the class-II side. Kissick *et al.* built one 27-mer
+    around the HLA-A\\*02:01 SIM2\\ :sub:`237-245` epitope so that a class-II epitope from the **same**
+    protein overlapped it, and it replaced the exogenous HBVcore helper outright: the long peptide
+    alone raised both the CD8 IFN-γ recall response to the 9-mer and a CD4 IL-2 response to
+    SIM2\\ :sub:`240-254`, and 137 class-II binders were predicted across DR/DP/DQ from that one
+    27-mer (*PLoS One* 2014;9(4):e93231, PMID 24690990, doi:10.1371/journal.pone.0093231). A unit
+    whose class-I epitope has **no** overlapping class-II epitope is the configuration that needed
+    the borrowed helper, and this map is what says which units those are.
+
+    ``ranker1`` / ``ranker2`` are ``ranker(peptides) -> [[(allele, %rank), ...], ...]``, per class;
+    :func:`store_ranker` builds one from a :class:`~mhcmatch.store.Store`. Either may be ``None``,
+    which simply omits that class. Injected for the same reason :func:`order`'s ``binder`` is — the
+    whole map is testable with no panel, no download and no calibration.
+
+    Every ``(peptide, allele)`` at or below ``threshold`` %rank is its own :class:`Feature`, so a
+    peptide presented by two of the patient's alleles appears **twice**. That is deliberate: at a
+    heterozygous locus the two molecules are two independent presentation events, they are what the
+    per-allotype capacity in :func:`select` is spent on, and collapsing them would under-count the
+    cassette's coverage of exactly the patients it was personalised for.
+
+    Coordinates are 1-based inclusive over :attr:`Cassette.sequence`, which is the epitope cassette
+    only — no start codon, no leader, no tag. An mRNA construct that adds those must offset.
+    """
+    seq = cassette.sequence
+    feats: list = []
+
+    # Units and linkers tile the cassette; `boundaries` is 0-based half-open.
+    prev_end = 0
+    for i, ((lo, hi), u) in enumerate(zip(cassette.boundaries, cassette.units), 1):
+        if lo > prev_end:
+            feats.append(Feature(id=f"l{i - 1}", kind="linker", start=prev_end + 1, end=lo,
+                                 seq=seq[prev_end:lo]))
+        feats.append(Feature(id=f"u{i}", kind="unit", start=lo + 1, end=hi, seq=seq[lo:hi],
+                             unit=i, gene=u.gene, allele=u.allele or ""))
+        prev_end = hi
+
+    def in_unit(lo, hi):
+        """Which unit fully contains [lo, hi); 0 when it spans a junction or a linker."""
+        for i, (a, b) in enumerate(cassette.boundaries, 1):
+            if a <= lo and hi <= b:
+                return i
+        return 0
+
+    n = 0
+    for cls, ranker, lengths in (("mhc1", ranker1, lengths1), ("mhc2", ranker2, lengths2)):
+        if ranker is None:
+            continue
+        wins = _windows(seq, lengths)
+        if not wins:
+            continue
+        for (lo, hi, pep), hits in zip(wins, ranker([w[2] for w in wins])):
+            for allele, rank in hits:
+                if rank is None or rank > threshold:
+                    continue
+                n += 1
+                k = in_unit(lo, hi)
+                core = (0, 0)
+                if cls == "mhc2":
+                    from .store import anchor_indices
+                    a = anchor_indices(pep, "mhc2")
+                    if a:
+                        core = (lo + a[0] + 1, lo + a[0] + 9)
+                feats.append(Feature(id=f"e{n}", kind="epitope", start=lo + 1, end=hi, seq=pep,
+                                     cls=cls, allele=allele, rank=float(rank), unit=k,
+                                     gene=cassette.units[k - 1].gene if k else "",
+                                     core_start=core[0], core_end=core[1]))
+
+    # Cross-class overlap, computed once over the finished list so both directions agree.
+    e1 = [f for f in feats if f.kind == "epitope" and f.cls == "mhc1"]
+    e2 = [f for f in feats if f.kind == "epitope" and f.cls == "mhc2"]
+    over: dict = {}
+    for a in e1:
+        for b in e2:
+            if a.start <= b.end and b.start <= a.end:
+                over.setdefault(a.id, []).append(b.id)
+                over.setdefault(b.id, []).append(a.id)
+    return [f if f.id not in over else replace(f, overlaps=tuple(over[f.id])) for f in feats]
+
+
+#: Column order of the cassette map, one source of truth for the TSV and the JSON.
+MAP_COLUMNS: tuple = ("id", "kind", "start", "end", "length", "seq", "cls", "allele", "rank",
+                      "unit", "gene", "core_start", "core_end", "overlaps", "n_overlaps")
+
+
+def map_rows(features) -> list:
+    """The map as plain dicts in :data:`MAP_COLUMNS` order — the payload both writers share."""
+    out = []
+    for f in features:
+        out.append({"id": f.id, "kind": f.kind, "start": f.start, "end": f.end, "length": f.length,
+                    "seq": f.seq, "cls": f.cls, "allele": f.allele,
+                    "rank": None if f.rank != f.rank else round(f.rank, 4),
+                    "unit": f.unit, "gene": f.gene,
+                    "core_start": f.core_start or None, "core_end": f.core_end or None,
+                    "overlaps": list(f.overlaps), "n_overlaps": len(f.overlaps)})
+    return out
+
+
+def map_summary(cassette: Cassette, features) -> dict:
+    """Per-unit coverage: how many class-I and class-II epitopes, on how many allotypes, and
+    **whether the unit's class-I epitopes have class-II help from within the same unit**.
+
+    The last column is the one a reviewer reads first. A unit with class-I epitopes and no
+    overlapping class-II epitope is the configuration that needed a borrowed universal helper.
+    """
+    eps = [f for f in features if f.kind == "epitope"]
+    units = []
+    for i, u in enumerate(cassette.units, 1):
+        mine = [f for f in eps if f.unit == i]
+        c1 = [f for f in mine if f.cls == "mhc1"]
+        c2 = [f for f in mine if f.cls == "mhc2"]
+        helped = [f for f in c1 if f.overlaps]
+        units.append({
+            "unit": i, "gene": u.gene, "allele": u.allele or "", "peptide": u.peptide,
+            "start": cassette.boundaries[i - 1][0] + 1, "end": cassette.boundaries[i - 1][1],
+            "n_mhc1": len(c1), "n_mhc2": len(c2),
+            "alleles_mhc1": sorted({f.allele for f in c1}),
+            "alleles_mhc2": sorted({f.allele for f in c2}),
+            "n_mhc1_with_mhc2_overlap": len(helped),
+            "self_help": bool(helped),
+        })
+    spanning = [f for f in eps if f.unit == 0]
+    return {
+        "n_units": len(cassette.units), "spacer": cassette.spacer,
+        "length_aa": len(cassette.sequence),
+        "n_mhc1": sum(f.cls == "mhc1" for f in eps),
+        "n_mhc2": sum(f.cls == "mhc2" for f in eps),
+        "n_junction_spanning": len(spanning),
+        "n_units_with_self_help": sum(u["self_help"] for u in units),
+        "units": units,
+    }
+
+
+def write_map(cassette: Cassette, features, tsv_path: str | None = None,
+              json_path: str | None = None) -> dict:
+    """Write the cassette map as TSV and/or JSON, and return the summary dict.
+
+    The TSV is the flat table — one row per feature, one value per cell, so it sorts and joins. The
+    JSON carries the same rows **plus** the per-unit summary and the cassette sequence, which is what
+    a viewer needs to draw the thing without recomputing anything.
+    """
+    import csv
+    import json as _json
+
+    rows = map_rows(features)
+    summary = map_summary(cassette, features)
+    if tsv_path:
+        with open(tsv_path, "w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(MAP_COLUMNS), delimiter="\t",
+                               extrasaction="ignore")
+            w.writeheader()
+            for r in rows:
+                w.writerow({**r, "overlaps": ",".join(r["overlaps"])})
+    if json_path:
+        with open(json_path, "w") as fh:
+            _json.dump({"sequence": cassette.sequence, "spacer": cassette.spacer,
+                        "summary": summary, "features": rows}, fh, indent=1)
+    return summary

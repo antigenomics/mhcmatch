@@ -157,14 +157,6 @@ Each answers something the block above it cannot express.
         - 0.6099 → 0.6159
         - +0.0060
         - +0.0056
-   ``chowell_rebuilt/mouse``            0.7019 → 0.7045   **+0.0026**    +0.0031
-   ``chowell_..._hla_matched/human``    0.6072 → 0.6210   **+0.0138**    +0.0048
-   ``chowell_..._hla_matched/mouse``    0.6909 → 0.6952   **+0.0042**    +0.0051
-   ``kesmir_rebuilt/human``             0.5720 → 0.5846   **+0.0126**    +0.0139
-   ``kesmir_rebuilt/mouse``             0.6099 → 0.6159   **+0.0060**    +0.0056
-   ``kesmir_..._hla_matched/human``     0.5607 → 0.5743   **+0.0135**    +0.0141
-   ``kesmir_..._hla_matched/mouse``     0.6099 → 0.6159   **+0.0060**    +0.0056
-   ===================================  ================  ==========  ==========
 
    Three columns for that, and it is the block that is largest where composition carries least — the
    two HLA-matched human arms, where the negatives were resampled so the allele group says nothing

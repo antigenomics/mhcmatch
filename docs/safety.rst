@@ -199,6 +199,74 @@ Screening runs **before** selection, for the same reason: capacity spent on a un
 withdrawn is capacity not spent on a safe one.
 
 
+The cassette map: coordinates, linkers, and who helps whom
+-----------------------------------------------------------
+
+:func:`mhcmatch.vector.epitope_map` annotates the assembled cassette and
+:func:`~mhcmatch.vector.write_map` writes it as a flat TSV and a JSON a viewer can draw from without
+recomputing anything. One row per **unit**, **linker** and predicted **epitope**, in 1-based
+inclusive coordinates over :attr:`~mhcmatch.vector.Cassette.sequence`:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 76
+
+   * - column
+     - meaning
+   * - ``id`` ``kind``
+     - ``u1``/``l1``/``e1``; ``unit``, ``linker`` or ``epitope``
+   * - ``start`` ``end`` ``length``
+     - 1-based inclusive span. Units and linkers **tile the cassette exactly**
+   * - ``seq``
+     - the residues; ``sequence[start-1:end]`` reproduces it
+   * - ``cls`` ``allele`` ``rank``
+     - ``mhc1``/``mhc2``, the presenting allotype, its %rank
+   * - ``unit`` ``gene``
+     - which unit contains it; **0 means it spans a junction**
+   * - ``core_start`` ``core_end``
+     - class II only: the 9-mer register core, in cassette coordinates
+   * - ``overlaps`` ``n_overlaps``
+     - ids of the **other class's** epitopes overlapping this one
+
+**A peptide presented by two of the recipient's alleles gets two rows.** At a heterozygous locus
+those are two independent presentation events, they are what :func:`~mhcmatch.vector.select` spends
+per-allotype capacity on, and collapsing them would under-count the coverage of exactly the patient
+the cassette was personalised for.
+
+**The overlap column is the point, not a decoration.** A cassette that carries a CD8 epitope and
+borrows its CD4 help from an unrelated universal helper (PADRE, HBVcore) raises no class-II response
+against the tumour antigen at all. Kissick *et al.* built one 27-mer around the HLA-A\*02:01
+SIM2\ :sub:`237-245` epitope so a class-II epitope from the **same protein** overlapped it, and the
+long peptide alone then replaced the exogenous HBVcore helper outright — a CD8 IFN-γ recall response
+equal to the 9-mer-plus-helper, *and* a CD4 IL-2 response to SIM2\ :sub:`240-254`, with 137 class-II
+binders predicted across DR/DP/DQ from that single 27-mer (*PLoS One* 2014;9(4):e93231, PMID
+24690990, `doi:10.1371/journal.pone.0093231 <https://doi.org/10.1371/journal.pone.0093231>`_). So
+:func:`~mhcmatch.vector.map_summary` reports per unit whether its class-I epitopes have overlapping
+class-II epitopes — ``self_help`` — and a unit without it is the configuration that needed the
+borrowed helper.
+
+.. code-block:: python
+
+   from mhcmatch import vector as V
+
+   r1 = V.store_ranker(store_mhc1, ["HLA-A*02:01", "HLA-B*07:02"], cls="mhc1")
+   r2 = V.store_ranker(store_mhc2, ["HLA-DRB1*01:01"],             cls="mhc2")
+   feats   = V.epitope_map(cassette, r1, r2, threshold=2.0)
+   summary = V.write_map(cassette, feats, "cassette.map.tsv", "cassette.map.json")
+   summary["n_units_with_self_help"], summary["n_junction_spanning"]
+
+``store_ranker`` is the per-allele adapter and is deliberately not
+:func:`~mhcmatch.vector.store_binder`, which collapses to the best allele because a *layout* cost
+only needs to know that some binder forms. Both rankers are injected, so the whole map is testable
+with no panel and no download.
+
+.. note::
+
+   Coordinates are over the **epitope cassette only** — no start codon, no stop, no leader, no
+   trafficking domain, because those belong to the vector backbone. An mRNA construct that adds them
+   must offset every coordinate in the map.
+
+
 Running it
 ----------
 
@@ -209,7 +277,9 @@ Running it
        --context windows.fasta \
        --n0 6 --alleles A*02:01,B*07:02 --cls mhc1 \
        --screen \
-       --out cassette.tsv --fasta cassette.faa --fasta-nt cassette.fna
+       --out cassette.tsv --fasta cassette.faa --fasta-nt cassette.fna \
+       --map cassette.map.tsv --map-json cassette.map.json \
+       --map-alleles-mhc2 DRB1*15:01,DRB1*07:01,DQB1*03:01
 
 ``--candidates`` and ``--context`` are both required and neither is redundant: ``rank`` emits
 **minimal epitopes** and a vaccine unit is the long window around the mutation. Injecting a minimal

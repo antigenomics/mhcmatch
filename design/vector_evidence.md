@@ -191,6 +191,63 @@ Carried into a clinical-stage vector as a genetic fusion, giving PADRE-specific 
 target-specific CD8 and B responses without autoimmunity: Snook et al., *Hum Gene Ther Methods* 2016,
 PMID 27903079, [DOI](https://doi.org/10.1089/hgtb.2016.114).
 
+### 5b. The CD4 epitope should come from the same antigen, and overlap the CD8 one
+
+Retrieved from **PubMed** on 2026-08-19, starting from PMC3972205 and sweeping its 44 references and
+15 citing articles.
+
+**[exp] One 27-mer carrying an overlapping class-I/class-II pair replaced the exogenous helper
+outright.** Kissick et al. built `NMFMFRASLDLKLIFLDSRVTEVTGYE` by extending the amino acids around
+the HLA-A\*02:01 epitope SIM2\ :sub:`237-245` until the flanks carried class-II binders. Immunising
+HHD mice with **the long peptide alone** gave a significant CD8 IFN-γ recall response to the 9-mer —
+equal in magnitude to the 9-mer delivered *with* the HBVcore I-A\ :sup:`b` helper — **and** a CD4
+IL-2 response to SIM2\ :sub:`240-254`, and splenocytes killed SIM2-expressing PC3-A2.1 but not
+HLA-A\*02:01-negative PC3 or SIM2-negative LNCaP. IEDB predicted **137 class-II binders** across
+DR/DP/DQ from that one 27-mer. Kissick, Sanda, Dunn & Arredouani, *PLoS One* 2014;9(4):e93231,
+PMID 24690990, [DOI](https://doi.org/10.1371/journal.pone.0093231).
+
+**[exp] Length alone is one route and help is a second, and they are not the same route.** Bijker et
+al. showed minimal OVA\ :sub:`257-264` in IFA transiently activates CD8 cells that then fail to
+expand or kill, because the peptide leaks systemically from the depot with no danger signal.
+**Two independent repairs**: adding the class-II OVA\ :sub:`323-339` helper restored both secondary
+expansion and in vivo killing; *or* simply extending the CTL peptide to **30 aa**, which worked
+**independent of T cell help** because the long peptide is presented predominantly in the inflamed
+draining lymph node. Reproduced in two further antigen systems. Bijker et al., *J Immunol*
+2007;179(8):5033-40, PMID 17911588, [DOI](https://doi.org/10.4049/jimmunol.179.8.5033).
+
+**[exp] Clinical long-peptide vaccines that raised both arms.** HPV-16 E6/E7 SLP in grade-3 vulvar
+intraepithelial neoplasia: 15 of 19 clinical responses at 12 months, complete in 9 of 19, sustained
+to 24 months, with complete responders showing a significantly stronger IFN-γ CD4 proliferative
+response and a broader CD8 response (Kenter et al., *N Engl J Med* 2009;361(19):1838-47, PMID
+19890126, [DOI](https://doi.org/10.1056/NEJMoa0810097)). p53-SLP in metastatic colorectal cancer:
+p53-specific T cells in 9 of 10, persisting ≥6 months in 6 of 9, and the cells recovered *from the
+vaccination site* were CD4 (Speetjens et al., *Clin Cancer Res* 2009;15(3):1086-95, PMID 19188184,
+[DOI](https://doi.org/10.1158/1078-0432.CCR-08-2227)). A four-peptide class-I + class-II WT1 vaccine
+in mesothelioma/NSCLC: CD4 proliferation in 6 of 9, CD8 in 5 of 6 HLA-A\*02:01 patients (Krug et
+al., *Cancer Immunol Immunother* 2010;59(10):1467-79, PMID 20532500,
+[DOI](https://doi.org/10.1007/s00262-010-0871-8)). The framework is Melief & van der Burg, *Nat Rev
+Cancer* 2008;8(5):351-60, PMID 18418403, [DOI](https://doi.org/10.1038/nrc2373).
+
+**[exp] PADRE works and that is exactly why it is the fallback rather than the design.** Pan-DR
+peptides bound 10 of 10 DR molecules, mostly nanomolar, and elicited help ~1000× more powerfully
+than natural T-cell epitopes (Alexander et al., *Immunity* 1994;1(9):751-61, PMID 7895164,
+[DOI](https://doi.org/10.1016/s1074-7613\(94\)80017-0)). But a borrowed universal helper raises
+**no** CD4 response against the tumour antigen, which is the gap Kissick closed.
+
+⇒ **Prefer a unit whose class-I epitope has an overlapping class-II epitope from the same antigen.**
+Not merely "put CD4 and CD8 in one molecule" (§5) but *which* CD4 epitope: one the same protein
+supplies, overlapping the CD8 epitope, so the long unit is its own helper. This is now computed —
+`mhcmatch.vector.epitope_map` reports per unit whether its class-I epitopes have overlapping
+class-II epitopes (`self_help`), and a unit without it is the configuration that needed the borrowed
+helper.
+
+**[open] Whether overlap beats mere co-residence in the same unit.** Kissick's class-II epitope
+overlaps the class-I one by six residues, and no retrieved experiment separates "overlapping" from
+"present in the same long peptide but disjoint". The map reports the overlap because that is the
+configuration with evidence behind it, not because the disjoint case is known to fail.
+
+---
+
 ⇒ **CD4 and CD8 payloads belong in the same molecule.** That is an experimental result, not a
 formulation preference, and it settles the open fork noted in the earlier design memo between
 "separate formulations per class" and "link them".
