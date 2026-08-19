@@ -140,7 +140,7 @@ with sections `withdrawn`, `allotype`, `not selected`, `unit`, `junction`, `cass
   Without it *no safety check runs at all* and the cassette carries whatever it was handed. It costs
   one whole-proteome index per register length — ~12 GB peak each, a few minutes apiece, four for
   class I — which is why `nextflow.config` gives this process its own memory and time.
-- **The map (v0.16.0)** is one row per unit, linker and predicted epitope, in 1-based inclusive
+- **The map (v0.17.0)** is one row per unit, linker and predicted epitope, in 1-based inclusive
   coordinates over the cassette. It is emitted by default because it re-scores one short sequence
   and costs almost nothing next to the screen. Three properties are structural: a **heterozygote is
   duplicated by construction** (a row is a *(peptide, allele)* pair, which is what a coverage count
@@ -193,10 +193,10 @@ From `slurm.config` only:
 ## Build the image (only for `-profile docker`)
 
 ```zsh
-docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.16.0 \
-    --build-arg MHCMATCH_VERSION=0.16.0 \
+docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.17.0 \
+    --build-arg MHCMATCH_VERSION=0.17.0 \
     integrations/nextflow/mhcmatch/
-docker push <ISPRAS_REGISTRY>/mhcmatch:0.16.0
+docker push <ISPRAS_REGISTRY>/mhcmatch:0.17.0
 ```
 
 No data staging: the build runs `mhcmatch bootstrap --reference`, which fetches the ligand panel

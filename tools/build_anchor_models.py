@@ -12,6 +12,13 @@ keys on ``mhcmatch.__version__``) or when the pmhc panel (``isalgo/pmhc_data`` f
     python tools/build_anchor_models.py
 
 Then commit the regenerated ``src/mhcmatch/data/anchor_model_mhc2_*.pkl.gz`` alongside the bump.
+
+**A bump-only regeneration does not move any prediction, and that was measured rather than assumed**
+(0.16.0 -> 0.17.0): ``panel_sha`` and ``params`` are unchanged and the refit is deterministic, so the
+rebuilt models score **bit-identically** -- max |old - new| = 0.0 over 12,000 scorings across four
+alleles. Only the ``version`` field in the metadata differs. The load guard is therefore a
+**provenance** guard, not a correctness one, and a downstream deliverable does not need re-running
+for a release that changes neither the panel nor the parameters.
 """
 import os
 

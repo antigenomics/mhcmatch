@@ -294,3 +294,56 @@ def test_written_tables_use_unix_line_endings(tmp_path):
     P.write_scored_csv([pred], str(scored))
     for p in (native, scored):
         assert b"\r" not in p.read_bytes(), f"{p.name} carries CR"
+
+
+# --- the Luksza recognition term ----------------------------------------------------------------
+# `viral_R` is one of the fitted aggregate's nine features and until 0.17.0 nothing in the library
+# could produce it, so `aggregate_score` was callable with a feature no caller could supply.
+
+def test_luksza_r_term_matches_the_benchmark_implementation():
+    """Reproduces bench/neoag/luksza_r.py's R_term, which is what the coefficient was fitted on."""
+    import numpy as np
+    from mhcmatch import luksza
+
+    def bench(counts, L, k, a0):                       # verbatim from the benchmark
+        Z = np.zeros(len(L))
+        for d in range(counts.shape[1]):
+            Z += counts[:, d] * np.exp(np.clip(-k * (a0 - (L - d)), -60, 60))
+        return Z / (1.0 + Z)
+
+    rng = np.random.default_rng(20260819)
+    for _ in range(50):
+        n, D = int(rng.integers(1, 40)), int(rng.integers(1, 7))
+        counts = rng.poisson(rng.uniform(0, 50), size=(n, D)).astype(float)
+        L = rng.integers(8, 26, size=n).astype(float)
+        k, a0 = float(rng.uniform(0.5, 8)), float(rng.uniform(6, 26))
+        assert np.max(np.abs(bench(counts, L, k, a0)
+                             - luksza.r_term(counts, L, k, a0))) < 1e-12
+
+
+def test_luksza_shape_comes_from_the_shipped_artifact():
+    """k and a0 are read, never hardcoded -- a refit must not need a code change."""
+    from mhcmatch import luksza, rank
+    assert luksza.shape() == (float(rank.aggregate()["luksza"]["k"]),
+                              float(rank.aggregate()["luksza"]["a0"]))
+
+
+def test_luksza_r_is_monotone_in_both_count_and_nearness():
+    """More near-matches raises R; the same match further away lowers it."""
+    import numpy as np
+    from mhcmatch import luksza
+    L = np.array([9.0])
+    one = luksza.r_term(np.array([[0.0, 1.0, 0.0]]), L, k=1.0, a0=9.0)
+    many = luksza.r_term(np.array([[0.0, 5.0, 0.0]]), L, k=1.0, a0=9.0)
+    far = luksza.r_term(np.array([[0.0, 0.0, 1.0]]), L, k=1.0, a0=9.0)
+    assert many[0] > one[0] > far[0]
+    assert luksza.r_term(np.zeros((1, 3)), L)[0] == 0.0        # nothing near -> no evidence
+
+
+def test_luksza_counts_by_distance_drops_beyond_radius():
+    """Distances past max_subs are dropped, not folded into the last bin -- Z weights by exp."""
+    from mhcmatch import luksza
+    hits = {"AAAAAAAAA": {"viral": [(0, "x"), (1, "y"), (1, "z"), (9, "far")]}}
+    counts, lengths = luksza.counts_by_distance(["AAAAAAAAA"], hits, "viral", max_subs=2)
+    assert list(counts[0]) == [1.0, 2.0, 0.0]
+    assert lengths[0] == 9.0

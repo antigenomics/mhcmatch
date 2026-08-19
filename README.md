@@ -77,6 +77,7 @@ mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor 
 | …and a map of it a viewer can draw | `mhcmatch vector ... --map c.tsv --map-json c.json` | `vector.epitope_map` |
 | Strip frameshift-prone motifs from the CDS | `mhcmatch deslip cassette.fa` | `vector.slippery_sites` |
 | Split a peptide into anchor / TCR-facing parts | `mhcmatch decompose PEP` | `store.decompose` |
+| How viral-like is it, as a soft sum not a cutoff? | — | `luksza.viral_r` |
 
 Full command reference, grouped by task: [the CLI page](https://antigenomics.github.io/mhcmatch/cli.html).
 
@@ -242,6 +243,7 @@ letter per parameter, in a fixed canonical order:
 | `E` | expression | `mhcmatch.expression` | `log1p(TPM)`, observed or reference-imputed |
 | `V` | vanilla physicochemistry | `mhcmatch.ipred` | the 13-parameter calibrated log-odds |
 | `C` | complementarity | `mhcmatch.complement` | the six-block recognition log-odds |
+| `R` | Łuksza recognition | `mhcmatch.luksza` | `Z/(1+Z)`, a soft sum over near-matches rather than a distance cut |
 | `F` | foreignness | viral IEDB ligandome | distance to the nearest viral epitope |
 | `M` | mimicry | `mhcmatch.mimicry` | the six-channel signed aggregate |
 

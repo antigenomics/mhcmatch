@@ -198,6 +198,21 @@ for comparison. **Vectorised** — pass a list, not a loop. See :doc:`complement
    :undoc-members:
    :show-inheritance:
 
+mhcmatch.luksza module
+----------------------
+
+The Łuksza recognition term :math:`R = Z/(1+Z)` -- a soft partition function over near-matches,
+replacing a hard distance cut, so **how many** near-matches a candidate has and **how near** they
+are both enter. ``viral_R`` is one of the fitted aggregate's nine features and before 0.17.0 the
+sum lived only in the benchmark repo, which made :func:`mhcmatch.rank.aggregate_score` callable with
+a feature no installed user could supply. ``k`` and ``a0`` are read from the shipped artifact rather
+than hardcoded, so a refit needs no code change.
+
+.. automodule:: mhcmatch.luksza
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 mhcmatch.mimicry module
 -----------------------
 

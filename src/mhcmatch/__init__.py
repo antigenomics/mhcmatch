@@ -10,12 +10,14 @@
 - :mod:`predict` -- score a variant peptide-window FASTA into native + pipeline-``.scored.csv`` output.
 - :mod:`vector` -- assemble a polyepitope vaccine cassette: how many units per allotype, in what
   order, joined by what spacer.
+- :mod:`luksza` -- the ``R = Z/(1+Z)`` recognition term, so ``viral_R`` -- one of the fitted
+  aggregate's nine features -- is computable without the benchmark repo.
 
 Theory: the theory appendix. Roadmap: ``ROADMAP.md``.
 """
 from importlib.metadata import PackageNotFoundError, version as _version
 
-from . import logo, mimics, predict, search, vector
+from . import logo, luksza, mimics, predict, search, vector
 from .affinity import AffinityModel, PottsAffinity
 from .structure import StructureScorer
 from .diffusion import AnchorModel
@@ -56,6 +58,7 @@ __all__ = [
     "predict_windows",
     "predict_fasta",
     "mimics",
+    "luksza",
     "vector",
     "__version__",
 ]
@@ -65,4 +68,4 @@ try:
 except PackageNotFoundError:  # running from a source tree without an install
     # Keep in step with pyproject.toml. It drifted to two minors behind once, and the value is what
     # every `versions.yml` in the nextflow module reports, so a stale one mislabels a pipeline run.
-    __version__ = "0.16.0"
+    __version__ = "0.17.0"

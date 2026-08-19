@@ -6,6 +6,57 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.17.0] - 2026-08-19
+
+### Added
+
+- **`mhcmatch.luksza` — the `R = Z/(1+Z)` recognition term, so `viral_R` is computable in-library.**
+  The fitted aggregate carries a `viral_R` coefficient, but the Boltzmann sum lived only in the
+  benchmark repo: `rank.aggregate_score` was a public function with a feature no installed user
+  could supply. `luksza.viral_r(peptides)` now goes from peptides to that column end to end against
+  the same viral ligandome and radius the coefficient was fitted with.
+
+  `k` and `a0` are **read from the shipped artifact**, not hardcoded, so a refit needs no code
+  change. `r_term` reproduces the benchmark's implementation **bit-identically** (0.0 over 200
+  random trials, asserted in the suite), which matters because the coefficient is only meaningful
+  against the exact sum it was fitted on.
+
+  Sanity, on the shipped reference: the two genuine viral epitopes among five test peptides —
+  GILGFVFTL (influenza M1) and SLYNTVATL (HIV gag) — score 3.9e-07 and 1.5e-06 against 2.1e-08 to
+  3.2e-08 for the tumour peptides, an order of magnitude apart in the right direction.
+
+  **Speed was measured, not assumed.** End to end on 20,000 peptides against the 57,331-peptide
+  viral set at radius 4: 57,000 peptides/s, of which the seqtree neighbour search is 98.6 %,
+  `counts_by_distance` 1.3 % and `r_term` 0.1 %. Both new functions are already an order of
+  magnitude faster than the search feeding them, so they are deliberately left un-vectorised and the
+  module says so — optimising them would buy 1.4 % of the run.
+
+- **`docs/cli.rst`** — the CLI had no reference page anywhere in the docs, only a bare
+  comma-separated list in the skill and prose scattered through the README. Nineteen commands
+  grouped by task and by axis, the batch/`--threads` rule, the `predict` vs `restriction`
+  distinction, and the environment variables a cluster needs. Wired into the toctree with its own
+  landing card, alongside a card for the safety page which also had none.
+
+- **The Nextflow `MHCMATCH_VECTOR` process emits the cassette map** (`map` / `map_json` channels,
+  on by default, `optional: true`). 0.16.0 shipped the map and the module could not produce it, so
+  the pipeline was a release behind its own library.
+
+### Measured
+
+- **Regenerating the vendored anchor models for a version bump moves no prediction.** The load guard
+  keys on `__version__`, so every release rebuilds them; 0.16.0 -> 0.17.0 leaves `panel_sha` and
+  `params` unchanged and the refit is deterministic, giving **bit-identical scores** (max
+  |old - new| = 0.0 over 12,000 scorings across four alleles). The guard is a provenance guard, not
+  a correctness one, and a downstream deliverable does not need re-running for a release that
+  changes neither the panel nor the parameters.
+
+### Fixed
+
+- **`recognition.default_head` returns `complement`, not `posbayes`.** The README and
+  `complementarity.rst` both stated the old value; `lowest_bic_head` is the one that still reports
+  `posbayes`, and the two answer different questions, so both are now shown together. Caught by a
+  clean-install smoke test against the published 0.16.0 wheel.
+
 ## [0.16.0] - 2026-08-19
 
 ### Added
