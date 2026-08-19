@@ -60,7 +60,8 @@ Pipeline integration
 Score a variant peptide-window FASTA (the neoantigen-pipeline schema) into the pipeline's
 ``.scored.csv`` plus mhcmatch's richer native table. The native table carries, per predicted binder,
 the presentation ``percent_rank`` / ``p_present`` / ``band``, the Potts ``affinity_nm`` / ``affinity_rank``,
-the WT counterpart + agretopicity / amplitude / DAI, and the **generalized binder score**
+the WT counterpart + agretopicity / amplitude / DAI, the equilibrium ``occupancy``, and the
+**generalized binder score**
 (``binder_rank`` = calibrated combined %rank, plus ``binder_band``):
 
 .. code-block:: fish

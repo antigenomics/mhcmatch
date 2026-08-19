@@ -68,4 +68,4 @@ try:
 except PackageNotFoundError:  # running from a source tree without an install
     # Keep in step with pyproject.toml. It drifted to two minors behind once, and the value is what
     # every `versions.yml` in the nextflow module reports, so a stale one mislabels a pipeline run.
-    __version__ = "0.17.0"
+    __version__ = "0.18.0"

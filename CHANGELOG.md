@@ -6,6 +6,44 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.18.0] - 2026-08-19
+
+### Added
+
+- **`rank.occupancy` and the `occupancy` column — agretopicity, taken from the binding equilibrium
+  instead of from a ratio.** `mhcmatch rank` now emits the fraction of MHC a peptide holds,
+  `a/(1+a)` with `a = [P]/Kd` and `[P]` = `rank.PEPTIDE_NM` (10 nM).
+
+  The benchmark's fitted aggregate carried `dai` = `log10(Kd_WT/Kd_MT)` with a **negative**
+  coefficient and an interval crossing zero, and the marginal was negative too — within-screen
+  median AUROC 0.4986 against the binder %rank's 0.6383, in nearly every screen. The cause is that
+  the raw ratio is not what Łuksza et al. (Nature 2017;551:517, doi:10.1038/nature24473) use: they
+  apply a pseudocount ε = 1/3687 nM to both dissociation constants and exclude substitutions away
+  from P2/PΩ. `AffinityModel.amplitude()` has shipped that pseudocount since 0.9.0 (eq. 9) and no
+  fit had ever called it.
+
+  Restoring both corrections is not enough — seven parameterisations were fitted and none resolves.
+  The ε sweep appears to (z climbs to +3.32) but the term is then 0.9955 correlated with
+  `-log10(Kd_MT)`: it improves by *deleting* the agretopicity, leaving mutant affinity under another
+  name. The competitive Langmuir occupancy is the term the equilibrium actually supplies, and three
+  things we had been bolting on by hand fall out of it — the binder gate (a non-binding mutant
+  occupies nothing whatever its wild type does), the pseudocount (the free-MHC `1` **is** Łuksza's
+  ε, which is why that ε has units of inverse concentration), and a bounded scale whose steepness is
+  fixed at 1 rather than fitted.
+
+  Occupancy is **absolute** where the binder %rank is allele-relative, so the two are additive, not
+  redundant: fitted together, `binder` holds z +6.5 and occupancy carries z +3.6 to +3.8, stable
+  across `[P]` from 1 to 1,000 nM — it is not fitting its own concentration parameter. Model
+  within-screen median AUROC 0.6526 against 0.6390. And it needs no wild type, so it is defined for
+  a frameshift or fusion product, where `dai` had to be fabricated from a per-cohort q90 quantile.
+
+### Changed
+
+- **`agretopicity` is reported, not fitted.** It stays in the `rank` output and is no longer a term
+  of the aggregate. `MODELS.md` names the model `BOECRT`.
+- **`rank.BASE_COLUMNS` is 13 columns**, `occupancy` inserted before `agretopicity`. The Nextflow
+  stub reads the header from `rank.columns()` so it tracks the change without editing.
+
 ## [0.17.0] - 2026-08-19
 
 ### Added

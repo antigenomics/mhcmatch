@@ -119,7 +119,9 @@ The commands, by axis
    * - command
      - does
    * - ``rank``
-     - rank neoantigen candidates, from a FASTA of windows or an already-scored table.
+     - rank neoantigen candidates, from a FASTA of windows or an already-scored table. Emits
+       ``occupancy`` (equilibrium fraction of MHC held, defined with or without a wild type) beside
+       ``agretopicity`` (reported, not fitted — see :ref:`occupancy-vs-agretopicity`).
        ``--extended`` appends the mimicry channels, ``--annotate`` what each candidate resembles —
        **columns only, the ordering is unchanged**
    * - ``explain``

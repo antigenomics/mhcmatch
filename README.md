@@ -239,7 +239,8 @@ letter per parameter, in a fixed canonical order:
 | `P` | presentation | `AnchorModel` | `-log10` of the per-allele `%rank`; fitted on **observed ligands** |
 | `B` | binder score | `predict.binder_score` | `-log10` of the calibrated combined `%rank` (Fisher of `P` and `A`) |
 | `A` | affinity | `PottsAffinity` | `-log10` of the Potts IC50 `%rank`; fitted on **measured IC50** |
-| `D` | differential agretopicity | `PottsAffinity.dai` | `log10(Kd_WT / Kd_MT)` vs the recovered wild type |
+| `D` | differential agretopicity | `PottsAffinity.dai` | `log10(Kd_WT / Kd_MT)` vs the recovered wild type. **Reported, not fitted** — it does not resolve in any parameterisation tested |
+| `O` | occupancy | `rank.occupancy` | `a/(1+a)`, `a = [P]/Kd` — the equilibrium fraction of MHC held. Absolute, so additive to the allele-relative `B`; needs no wild type |
 | `E` | expression | `mhcmatch.expression` | `log1p(TPM)`, observed or reference-imputed |
 | `V` | vanilla physicochemistry | `mhcmatch.ipred` | the 13-parameter calibrated log-odds |
 | `C` | complementarity | `mhcmatch.complement` | the six-block recognition log-odds |

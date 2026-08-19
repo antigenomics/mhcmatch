@@ -347,3 +347,25 @@ def test_luksza_counts_by_distance_drops_beyond_radius():
     counts, lengths = luksza.counts_by_distance(["AAAAAAAAA"], hits, "viral", max_subs=2)
     assert list(counts[0]) == [1.0, 2.0, 0.0]
     assert lengths[0] == 9.0
+
+
+# ------------------------------------------------------------------ occupancy (0.18.0)
+
+def test_occupancy_is_langmuir_and_saturates():
+    """a/(1+a) with a = [P]/Kd: half the groove at Kd = [P], and monotone decreasing in Kd."""
+    from mhcmatch.rank import occupancy, PEPTIDE_NM
+    assert abs(occupancy(PEPTIDE_NM) - 0.5) < 1e-12
+    assert occupancy(1.0) > occupancy(10.0) > occupancy(100.0) > occupancy(10000.0)
+    assert 0.0 < occupancy(1e6) < 1e-4          # a non-binder occupies essentially nothing
+    assert occupancy(float("nan")) != occupancy(float("nan"))   # nan in, nan out
+    assert occupancy(0.0) != occupancy(0.0)     # a zero Kd is not a physical input
+
+
+def test_occupancy_needs_no_wild_type():
+    """The point of the split: occupancy is defined for a frameshift or fusion product, which has
+    no wild type by construction and therefore no agretopicity at all."""
+    from mhcmatch.rank import Ranked, occupancy
+    r = Ranked(peptide="SIINFEKL", allele="H2-Kb", occupancy=occupancy(25.0))
+    assert r.occupancy == r.occupancy          # defined
+    assert r.agretopicity != r.agretopicity    # absent, and stays absent
+    assert r.wt_peptide == ""

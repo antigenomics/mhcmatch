@@ -51,8 +51,8 @@ __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
 #: drifts. That is not hypothetical: the nextflow module's stub carried an 18-column header against
 #: a 57-column table until 2026-08-18.
 BASE_COLUMNS: tuple = ("rank", "peptide", "allele", "gene", "score", "presentation",
-                       "agretopicity", "physchem", "expression", "expr_imputed", "wt_peptide",
-                       "known_epitope")
+                       "occupancy", "agretopicity", "physchem", "expression", "expr_imputed",
+                       "wt_peptide", "known_epitope")
 #: (reference, channel) in the order the mimicry columns are emitted.
 MIMICRY_PAIRS: tuple = tuple((c, ch) for c in ("viral", "self", "thymus")
                              for ch in ("anchor", "tcr"))
@@ -199,6 +199,10 @@ class Ranked:
     presentation: float = float("nan")
     #: log10(Kd_WT / Kd_MT) against the recovered wild type; larger = more differential.
     agretopicity: float = float("nan")
+    #: Fraction of MHC this peptide occupies at equilibrium, ``a/(1+a)`` with ``a = [P]/Kd``
+    #: (:data:`PEPTIDE_NM`). Unlike a %rank this is an absolute quantity, and unlike agretopicity it
+    #: needs no wild type -- so it is defined for a frameshift or fusion product that has none.
+    occupancy: float = float("nan")
     #: calibrated physicochemical log-probability of immunogenicity.
     physchem: float = float("nan")
     #: log1p(TPM), observed if the input carried one, else the tissue/tumour reference median.
@@ -209,6 +213,29 @@ class Ranked:
     known_epitope: str = ""
     score: float = float("nan")
     components: dict = field(default_factory=dict)
+
+
+#: Effective peptide concentration (nM) in the occupancy term. A physical quantity, not a fitted
+#: knob: on the grand corpus the occupancy coefficient sits at +0.046 to +0.049 across [P] = 1 to
+#: 1,000 nM, so the term is insensitive to it over three orders of magnitude
+#: (``bench/results/neoag_occupancy.md``).
+PEPTIDE_NM: float = 10.0
+
+
+def occupancy(affinity_nm: float, conc: float = PEPTIDE_NM) -> float:
+    """Equilibrium fraction of MHC bound by a peptide of dissociation constant ``affinity_nm``.
+
+    Langmuir/Michaelis-Menten: ``a/(1+a)`` with ``a = [P]/Kd``. On its own this scores about what
+    the binder %rank does (within-screen median AUROC 0.6386 against 0.6383 over 9 screens of the
+    grand corpus) -- but the two are **additive, not redundant**, because a %rank says where a
+    peptide sits in its allele's own distribution while occupancy says how much groove it actually
+    holds. Fitted together, occupancy carries z +3.8 with `binder` still at z +6.6, and the model
+    gains +0.014 within-screen median AUROC (``bench/results/neoag_occupancy.md``).
+    """
+    if affinity_nm != affinity_nm or affinity_nm <= 0:
+        return float("nan")
+    a = conc / affinity_nm
+    return a / (1.0 + a)
 
 
 def _neglog10(rank: float) -> float:
@@ -339,7 +366,8 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
                 and p.affinity_nm > 0:
             dai = math.log10(p.wt_affinity_nm / p.affinity_nm)
         rows.append(Ranked(peptide=p.peptide, allele=p.allele, gene=gene, source=p.source,
-                           presentation=_neglog10(p.percent_rank), agretopicity=dai,
+                           presentation=_neglog10(p.percent_rank),
+                           occupancy=occupancy(p.affinity_nm), agretopicity=dai,
                            physchem=_recognition(p.peptide, cls=cls), expression=expr,
                            expression_imputed=imputed, wt_peptide=p.wt_peptide,
                            known_epitope=_known(p.peptide, refs)))

@@ -475,7 +475,8 @@ def cmd_rank(a):
         print("\t".join(cols), file=out)
         for i, r in enumerate(rows, 1):
             cells = [str(i), r.peptide, _allele(a, r.allele), r.gene, f"{r.score:.6g}",
-                     f"{r.presentation:.4g}", f"{r.agretopicity:.4g}",
+                     f"{r.presentation:.4g}", f"{r.occupancy:.4g}",
+                     f"{r.agretopicity:.4g}",
                      f"{r.physchem:.4g}", f"{r.expression:.4g}",
                      "1" if r.expression_imputed else "0", r.wt_peptide,
                      r.known_epitope]

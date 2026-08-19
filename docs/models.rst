@@ -34,7 +34,13 @@ One letter per parameter, in a fixed canonical order — presentation, then reco
    * - ``D``
      - differential agretopicity
      - :meth:`mhcmatch.affinity.PottsAffinity.dai`
-     - ``log10(Kd_WT / Kd_MT)`` against the recovered wild type
+     - ``log10(Kd_WT / Kd_MT)`` against the recovered wild type. **Reported, not fitted** — see
+       :ref:`occupancy-vs-agretopicity`
+   * - ``O``
+     - occupancy
+     - :func:`mhcmatch.rank.occupancy`
+     - ``a/(1+a)`` with ``a = [P]/Kd``: the equilibrium fraction of MHC held. Absolute rather than
+       allele-relative, and defined without a wild type
    * - ``E``
      - expression
      - :mod:`mhcmatch.expression`
@@ -402,3 +408,36 @@ The mapping, for when a result cites one:
    (`2026-mhcmatch-benchmark <https://github.com/antigenomics/2026-mhcmatch-benchmark>`_), whose
    ``MODELS.md`` is authoritative for this scheme. This page mirrors it so a library user can read a
    model name without leaving the docs.
+
+
+.. _occupancy-vs-agretopicity:
+
+Occupancy and agretopicity
+--------------------------
+
+Both come from the same competitive-binding equilibrium and differ in what the peptide is competing
+against — the allele's own self-ligandome for one, its own wild type for the other:
+
+.. math::
+
+   \theta_{MT} = \frac{[P]/K_{MT}}{1 + [P]/K_{MT} + \sum_i [P_i]/K_i}
+   \qquad
+   \phi = \frac{[P]/K_{MT}}{[P]/K_{MT} + [P]/K_{WT}} = \frac{K_{WT}}{K_{WT}+K_{MT}}
+
+Three properties of :math:`\theta` come out of the physics rather than being imposed on it. A
+mutant that does not bind occupies nothing whatever its wild type does, so a binder gate is
+automatic. The free-MHC ``1`` in the denominator is exactly the pseudocount Łuksza applies to both
+dissociation constants — which is why that :math:`\varepsilon` carries units of inverse
+concentration. And :math:`\theta` is bounded in :math:`[0,1]`, so the four-decade tail of the raw
+ratio cannot set a slope.
+
+:math:`\theta` is **additive to the binder %rank, not redundant with it**: a %rank says where a
+peptide sits in its allele's own distribution, occupancy says how much groove it actually holds, and
+an allele with a permissive groove has a large self load its candidates must out-compete. Fitted
+together on the grand corpus, ``binder`` holds z +6.5 while occupancy carries z +3.6 to +3.8, stable
+across :math:`[P]` from 1 to 1,000 nM.
+
+:math:`\phi` does not resolve — z −0.48, and 0.4979 on its own. Neither do the raw ratio, the
+pseudocount amplitude, a logistic squashing of it, or gating on anchor substitutions and genuine
+binders; the benchmark records all seven parameterisations. It is emitted as a column and is not a
+term of the fitted model.
