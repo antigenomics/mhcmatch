@@ -39,11 +39,12 @@ def fetch_pmhc(tier: str = "full") -> str:
     Fetches only ``pmhc/pmhc_<tier>.tsv.gz`` (~4-12 MB) — never the other dataset directories — and
     relies on the ``huggingface_hub`` cache, so it downloads once and is instant thereafter. This lets
     a fresh install or a container bootstrap the reference panel with no pre-staged data, which the
-    nextflow/Docker deploy depends on. Override with a local ``path=``/``$MHCMATCH_PMHC`` when present.
+    nextflow/Docker deploy depends on. Resolves through :func:`fetch_file`, so a local mirror at
+    ``$MHCMATCH_PMHC_DIR`` -- the dataset root the SLURM profile exports -- is used before any
+    download; ``path=`` / ``$MHCMATCH_PMHC``, which name the *holding* directory rather than the
+    dataset root, still win over both.
     """
-    from huggingface_hub import hf_hub_download
-    return hf_hub_download(repo_id=PMHC_REPO, repo_type="dataset",
-                           filename=f"pmhc/pmhc_{tier}.tsv.gz")
+    return fetch_file(f"pmhc/pmhc_{tier}.tsv.gz")
 
 
 def fetch_file(relpath: str) -> str:
@@ -326,6 +327,7 @@ class Store:
         if path is None:
             base = os.environ.get("MHCMATCH_PMHC")
             path = os.path.join(base, f"pmhc_{tier}.tsv.gz") if base else fetch_pmhc(tier)
+        path = os.path.expanduser(path)
         if not os.path.exists(path):
             raise FileNotFoundError(
                 f"pmhc table not found: {path!r}. Pass tier='shortlist'|'full' (auto-fetched "

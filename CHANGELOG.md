@@ -62,6 +62,29 @@ versioning is [SemVer](https://semver.org).
 
 - Container tag and conda pin moved from the 0.14.0 the module still named.
 
+### Fixed
+
+- **`fetch_pmhc` ignored the local mirror.** It called `hf_hub_download` directly, so
+  `$MHCMATCH_PMHC_DIR` — the dataset root the SLURM profile and the cluster README export — was
+  honoured by `fetch_file`/`fetch_proteome` but not by the one accessor every `Store.from_pmhc()`
+  goes through. On a cluster following our own instructions each task therefore reached HuggingFace
+  from a compute node instead of reading the staged mirror. It now resolves through `fetch_file`,
+  exactly as `fetch_proteome` already did.
+- **`Store.from_pmhc()` did not expand `~`.** A path like `~/hf/pmhc_data/pmhc/pmhc_shortlist.tsv.gz`
+  raised `FileNotFoundError` on a file that was present — including the example in `skills/mhcmatch/SKILL.md`.
+- **`slurm.config` declared its params after using them.** `process.queue` and the `env` block are
+  plain assignments, so `queue`, `MHCMATCH_PMHC_DIR` and `MHCMATCH_CALIBRATION_CACHE` read back
+  null: tasks went to the default partition and ignored the shared reference and calibration
+  directories, silently.
+- **Version pins were a release behind** in `main.nf`, `Dockerfile`, `environment.yml`, the module
+  README and the `__init__.py` fallback (all `0.15.0`). Two tests now assert they track
+  `pyproject.toml`, since this had drifted twice.
+- **Docs corrected**: `complementarity.rst` still stated that no fitted class-II recognition model
+  exists, which this release makes false — the warning is now scoped to `recognition.score_mhc2`,
+  which remains MHC-I coefficients on a class-II core, and the fitted `complement.score(cls="mhc2")`
+  has its own section. `api.rst` and `README.md` described the `aa` block as class-I only; the
+  notebook count said six for seven.
+
 ## [0.15.0] - 2026-08-19
 
 ### Added

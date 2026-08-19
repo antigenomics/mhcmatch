@@ -536,18 +536,15 @@ Class II: what this is and what it is not
 
 .. warning::
 
-   **There is no fitted class-II recognition model, and**
-   :func:`~mhcmatch.recognition.score_mhc2` **is not one.** No class-II immunogenicity corpus with a
-   usable negative set exists here to fit against: every arm in this work pairs T-cell-assay
-   positives with eluted *self* ligands as negatives, and that construction has not been built for
-   class II. What the function does is apply the **MHC-I-trained coefficients** to the class-II
-   binding core, with the groove-facing positions redefined as P1/P4/P6/P9 of the register-anchored
-   9-mer instead of the class-I P2/P\ :math:`\Omega` pattern. It emits a ``UserWarning`` the first
-   time it is called.
+   :func:`~mhcmatch.recognition.score_mhc2` **is not a class-II model.** What it does is apply
+   the **MHC-I-trained coefficients** to the class-II binding core, with the groove-facing positions
+   redefined as P1/P4/P6/P9 of the register-anchored 9-mer instead of the class-I
+   P2/P\ :math:`\Omega` pattern. It emits a ``UserWarning`` the first time it is called.
 
    Use it to **rank class-II peptides against each other**. Do not compare the values with class-I
    scores, do not read them as calibrated probabilities, and do not report a number from it without
-   saying which model produced it.
+   saying which model produced it. Where a genuinely fitted class-II score is what you want, use
+   :func:`mhcmatch.complement.score` with ``cls="mhc2"`` --- :ref:`below <mhc2-complement>`.
 
 .. code-block:: python
 
@@ -570,3 +567,56 @@ geometry is being read on another. And the register is a heuristic unless one is
 error in the frame moves every residue from one face to the other. Pass ``register_start=`` from
 :meth:`mhcmatch.diffusion.AnchorModel.best_register` when a per-allele register is available.
 
+
+.. _mhc2-complement:
+
+The fitted class-II complementarity score
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Since **0.16.0** the six-block score is fitted on class II in its own right, on the class-II arm of
+the same IEDB export built by the same rules with the restriction *parsed* rather than imputed
+(``bench/results/complementarity_mhc2.md``). :func:`mhcmatch.complement.score` takes ``cls="mhc2"``
+and reads ``complement_mhc2_<species>.json``; the hosts are never pooled.
+
+.. code-block:: python
+
+   from mhcmatch import complement
+
+   complement.score(["PKYVKQNTLKLATAAA"], cls="mhc2")                     # human, register inferred
+   complement.score(peptides, cls="mhc2", species="mouse")                # separate table
+   complement.score(peptides, cls="mhc2", registers=starts)               # pinned per-allele frames
+
+Peptide-grouped 5-fold CV, ``aa`` and ``kmer`` refitted inside every fold, intervals from 400
+bootstrap draws over the out-of-fold predictions:
+
+.. list-table::
+   :header-rows: 1
+
+   * - host
+     - peptides
+     - immunogenic
+     - AUROC
+     - 95% CI
+   * - human
+     - 603,781
+     - 30,621
+     - **0.7127**
+     - 0.7102--0.7163
+   * - mouse
+     - 50,258
+     - 9,197
+     - **0.6926**
+     - 0.6873--0.6986
+
+The one construction that differs from class I is what the ``aa`` block is keyed on, and it was
+measured rather than assumed. A class-II ligand is a 9-mer core floating inside an 11--25-mer, so
+the class-I length binning might be expected to carry nothing --- yet total length earns **more**
+than the register zones do (+0.0070 against +0.0029 AUROC on human), and the two are complementary,
+so the shipped table carries **both** keys: the register zones ``nflank``/``core``/``cflank`` and
+length quartiles at 14/16/19. The prediction was right about the core and wrong about the ligand ---
+a class-II ligand's length is the length of its flanks, which is its own covariate.
+
+The register comes from :func:`mhcmatch.store.anchor_indices`, which is an allele-agnostic argmax
+unless one is supplied; as with :func:`~mhcmatch.recognition.score_mhc2`, an error in the frame moves
+every residue from one face to the other, so pass ``registers=`` from
+:meth:`mhcmatch.diffusion.AnchorModel.best_register` where a per-allele register is available.

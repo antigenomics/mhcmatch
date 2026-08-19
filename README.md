@@ -144,7 +144,8 @@ K=3 motif mixture and per-allele register EM for class II; plus a pan-allele **P
 **Recognition** — `mhcmatch.complement`, a prior-free log-odds over six blocks: physicochemistry and
 length; the same components split **MHC-facing vs TCR-facing**; MJ1996 on the anchors and **TCRen
 marginalised over 28 M real CDR3 loops** on the TCR-facing side; contiguous-hydrophobic-run motifs;
-per-role **residue log-odds**, now with per-length (8/9/10/11+) and relative-position tables; and
+per-role **residue log-odds**, with per-length and position-zone tables (class I bins 8/9/10/11+ by
+relative third of the TCR face; class II bins 14/16/19 by register zone, via `cls="mhc2"`); and
 adjacent TCR-facing dipeptides. Fitted per species and never pooled across hosts. Vectorised — a
 whole published corpus scores in seconds, so pass a list. `mhcmatch.posbayes` and `mhcmatch.ipred`
 are strict special cases of it and ship alongside for comparison.
@@ -292,7 +293,7 @@ pm.find_sources(peptides, max_subs=1, threads=0)     # batch; find_source() is t
 pm.wildtype("NLVPMVATV")                             # the WT counterpart, for agretopicity
 ```
 
-Full API: [antigenomics.github.io/mhcmatch](https://antigenomics.github.io/mhcmatch/). Six
+Full API: [antigenomics.github.io/mhcmatch](https://antigenomics.github.io/mhcmatch/). Seven
 [marimo](https://marimo.io) notebooks in [`notebooks/`](notebooks/README.md) run the workflows end to
 end on whole published deposits (`pip install 'mhcmatch[notebooks]'`).
 
