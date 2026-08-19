@@ -316,8 +316,17 @@ BIC ordering, and the two are not in conflict because they answer different ques
   for a 30-feature one is a different claim -- so the default names the six-block model explicitly
   rather than inheriting whatever won a parsimony comparison on a different corpus.
 
-The ``aa`` block alone *is* :func:`mhcmatch.posbayes.llr`, asserted in the test suite, so
-``posbayes`` is a strict special case of ``complement`` rather than an alternative to it.
+``posbayes`` is a **special case** of ``complement`` rather than an alternative to it: it is the
+``aa`` block's two face columns with their weights pinned at 1 and the other 28 columns dropped.
+The suite asserts the construction is the same one -- same alphabet, same anchors, same per-face
+counts -- and that ``posbayes``'s own table over those counts reproduces
+:func:`mhcmatch.posbayes.llr` to 1e-9. The ``aa`` columns themselves carry ``complement``'s
+separately fitted tables, so they agree with ``posbayes`` closely but not identically.
+
+What the other five blocks add is not a refinement of the same quantity. Over random 8--11mers the
+two scores correlate at only :math:`r = 0.51`, because identity counts cannot express a contiguous
+hydrophobic run (``motif``), a contact potential resolved by face (``pot``), or a length
+(``phys``).
 
 .. code-block:: python
 
