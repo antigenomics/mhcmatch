@@ -320,8 +320,17 @@ head                  k     what it is
    rec.score(peps, roles=mask)                        # explicit per-residue mask
    rec.posterior(peps, prior=0.03)                    # a probability needs a prior
 
-**The default head needs no optional dependency.** A user who never installs ``mhcmatch[esm]``
-still gets a complete, fitted, validated model rather than a degraded one.
+**The default head needs no optional dependency.** The base install is ``seqtree``, ``numpy`` and
+``huggingface_hub``; ``posbayes`` and ``physchem_glm`` run on exactly that. Only ``esm64_glm``
+needs ``torch`` and ``transformers``:
+
+.. code-block:: console
+
+   pip install 'mhcmatch[esm]'      # ~2.4 GB ESM2 checkpoint on first use
+
+Asking for that head without the extra raises an :class:`ImportError` naming the extra. It never
+drops the features and returns a number that looks fine, which is the failure mode worth avoiding:
+a model missing its whole design is not the model that was validated.
 
 Why the split is by face and not by position
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

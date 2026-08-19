@@ -142,3 +142,21 @@ def test_esm64_head_runs_and_is_length_aware():
     assert np.all(np.isfinite(s)) and len(set(np.round(s, 6))) == len(PEPS)
     e = RC.embed(PEPS)
     assert e.shape == (len(PEPS), 1280) and np.all(np.abs(e).sum(1) > 0)
+
+
+def test_default_head_works_without_torch_and_esm_head_names_the_extra(monkeypatch):
+    """The base install must give a complete model, and the ESM head must fail loudly, not quietly."""
+    import builtins
+    real = builtins.__import__
+
+    def blocked(name, *a, **k):
+        if name.split(".")[0] in ("torch", "transformers"):
+            raise ImportError(f"No module named {name!r}")
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", blocked)
+    RC._esm.cache_clear()
+    assert np.all(np.isfinite(RC.score(PEPS)))                  # default head, pure numpy
+    with pytest.raises(ImportError, match=r"mhcmatch\[esm\]"):
+        RC.score(PEPS, head="esm64_glm")
+    RC._esm.cache_clear()
