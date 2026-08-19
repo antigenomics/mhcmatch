@@ -55,6 +55,7 @@ Capabilities
    getting-started
    immunogenicity
    complementarity
+   safety
    models
    property_basis
    api
