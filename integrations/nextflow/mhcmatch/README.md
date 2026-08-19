@@ -170,13 +170,21 @@ alleles is unaffected by the default.
 | `mhcmatch_vector_n0` | `null` | **required** per-allotype capacity |
 | `mhcmatch_vector_screen` | `true` | run the essential-tissue / self-origin exclusion |
 
+From `slurm.config` only:
+
+| param | default | what it does |
+|---|---|---|
+| `mhcmatch_slurm_queue` | `normal` | the partition every mhcmatch task is submitted to |
+| `mhcmatch_pmhc_dir` | `${projectDir}/reference/pmhc_data` | shared reference mirror; pre-stage with `mhcmatch bootstrap --reference` |
+| `mhcmatch_calibration_cache` | `${projectDir}/reference/calibration` | shared per-allele %rank calibration, safe to share under concurrency |
+
 ## Build the image (only for `-profile docker`)
 
 ```zsh
-docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.14.0 \
-    --build-arg MHCMATCH_VERSION=0.14.0 \
+docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.15.0 \
+    --build-arg MHCMATCH_VERSION=0.15.0 \
     integrations/nextflow/mhcmatch/
-docker push <ISPRAS_REGISTRY>/mhcmatch:0.14.0
+docker push <ISPRAS_REGISTRY>/mhcmatch:0.15.0
 ```
 
 No data staging: the build runs `mhcmatch bootstrap --reference`, which fetches the ligand panel
@@ -198,6 +206,101 @@ MHCMATCH( ch_windows )
 
 Or take a single process — `include { MHCMATCH_PREDICT } from '.../main.nf'` — if all you want is
 the predictor swap.
+
+## Running it on a SLURM cluster
+
+`slurm.config` is the executor profile: it sets `executor = 'slurm'`, sizes the five processes to
+what they actually consume, retries the two exit codes a *scheduler* produces rather than the code
+(137 OOM-kill, 140 wall-clock kill) with `task.attempt` scaling the request, and points every task
+at one shared reference directory.
+
+```groovy
+// your pipeline's nextflow.config
+profiles {
+    slurm {
+        includeConfig 'integrations/nextflow/mhcmatch/nextflow.config'
+        includeConfig 'integrations/nextflow/mhcmatch/slurm.config'   // AFTER, it overrides
+    }
+}
+```
+
+### Stage the references once, on the head node
+
+Do this before the first run and never again. Both directories must be on a filesystem every
+compute node can see.
+
+```bash
+export MHCMATCH_PMHC_DIR=/shared/ref/mhcmatch/pmhc_data
+mhcmatch bootstrap --reference          # ligand panel + thymic/viral/neoantigen sets + expression
+mkdir -p /shared/ref/mhcmatch/calibration
+```
+
+Then point the run at them:
+
+```bash
+nextflow run . -profile slurm \
+    --mhcmatch_pmhc_dir          /shared/ref/mhcmatch/pmhc_data \
+    --mhcmatch_calibration_cache /shared/ref/mhcmatch/calibration \
+    --mhcmatch_slurm_queue       normal \
+    --mhcmatch_vector_n0         6 \
+    --mhcmatch_tumor             SKCM
+```
+
+**Why the calibration directory is worth the trouble.** `mhcmatch` reports a %rank, which means each
+allele needs a background distribution derived from 10,000 random peptides plus an isotonic fit.
+That costs 0.15–3.4 s per allele and *every task that scores that allele pays it again* — a
+200-sample cohort over a 25-allele panel derives the same 25 backgrounds 200 times. Cached, the same
+panel goes from 13.29 s to 0.89 s, bit-identical.
+
+It is safe to share under concurrency **by construction, not by luck**: an entry is written to a
+tempfile in the same directory and moved into place with `os.replace`, which is atomic on POSIX. A
+reader therefore sees the old file, the new file, or no file — never half of one. Two tasks racing
+on the same allele both compute it and both write it, the payload is deterministic, and whichever
+lands last is the same bytes. There is no lock, so there is no lock to leak when a task is killed.
+
+### Submitting the head job
+
+Nextflow's own process is the thing `sbatch` runs; it then submits one job per task. Give it a small
+allocation and a long wall clock, because it mostly waits.
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=mhcmatch
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=8G
+#SBATCH --time=48:00:00
+#SBATCH --output=mhcmatch-%j.out
+
+export NXF_ANSI_LOG=false
+export NXF_OPTS='-Xms1g -Xmx4g'
+export MHCMATCH_PMHC_DIR=/shared/ref/mhcmatch/pmhc_data
+export MHCMATCH_CALIBRATION_CACHE=/shared/ref/mhcmatch/calibration
+
+nextflow run . -profile slurm,singularity -resume \
+    --input samplesheet.csv --outdir results \
+    --mhcmatch_vector_n0 6
+```
+
+`-resume` is not optional in practice: `MHCMATCH_VECTOR --screen` builds a whole-proteome index per
+register length and a re-run without it repeats hours of work that has not changed.
+
+### What each process asks for
+
+| process | cpus | memory | time | why |
+|---|--:|--:|--:|---|
+| `MHCMATCH_PREDICT` | 8 | 16 GB | 4 h | per-allele scoring, parallel over alleles |
+| `MHCMATCH_RANK` | 8 | 24 GB | 6 h | the above plus the mimicry references |
+| `MHCMATCH_NEOAG` | 4 | 32 GB | 4 h | one seqtree index over the reference window set |
+| `MHCMATCH_MIMICRY` | 4 | 32 GB | 4 h | the same, six channels |
+| `MHCMATCH_VECTOR` | 4 | **48 GB** | 8 h | one whole-proteome index **per register length**, ~12 GB peak each |
+
+`MHCMATCH_VECTOR` drops to 8 GB / 1 h with `--mhcmatch_vector_screen false` — **and then no safety
+screen runs at all** and the cassette carries whatever it was handed. The 48 GB is the price of the
+screen and it is the reason the flag defaults to on.
+
+The config also pins `OMP_NUM_THREADS=1` and friends. Each task already has a SLURM CPU allocation;
+letting BLAS spawn a thread per physical core on top of that oversubscribes the node and makes every
+task slower.
 
 ## A note on the stubs
 
