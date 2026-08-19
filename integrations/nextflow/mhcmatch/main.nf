@@ -241,6 +241,8 @@ process MHCMATCH_VECTOR {
     tuple val(meta), path("*.cassette.tsv"),    emit: report
     tuple val(meta), path("*.cassette.faa"),    emit: protein
     tuple val(meta), path("*.cassette.fna"),    emit: cds
+    tuple val(meta), path("*.cassette.map.tsv"),  optional: true, emit: map
+    tuple val(meta), path("*.cassette.map.json"), optional: true, emit: map_json
     path "versions.yml",                        emit: versions
 
     when:
@@ -252,6 +254,15 @@ process MHCMATCH_VECTOR {
     def n0     = params.mhcmatch_vector_n0
     def screen = params.mhcmatch_vector_screen ? '--screen' : ''
     def ctx    = context.name != 'NO_FILE' ? "--context ${context}" : ''
+    // The cassette MAP: one row per unit, linker and predicted epitope in 1-based coordinates.
+    // `mhcmatch_vector_map_alleles_mhc2` is what makes it worth more than a coordinate listing --
+    // without the recipient's class-II allotypes the map carries class I only and `self_help`
+    // (does this unit's CD8 epitope have CD4 help from the SAME unit?) cannot be computed at all.
+    def map2   = params.mhcmatch_vector_map_alleles_mhc2
+                     ? "--map-alleles-mhc2 '${params.mhcmatch_vector_map_alleles_mhc2}'" : ''
+    def mapArg = params.mhcmatch_vector_map
+                     ? "--map ${prefix}.cassette.map.tsv --map-json ${prefix}.cassette.map.json " +
+                       "--map-threshold ${params.mhcmatch_vector_map_threshold ?: 2.0} ${map2}" : ''
     if (n0 == null) error "params.mhcmatch_vector_n0 is required and has no default: per-allotype capacity is not fitted by anything in the public record, so the value is yours to set and it is recorded in the output"
     """
     mhcmatch vector \\
@@ -259,7 +270,7 @@ process MHCMATCH_VECTOR {
         --n0 ${n0} \\
         --alleles '${alleles}' \\
         --cls ${cls} \\
-        ${screen} ${args} \\
+        ${screen} ${mapArg} ${args} \\
         --fasta ${prefix}.cassette.faa \\
         --fasta-nt ${prefix}.cassette.fna \\
         --out ${prefix}.cassette.tsv
@@ -276,6 +287,9 @@ process MHCMATCH_VECTOR {
     printf 'section\\ti\\tkey\\tvalue\\tdetail\\n' > ${prefix}.cassette.tsv
     printf '>cassette units=0 spacer=null\\n\\n'   > ${prefix}.cassette.faa
     printf '>cassette_cds units=0 spacer=null\\n\\n' > ${prefix}.cassette.fna
+    python -c "from mhcmatch.vector import MAP_COLUMNS as C; print('\\t'.join(C))" \\
+        > ${prefix}.cassette.map.tsv
+    echo '{"units": [], "features": []}' > ${prefix}.cassette.map.json
 
     cat <<-END_VERSIONS > versions.yml
     "${task.process}":

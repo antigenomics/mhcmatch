@@ -128,7 +128,7 @@ a deprioritisation signal and the autoimmunity flag, so report it, do not bury i
 | | |
 |---|---|
 | **in** | `tuple val(meta), path(candidates), path(context), val(alleles), val(cls)` — `context` may be `NO_FILE` if `candidates` already carries long windows |
-| **out** | `report` → `${prefix}.cassette.tsv` · `protein` → `.cassette.faa` · `cds` → `.cassette.fna` · `versions` |
+| **out** | `report` → `${prefix}.cassette.tsv` · `protein` → `.cassette.faa` · `cds` → `.cassette.fna` · `map` → `.cassette.map.tsv` · `map_json` → `.cassette.map.json` · `versions` |
 
 Screen → select → order → back-translate. The report is long-form (`section, i, key, value, detail`)
 with sections `withdrawn`, `allotype`, `not selected`, `unit`, `junction`, `cassette`, `sequence`.
@@ -140,6 +140,15 @@ with sections `withdrawn`, `allotype`, `not selected`, `unit`, `junction`, `cass
   Without it *no safety check runs at all* and the cassette carries whatever it was handed. It costs
   one whole-proteome index per register length — ~12 GB peak each, a few minutes apiece, four for
   class I — which is why `nextflow.config` gives this process its own memory and time.
+- **The map (v0.16.0)** is one row per unit, linker and predicted epitope, in 1-based inclusive
+  coordinates over the cassette. It is emitted by default because it re-scores one short sequence
+  and costs almost nothing next to the screen. Three properties are structural: a **heterozygote is
+  duplicated by construction** (a row is a *(peptide, allele)* pair, which is what a coverage count
+  needs); **junction-spanning epitopes carry `unit=0`** and no gene, because they are an artefact of
+  assembly; and **`self_help` per unit** records whether a class-II epitope in that unit contains one
+  of its own class-I epitopes. `self_help` needs `params.mhcmatch_vector_map_alleles_mhc2` — without
+  the recipient's class-II allotypes there is nothing to compute it from, and the process says so
+  on stderr rather than emitting a silently empty column.
 - **`.cassette.fna` is the epitope cassette only** — no start codon, no stop, no leader, no
   trafficking domain, because those flanks belong to the vector rather than the payload. Codons are
   the highest-usage human ones, backed off to shorten homopolymers, then deslipped so no `TTT`
@@ -169,6 +178,9 @@ alleles is unaffected by the default.
 | `mhcmatch_mimicry_annotate` | `false` | append the nearest reference peptide per channel |
 | `mhcmatch_vector_n0` | `null` | **required** per-allotype capacity |
 | `mhcmatch_vector_screen` | `true` | run the essential-tissue / self-origin exclusion |
+| `mhcmatch_vector_map` | `true` | emit the cassette map (`*.cassette.map.tsv` / `.json`) |
+| `mhcmatch_vector_map_threshold` | `2.0` | %rank at or below which a window enters the map |
+| `mhcmatch_vector_map_alleles_mhc2` | `null` | the recipient's class-II allotypes; without them the map is class I only and `self_help` is not computed |
 
 From `slurm.config` only:
 
