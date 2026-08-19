@@ -294,10 +294,55 @@ rank so the aggregate can be taken apart.
 Shipping it: :mod:`mhcmatch.recognition`
 ----------------------------------------
 
-:mod:`mhcmatch.complement` is the six-block model this page describes, and it is unchanged. What
-ships as the recognition head is :mod:`mhcmatch.recognition`, and it is **three models, not one**.
-Each is fitted alone, so their fit criteria are comparable and each score is readable on its own
-terms. The default is whichever wins BIC, currently ``posbayes`` for both species.
+:mod:`mhcmatch.complement` is the six-block model this page describes, and it is unchanged.
+:mod:`mhcmatch.recognition` is the dispatcher over recognition heads, and there are **four**.
+
+.. rubric:: What :func:`mhcmatch.complement.score` is, and why it is the default
+
+It is the whole of this page in one number: the 30-feature design of the six blocks above --
+aggregate composition, the two role-split log-odds, contiguous motifs, property averages per face,
+and length -- standardised, put through one **linear** head, and returned as a log-odds with no
+prior. One call handles a whole corpus, because the design is a few sparse matrices times a
+handful of property vectors.
+
+It is what :func:`mhcmatch.recognition.score` uses when no head is named, and what
+:mod:`mhcmatch.rank` scores the recognition axis with. That is a deliberate choice against the
+BIC ordering, and the two are not in conflict because they answer different questions:
+
+- **BIC** asks which head buys its own parameters on one training arm. ``posbayes`` wins it at
+  three parameters, and :func:`~mhcmatch.recognition.lowest_bic_head` still reports that.
+- **The default** asks which recognition term to *score* with. In the integrated neoantigen fit it
+  is the six-block form that carries the recognition signal, and substituting a 3-parameter head
+  for a 30-feature one is a different claim -- so the default names the six-block model explicitly
+  rather than inheriting whatever won a parsimony comparison on a different corpus.
+
+``posbayes`` is a **special case** of ``complement`` rather than an alternative to it: it is the
+``aa`` block's two face columns with their weights pinned at 1 and the other 28 columns dropped.
+The suite asserts the construction is the same one -- same alphabet, same anchors, same per-face
+counts -- and that ``posbayes``'s own table over those counts reproduces
+:func:`mhcmatch.posbayes.llr` to 1e-9. The ``aa`` columns themselves carry ``complement``'s
+separately fitted tables, so they agree with ``posbayes`` closely but not identically.
+
+What the other five blocks add is not a refinement of the same quantity. Over random 8--11mers the
+two scores correlate at only :math:`r = 0.51`, because identity counts cannot express a contiguous
+hydrophobic run (``motif``), a contact potential resolved by face (``pot``), or a length
+(``phys``).
+
+.. code-block:: python
+
+   from mhcmatch import complement, recognition
+   import numpy as np
+
+   peps = ["YLQPRTFLL", "SIINFEKLA", "KLGGALQAK"]
+   assert np.allclose(recognition.score(peps), complement.score(peps))   # the default
+   recognition.score(peps, head="posbayes")                             # the BIC winner, on request
+   recognition.lowest_bic_head("human")                                 # -> 'posbayes'
+
+.. rubric:: The three heads with their own fitted tables
+
+Each is fitted alone, so their fit criteria are comparable to each other and each score is readable
+on its own terms. ``complement`` is not among them because it has no separate artifact -- it is
+served by :mod:`mhcmatch.complement`, and asking :func:`~mhcmatch.recognition.table` for it says so.
 
 ===================== ===== ================================================================
 head                  k     what it is
