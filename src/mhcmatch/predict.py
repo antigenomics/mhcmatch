@@ -473,7 +473,10 @@ def _blank_nan(x):
 def write_native(preds, path: str) -> None:
     """Write predictions as a native TSV (one row per predicted binder)."""
     with open(path, "w", newline="") as fh:
-        w = csv.writer(fh, delimiter="\t")
+        # `lineterminator="\n"`: the csv module defaults to the excel dialect's CRLF, which is
+        # wrong for a Unix TSV and is not what the pipelines that consume this emit. Shipped as
+        # CRLF from 0.8.0 until 0.14.1, where it broke awk on the last column of every table.
+        w = csv.writer(fh, delimiter="\t", lineterminator="\n")
         w.writerow(NATIVE_COLUMNS)
         for p in preds:
             v = p.var
@@ -494,7 +497,8 @@ def write_scored_csv(preds, path: str) -> None:
     (Kd_MT/Kd_WT for mutation-spanning k-mers). The expression / immunogenicity / composite-score
     columns are left empty for their own pipeline modules to populate."""
     with open(path, "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=SCORED_COLUMNS, extrasaction="ignore")
+        w = csv.DictWriter(fh, fieldnames=SCORED_COLUMNS, extrasaction="ignore",
+                           lineterminator="\n")
         w.writeheader()
         for p in preds:
             v = p.var

@@ -67,14 +67,19 @@ DEFAULT_REFS = {
 #: ``neoag``        already tested as a neoantigen somewhere. Prior evidence, not
 #:                  biology.
 #: ===============  ==================================================================
-KINDS = {"thymus": "self", "self": "self", "viral": "foreign", "bacterial": "foreign",
-         "neoag": "database"}
+KINDS = {"thymus": "self", "self": "self", "self_mouse": "self", "viral": "foreign",
+         "bacterial": "foreign", "neoag": "database"}
 
 #: Reference **proteomes** per category, as :func:`mhcmatch.store.fetch_proteome` stems. Gut
 #: commensals (*L. reuteri*, *M. gnavus*, *E. gallinarum*), a gut/lab strain (*E. coli* K12) and a
 #: skin/nasal pathogen (*S. aureus*) -- the exposures a human repertoire has plausibly seen.
 PROTEOME_REFS = {
     "self": ("human",),
+    #: The host proteome for a **mouse** recipient. `self` means "the recipient's own proteins", so
+    #: it is a property of who is being vaccinated, not a constant -- scoring mouse tumour epitopes
+    #: against the human proteome asks whether a mouse peptide resembles a human self protein, which
+    #: is not a tolerance statement about that mouse.
+    "self_mouse": ("mouse",),
     "bacterial": ("ecoli_K12_UP000000625", "saureus_UP000008816", "lreuteri_UP000001991",
                   "mgnavus_UP000018690", "egallinarum_UP000254807"),
 }

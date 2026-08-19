@@ -150,7 +150,8 @@ class MimicryScore:
         return out
 
 
-def load_references(pmhc_dir=None, cls: str = "mhc1", with_self: bool = True) -> dict:
+def load_references(pmhc_dir=None, cls: str = "mhc1", with_self: bool = True,
+                   self_species: str = "human") -> dict:
     """Reference window sets per (component, channel, length), ready for :func:`features`.
 
     ``with_self=False`` skips the host proteome, which dominates the cost: ~12 M windows per length,
@@ -166,7 +167,11 @@ def load_references(pmhc_dir=None, cls: str = "mhc1", with_self: bool = True) ->
         if comp == "self":
             if not with_self:
                 continue
-            peps = mimics.proteome_peptides("self", lengths)
+            # `self` is the RECIPIENT's proteome. The fitted coefficients were estimated with the
+            # human one, so a mouse run reports its mouse-self channel beside that rather than
+            # silently substituting a differently-scaled feature into the same weight.
+            peps = mimics.proteome_peptides(
+                "self" if self_species == "human" else "self_mouse", lengths)
         else:
             rel = mimics.DEFAULT_REFS["thymus" if comp == "thymus" else "viral"][0]
             peps = mimics.load_peptides(pmhc_dir, rel, cls)

@@ -80,3 +80,22 @@ def test_cli_coefficients_reports_both_aurocs(capsys):
         assert f"{comp}\t{ch}\t" in out
     assert f"{p['fit']['auroc_pooled']:.3f}" in err
     assert f"{p['fit']['auroc_within_screen_median']:.3f}" in err
+
+
+def test_self_is_the_recipients_proteome_not_a_constant():
+    """`self` means "the recipient's own proteins", so a mouse run must be able to say so.
+
+    Scoring mouse tumour epitopes against the *human* proteome asks whether a mouse peptide
+    resembles a human self protein, which is not a tolerance statement about that mouse. The
+    category exists so the mouse deliverable can carry both channels rather than mislabel one.
+    """
+    from mhcmatch import mimics
+
+    assert mimics.PROTEOME_REFS["self"] == ("human",)
+    assert mimics.PROTEOME_REFS["self_mouse"] == ("mouse",)
+
+    import inspect
+    from mhcmatch import mimicry
+    p = inspect.signature(mimicry.load_references).parameters
+    assert "self_species" in p
+    assert p["self_species"].default == "human", "the fitted coefficients are the human ones"
