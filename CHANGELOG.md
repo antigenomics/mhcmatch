@@ -6,6 +6,124 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.24.0] - 2026-08-20
+
+### Changed
+
+- **`C_corpus` is now the exact Łuksza sum, and it costs a table lookup.** The term is
+  `Z = Σ_r exp(−κ(a₀ − s(q,r)))` over a reference immunopeptidome, and mhcmatch computed it by
+  walking a trie to Hamming radius 2. With an ungapped position-additive score the weight
+  **factorises over positions**, so the sum over the *whole* reference set is one 20×20 matrix
+  applied along each axis of a k-mer frequency table — a contraction, computed once
+  (`mimicry.corpus_counts` + `mimicry.contract`), after which every query is one array index.
+
+  | | radius-2 search | k-mer contraction |
+  |---|--:|--:|
+  | 340,876 queries | ~46,000 ms | **2.3 ms** |
+  | `self` channel build | 75.6 s + ~7.5 GB index | **50 s**, 64 KB resident |
+  | agreement with a true all-vs-all | median **0.4999** of `Z` | **5.5×10⁻¹⁶** |
+  | Spearman with peptide length | **−0.502** | **+0.040** |
+
+  The reported column is the **per-window density** `ρ = S_k/(m_k N_k) ∈ [0,1]`. `m_k` (the query's
+  sliding-window count) is what removes the length artefact; `N_k` (the corpus's total window mass)
+  is what puts deposits of 140,482 and 121,968,158 windows on one scale. `a₀` and the `Z/(1+Z)`
+  saturation are **retired** — the first was a scale the standardizer absorbed, the second bounded
+  a count that is now already bounded. `bench/results/corpus_exact.md`.
+
+- **GRAND v3: nine terms in four hierarchical blocks.** `presentation` → `expression` → `physchem`
+  → `corpus`, entered in pipeline order, so a recognition coefficient is what that term is worth
+  *after* presentation and expression. Both recognition blocks are significant on entry
+  (physchem LR χ²(2) = 11.0, p = 4.0×10⁻³; corpus LR χ²(3) = 15.7, p = 1.3×10⁻³) and the full model
+  has the best held-out mean AUROC of any rung in the ladder (0.6927 against 0.6734 for presentation
+  alone, leave-one-screen-out over nine screens). `bench/results/grand_corpus.md`.
+
+  - `C_phys` becomes **two** columns, `C_phys_rose` and `C_phys_hydrop` (Kidera KF4). Rose carries
+    the block on neoantigens; KF4 is the stronger of the two on the Chowell-family corpora that
+    motivated a chemistry term in the first place. They correlate −0.836, so the statistic to read
+    is the block test, not a per-term `z` — the report gives the fit in its sequential
+    (Gram–Schmidt) basis and in both entry orders for exactly that reason.
+  - `C_corpus` becomes **three** columns — `thymus`, `self`, `viral`. `self` and `viral` were
+    dropped in 0.21.0 for what they cost (a ~7.5 GB trie), not for what they were worth; the
+    contraction removes the cost. The thymus/self **sign dissociation** (+0.246 / −0.241) is intact
+    and is the evidence for the biased-sample mechanism.
+  - `C_corpus_missing` is **removed**. It flagged a peptide with no cache entry; the exact sum has a
+    value for every canonical peptide of an admitted length, so the column would be identically
+    zero.
+
+- **`complement.burial` averages over the TCR face instead of summing.** The face is `L − 5`
+  residues wide and the Rose scale is strictly positive (0.52–0.91), so the summed column was
+  **Pearson +0.954 with peptide length** (n = 60,000) — a chemistry term that was 91 % ruler. The
+  averaged column sits at −0.010, its marginal within-screen AUROC rises 0.5098 → 0.5646, and the
+  two scales become comparable for the first time (their correlation moves from −0.20 to −0.836,
+  which is what they always were under the length variance). `burial(..., per_residue=False)`
+  reproduces a pre-0.24.0 number.
+
+- **`mimicry.SHAPES` is one `κ` per component, not a `(κ, a₀)` pair**, profiled by
+  `bench/immuno/corpus_exact.py`: `thymus` 3.0, `self` 5.0, `viral` 8.0. `mimicry.RADIUS` and
+  `mimicry.corpus_radius()` are removed with the search. Writing `γ = (1−e^−κ)/(1+19e^−κ)`, the
+  contraction keeps an order-`j` interaction at exactly `γ^j` — so `κ` is a single scalar bandwidth
+  running from pure composition to exact k-mer matching, and the three components sit at
+  γ = 0.49 (graded tolerance), 0.88 (unidentified) and 0.99 (near-exact). Derived and verified to
+  10⁻¹⁵ in `bench/results/kmer_spectrum.md`.
+
+- **`rank` is the rank by score**, dense and 1-based, rather than the row's position in the file.
+  Known epitopes are still floated to the top of the listing; that is a display choice and no longer
+  renumbers the ranking.
+
+### Added
+
+- **`p_response`: the score on a probability axis.** `rank.probability` picks the single additive
+  offset that makes the mean fitted probability over the pool equal a declared prevalence, and
+  reports `σ(s + b)`. `--prevalence` (default 0.0602 = TESLA's 37 of 615). It is a **prior shift,
+  not a recalibration**: additive in log-odds, so it moves no rank. What it buys is portability —
+  a raw-score cut-off means nothing across cohorts whose base rates differ by four orders of
+  magnitude, and "P ≥ 0.2 at an assumed 6 % pool prevalence" is a statement another cohort can be
+  held to.
+
+- **`portfolio.compose`: cassette composition to quotas.** `{"mhc1": (8, 2), "mhc2": (4, 1),
+  "nonconventional": (3, 1)}` reads *eight class-I slots, of which at least two should respond*.
+  `mhcmatch vector --quota`, which reports the composed cassette **and the same slot budgets filled
+  by score alone**, side by side. `P(≥ k)` is not a modular set function whenever two units share a
+  block, so no pointwise score can be sorted to maximise it: on nine candidates at target 1, the
+  composer reaches P(≥ 1) **0.6550 against top-4-by-score's 0.4806**, and spreads over four
+  allotypes instead of one without being told to. At target ≥ 2 it *concentrates*, and is right to —
+  two units in two blocks need both blocks live.
+
+  Arms are disjoint by construction (`Unit.kind`): a frameshift product is charged to
+  `nonconventional` rather than to `mhc1`, or "at least one non-conventional epitope responds" would
+  be satisfied for free and the quota would never change a cassette.
+
+- **`portfolio.survival` and `portfolio.coverage`.** `survival` is the whole tail of the block
+  response model, **exact** by convolution over blocks — `O(B m²)`, no `2^B` live-set enumeration
+  and no Monte Carlo. `p_at_least` reads it and has lost its `n_mc`/`seed` arguments. `coverage`
+  gives the Gini index and H/H_max of allotype spread, over the **donor's own distinct allotypes**:
+  a patient homozygous at *B* has five, and scoring an even cassette against a denominator of six
+  would report a genotype as a design flaw.
+
+- **`variant_type`** on the `rank` output, from the FASTA header's `type` field or the table's
+  `type` column. Reported, never scored — it is what lets the cassette layer hold a quota of
+  non-conventional epitopes.
+
+- `mimicry.corpus_counts`, `mimicry.contract`, `mimicry.face_kmers`, `complement.PHYS_SCALE_HYDROP`,
+  `rank.AGGREGATE_BLOCKS`, `rank.PHYS_COLUMNS`, `rank.POOL_PREVALENCE`.
+
+### Removed
+
+- **`$MHCMATCH_REFERENCE_CACHE`, and `load_references(cache=)`.** There is nothing left to cache on
+  the corpus path: the thymic table builds in 0.5 s and the contraction in ~1 ms. **If a cluster has
+  been pointing this at shared storage, that directory (~1 GB) is now dead and can be deleted** —
+  the variable is simply unread. `mimicry.CACHE_VERSION` and the whole cache read/write path go with
+  it (~130 lines). The indexed search remains for `features()`, `annotate()` and the self-mimicry
+  safety scan, which report *which* reference was hit and cannot be answered by a weighted sum.
+  Removed from `slurm.config` and the nextflow README.
+
+- `mimicry.RADIUS`, `mimicry.corpus_radius`, and the artifact's `corpus_radius` key.
+
+### Note
+
+- The bump invalidates `$MHCMATCH_CALIBRATION_CACHE` entries (`predict._fingerprint` carries
+  `__version__`). That cache is safe to leave in place; it rebuilds.
+
 ## [0.23.0] - 2026-08-20
 
 ### Added

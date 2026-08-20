@@ -168,6 +168,14 @@ class Unit:
     allele: str
     p: float
     cls: str = "mhc1"
+    #: What kind of variant produced the neoepitope. ``"missense"`` is a single substitution against
+    #: a self protein; anything else -- ``frameshift``, ``fusion``, ``splice``, ``retained_intron``,
+    #: ``ORF``, ``editing`` -- is **non-conventional** and is charged to its own arm by
+    #: :func:`mhcmatch.portfolio.compose`. The distinction earns a quota of its own because a
+    #: non-conventional product is foreign over a stretch rather than at one position, so it fails
+    #: differently from a missense: whatever makes the missense arm miss (a wrong wild type, a
+    #: tolerised residue) does not make this arm miss.
+    kind: str = "missense"
 
     def __post_init__(self):
         if not 0 <= self.mutation_index < len(self.peptide):
@@ -329,7 +337,9 @@ def units_from_context(rows, records, length: int = 27, cls: str = "mhc1") -> li
         out.append(unit(context, offset, length=length,
                         gene=var["gene_name"] or str(r.get("gene", "")).strip(),
                         allele=str(r.get("allele", "")).strip(), p=p,
-                        cls=str(r.get("cls", "") or cls)))
+                        cls=str(r.get("cls", "") or cls),
+                        kind=str(r.get("kind", "") or r.get("variant_type", "")
+                                 or var.get("type", "") or "missense")))
     return out
 
 

@@ -93,18 +93,126 @@ def test_p_at_least_saturates_at_q_for_one_block():
     prev = 0.0
     for m in (5, 20, 80):
         p = np.full(m, 0.15)
-        v = pf.p_at_least(p, np.zeros(m, int), [q], n_mc=40_000, seed=1)
-        assert v <= q + 0.01
-        assert v >= prev - 0.01
+        v = pf.p_at_least(p, np.zeros(m, int), [q])
+        assert v <= q                                    # exact now, so no Monte-Carlo slack
+        assert v >= prev
         prev = v
     assert prev > 0.45                                   # and it does approach the cap
 
 
 def test_p_at_least_beats_one_block_when_spread():
     p = np.full(12, 0.15)
-    one = pf.p_at_least(p, np.zeros(12, int), [0.5], n_mc=40_000, seed=1)
-    many = pf.p_at_least(p, np.arange(12) % 4, [0.5] * 4, n_mc=40_000, seed=1)
+    one = pf.p_at_least(p, np.zeros(12, int), [0.5])
+    many = pf.p_at_least(p, np.arange(12) % 4, [0.5] * 4)
     assert many > one + 0.15
+
+
+def test_survival_is_exact_against_a_brute_force_enumeration():
+    """The convolution has to agree with summing over every live-set and every response pattern.
+
+    Small enough to enumerate literally: 3 blocks x 2 units. This is the check that the O(B m^2)
+    convolution replacing the 200,000-draw Monte Carlo did not change the answer, only the noise.
+    """
+    import itertools
+    p = np.array([0.20, 0.15, 0.30, 0.10, 0.25, 0.05])
+    blk = np.array([0, 0, 1, 1, 2, 2])
+    q = np.array([0.5, 0.8, 0.3])
+    ratio = p / q[blk]
+    exact = np.zeros(len(p) + 1)
+    for live in itertools.product([0, 1], repeat=3):
+        pl = np.prod([q[b] if live[b] else 1 - q[b] for b in range(3)])
+        for resp in itertools.product([0, 1], repeat=len(p)):
+            pr = np.prod([ratio[i] if resp[i] else 1 - ratio[i] for i in range(len(p))])
+            exact[sum(r * live[b] for r, b in zip(resp, blk))] += pl * pr
+    want = np.cumsum(exact[::-1])[::-1]
+    assert np.allclose(pf.survival(p, blk, q), want, atol=1e-12)
+
+
+def test_survival_first_element_is_one_and_the_tail_is_monotone():
+    s = pf.survival([0.2, 0.3, 0.1], [0, 1, 1], 0.6)
+    assert s[0] == pytest.approx(1.0)
+    assert all(s[i] >= s[i + 1] for i in range(len(s) - 1))
+
+
+# ------------------------------------------------------------------ coverage evenness
+def test_coverage_is_even_when_it_should_be_and_uneven_when_it_should_not():
+    even = pf.coverage(["A", "A", "B", "B"])
+    assert even["gini"] == pytest.approx(0.0)
+    assert even["entropy_ratio"] == pytest.approx(1.0)
+    piled = pf.coverage(["A", "A", "A", "A"], universe=["A", "B", "C", "D"])
+    assert piled["entropy_ratio"] == pytest.approx(0.0)
+    assert piled["gini"] > 0.7
+    assert piled["n_covered"] == 1 and piled["n_allotypes"] == 4
+
+
+def test_coverage_denominator_is_the_donors_own_allotypes_not_a_fixed_six():
+    """Homozygosity is a genotype, not a design flaw.
+
+    A donor homozygous at B has five distinct class-I allotypes. A cassette spread evenly over
+    those five is perfectly even, and scoring it against a denominator of six would report the
+    genotype as a failure to diversify.
+    """
+    homo = ["A*01:01", "A*02:01", "B*07:02", "C*07:01", "C*05:01"]      # 5 distinct, B homozygous
+    assert pf.coverage(homo, universe=homo)["entropy_ratio"] == pytest.approx(1.0)
+    assert pf.coverage(homo, universe=homo + ["B*44:02"])["entropy_ratio"] < 1.0
+
+
+# ------------------------------------------------------------------ quota composition
+def _cands(spec):
+    from mhcmatch.vector import Unit
+    return [Unit(peptide="A" * 27, mutation_index=13, gene=g, allele=a, p=p, cls=c, kind=k)
+            for g, a, p, c, k in spec]
+
+
+def test_compose_beats_top_m_by_score_when_the_target_is_at_least_one():
+    """The whole claim: P(>= 1) is not modular, so no pointwise score can be sorted to maximise it.
+
+    Five strong candidates all restricted to one allotype, four weaker ones spread over four
+    others. Top-4 by score takes the pile and is capped by that one block's live probability.
+    """
+    spec = ([(f"G{i}", "A*02:01", 0.30 - 0.015 * i, "mhc1", "missense") for i in range(5)] +
+            [(f"H{i}", a, 0.22 - 0.01 * i, "mhc1", "missense")
+             for i, a in enumerate(["A*01:01", "B*07:02", "B*44:02", "C*07:01"])])
+    units = _cands(spec)
+    top = sorted(units, key=lambda u: -u.p)[:4]
+    p_top = pf.p_at_least([u.p for u in top], [u.allele for u in top], 0.5, k=1)
+    c = pf.compose(units, {"mhc1": (4, 1)}, 0.5)
+    assert c.arms["mhc1"]["p_at_least"] > p_top + 0.15
+    assert len({u.allele for u in c.arms["mhc1"]["units"]}) == 4      # and it spread to get there
+
+
+def test_compose_charges_a_non_missense_variant_to_its_own_arm():
+    """Otherwise "at least one non-conventional epitope" is satisfied for free by the class-I arm."""
+    units = _cands([("M1", "A*02:01", 0.30, "mhc1", "missense"),
+                    ("M2", "A*01:01", 0.28, "mhc1", "missense"),
+                    ("F1", "A*02:01", 0.10, "mhc1", "frameshift"),
+                    ("D1", "DRB1*15:01", 0.20, "mhc2", "missense")])
+    c = pf.compose(units, {"mhc1": (2, 1), "mhc2": (1, 1), "nonconventional": (1, 1)}, 0.5)
+    assert [u.gene for u in c.arms["nonconventional"]["units"]] == ["F1"]
+    assert {u.gene for u in c.arms["mhc1"]["units"]} == {"M1", "M2"}
+    assert [u.gene for u in c.arms["mhc2"]["units"]] == ["D1"]
+
+
+def test_compose_fills_no_more_than_the_slots_and_records_why_each_was_taken():
+    units = _cands([(f"G{i}", f"A*{i:02d}:01", 0.2, "mhc1", "missense") for i in range(9)])
+    c = pf.compose(units, {"mhc1": (3, 1)}, 0.6)
+    assert len(c.arms["mhc1"]["units"]) == 3
+    assert [t["step"] for t in c.trace] == [1, 2, 3]
+    assert all(t["gain"] == t["gain"] for t in c.trace)              # every step recorded a gain
+    assert c.arms["mhc1"]["n_available"] == 9
+
+
+def test_evenness_weight_buys_coverage_and_the_cost_is_visible():
+    """The weight is for when the response model does not already want to spread. It must cost."""
+    spec = [(f"G{i}", "A*02:01", 0.30 - 0.01 * i, "mhc1", "missense") for i in range(4)] + \
+           [(f"H{i}", a, 0.24 - 0.01 * i, "mhc1", "missense")
+            for i, a in enumerate(["A*01:01", "B*07:02"])]
+    units, U = _cands(spec), ["A*02:01", "A*01:01", "B*07:02"]
+    plain = pf.compose(units, {"mhc1": (3, 2)}, 0.9, universe=U)
+    spread = pf.compose(units, {"mhc1": (3, 2)}, 0.9, universe=U, weight_evenness=0.3)
+    assert spread.arms["mhc1"]["coverage"]["entropy_ratio"] > \
+        plain.arms["mhc1"]["coverage"]["entropy_ratio"]
+    assert spread.arms["mhc1"]["p_at_least"] < plain.arms["mhc1"]["p_at_least"]
 
 
 def test_p_at_least_refuses_unrepresentable_marginal():

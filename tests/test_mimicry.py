@@ -68,7 +68,10 @@ def test_rank_extended_appends_columns_without_moving_the_ranking(tmp_path, caps
     # a property of those flags, not of the scorer.
     def run(*flags):
         main(["rank", "table", str(p), "--tumor", "SKCM", "--score", "gate", *flags])
-        body = [ln.split("\t") for ln in capsys.readouterr().out.strip().splitlines()]
+        # rstrip newlines only. `.strip()` would eat a trailing TAB, which is exactly what an
+        # empty last column (`variant_type`) emits, and the base and extended runs would then
+        # disagree on width for a reason that is not about the flags under test.
+        body = [ln.split("\t") for ln in capsys.readouterr().out.rstrip("\n").splitlines()]
         return body[0], body[1:]
 
     head, rows = run()
@@ -86,15 +89,28 @@ def test_the_aggregate_no_longer_needs_the_host_proteome_index():
     weight -- and that forced the host-proteome index: 6 min 15 s and ~7.5 GB, the largest single
     cost in the package.
 
-    GRAND takes its corpus term from the thymic channel alone (26,513 peptides), so the proteome
-    index is off the ranking path. This pins that: the model must declare no `self` feature, and
-    the channels the CLI builds must be buildable with `with_self=False`."""
+    GRAND v3 scores `C_corpus_self` again -- but from a 64 KB k-mer count table, not a trie. The
+    proteome index is still off the ranking path, and the property to pin is that rather than the
+    absence of a `self` feature: the channels the CLI builds must be computable without ever
+    calling `load_references`."""
+    import mhcmatch.mimicry as MM
     from mhcmatch import rank
+    from mhcmatch.cli import _aggregate_channels
 
     feats = rank.aggregate()["features"]
-    assert not any("self" in f for f in feats), feats
-    assert "C_corpus_thymus" in feats
+    assert "C_corpus_self" in feats and "C_corpus_thymus" in feats
     assert set(rank.CHANNEL_COLUMNS) <= set(feats)
+
+    def _refuse(*a, **k):                       # the index build, if the corpus path ever calls it
+        raise AssertionError("corpus channels must not build a reference index")
+
+    real, MM.load_references = MM.load_references, _refuse
+    try:
+        got = _aggregate_channels("mhc1", no_self=True)(["GILGFVFTL", "KLVVVGACGV"])
+    finally:
+        MM.load_references = real
+    assert set(got) == set(rank.CHANNEL_COLUMNS)
+    assert all(len(v) == 2 and all(0.0 <= x <= 1.0 for x in v) for v in got.values())
 
 
 def test_cli_coefficients_reports_both_aurocs(capsys):
@@ -132,48 +148,6 @@ def test_self_is_the_recipients_proteome_not_a_constant():
 
 # ------------------------------------------------------------------ the reference cache (0.20.0)
 @pytest.mark.hfdata
-def test_reference_cache_round_trips_and_agrees_with_a_fresh_build(tmp_path):
-    """A cached reference set must score identically to the one it was built from.
-
-    Exercised with `with_self=False` so it stays a unit test: the self proteome is the 6-minute,
-    ~7.5 GB part, and what is under test here is the persistence, not the size.
-    """
-    peps = ["GILGFVFTL", "NLVPMVATV"]
-    fresh = mimicry.load_references(cls="mhc1", with_self=False)
-    a = mimicry.score(peps, fresh, cls="mhc1", allow_missing=True)
-
-    built = mimicry.load_references(cls="mhc1", with_self=False, cache=tmp_path)
-    b = mimicry.score(peps, built, cls="mhc1", allow_missing=True)
-    loaded = mimicry.load_references(cls="mhc1", with_self=False, cache=tmp_path)
-    c = mimicry.score(peps, loaded, cls="mhc1", allow_missing=True)
-
-    assert list(tmp_path.iterdir()), "nothing was written to the cache directory"
-    for x, y, z in zip(a, b, c):
-        # with_self=False, so `logodds` is NaN by construction (0.21.0): the fitted coefficients
-        # describe the full component set. The per-channel equality below is the real round-trip.
-        assert x.logodds == pytest.approx(y.logodds, nan_ok=True)
-        assert x.logodds == pytest.approx(z.logodds, nan_ok=True), \
-            "cached load disagrees with a fresh build"
-        for comp in mimicry.COMPONENTS:
-            if comp in x.components:
-                for ch in mimicry.CHANNELS:
-                    assert x.components[comp][ch] == pytest.approx(z.components[comp][ch],
-                                                                   nan_ok=True)
-
-
-@pytest.mark.hfdata
-def test_reference_cache_key_changes_when_the_projection_does(tmp_path, monkeypatch):
-    """A cache entry is keyed on what produced it. Bumping CACHE_VERSION must miss, not reuse --
-    a stale projection is a silently wrong feature."""
-    lengths = [9]
-    before = mimicry._fingerprint(None, "mhc1", False, "human", lengths)
-    monkeypatch.setattr(mimicry, "CACHE_VERSION", mimicry.CACHE_VERSION + 1)
-    assert mimicry._fingerprint(None, "mhc1", False, "human", lengths) != before
-    # and the same inputs are stable
-    monkeypatch.undo()
-    assert mimicry._fingerprint(None, "mhc1", False, "human", lengths) == before
-
-
 def test_backing_reads_str_pairs_from_arrays():
     """`features` indexes the backing only for a best hit, so it stays memory-mapped; it still has
     to hand back plain strings."""
@@ -183,45 +157,128 @@ def test_backing_reads_str_pairs_from_arrays():
     assert b[0] == ("GILGFVFTL", "FLU")
 
 
-def test_corpus_R_is_the_fitted_luksza_form():
-    """`corpus_R` must compute Z = sum_d n_d exp(-k(a0 - (L - d))), not a rescaling of it.
+def _spectrum_from(peptides, kappa, k=3, cls="mhc1"):
+    """A spectrum dict built by hand from a peptide list -- the same shape `corpus_spectrum` returns."""
+    import numpy as np
+    T = np.zeros(20 ** k)
+    for p in peptides:
+        idx = mimicry.face_kmers(p, cls, k)
+        if idx.size:
+            np.add.at(T, idx, 1.0)
+    beta = np.exp(-kappa)
+    K = (1 - beta) * np.eye(20) + beta * np.ones((20, 20))
+    C = T.reshape((20,) * k)
+    for ax in range(k):
+        C = np.moveaxis(np.tensordot(K, C, axes=([1], [ax])), 0, ax)
+    return {"thymus": (C.ravel(), float(T.sum()), k)}, T
 
-    Two mistakes are silent and both change the ranking rather than the calibration: flipping the
-    sign on `d` (which upweights *distant* neighbours) and dropping the `L` term (which is a real
-    per-row factor because peptide length varies). Either one saturates R -- measured against the
-    fitted column over 328,276 cached peptides, the flipped variant has mean R 0.771 with 77.2% of
-    peptides above 0.5, against a fitted mean of 3.29e-5 and none above 0.5, ranking differently at
-    Spearman +0.705. So the formula is pinned here against its closed form, not merely exercised.
+
+def test_corpus_R_is_the_exact_all_vs_all_sum_not_a_truncation():
+    """The contraction must reproduce a brute-force sum over EVERY reference k-mer.
+
+    This is the property the radius-capped search never had: it walked a Hamming ball and stopped,
+    capturing a median 0.4999 of the true sum on real 9-mers. Here the decaying exponent is the
+    threshold and nothing is dropped, so the check is equality with the definition, not closeness.
     """
-    import math
+    import numpy as np
+    rng = np.random.default_rng(0)
+    AA = mimicry.AA
+    ref = ["".join(rng.choice(list(AA), size=n)) for n in rng.integers(8, 12, size=400)]
+    kappa, k = 2.25, 3
+    spec, T = _spectrum_from(ref, kappa, k)
+    beta = np.exp(-kappa)
 
-    class _Hit:
-        def __init__(self, score): self.score = score
+    nz = np.nonzero(T)[0]
+    dig = (nz[:, None] // (20 ** np.arange(k)[::-1])) % 20          # every occupied k-mer, unpacked
+    for pep in ["GILGFVFTL", "SIINFEKL", "KLINSQINL", "GILGFVFTLAV"]:
+        idx = mimicry.face_kmers(pep, "mhc1", k)
+        qd = (idx[:, None] // (20 ** np.arange(k)[::-1])) % 20
+        brute = sum(float((T[nz] * beta ** ((dig != qd[i]).sum(1))).sum()) for i in range(len(idx)))
+        got = mimicry.corpus_R([pep], spec)[0]["thymus"] * idx.size * spec["thymus"][1]
+        assert got == pytest.approx(brute, rel=1e-12), pep
 
-    counts = {0: 1, 1: 28, 2: 585}                      # a real thymus row: AAAAAAAVL
-    hits = [_Hit(d) for d, c in counts.items() for _ in range(c)]
 
-    class _Index:
-        def search(self, q, params): return hits
+def test_corpus_R_is_a_density_per_query_window():
+    """`rho` divides by both the query's window count and the reference's total mass.
 
-    pep = "AAAAAAAVL"                                    # L = 9
-    refs = {("thymus", "tcr", len(pep)): (_Index(), 0, None)}
-    got = mimicry.corpus_R([pep], refs, components=("thymus",))[0]
+    Without the first it is a length detector; without the second `thymus` (26,513 peptides) and
+    `self` (12 M proteome windows) are not on one scale and 'thymus makes the others redundant' is
+    a statement about set size rather than about biology."""
+    import numpy as np
+    ref = ["GILGFVFTL", "GILGFVFTLA", "SIINFEKL"]
+    spec, T = _spectrum_from(ref, 2.25)
+    table, n, k = spec["thymus"]
+    pep = "KLINSQINL"
+    idx = mimicry.face_kmers(pep, "mhc1", k)
+    assert mimicry.corpus_R([pep], spec)[0]["thymus"] == pytest.approx(
+        float(table[idx].sum()) / (idx.size * n))
+    # doubling the reference set leaves the density unchanged: N_k doubles with the sum
+    spec2, _ = _spectrum_from(ref * 2, 2.25)
+    assert mimicry.corpus_R([pep], spec2)[0]["thymus"] == pytest.approx(
+        mimicry.corpus_R([pep], spec)[0]["thymus"])
 
-    k, a0 = mimicry.SHAPES["thymus"]
-    z = sum(c * math.exp(-k * (a0 - (len(pep) - d))) for d, c in counts.items())
-    assert got["thymus"] == pytest.approx(z / (1.0 + z), rel=1e-12)
-    assert [got["thymus_n0"], got["thymus_n1"], got["thymus_n2"]] == [1, 28, 585]
 
-    # the linear regime the appendix documents: Z stays far below 1, so R ~ Z
-    assert z < 1.4e-3
-    assert got["thymus"] == pytest.approx(z, rel=1e-3)
+def test_the_face_is_contiguous_and_k_is_the_only_width_every_length_supports():
+    """k=3 is a consequence, not a preference: the face is L-5 wide and the shortest ligand is 8."""
+    for L in range(8, 16):
+        sel = mimicry.masks(L, "mhc1")["tcr"]
+        assert sel == list(range(3, L - 2)), L                       # contiguous, width L-5
+    assert mimicry.CORPUS_K == 3
+    assert mimicry.face_kmers("SIINFEKL").size == 1                  # W=3, exactly one 3-mer
+    assert mimicry.face_kmers("SIINFEKL", k=4).size == 0             # W=3 cannot carry a 4-mer
+    assert mimicry.face_kmers("GILGFVFTLAV").size == 4               # W=6 -> 6-3+1
 
-    # nearer neighbours must weigh more -- the sign check that the flipped variant fails
-    solo = {d: {("thymus", "tcr", len(pep)): (type("I", (), {"search": lambda s, q, p, d=d: [_Hit(d)]})(), 0, None)}
-            for d in (0, 1, 2)}
-    r = [mimicry.corpus_R([pep], solo[d], components=("thymus",))[0]["thymus"] for d in (0, 1, 2)]
-    assert r[0] > r[1] > r[2]
+
+def test_corpus_R_averages_over_query_windows_so_length_alone_cannot_move_it():
+    """The shipped fixed-face column varied 17x in mean across lengths 8-11 (Spearman -0.502 with
+    length); the `m_k(q)` divisor is what removes that. The face is `L - 5` wide so it cannot be
+    held constant across lengths -- but a *homopolymer* face is every window at once, so its density
+    must be exactly the single-window value at every length."""
+    spec, _ = _spectrum_from(["AAAWWWAAA", "CCCYYYCCC", "GGGAAAGGG"], 2.25)
+    table, n, k = spec["thymus"]
+    one = float(table[mimicry.face_kmers("AAAAAAAA", "mhc1", k)].sum()) / n     # W=3, a single AAA
+    for L in range(8, 13):
+        pep = "A" * L                                   # face is A*(L-5): L-7 windows, all AAA
+        got = mimicry.corpus_R([pep], spec)[0]["thymus"]
+        assert got == pytest.approx(one), (L, got, one)
+
+
+def test_corpus_R_takes_any_position_additive_kernel():
+    """BLOSUM62 is the same contraction with a different 20x20, so the graded Luksza form is exact
+    too. Only gapped alignment fails to factorise, which is why `features` keeps its index."""
+    import numpy as np
+    from seqtree import SubstitutionMatrix
+    AA = mimicry.AA
+    S = np.array([[SubstitutionMatrix.blosum62().similarity(a, b) for b in AA] for a in AA], float)
+    rng = np.random.default_rng(1)
+    ref = ["".join(rng.choice(list(AA), size=9)) for _ in range(200)]
+    k, kb = 3, 0.30
+    T = np.zeros(20 ** k)
+    for p in ref:
+        np.add.at(T, mimicry.face_kmers(p, "mhc1", k), 1.0)
+    C = T.reshape((20,) * k)
+    for ax in range(k):
+        C = np.moveaxis(np.tensordot(np.exp(kb * S), C, axes=([1], [ax])), 0, ax)
+    spec = {"thymus": (C.ravel(), float(T.sum()), k)}
+
+    nz = np.nonzero(T)[0]
+    dig = (nz[:, None] // (20 ** np.arange(k)[::-1])) % 20
+    pep = "GILGFVFTL"
+    idx = mimicry.face_kmers(pep, "mhc1", k)
+    qd = (idx[:, None] // (20 ** np.arange(k)[::-1])) % 20
+    brute = sum(float((T[nz] * np.exp(kb * S[np.repeat(qd[i][None, :], len(nz), 0), dig].sum(1))).sum())
+                for i in range(len(idx)))
+    got = mimicry.corpus_R([pep], spec)[0]["thymus"] * idx.size * spec["thymus"][1]
+    assert got == pytest.approx(brute, rel=1e-12)
+
+
+def test_load_references_no_longer_takes_a_cache(monkeypatch):
+    """The reference cache is gone (0.24.0). A caller who passes `cache=` gets a TypeError naming
+    it, which is the deprecation; the env var is simply unread and has no failure mode."""
+    import inspect
+    assert "cache" not in inspect.signature(mimicry.load_references).parameters
+    assert not [n for n in mimicry.__all__ if "CACHE" in n]
+    assert not hasattr(mimicry, "CACHE_VERSION") and not hasattr(mimicry, "REFERENCE_CACHE_ENV")
 
 
 @pytest.mark.parametrize("peptide", ["AAAKFVAAWTLKAAA", "PKYVKQNTLKLATGM", "GELIGILNAAKVPAD"])
@@ -348,3 +405,96 @@ def test_probability_refuses_an_unnamed_corpus():
     corpus this model was never calibrated on has to raise rather than pick one."""
     with pytest.raises(ValueError, match="no calibration for corpus"):
         mimicry.probability([_score("GILGFVFTL", {})], corpus="nosuchcorpus")
+
+
+# ------------------------------------------------------------------ locus weighting
+def test_locus_weights_pool_overlapping_registers_of_one_hotspot():
+    """The KRAS G12 family is one locus at seven residues, not a dozen independent observations.
+
+    This is the correction that matters for any statement about a peptide set's k-mer vocabulary:
+    a recurrent public hotspot enters an assayed deposit many times over as overlapping registers,
+    and an unweighted table reads that as evidence about biology when it is evidence about what got
+    tested.
+    """
+    kras = ["KLVVVGAVGV", "KLVVVGADGV", "KLVVVGACGV", "VVGAVGVGK", "VVGADGVGK",
+            "GADGVGKSAL", "GADGVGKSA"]
+    others = ["SIINFEKLAA", "GILGFVFTLA", "NLVPMVATVA"]
+    w = mimicry.locus_weights(kras + others)
+    assert all(x == pytest.approx(1.0 / len(kras)) for x in w[:len(kras)])
+    assert all(x == 1.0 for x in w[len(kras):])
+    assert sum(w) == pytest.approx(1.0 + len(others))     # one locus for KRAS, one each for the rest
+
+
+def test_locus_weights_width_is_the_knob_and_a_short_match_is_not_a_locus():
+    a, b = "AAAAAACCCCC", "CCCCCGGGGGG"                   # share exactly 5
+    assert mimicry.locus_weights([a, b], w=5) == [0.5, 0.5]
+    assert mimicry.locus_weights([a, b], w=6) == [1.0, 1.0]
+
+
+def test_locus_weighting_shrinks_a_deposit_and_leaves_the_proteome_alone():
+    """`weights="locus"` corrects a SAMPLING bias, so it applies to assayed deposits and not to a
+    proteome, where every window appears exactly once by construction."""
+    _t, n_plain = mimicry.corpus_counts(comp="thymus")
+    _t, n_locus = mimicry.corpus_counts(comp="thymus", weights="locus")
+    assert 0.0 < n_locus < n_plain                        # recurrence really was there
+    _s, s_plain = mimicry.corpus_counts(comp="self")
+    _s, s_locus = mimicry.corpus_counts(comp="self", weights="locus")
+    assert s_locus == s_plain                             # and the proteome is untouched
+
+
+def test_weighted_density_is_still_a_density():
+    spec = mimicry.corpus_spectrum(components=("thymus",), weights="locus")
+    v = mimicry.corpus_R(["GILGFVFTL", "SIINFEKL", "NLVPMVATV"], spec)
+    assert all(0.0 <= r["thymus"] <= 1.0 for r in v)
+
+
+def test_an_unknown_weighting_is_refused_rather_than_ignored():
+    with pytest.raises(ValueError, match="weights must be"):
+        mimicry.corpus_counts(comp="thymus", weights="expression")
+
+
+# ------------------------------------------------------------ the division of labour, pinned
+def test_the_kmer_tables_are_for_the_corpus_term_and_nothing_else():
+    """`corpus_R` is a weighted sum and cannot name a hit. Everything that must name one still
+    searches.
+
+    This is a contract, not an implementation note. The contraction gives
+    `sum_r w(q, r)` over the whole reference set, which is the right object for a scored feature and
+    the wrong one for safety: `mimicry.safety` has to say *which* self protein a candidate resembles
+    so `expression.safety_profile` can say what tissue presents it, and a density cannot be
+    interrogated for that. `annotate` has the same requirement for the tested-neoantigen listing.
+    So the indexed search stays on exactly those paths and this test fails if it is ever quietly
+    swapped for a lookup.
+    """
+    import inspect
+
+    import mhcmatch.mimicry as MM
+    import mhcmatch.proteome as PR
+
+    # the search paths, by the seqtree symbols they name
+    for fn in (MM.features, MM.annotate):
+        src = inspect.getsource(fn)
+        assert "seqtree" in src or "index.search" in src, fn.__name__
+    assert "Index" in inspect.getsource(PR)                    # self-origin safety scan
+
+    # and the corpus path, which must NOT
+    for fn in (MM.corpus_counts, MM.contract, MM.corpus_R, MM.corpus_spectrum):
+        assert "seqtree" not in inspect.getsource(fn), fn.__name__
+
+
+def test_annotate_names_the_neoantigen_it_matched():
+    """The known-neoantigen listing reports an identity and a distance, which is what a search is
+    for. A density would give neither."""
+    got = mimicry.annotate(["KLVVVGACGV", "AAAAAAAAA"], cls="mhc1")
+    assert set(got[0]) >= {"neoag_distance", "neoag_nearest", "neoag_n_within"}
+    assert got[0]["neoag_nearest"] and got[0]["neoag_distance"] == 0     # it is a tested neoantigen
+    assert isinstance(got[0]["neoag_n_within"], int)
+
+
+def test_features_keeps_the_source_protein_that_safety_needs():
+    """`safety` resolves a tissue from the mimic's SOURCE, so `features` must carry it through."""
+    refs = mimicry.load_references(cls="mhc1", with_self=False)
+    f = mimicry.features(["GILGFVFTL"], refs, cls="mhc1")[0]
+    near = f.get("nearest_thymus_tcr")
+    assert near is not None and near.get("peptide")
+    assert "source" in near                    # the field safety() joins on

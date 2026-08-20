@@ -406,6 +406,52 @@ vs 0.473, Neopep 0.802 vs 0.662, Gfeller 0.782 vs 0.702.
    under-weights presentation for screens where presentation is strong. Presentation alone still
    leads the LODO mean (0.707 vs 0.698).
 
+## 5b-2. GRAND v3 — the corpus term becomes exact (v0.24.0, 2026-08-20)
+
+Analysis in `2026-mhcmatch-benchmark`: `bench/results/corpus_exact.md` (shapes, coverage,
+exactness), `grand_corpus.md` (the hierarchical fit), `grand_versions.md` (**v2 against v3 on the
+same rows**), `kmer_spectrum.md` (what the tables carry), `corpus_selection.md` (why Chowell is
+excluded), `physchem_cv.md` (the two chemistry scales on the selection corpora).
+
+**`C_corpus` is the exact Łuksza sum, evaluated as a k-mer table contraction.** With an ungapped
+position-additive score the weight factorises over positions, so the sum over the *whole* reference
+set is one 20×20 matrix applied along each axis of a sliding-k-mer frequency table. Every query is
+then one array index. Exact to 5.5e-16 against a literal all-vs-all; the radius-2 search it replaced
+recovered a median 0.4999 of the same quantity. 340,876 queries: ~46,000 ms → **2.3 ms**. The
+~7.5 GB proteome trie became a 64 KB table, which is why `self` and `viral` are back in the model —
+they were dropped in 0.21.0 for what they cost, not for what they were worth.
+
+**Nine terms in four hierarchical blocks.** Both recognition blocks are significant on entry after
+presentation and expression (physchem LR χ²(2) = 11.0, p = 4.0e-3; corpus LR χ²(3) = 15.7,
+p = 1.3e-3), and held-out mean AUROC over nine screens rises 0.6892 → 0.6927, median 0.6391 → 0.6500,
+better on 7 of 9 screens.
+
+**Two defects found and fixed along the way, both the same defect:**
+
+1. **`C_phys` was a length detector.** The Rose scale is strictly positive and the face is `L − 5`
+   wide, so summing gave Pearson **+0.954** with peptide length. `burial` now averages; the column's
+   marginal AUROC rises 0.5098 → 0.5646 and the two chemistry scales become comparable for the first
+   time (their correlation moves −0.20 → −0.836, which is what they always were underneath it).
+2. **`C_corpus_missing` was a label proxy.** On IEDB_neoag the v2 cache reached 3.0 % of rows, and
+   those rows were 76.9 % positive against 46.0 % for the rest. The flag carried the largest
+   coefficient magnitude in v2 (−0.3510) and was reading the coverage of our own index. It is gone
+   with the cache.
+
+**Open in the library:**
+
+1. **`thymus` and `viral` are human-only deposits.** `self` honours `self_species`, so mouse self
+   for mouse; the other two score a mouse row against human references. The fix is now cheap — a
+   mouse thymic deposit is one `bincount` and a 64 KB table, where under the old design it was a
+   second multi-gigabyte index.
+2. **Locus weighting is measured and not shipped.** `corpus_counts(weights="locus")` builds the
+   tables per locus rather than per peptide, which is the right correction for an assayed deposit's
+   over-representation (it is what removes the KRAS G12 family from `kmer_spectrum.md`'s
+   distinctive k-mers). On the fit it takes held-out **mean** AUROC to 0.6938, the best of any arm,
+   while lowering the **median** to 0.6463. Marginal both ways; shipped off, reported in
+   `grand_versions.md`.
+3. **HiTIDE loses 0.0128 against v2** on 234 rows / 37 positives, and that one is not explained by
+   coverage (77.8 %, every positive present). Recorded as measured.
+
 ## 5c. Mimicry as immune-response risk (v0.12.0, 2026-08-17)
 
 Analysis in `2026-mhcmatch-benchmark` (`bench/results/mimicry_model.md`,

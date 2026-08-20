@@ -36,11 +36,14 @@ it lazily and say so if it is missing.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 import numpy as np
 
 __all__ = [
     "pareto_front", "nondominated_rank", "crowding_distance", "linearly_supported",
-    "chebyshev_score", "corner", "p_at_least", "n_effective", "dispersion", "betabinom_rho",
+    "chebyshev_score", "corner", "survival", "p_at_least", "n_effective", "coverage",
+    "dispersion", "betabinom_rho", "Composition", "compose",
 ]
 
 
@@ -159,34 +162,111 @@ def corner(Z, groups=None) -> np.ndarray:
 
 
 # ------------------------------------------------------------------ the block response model
-def p_at_least(p, block, q, k: int = 1, n_mc: int = 200_000, seed: int = 0) -> float:
-    """``P(at least k responses)`` under ``y_i = B_{block(i)} * eps_i``, ``B_b ~ Bern(q_b)``.
+def _poisson_binomial(r) -> np.ndarray:
+    """pmf of a sum of independent Bernoullis with probabilities ``r``. Exact, O(n^2)."""
+    f = np.ones(1)
+    for x in np.asarray(r, dtype=float):
+        f = np.convolve(f, [1.0 - x, x])
+    return f
+
+
+def _ratio(p, block, q):
+    """``eps`` probabilities ``p_i / q_{block(i)}``, with the block index and per-block ``q``."""
+    p = np.asarray(p, dtype=float)
+    block = np.asarray(block)
+    _, block = np.unique(block, return_inverse=True)
+    q = np.atleast_1d(np.asarray(q, dtype=float))
+    if q.size == 1:
+        q = np.repeat(q, block.max() + 1 if block.size else 1)
+    if block.size and q.size <= block.max():
+        raise ValueError(f"q has {q.size} entries but block indexes up to {block.max()}")
+    ratio = p / q[block] if p.size else p
+    if np.any(ratio > 1.0):
+        b = int(np.argmax(ratio))
+        raise ValueError(f"p[{b}]={p[b]:.4g} exceeds its block-live probability "
+                         f"q={q[block[b]]:.4g}; the marginal is not representable. Raise q or cap p.")
+    return ratio, block, q
+
+
+def survival(p, block, q) -> np.ndarray:
+    """``P(X >= j)`` for every ``j``, under ``y_i = B_{block(i)} * eps_i``, ``B_b ~ Bern(q_b)``.
 
     ``p`` is the marginal per-unit probability a ranker reports, so the unit-specific term is
     ``eps_i ~ Bern(p_i / q_{block(i)})``. That requires ``p_i <= q_{block(i)}``: a unit cannot
     respond more often than its own block is live. Clipping there would understate the marginal for
     exactly the strongest units, so this raises instead.
 
-    With every unit in one block the result is capped at ``q`` however large ``m`` grows --- which is
-    the whole reason to block on more than the allotype.
+    **Exact, and cheap.** ``X = sum_b B_b S_b`` with ``S_b`` a Poisson binomial over the block's
+    units, and ``B_b S_b`` has pmf ``(1 - q_b) delta_0 + q_b pmf(S_b)``. The blocks are independent,
+    so the pmf of ``X`` is the convolution of those -- no ``2^B`` enumeration over live sets and no
+    Monte Carlo. Returns an array of length ``len(p) + 1``; element ``k`` is ``P(X >= k)``, so
+    ``survival(...)[0] == 1``.
+
+    With every unit in one block the tail is capped at ``q`` however large the cassette grows, which
+    is the whole reason to block on more than the allotype.
+
+    >>> float(survival([0.5, 0.5], [0, 1], 1.0)[1])
+    0.75
     """
-    p = np.asarray(p, dtype=float)
-    block = np.asarray(block)
-    _, block = np.unique(block, return_inverse=True)
-    q = np.atleast_1d(np.asarray(q, dtype=float))
-    if q.size == 1:
-        q = np.repeat(q, block.max() + 1)
-    if q.size <= block.max():
-        raise ValueError(f"q has {q.size} entries but block indexes up to {block.max()}")
-    ratio = p / q[block]
-    if np.any(ratio > 1.0):
-        b = int(np.argmax(ratio))
-        raise ValueError(f"p[{b}]={p[b]:.4g} exceeds its block-live probability "
-                         f"q={q[block[b]]:.4g}; the marginal is not representable. Raise q or cap p.")
-    rng = np.random.default_rng(seed)
-    B = rng.random((n_mc, q.size)) < q
-    E = rng.random((n_mc, p.size)) < ratio
-    return float(((B[:, block] & E).sum(1) >= k).mean())
+    ratio, block, q = _ratio(p, block, q)
+    if ratio.size == 0:
+        return np.ones(1)
+    pmf = np.ones(1)
+    for b in range(block.max() + 1):
+        sel = block == b
+        if not sel.any():
+            continue
+        mix = q[b] * _poisson_binomial(ratio[sel])
+        mix[0] += 1.0 - q[b]
+        pmf = np.convolve(pmf, mix)
+    return np.cumsum(pmf[::-1])[::-1]
+
+
+def p_at_least(p, block, q, k: int = 1) -> float:
+    """``P(at least k responses)`` under the block model. See :func:`survival`, which it reads.
+
+    >>> round(p_at_least([0.5, 0.5], [0, 0], 1.0), 4)
+    0.75
+    """
+    s = survival(p, block, q)
+    return float(s[k]) if 0 <= k < s.size else (1.0 if k <= 0 else 0.0)
+
+
+# ------------------------------------------------------------------ coverage evenness
+def coverage(labels, universe=None) -> dict:
+    """How evenly a cassette spreads over allotypes: counts, Gini, and share of maximum entropy.
+
+    ``universe`` is **the donor's distinct allotypes**, and passing it is the whole point when the
+    donor is homozygous. A patient homozygous at *B* has five distinct class-I allotypes, not six,
+    so an even cassette over five is perfectly even; scoring it against a denominator of six would
+    report a genotype as a design flaw. Allotypes in ``universe`` with no unit are counted as zeros,
+    which is exactly the inequality the index should see.
+
+    Returns ``gini`` (0 = every allotype equally covered, -> 1 = all units on one) and
+    ``entropy_ratio`` = ``H / log(|universe|)``, the "% of maximum entropy" reading. With one
+    allotype both are defined as perfectly even, because there is nothing to be uneven about.
+
+    >>> c = coverage(["A", "A", "B", "B"])
+    >>> round(c["gini"], 6), round(c["entropy_ratio"], 6)
+    (0.0, 1.0)
+    >>> round(coverage(["A", "A", "A", "B"])["entropy_ratio"], 4)
+    0.8113
+    """
+    labels = [str(x) for x in labels]
+    keys = sorted(set(labels) | set(str(u) for u in (universe or [])))
+    counts = np.array([labels.count(k) for k in keys], dtype=float)
+    n, m = counts.sum(), counts.size
+    if m <= 1 or n <= 0:
+        return {"counts": dict(zip(keys, counts.astype(int).tolist())),
+                "gini": 0.0, "entropy_ratio": 1.0, "n_covered": int((counts > 0).sum()),
+                "n_allotypes": int(m)}
+    x = np.sort(counts)
+    gini = float((2 * np.arange(1, m + 1) - m - 1) @ x / (m * n))
+    f = counts[counts > 0] / n
+    ent = float(-(f * np.log(f)).sum() / np.log(m)) or 0.0
+    return {"counts": dict(zip(keys, counts.astype(int).tolist())),
+            "gini": gini, "entropy_ratio": ent, "n_covered": int((counts > 0).sum()),
+            "n_allotypes": int(m)}
 
 
 def n_effective(p, p_ge1: float) -> float:
@@ -255,3 +335,124 @@ def betabinom_rho(m, k) -> dict:
     return {"rho": float(1.0 / (1.0 + np.exp(-r.x))), "D": float(d),
             "p_value": float(chi2.sf(max(d, 0.0), 1) / 2.0),
             "loglik_binomial": ll_bin, "loglik_betabinom": float(-r.fun)}
+# ------------------------------------------------------------------ quota-constrained composition
+@dataclass
+class Composition:
+    """A cassette built to a set of quotas, and the arithmetic that justifies each slot.
+
+    ``arms`` carries one entry per arm: the units chosen, the slot budget, the response target, and
+    the attained ``P(X >= target)``. ``trace`` is one row per greedy step with the marginal gain the
+    step bought, so a cassette that cannot explain why its 12th unit is in and the 13th is out is
+    not shipped.
+    """
+
+    units: list = field(default_factory=list)
+    arms: dict = field(default_factory=dict)
+    trace: list = field(default_factory=list)
+    coverage: dict = field(default_factory=dict)
+
+    @property
+    def joint(self) -> float:
+        """``prod_arm P(X_arm >= target_arm)`` -- every quota met at once, arms independent.
+
+        The independence is across *arms*, not across units: within an arm the block model is
+        carried in full. Two arms sharing a patient are not independent in truth, so read this as
+        the product of three separately-meaningful numbers rather than a calibrated joint.
+        """
+        return float(np.prod([a["p_at_least"] for a in self.arms.values()])) if self.arms else 0.0
+
+
+def default_arm(u) -> str:
+    """``"nonconventional"`` for anything that is not a simple missense, else the unit's class.
+
+    The arms are **disjoint by construction**, and that is the design choice that makes the quota
+    bite. A frameshift neoepitope is presented on MHC-I, so if it counted toward both budgets the
+    constraint "at least one non-conventional epitope responds" could be satisfied for free by the
+    class-I arm and would never change a cassette. Charged to its own arm, it has to earn a slot.
+
+    Reads ``Unit.kind`` (default ``"missense"``); anything else -- ``frameshift``, ``fusion``,
+    ``splice``, ``retained_intron``, ``ORF``, ``editing`` -- is non-conventional.
+    """
+    return "mhc1" if getattr(u, "kind", "missense") == "missense" and u.cls == "mhc1" else (
+        "mhc2" if getattr(u, "kind", "missense") == "missense" else "nonconventional")
+
+
+def compose(candidates, quotas, q, block=None, arm=None, weight_evenness: float = 0.0,
+            universe=None) -> Composition:
+    """Fill each arm's slots to maximise ``P(at least target responses)``, not the mean score.
+
+    ``quotas`` is ``{arm: (slots, target)}`` -- e.g.
+    ``{"mhc1": (8, 2), "mhc2": (4, 1), "nonconventional": (3, 1)}`` reads *eight class-I slots, of
+    which at least two should respond*. ``q`` is the per-block live probability of the response
+    model (:func:`survival`); ``block`` a callable ``Unit -> hashable`` (default the allotype);
+    ``arm`` a callable ``Unit -> str`` (default :func:`default_arm`).
+
+    **This is not top-m by score, and the difference is the point.** ``P(X >= k)`` is not a modular
+    set function whenever two units share a block, so no pointwise score -- however well fitted --
+    can be sorted to maximise it. The greedy step here takes the unit with the largest gain in
+    ``P(X >= target)``, and because a block that is already represented contributes less than a
+    fresh one, diversification across allotypes and mechanisms falls out of the objective rather
+    than being bolted on as a rule. A cassette of eight units all restricted to the same allotype
+    is capped at ``q`` for that block no matter how good the eight are.
+
+    ``weight_evenness`` adds ``w * delta(H / H_max)`` over the arm's allotypes (:func:`coverage`),
+    for when spreading matters beyond what the response model already pays for -- manufacturing
+    risk, an uncertain genotype, a donor whose typing is provisional. Pass ``universe`` (the
+    donor's **distinct** allotypes) so homozygosity is not scored as a design flaw. Default 0:
+    the block model already prefers spread, and stacking a second diversity term on top of it
+    double-counts unless you mean it.
+
+    Every arm is filled independently, which is exact here because :func:`default_arm` makes them
+    disjoint, so the objective separates.
+    """
+    key_b = block if block is not None else (lambda u: u.allele)
+    key_a = arm if arm is not None else default_arm
+    pool: dict = {}
+    for c in candidates:
+        pool.setdefault(key_a(c), []).append(c)
+
+    comp = Composition()
+    for name, (slots, target) in quotas.items():
+        avail = sorted(pool.get(name, []), key=lambda u: (-u.p, u.gene, u.peptide))
+        chosen: list = []
+        while len(chosen) < slots and len(chosen) < len(avail):
+            best, best_gain = None, -np.inf
+            base = _arm_value(chosen, target, q, key_b, weight_evenness, universe)
+            for c in avail:
+                if any(c is x for x in chosen):
+                    continue
+                gain = _arm_value(chosen + [c], target, q, key_b,
+                                  weight_evenness, universe) - base
+                if gain > best_gain:
+                    best, best_gain = c, gain
+            if best is None:
+                break
+            chosen.append(best)
+            comp.trace.append({"arm": name, "step": len(chosen), "gene": best.gene,
+                               "peptide": best.peptide, "allele": best.allele, "p": best.p,
+                               "gain": float(best_gain),
+                               "p_at_least": _p_arm(chosen, target, q, key_b)})
+        comp.units.extend(chosen)
+        comp.arms[name] = {
+            "units": chosen, "slots": int(slots), "target": int(target),
+            "p_at_least": _p_arm(chosen, target, q, key_b),
+            "n_chosen": len(chosen), "n_available": len(avail),
+            "coverage": coverage([key_b(u) for u in chosen],
+                                 universe if name == "mhc1" else None),
+        }
+    comp.coverage = coverage([u.allele for u in comp.units if u.cls == "mhc1"], universe)
+    return comp
+
+
+def _p_arm(units, target, q, key_b) -> float:
+    if not units:
+        return 0.0
+    return p_at_least([u.p for u in units], [key_b(u) for u in units], q, k=target)
+
+
+def _arm_value(units, target, q, key_b, w, universe) -> float:
+    """The greedy objective: attained tail probability, plus optional evenness."""
+    v = _p_arm(units, target, q, key_b)
+    if w:
+        v += w * coverage([key_b(u) for u in units], universe)["entropy_ratio"]
+    return v

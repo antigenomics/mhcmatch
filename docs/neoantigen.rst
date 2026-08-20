@@ -15,47 +15,129 @@ The model
 ---------
 
 ``mhcmatch rank`` scores each candidate with the fitted aggregate vendored at
-``data/aggregate_mhc1.json``, which since 0.21.0 declares itself **GRAND**: seven terms, one
-unpenalised intercept per screen, and **Complementarity as exactly two factors**. Read the feature
-list from :data:`mhcmatch.rank.AGGREGATE_FEATURES` rather than typing it out.
+``data/aggregate_mhc1.json``, which declares itself **GRAND**, version 3: nine terms in four
+**hierarchical blocks**, one unpenalised intercept per screen. Read the feature list from
+:data:`mhcmatch.rank.AGGREGATE_FEATURES` and the grouping from
+:data:`mhcmatch.rank.AGGREGATE_BLOCKS` rather than typing either out.
+
+The blocks are entered in pipeline order, each on top of the last, so a recognition coefficient is
+what that term is worth **after** presentation and expression rather than in competition with them.
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 76
+   :widths: 14 22 64
 
-   * - term
+   * - block
+     - term
      - what it is
-   * - ``binder``
-     - ``-log10`` of the calibrated combined %rank — presentation and affinity heads Fisher-combined.
-       **Allele-relative**: where this peptide sits in its own allele's distribution.
-   * - ``occupancy``
+   * - ``presentation``
+     - ``binder``
+     - ``-log10`` of the calibrated combined %rank — presentation and affinity heads
+       Fisher-combined. **Allele-relative**: where this peptide sits in its own allele's
+       distribution.
+   * -
+     - ``occupancy``
      - :func:`mhcmatch.rank.occupancy`, ``a/(1+a)`` with ``a = [P]/Kd``. **Absolute**: what fraction
        of the groove the peptide actually holds. Needs no wild type.
-   * - ``expr``
+   * - ``expression``
+     - ``expr``
      - ``log1p(TPM)``, the cohort's own measurement where it has one, else the tumour-matched
        reference, else the GTEx cross-tissue median.
-   * - ``expr_missing``
+   * -
+     - ``expr_missing``
      - which of those three the row got — the gap as a term rather than a fabricated zero.
-   * - ``C_phys``
-     - :func:`mhcmatch.complement.burial`, the Rose burial propensity summed over the TCR face.
-       An **imported** scale, so zero fitted residue parameters. See :doc:`burial`.
-   * - ``C_corpus_thymus``
-     - :func:`mhcmatch.mimicry.corpus_R` on the thymic channel — the Łuksza ``Z/(1+Z)`` neighbour
-       density over the TCR face, label-free. See :doc:`corpus`.
-   * - ``C_corpus_missing``
-     - the flag for a peptide with no reference entry, on the same principle as ``expr_missing``.
+   * - ``physchem``
+     - ``C_phys_rose``
+     - :func:`mhcmatch.complement.burial`, the Rose burial propensity **averaged** over the TCR
+       face. An imported scale, so zero fitted residue parameters. See :doc:`burial`.
+   * -
+     - ``C_phys_hydrop``
+     - the same, on Kidera KF4 hydropathy. Carried alongside Rose rather than instead of it: they
+       measure different things — surface buried on folding against water/oil partition — and which
+       is stronger depends on the corpus.
+   * - ``corpus``
+     - ``C_corpus_thymus``
+     - :func:`mhcmatch.mimicry.corpus_R` on the thymic channel — the **exact** Łuksza density over
+       the TCR face, label-free. Reads as **danger**, coefficient positive. See :doc:`corpus`.
+   * -
+     - ``C_corpus_self``
+     - the same against the host proteome. Reads as **tolerance**, coefficient negative. The sign
+       dissociation against ``thymus`` is the evidence for the mechanism.
+   * -
+     - ``C_corpus_viral``
+     - the same against a foreign presented ligandome — a thymocyte never sees this during
+       selection, so a hit is about peripheral priming.
+
+**What changed in v3, and why.** ``C_corpus`` used to be the thymic channel alone, computed by a
+radius-2 trie walk that captured a median 0.4999 of the sum its own definition calls for, from a
+cache that had no entry at all for three of the nine fitting screens. It is now the exact sum,
+evaluated as a k-mer table contraction, for every row; ``self`` and ``viral`` came back into the
+model because the contraction removed the ~7.5 GB index that had priced them out, not because
+anything about them changed. ``C_corpus_missing`` left with the cache — there is no gap left to
+flag. And ``C_phys`` was a **sum** over a face of width *L* − 5 on a strictly positive scale, so it
+correlated +0.954 with peptide length; averaging it fixed that and made the two scales comparable
+for the first time.
 
 The predecessor, **BOECRT**, carried the 30-column :func:`mhcmatch.complement.score` as ``C``, the
-Łuksza ``viral_R`` as ``R`` and the three TCR-face mimicry densities as ``T``. All four collapse
-into the two ``C_`` factors above; every alternative was measured and each costs BIC to add back
-(Kidera KF4 +9.0, KF2 +12.8, the ``self`` corpus channel +8.1, ``viral`` +11.6, ``viral_R`` +11.6,
-``C_aa`` +6.7). ``luksza.viral_r`` and ``complement.score`` still ship and are still computable;
-they are no longer terms of the shipped model.
+Łuksza ``viral_R`` as ``R`` and the three TCR-face mimicry densities as ``T``. ``luksza.viral_r``
+and ``complement.score`` still ship and are still computable; they are no longer terms of the
+shipped model. Every alternative is re-measured in ``bench/results/grand_corpus.md``.
 
 Standardisation (``mu``, ``sigma``) travels **inside** the artifact, so a caller reproduces the
 score exactly. A feature you cannot supply contributes its training mean — which is what "no
 information" should do — so a candidate with no expression value is scored on the terms it has
 rather than dropped.
+
+From a score to a probability
+-----------------------------
+
+``score`` is a log-odds **ranking**, and ``rank`` is that ranking as a dense 1-based integer. Neither
+is a probability, because the fit deliberately has no shared intercept: every screen got its own,
+unpenalised, precisely so prevalence and candidate generation stayed out of the slopes.
+
+The ``p_response`` column supplies the missing constant, by the only rule that needs no new data.
+Given a **pool prevalence** :math:`\pi` you declare, it picks the single offset *b* with
+
+.. math::
+
+   \frac{1}{n}\sum_i \sigma(s_i + b) = \pi
+
+and reports :math:`\sigma(s_i + b)`. See :func:`mhcmatch.rank.probability`.
+
+.. code-block:: console
+
+   $ mhcmatch rank fasta candidates.fasta --alleles donor.txt --prevalence 0.06
+
+**It is a prior shift, not a recalibration.** *b* is additive and :math:`\sigma` is monotone, so it
+preserves the ordering exactly — halving :math:`\pi` roughly halves every probability and moves no
+rank. What it buys is portability: a raw-score cut-off means nothing across cohorts whose base rates
+differ by four orders of magnitude, and "P ≥ 0.2 at an assumed 6 % pool prevalence" is a statement
+another cohort can be held to.
+
+The default is TESLA's **37 immunogenic of 615 tested candidates** — the community benchmark whose
+whole design is "a pipeline nominated these; which respond". It is a prior, not a measurement of
+your cohort, and it is the single number the emitted probability is most sensitive to. Anchors:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 46 18 36
+
+   * - pool
+     - responds
+     - what it is
+   * - Neopep
+     - 0.0060 %
+     - 19 of 318,197 — an exhaustive scan, nothing filtered
+   * - TESLA (the default)
+     - **6.0 %**
+     - 37 of 615 — nominated candidates, tested
+   * - ITSNdb
+     - 59.7 %
+     - 89 of 149 — a curated, positive-enriched set
+   * - assayed vaccine units
+     - ~19 %
+     - 41 of 216 units, 13 patients (Sahin et al., *Nature* 2026;651:1088–1096) — already through
+       a cassette selection
 
 Why occupancy and not agretopicity
 ----------------------------------
@@ -181,12 +263,19 @@ Reading the output
 
    mhcmatch rank fasta candidates.fasta --alleles donor.txt --tumor SKCM --out ranked.tsv
 
-``score`` is the aggregate; higher is better. Every one of the model's seven features is a column,
-because a row should report what produced it: ``binder``, ``occupancy``, ``expression`` (with
-``expr_imputed``), and the two Complementarity factors ``C_phys`` and ``C_corpus_thymus`` with
-``C_corpus_missing``. ``agretopicity``, ``physchem`` and
+``score`` is the aggregate; higher is better. ``rank`` is that score as a dense 1-based integer and
+``p_response`` is it on a probability axis at ``--prevalence`` (above). Every one of the model's
+nine features is a column, because a row should report what produced it: ``binder``, ``occupancy``,
+``expression`` (with ``expr_imputed``), the two chemistry scales ``C_phys_rose`` and
+``C_phys_hydrop``, and the three corpus channels ``C_corpus_thymus`` / ``_self`` / ``_viral``.
+``agretopicity``, ``physchem``, ``variant_type`` and
 ``n_alleles_presenting`` / ``alleles_presenting`` are reported beside them and are **not** in the
-model. (``physchem_ipred`` was a column here through 0.21.0; the module behind it was removed in
+model.
+
+``variant_type`` is carried for the cassette layer rather than for the score: a frameshift or fusion
+product is foreign over a stretch rather than at one position, so it fails differently from a
+missense and earns a quota of its own in
+:func:`mhcmatch.portfolio.compose` (:doc:`portfolio`). (``physchem_ipred`` was a column here through 0.21.0; the module behind it was removed in
 0.22.0 --- :ref:`ipred-legacy`.) ``--extended`` appends the remaining mimicry channels and ``--annotate`` what each candidate
 resembles; both add **columns only** and never change the ordering.
 
@@ -231,8 +320,8 @@ move a ranking.
 .. warning::
 
    **A model emits the features it used, and refuses to run without them.** ``GRAND``'s corpus
-   term is the thymic channel alone (26,513 peptides), so an aggregate score no longer forces the
-   host-proteome reference index and ``--no-self`` is allowed with ``--score aggregate``. That
+   term reads three reference deposits as three 64 KB k-mer tables, so an aggregate score builds no
+   trie at all and ``--no-self`` is allowed with ``--score aggregate``. That
    index — ~7.5 GB and 6 min 15 s, paid once for the whole candidate list — is still what
    ``--extended`` and ``--annotate`` cost, because they report the ``self`` channels.
 

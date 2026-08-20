@@ -28,7 +28,7 @@ process MHCMATCH_PREDICT {
     label 'process_medium'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.23.0"
+    container "mhcmatch:0.24.0"
 
     input:
     tuple val(meta), path(fasta), val(alleles), val(cls)
@@ -84,7 +84,7 @@ process MHCMATCH_RANK {
     label 'process_medium'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.23.0"
+    container "mhcmatch:0.24.0"
 
     // `rank` reads the known-epitope sets, the mimicry references and the expression tables on top
     // of the ligand panel. The image bakes them (`bootstrap --reference`); a bare `bootstrap` image
@@ -106,6 +106,10 @@ process MHCMATCH_RANK {
     def tier   = params.mhcmatch_tier ?: 'full'
     def tumor  = params.mhcmatch_tumor ? "--tumor ${params.mhcmatch_tumor}" : ''
     def score  = params.mhcmatch_rank_score ? "--score ${params.mhcmatch_rank_score} " : ''
+    // The pool prevalence `p_response` is anchored on. It is a PRIOR about this cohort's candidate
+    // list, not a model output, so it is a pipeline parameter rather than a default buried in a
+    // process. Left unset, the CLI uses TESLA's 37 of 615.
+    def prev   = params.mhcmatch_prevalence ? "--prevalence ${params.mhcmatch_prevalence} " : ''
     def extra  = (params.mhcmatch_rank_extended ? '--extended ' : '') +
                  (params.mhcmatch_rank_annotate ? '--annotate ' : '') +
                  (params.mhcmatch_rank_core     ? '--core '     : '')
@@ -114,7 +118,7 @@ process MHCMATCH_RANK {
         --alleles '${alleles}' \\
         --cls ${cls} \\
         --tier ${tier} \\
-        ${tumor} ${score}${extra}${args} \\
+        ${tumor} ${score}${prev}${extra}${args} \\
         --out ${prefix}.${cls}.mhcmatch.ranked.tsv
 
     cat <<-END_VERSIONS > versions.yml
@@ -146,7 +150,7 @@ process MHCMATCH_NEOAG {
     label 'process_single'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.23.0"
+    container "mhcmatch:0.24.0"
 
     input:
     tuple val(meta), path(peptides), val(cls)
@@ -195,7 +199,7 @@ process MHCMATCH_MIMICRY {
     label 'process_medium'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.23.0"
+    container "mhcmatch:0.24.0"
 
     input:
     tuple val(meta), path(peptides), val(cls)
@@ -242,7 +246,7 @@ process MHCMATCH_VECTOR {
     label 'process_high'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.23.0"
+    container "mhcmatch:0.24.0"
 
     // `--screen` builds one whole-proteome index per register length: ~12 GB peak each and a few
     // minutes apiece, which is why this process carries `process_high` and why the flag is a param.
@@ -276,6 +280,13 @@ process MHCMATCH_VECTOR {
     def mapArg = params.mhcmatch_vector_map
                      ? "--map ${prefix}.cassette.map.tsv --map-json ${prefix}.cassette.map.json " +
                        "--map-threshold ${params.mhcmatch_vector_map_threshold ?: 2.0} ${map2}" : ''
+    // Quota composition: fill declared slot budgets so that at least k of each arm is expected to
+    // respond, rather than taking the ranked top. Off unless a quota is given, because the arms and
+    // their targets are a trial-design decision and there is no defensible default for them.
+    def quota  = params.mhcmatch_vector_quota
+                     ? "--quota '${params.mhcmatch_vector_quota}' " +
+                       "--block-live ${params.mhcmatch_vector_block_live ?: 0.5} " +
+                       "--evenness ${params.mhcmatch_vector_evenness ?: 0.0}" : ''
     if (n0 == null) error "params.mhcmatch_vector_n0 is required and has no default: per-allotype capacity is not fitted by anything in the public record, so the value is yours to set and it is recorded in the output"
     """
     mhcmatch vector \\
@@ -283,7 +294,7 @@ process MHCMATCH_VECTOR {
         --n0 ${n0} \\
         --alleles '${alleles}' \\
         --cls ${cls} \\
-        ${screen} ${mapArg} ${args} \\
+        ${screen} ${quota} ${mapArg} ${args} \\
         --fasta ${prefix}.cassette.faa \\
         --fasta-nt ${prefix}.cassette.fna \\
         --out ${prefix}.cassette.tsv

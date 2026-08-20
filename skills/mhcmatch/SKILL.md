@@ -81,7 +81,7 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 | `mhcmatch.known` | five built-in reference sets | exact-match lookup. An exact match outranks any model output, so `rank` flags it and never folds it into the score |
 | `mhcmatch.expression` | `lookup`, `safety_profile`, `matched_tissues`, `tumor_types`, `TUMOR_TISSUE` | GTEx `SMTSD` tissues and TCGA study abbreviations — **two vocabularies, never merged, neither clinical**. **Always pass the caller's own tumour type**; the benchmark's cross-tissue median exists for fit/holdout comparability, not as a default |
 | `mhcmatch.mimics` | `neighbours`, `KINDS`, `DEFAULT_REFS` | the raw scan, per category, **never summed** — each category argues something different |
-| `mhcmatch.mimicry` | `score`, `probability`, `annotate`, `safety`, `masks`, `corpus_R`, `features`, `load_references` | the *fitted* form: `viral`/`self`/`thymus` × `anchor`/`tcr` as signed log-odds. `probability` demands a **named** corpus. `annotate` (tested-neoantigen DB) is prior evidence and **never a fitted term**. **`corpus_R` is `C_corpus`** — the Łuksza `R = Z/(1+Z)` neighbour density over the TCR face, shapes in `SHAPES`, `components=("thymus",)` for the scoring column ([docs/corpus.rst](../../docs/corpus.rst)). `load_references` builds the index the search needs; cache it with `$MHCMATCH_REFERENCE_CACHE` |
+| `mhcmatch.mimicry` | `score`, `probability`, `annotate`, `safety`, `masks`, `corpus_R`, `features`, `load_references` | the *fitted* form: `viral`/`self`/`thymus` × `anchor`/`tcr` as signed log-odds. `probability` demands a **named** corpus. `annotate` (tested-neoantigen DB) is prior evidence and **never a fitted term**. **`corpus_R` is `C_corpus`** — the **exact** Luksza density over the TCR face, evaluated as a sliding-k-mer table contraction (`corpus_counts` + `contract`), not a search. All three components (`thymus`/`self`/`viral`) ship in GRAND v3; `SHAPES` is one `kappa` each (`a0` retired). `self_species=` picks the proteome, so mouse self for mouse. Counts are memoised per `(cls, comp, k, species)` and **not** keyed on `kappa`, so a kappa sweep is free; there is **no disk cache** ([docs/corpus.rst](../../docs/corpus.rst)). `load_references` still builds the index `features`/`annotate`/`safety` need, because those report *which* reference was hit |
 | `mhcmatch.vector` | `screen`, `self_origin_risk`, `select`, `order`, `slippery_sites`, `epitope_map`, `write_map` | **cassette assembly**, the step after `rank`: withdraw on safety, then how many units per allotype, in what order, joined by what. `screen` **excludes**, never down-ranks. Scoring is injected (`binder`, `risk`), so the layout logic needs no panel. `epitope_map`/`write_map` (v0.16.0) emit the TSV/JSON cassette map — unit, linker and epitope rows with 1-based coordinates, the class-II core, cross-class overlaps and per-unit `self_help`; **one row per (peptide, allele)**, so a heterozygote is duplicated by construction |
 | `mhcmatch.portfolio` | `pareto_front`, `linearly_supported`, `chebyshev_score`, `corner`, `p_at_least`, `n_effective`, `dispersion`, `betabinom_rho` | **cassette composition**, the layer above `vector.select`. Fits nothing: it says what a proposed *set* is worth. `vector.select` now takes `block=` (a callable `Unit -> hashable`, default the allotype) so the budget can saturate against allotype **x** mechanism; `Selection.expected_yield` follows whatever partition the rule used, and `per_block()` reports it. `linearly_supported` is exact (LP), the sampled searches in the benchmark repo are not. SciPy is a **lazy** import — `linearly_supported` and `betabinom_rho` need it, nothing else does |
 | `mhcmatch.luksza` | `viral_r`, `r_term`, `counts_by_distance`, `shape` | the Łuksza `R = Z/(1+Z)` term (v0.17.0). `viral_R` was a term of the retired `BOECRT` aggregate and used to be computable only in the benchmark repo; `GRAND` does not score with it. `k`/`a0` are **read from the artifact**, never hardcoded. The neighbour search is 98.6% of the runtime — do not micro-optimise the rest |
@@ -113,32 +113,55 @@ process over a list is the difference between seconds per peptide and thousands 
 `--threads` exists **only** on `source` and `mimics`, whose neighbour search runs in C++ with the GIL
 released; elsewhere it is absent rather than accepted and ignored.
 
-**Set `$MHCMATCH_REFERENCE_CACHE` on a cluster.** The mimicry reference indexes are built once into
-that directory and memory-mapped thereafter; pointed at shared storage, a Nextflow or SLURM fleet
-builds once and every task loads, and co-resident tasks share the mapped pages instead of each
-holding a copy. Figures in `CHANGELOG.md` under 0.20.0. `$MHCMATCH_PMHC_DIR` and
-`$MHCMATCH_CALIBRATION_CACHE` are the other two a cluster wants; `integrations/nextflow/mhcmatch/slurm.config`
-exports all three.
+**`$MHCMATCH_REFERENCE_CACHE` is gone in 0.24.0** and so is the ~1 GB it held (yours to delete).
+`C_corpus` stopped searching — it contracts a k-mer table, exactly, in milliseconds — so there was
+nothing left to cache. `$MHCMATCH_PMHC_DIR` and `$MHCMATCH_CALIBRATION_CACHE` are the two a cluster
+still wants; `integrations/nextflow/mhcmatch/slurm.config` exports both.
 
-## The shipped scorer (2026-08-19)
+## The shipped scorer (2026-08-21)
+
+`GRAND` **v3** — nine terms in four **hierarchical blocks**, entered in pipeline order so a
+recognition coefficient is what it is worth *after* presentation and expression. Vendored at
+`data/aggregate_mhc1.json`; `mhcmatch rank` scores with it by default. 354,909 rows / 958 positive /
+9 screens, per-screen intercept, `tau = 0.25`. **Leave-one-screen-out median AUROC 0.6500, mean
+0.6927** — better than v2 on 7 of 9 held-out screens (`bench/results/grand_versions.md`).
+
+| block | term | coefficient | z | sequential z |
+|---|---|--:|--:|--:|
+| `presentation` | `binder` | +0.1392 | +4.00 | +7.70 |
+| `presentation` | `occupancy` | +0.1062 | +5.27 | +5.15 |
+| `expression` | `expr` | +0.3474 | +6.45 | +6.39 |
+| `expression` | `expr_missing` | +0.0935 | +6.03 | +5.96 |
+| `physchem` | `C_phys_rose` | +0.1012 | +1.22 | **+3.53** |
+| `physchem` | `C_phys_hydrop` | +0.0180 | +0.22 | −0.39 |
+| `corpus` | `C_corpus_thymus` | +0.2459 | +2.93 | **+2.53** |
+| `corpus` | `C_corpus_self` | −0.2409 | −2.82 | **−2.63** |
+| `corpus` | `C_corpus_viral` | +0.0750 | +1.13 | +1.13 |
+
+- **Read the block test, not the per-term `z`.** `C_phys_rose` against `C_phys_hydrop` is Pearson
+  −0.836 and the three corpus channels run +0.71 to +0.79, so a conditional `z` splits one shared
+  axis across several coefficients and understates all of them. The block likelihood ratios are
+  physchem χ²(2) = 11.0 (p = 4.0e-3) and corpus χ²(3) = 15.7 (p = 1.3e-3), both **after**
+  presentation and expression. The *sequential* column above is the same fit in its Gram–Schmidt
+  basis (same span, max |Δη| = 3.1e-3); reversing the order inside a block moves the significance
+  to the other member, which is what a shared axis looks like.
+- **`C_corpus` is exact and searches nothing.** The Łuksza weight factorises over positions, so the
+  sum over the whole reference set is a k-mer table contraction: 2.3 ms for 340,876 queries against
+  ~46,000 ms, agreeing with a literal all-vs-all to 5.5e-16 where the radius-2 search it replaced
+  recovered a median 0.4999. That is why `self` and `viral` are back — 64 kB tables, not a 7.5 GB
+  trie. `mimicry.corpus_counts` + `contract`; `docs/corpus.rst`.
+- **`C_phys` averages over the face, it does not sum.** The summed form was Pearson **+0.954** with
+  peptide length — 91 % of a chemistry term was a ruler. `burial(..., per_residue=False)` reproduces
+  a pre-0.24.0 number.
+- **`C_corpus_missing` is retired.** On IEDB_neoag the v2 cache reached 3.0 % of rows and those rows
+  were 76.9 % positive against 46.0 % for the rest, so the flag with v2's largest coefficient
+  magnitude (−0.3510) was a within-screen label proxy for our own index coverage.
+
+### The previous scorer, for comparison
 
 `BOECRT` — binder, **occupancy**, expression, complementarity, the refitted Łuksza `R`, and the
-three TCR-facing mimicry channels. Vendored at `data/aggregate_mhc1.json`; `mhcmatch rank` scores
-with it by default as of 0.19.0 (before that it scored with the two-term gate while this artifact
-sat uncalled). Fitted on the **cleaned** corpus: 355,052 rows / 1,101 positive / 10 screens,
-per-screen intercept, `tau = 0.25`. Within-screen median AUROC **0.6504**.
-
-| term | coefficient | z |
-|---|--:|--:|
-| `expr` | +0.3410 | +6.31 |
-| `expr_missing` | +0.0929 | +5.98 |
-| **`occupancy`** | +0.1050 | **+5.16** |
-| `complement` | +0.1790 | +4.24 |
-| `binder` | +0.1418 | +4.00 |
-| `self_tcr` | +0.3154 | +3.45 |
-| `viral_R` | +0.1020 | +1.41 |
-| `viral_tcr` | +0.0995 | +0.87 |
-| `thymus_tcr` | −0.0110 | −0.11 |
+three TCR-facing mimicry channels. Shipped 0.19.0–0.20.0 on the cleaned corpus: 355,052 rows /
+1,101 positive / 10 screens. Within-screen median AUROC **0.6504**.
 
 - **`O` replaced `D`.** Agretopicity does not resolve in any of seven parameterisations, and the one
   that appears to is 0.9955 correlated with mutant affinity — it improves by deleting itself.

@@ -134,16 +134,15 @@ anything; what was wrong was the model the output named.
 
 `--score gate` uses the two-term noisy-AND and stays cheap.
 
-**Cache it.** The build is 75.6 s (down from 6 min 15 s — the window enumeration is vectorized now),
-and **0.82 s from cache**:
+**There is nothing left to cache on the corpus path.** `$MHCMATCH_REFERENCE_CACHE` is gone in
+0.24.0, along with the ~1 GB of index it held (yours to delete). `C_corpus` no longer searches: it
+contracts a k-mer frequency table, which is the **exact** Łuksza sum rather than a radius-2
+truncation of it, and costs a 64 KB table per reference deposit instead of a 7.5 GB trie. The
+tables are memoised per process and need no lock — see `docs/corpus.rst`.
 
-```bash
-export MHCMATCH_REFERENCE_CACHE=/shared/mhcmatch-cache   # ~1.0 GB for class I
-```
-
-Point that at shared storage and a Nextflow or SLURM fleet builds once and every task loads in under
-a second, sharing the memory-mapped pages through the OS page cache instead of each holding its own
-copy.
+The indexed search is still there for what genuinely needs it: `features()`, `annotate()` and the
+self-mimicry safety scan report *which* reference peptide was hit and from what protein, which a
+weighted sum cannot.
 
 ## Caching calibration across jobs
 
@@ -199,10 +198,12 @@ numpy product and a thread pool would buy nothing, so the flag is absent rather 
 
 Presentation is necessary and not sufficient: most presented peptides are ignored. mhcmatch keeps
 the two questions apart and scores them with the fitted **`GRAND`** aggregate (0.21.0), whose
-`C_phys` and `C_corpus_thymus` terms are the recognition axis and whose `binder`/`occupancy` terms
-are the presentation one. Its predecessor **`BOECRT`** carried recognition as the 30-column `C`
-term (z +4.24) plus `R` and `T`; those four columns collapse to two, neither fitted on
-immunogenicity labels. The older **gate** — a product of sigmoids rather than a sum, so a candidate
+`C_phys_*` and `C_corpus_*` terms are the recognition axis and whose `binder`/`occupancy` terms are
+the presentation one. Version 3 (0.24.0) is **hierarchical**: nine columns in four blocks —
+presentation, expression, physchem, corpus — entered in pipeline order, so a recognition
+coefficient is what that term is worth *after* presentation and expression rather than in
+competition with them. Its predecessor **`BOECRT`** carried recognition as the 30-column `C`
+term (z +4.24) plus `R` and `T`; none of the recognition terms is fitted on immunogenicity labels. The older **gate** — a product of sigmoids rather than a sum, so a candidate
 failing either axis cannot be rescued by the other — is still reachable as
 `mhcmatch rank --score gate`.
 
@@ -355,7 +356,7 @@ letter per parameter, in a fixed canonical order:
 | `F` | foreignness | viral IEDB ligandome | distance to the nearest viral epitope |
 | `M` | mimicry | `mhcmatch.mimicry` | the six-channel signed aggregate |
 | `T` | TCR-facing mimicry | `mhcmatch.mimicry` | the three TCR-facing channels only; the anchor ones are dropped as collinear with `B` |
-| `K` | corpus complementarity (`C_corpus`) | `mimicry.corpus_R` | the Łuksza-form neighbour density against the thymic immunopeptidome over the TCR face |
+| `K` | corpus complementarity (`C_corpus`) | `mimicry.corpus_R` | the exact Łuksza density over the TCR face against three reference corpora — thymic, self and viral — as a k-mer table contraction, not a search |
 
 So `PADEC` is presentation + affinity + agretopicity + expression + complementarity, and `PADECM`
 adds mimicry. Suffixes are fitting choices rather than parameters: `-scr` (screen indicators as

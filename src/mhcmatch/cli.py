@@ -438,29 +438,38 @@ def _mimicry_scores(peptides, cls: str, no_self: bool):
     return MM.score(peptides, refs, cls=cls, allow_missing=no_self)
 
 
-def _aggregate_channels(cls: str, no_self: bool):
+def _aggregate_channels(cls: str, no_self: bool, species: str = "human"):
     """Build the ``channels`` callable ``rank`` needs to score with the fitted aggregate.
 
-    Returns ``list[peptide] -> {C_corpus_thymus, C_corpus_missing}``.
+    Returns ``list[peptide] -> {C_corpus_thymus, C_corpus_self, C_corpus_viral}``.
 
-    **Since 0.21.0 this is cheap.** ``BOECRT`` needed ``self_tcr`` -- its second-largest
-    coefficient -- so an aggregate score forced the host-proteome reference index: 6 min 15 s and
-    ~7.5 GB, the largest single cost in the package, and a cost ``--no-self`` could not be allowed
-    to skip. ``GRAND`` takes its corpus term from the **thymic** channel alone (26,513 peptides),
-    so the proteome index is off the ranking path and ``--no-self`` no longer conflicts with
-    ``--score aggregate``. It still matters for ``--extended``/``--annotate``, which report the
-    ``self`` mimicry channels, and for the safety scan.
+    **Since 0.24.0 there is no search here at all.** ``BOECRT`` needed ``self_tcr`` -- its
+    second-largest coefficient -- so an aggregate score forced the host-proteome reference index:
+    6 min 15 s and ~7.5 GB, the largest single cost in the package. 0.24.0 replaced the neighbour
+    search with a :func:`mhcmatch.mimicry.corpus_spectrum` table contraction, so all three channels
+    together cost three tables of 64 KB and the ranking path builds no trie at all. That is why
+    ``self`` and ``viral`` are back in the model: they were dropped in 0.21.0 for what they cost,
+    not for what they were worth. ``--no-self`` still matters for ``--extended``/``--annotate``,
+    which report *which* reference peptide was nearest and do need the index, and for the safety
+    scan.
 
-    ``C_phys`` is deliberately absent: :func:`mhcmatch.rank._finish` computes it, because it is a
-    matrix product against a published residue vector and needs no index at all.
+    ``species`` picks the ``self`` proteome, so a mouse run scores mouse self. The ``thymus`` and
+    ``viral`` deposits are human-only; that is stated in :func:`mhcmatch.mimicry.corpus_spectrum`
+    and is a roadmap item, not a silent substitution.
+
+    The ``C_phys`` pair is deliberately absent: :func:`mhcmatch.rank._finish` computes both, because
+    they are matrix products against published residue vectors and need no deposit at all.
     """
     from . import mimicry as MM
+    from . import rank as R
 
     def channels(peptides):
-        refs = MM.load_references(cls=cls, with_self=False)
-        rows = MM.corpus_R(list(peptides), refs, cls=cls, components=("thymus",))
-        return {"C_corpus_thymus": [r.get("thymus", float("nan")) for r in rows],
-                "C_corpus_missing": [0.0 if "thymus" in r else 1.0 for r in rows]}
+        spec = MM.corpus_spectrum(cls=cls, components=("thymus", "self", "viral"),
+                                  self_species=species)
+        rows = MM.corpus_R(list(peptides), spec, cls=cls)
+        return {f"C_corpus_{c}": [r.get(c, float("nan")) for r in rows]
+                for c in ("thymus", "self", "viral")
+                if f"C_corpus_{c}" in R.CHANNEL_COLUMNS}
 
     return channels
 
@@ -468,7 +477,7 @@ def _aggregate_channels(cls: str, no_self: bool):
 def cmd_rank(a):
     """Rank neoantigen candidates from a window FASTA or an already-scored table.
 
-    With ``--score aggregate`` (the default) every one of the model's seven features is computed
+    With ``--score aggregate`` (the default) every one of the model's nine features is computed
     *before* scoring and emitted as a column -- see :func:`_aggregate_channels`. Before 0.20.0 four
     of the then nine were computed after scoring, or not at all, and contributed a constant to
     every candidate while the output still said ``BOECRT``.
@@ -486,7 +495,8 @@ def cmd_rank(a):
         rows = R.rank_fasta(store, a.input, _read_alleles(a.alleles), cls=a.cls,
                             tissue=a.tissue, tumor=a.tumor, refs=refs,
                             rank_threshold=a.rank_threshold, score=a.score,
-                            channels=_aggregate_channels(a.cls, a.no_self)
+                            prevalence=a.prevalence,
+                            channels=_aggregate_channels(a.cls, a.no_self, a.species)
                             if a.score == "aggregate" else None)
     else:
         store = None
@@ -494,7 +504,8 @@ def cmd_rank(a):
             store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
         rows = R.rank_table(a.input, tissue=a.tissue, tumor=a.tumor, refs=refs,
                             store=store, cls=a.cls, score=a.score,
-                            channels=_aggregate_channels(a.cls, a.no_self)
+                            prevalence=a.prevalence,
+                            channels=_aggregate_channels(a.cls, a.no_self, a.species)
                             if a.score == "aggregate" else None)
     rows = rows[:a.top] if a.top else rows
     cols = list(R.BASE_COLUMNS)
@@ -522,14 +533,15 @@ def cmd_rank(a):
     try:
         print("\t".join(cols), file=out)
         for i, r in enumerate(rows, 1):
-            cells = [str(i), r.peptide, _allele(a, r.allele), r.gene, f"{r.score:.6g}",
+            cells = [str(r.rank), r.peptide, _allele(a, r.allele), r.gene, f"{r.score:.6g}",
+                     f"{r.p_response:.4g}",
                      f"{r.presentation:.4g}", f"{r.binder:.4g}", f"{r.occupancy:.4g}",
                      f"{r.agretopicity:.4g}",
                      f"{r.physchem:.4g}", f"{r.expression:.4g}",
                      "1" if r.expression_imputed else "0",
                      str(r.n_alleles_presenting), r.alleles_presenting,
                      r.imputed, r.wt_peptide,
-                     r.known_epitope]
+                     r.known_epitope, r.variant_type]
             if a.score == "aggregate":
                 cells += [f"{r.components[c]:.6g}" for c in R.AGGREGATE_COLUMNS]
             if a.extended:
@@ -838,9 +850,34 @@ REFERENCE_FILES = (
 )
 
 
+def _parse_quota(spec: str) -> dict:
+    """``'mhc1=8:2,mhc2=4:1'`` -> ``{"mhc1": (8, 2), ...}``. Slots first, response target second."""
+    out = {}
+    for part in str(spec).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            arm, rest = part.split("=", 1)
+            slots, target = rest.split(":", 1)
+            out[arm.strip()] = (int(slots), int(target))
+        except ValueError:
+            raise SystemExit(f"--quota: cannot read {part!r}; use ARM=SLOTS:TARGET, e.g. "
+                             "'mhc1=8:2,mhc2=4:1,nonconventional=3:1'") from None
+        if out[arm.strip()][1] > out[arm.strip()][0]:
+            raise SystemExit(f"--quota {part}: asking for {target} responses out of {slots} slots")
+    if not out:
+        raise SystemExit("--quota was empty; use ARM=SLOTS:TARGET, e.g. 'mhc1=8:2,mhc2=4:1'")
+    return out
+
+
 def _read_units(path):
     """``[Unit]`` from a TSV with ``peptide``/``gene``/``allele``/``p`` (+ optional
-    ``mutation_index``, ``cls``).
+    ``mutation_index``, ``cls``, ``kind``).
+
+    ``kind`` is the variant class -- ``missense`` (the default) or a non-conventional product
+    (``frameshift``, ``fusion``, ``splice``, ``retained_intron``, ``ORF``, ``editing``). ``rank``
+    emits it as ``variant_type`` where the input carried one; it only matters under ``--quota``.
 
     Deliberately not the `rank` table read directly. `rank` emits **minimal epitopes**, and a unit is
     the long peptide around one mutation -- injecting a 9-mer would build the tolerising
@@ -874,7 +911,9 @@ def _read_units(path):
             units.append(Unit(peptide=pep, mutation_index=mi, gene=f[ix["gene"]].strip(),
                               allele=f[ix["allele"]].strip(), p=float(f[ix["p"]]),
                               cls=(f[ix["cls"]].strip() if "cls" in ix and len(f) > ix["cls"]
-                                   else "mhc1")))
+                                   else "mhc1"),
+                              kind=(f[ix["kind"]].strip() or "missense"
+                                    if "kind" in ix and len(f) > ix["kind"] else "missense")))
         return units
     finally:
         if path != "-":
@@ -952,6 +991,23 @@ def cmd_vector(a):
     print(f"# selected {len(sel.units)} of {len(units)}, expected yield "
           f"{sel.expected_yield:.2f} at n0={a.n0}", file=sys.stderr)
 
+    comp = topk = None
+    if a.quota:
+        from . import portfolio as PF
+        quotas = _parse_quota(a.quota)
+        universe = _read_alleles(a.alleles) or sorted({u.allele for u in units if u.allele})
+        comp = PF.compose(units, quotas, a.block_live, weight_evenness=a.evenness,
+                          universe=universe)
+        # The same slot budgets filled by score alone -- the cassette a ranked list gives you.
+        # Reported beside the composed one because "different from ranking" is a claim that has to
+        # be shown on the caller's own candidates, not asserted from a docstring.
+        topk = {}
+        for arm, (slots, target) in quotas.items():
+            pool = sorted([u for u in units if PF.default_arm(u) == arm], key=lambda u: -u.p)
+            topk[arm] = pool[:slots]
+        print(f"# composed {len(comp.units)} unit(s) over {len(quotas)} arm(s); joint "
+              f"P(all quotas met) {comp.joint:.4f} at q={a.block_live}", file=sys.stderr)
+
     cas = None
     if len(sel.units) >= 2:
         store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
@@ -982,6 +1038,31 @@ def cmd_vector(a):
             o.row("withdrawn", "", u.gene, why.get("clause", ""),
                   f"{why.get('gene', '')}{sub} {why.get('tissue', '')} "
                   f"{why.get('tpm', 0):.1f}".strip() + (f" via {reg}" if reg else ""))
+        if comp is not None:
+            from . import portfolio as PF
+            for arm, d in comp.arms.items():
+                tk = topk[arm]
+                p_top = (PF.p_at_least([u.p for u in tk], [u.allele for u in tk], a.block_live,
+                                       k=d["target"]) if tk else 0.0)
+                cov_top = PF.coverage([u.allele for u in tk],
+                                      universe if arm == "mhc1" else None)
+                o.row("arm", d["n_chosen"], arm,
+                      f"{d['p_at_least']:.4f}",
+                      f"target >={d['target']} of {d['slots']} slots; "
+                      f"top-{d['slots']}-by-score gives {p_top:.4f}; "
+                      f"H/Hmax {d['coverage']['entropy_ratio']:.3f} vs "
+                      f"{cov_top['entropy_ratio']:.3f}, gini {d['coverage']['gini']:.3f} vs "
+                      f"{cov_top['gini']:.3f}")
+                for u in d["units"]:
+                    o.row("composed", arm, u.gene, f"{u.p:.4f}",
+                          f"{u.allele} {u.kind} {u.cls}")
+                for u in tk:
+                    o.row("top-rank", arm, u.gene, f"{u.p:.4f}",
+                          f"{u.allele} {u.kind} {u.cls}")
+            o.row("composition", len(comp.units), "joint", f"{comp.joint:.4f}",
+                  f"gini {comp.coverage['gini']:.3f}, H/Hmax "
+                  f"{comp.coverage['entropy_ratio']:.3f} over "
+                  f"{comp.coverage['n_covered']}/{comp.coverage['n_allotypes']} allotype(s)")
         for allele, (n, s, y) in sel.per_allele().items():
             o.row("allotype", n, allele, f"{y:.4f}", f"sum p = {s:.4f}")
         for t in sel.trace:
@@ -1234,6 +1315,13 @@ def main(argv=None):
                     help="with --extended/--annotate, skip the host proteome. It is the expensive "
                          "reference (several minutes, ~7 GB) and carries the largest coefficients, "
                          "so this is faster and deliberately a smaller model")
+    rk.add_argument("--prevalence", type=float, default=round(37.0 / 615.0, 4),
+                    help="assumed fraction of this candidate pool that responds, used to put "
+                         "`score` on a probability axis as the `p_response` column (default "
+                         "%(default)s -> TESLA's 37 of 615). It is a PRIOR you own: the fit gave "
+                         "every screen its own intercept precisely so base rate stayed out of the "
+                         "slopes, and the nine screens behind it span 0.0060%% to 59.7%% positive. "
+                         "It shifts every probability and moves no rank")
     rk.add_argument("--top", type=int, help="print only the top N candidates")
     rk.add_argument("--out", help="write TSV here instead of stdout")
     _add_store_opts(rk)
@@ -1345,6 +1433,26 @@ def main(argv=None):
                     help="per-allotype capacity, the one free parameter of the stopping rule. "
                          "REQUIRED and with no default on purpose: nothing in the public record fits "
                          "it, so the value is yours to defend and it is recorded in the output")
+    vc.add_argument("--quota", metavar="ARM=SLOTS:TARGET",
+                    help="compose the cassette to quotas instead of taking the ranked top, e.g. "
+                         "'mhc1=8:2,mhc2=4:1,nonconventional=3:1' -- eight class-I slots of which "
+                         "at least two should respond, and so on. Arms are disjoint: a unit whose "
+                         "`kind` column is anything but `missense` is charged to `nonconventional`, "
+                         "so the constraint bites. The same slot budgets filled by score alone are "
+                         "reported beside it, because 'not the same as ranking' is a claim about "
+                         "YOUR candidates")
+    vc.add_argument("--block-live", type=float, default=0.5, metavar="Q",
+                    help="P(a block is live) in the response model behind --quota (default "
+                         "%(default)s). A block is an allotype: if the recipient never mounts a "
+                         "response on that allotype, none of its units respond however good they "
+                         "are. Measure it on your own readout with "
+                         "mhcmatch.portfolio.betabinom_rho before trusting a default")
+    vc.add_argument("--evenness", type=float, default=0.0, metavar="W",
+                    help="weight on class-I allotype evenness (H/Hmax) in --quota's objective "
+                         "(default %(default)s = off). The block model already prefers spread when "
+                         "spread helps; this is for when it does not and you want it anyway. "
+                         "Homozygosity is handled: the denominator is the DISTINCT allotypes in "
+                         "--alleles, so a homozygous locus is not scored as a design flaw")
     vc.add_argument("--alleles", help="the recipient's allotypes for junction scoring "
                                       "(comma-separated or a file); default = those in the table")
     vc.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))

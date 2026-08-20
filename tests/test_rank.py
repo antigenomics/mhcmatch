@@ -17,9 +17,10 @@ from mhcmatch import rank as R
 #: (``viral_R`` sits near 4e-11; the three mimicry channels are log1p per-million window densities).
 #: Since 0.20.0 the model refuses to score without them, so any test exercising the aggregate has to
 #: supply them -- which is the point: a model scores on the features it declares or not at all.
-#: What `channels()` supplies -- `C_corpus_thymus` on its fitted 1e-5 scale, plus its missing
-#: flag. `C_phys` is deliberately absent: the library computes it, so a caller never passes it.
-CHANNELS = {"C_corpus_thymus": 3.3e-5, "C_corpus_missing": 0.0}
+#: What `channels()` supplies -- the three corpus densities, each on its fitted 1e-3/1e-4 scale.
+#: The `C_phys` pair is deliberately absent: the library computes both, so a caller never passes
+#: them.
+CHANNELS = {"C_corpus_thymus": 1.2e-3, "C_corpus_self": 2.9e-4, "C_corpus_viral": 2.0e-4}
 
 
 def with_channels(rows):
@@ -274,7 +275,8 @@ def test_aggregate_artifact_is_self_consistent():
     assert a["intercept"] is None
     assert a["fit"]["per_screen_intercept"] is True
     # the corpus term is on a 1e-5 scale, so a sigma clamped to 1.0 would silently kill it
-    assert 1e-6 < a["sigma"][a["features"].index("C_corpus_thymus")] < 1e-3
+    for c in ("C_corpus_thymus", "C_corpus_self", "C_corpus_viral"):
+        assert 1e-6 < a["sigma"][a["features"].index(c)] < 1e-2
 
 
 def test_aggregate_score_is_monotone_in_binder_and_refuses_a_subset():
@@ -316,11 +318,20 @@ def test_aggregate_carries_the_fit_provenance_a_reader_needs():
     # every screen is held out in turn and scored with the mean intercept -- what a new cohort gets
     assert a["fit"]["holdout"] == "leave-one-screen-out"
     assert len(a["fit"]["loo"]) == len(a["fit"]["screens"])
-    # the corpus term's construction travels with the coefficient: a different mask, radius or
-    # shape is a different axis, and the standardizer would not transfer to it
-    assert a["corpus_mask"] == "tcr5" and a["corpus_radius"] == 2
-    assert a["corpus_shapes"]["thymus"] == [2.25, 14.0]
-    assert a["phys_scale"] == "Rose"
+    # the corpus term's construction travels with the coefficient: a different mask, k-mer width
+    # or decay is a different axis, and the standardizer would not transfer to it
+    assert a["corpus_mask"] == "tcr5" and a["corpus_k"] == 3
+    # there is no search any more, so there is no radius to record
+    assert "corpus_radius" not in a
+    # one kappa per component, not a (kappa, a0) pair: a0 is retired
+    assert set(a["corpus_shapes"]) == {"thymus", "self", "viral"}
+    assert all(isinstance(v, float) for v in a["corpus_shapes"].values())
+    assert a["phys_scale"] == "Rose" and a["phys_scale_hydrop"] == "KIDERA:KF4"
+    # C_phys is the per-residue mean; the summed form was 91% peptide-length variance
+    assert a["phys_per_residue"] is True
+    # the hierarchy the fit was run as travels too, so a consumer need not re-derive the grouping
+    assert [b[0] for b in a["blocks"]] == ["presentation", "expression", "physchem", "corpus"]
+    assert tuple(c for _b, cols in a["blocks"] for c in cols) == R.AGGREGATE_FEATURES
 
 
 def test_written_tables_use_unix_line_endings(tmp_path):
@@ -438,7 +449,8 @@ def test_default_score_is_the_fitted_aggregate_not_the_gate():
     out = _finish([Ranked(**vars(r)) for r in rows], None)
     want = aggregate_score({"binder": [2.0, 0.1], "occupancy": [0.9, 0.01],
                             "expr": [3.0, 0.5], "expr_missing": [0.0, 0.0],
-                            "C_phys": complement.burial(["SIINFEKL", "SIINFEKV"]),
+                            **{c: complement.burial(["SIINFEKL", "SIINFEKV"], scale=sc)
+                               for c, sc in R.PHYS_COLUMNS.items()},
                             **{c: [chan[c], chan[c]] for c in CHANNEL_COLUMNS}})
     assert [r.peptide for r in out] == ["SIINFEKL", "SIINFEKV"]
     assert abs(out[0].score - float(want[0])) < 1e-10
@@ -463,16 +475,28 @@ def test_scoring_without_the_recognition_channels_is_an_error_naming_the_feature
 
 
 def test_c_phys_is_computed_rather_than_demanded_from_the_caller():
-    """`C_phys` needs no reference index -- it is a matrix product against a published residue
-    vector -- so making the caller supply it would be ceremony. It must land in `components`
-    with the exact value `complement.burial` gives, since that is the axis its mu/sigma describe."""
+    """Neither `C_phys` column needs a reference deposit -- each is a matrix product against a
+    published residue vector -- so making the caller supply them would be ceremony. Both must land
+    in `components` with the exact value `complement.burial` gives, since that is the axis their
+    mu/sigma describe."""
     from mhcmatch import complement
     from mhcmatch.rank import Ranked, _finish
     rows = with_channels([Ranked(peptide="SIINFEKL", allele="H2-Kb", binder=2.0, occupancy=0.9,
                                  physchem=1.5, expression=3.0)])
     _finish(rows, None)
-    assert rows[0].components["C_phys"] == pytest.approx(complement.burial(["SIINFEKL"])[0])
-    assert "C_phys" not in R.CHANNEL_COLUMNS and "C_phys" in R.AGGREGATE_COLUMNS
+    for col, scale in R.PHYS_COLUMNS.items():
+        assert rows[0].components[col] == pytest.approx(
+            complement.burial(["SIINFEKL"], scale=scale)[0])
+        assert col not in R.CHANNEL_COLUMNS and col in R.AGGREGATE_COLUMNS
+
+
+def test_phys_columns_name_the_scales_the_module_declares():
+    """`PHYS_COLUMNS` and `complement`'s two scale constants are two halves of one fact."""
+    from mhcmatch import complement
+    assert R.PHYS_COLUMNS["C_phys_rose"] == complement.PHYS_SCALE
+    assert R.PHYS_COLUMNS["C_phys_hydrop"] == complement.PHYS_SCALE_HYDROP
+    assert R.aggregate()["phys_scale"] == complement.PHYS_SCALE
+    assert R.aggregate()["phys_scale_hydrop"] == complement.PHYS_SCALE_HYDROP
 
 
 def test_the_header_carries_the_features_the_model_used():

@@ -82,10 +82,103 @@ Read the cassette back
    q     = 0.5                        # probability a block is live in this donor
 
    ge1 = portfolio.p_at_least(p, block, q, k=1)
+   portfolio.survival(p, block, q)    # the whole tail: element k is P(X >= k)
    portfolio.n_effective(p, ge1)      # how many INDEPENDENT units this cassette is worth
 
 :func:`~mhcmatch.portfolio.p_at_least` refuses a marginal it cannot represent: a unit cannot respond
 more often than its own block is live, so ``p_i > q`` raises rather than silently clipping.
+
+Both are **exact**, and cheaply so. :math:`X = \sum_b B_b S_b` with :math:`S_b` a Poisson binomial
+over block *b*'s units, and :math:`B_b S_b` has pmf :math:`(1-q_b)\delta_0 + q_b\,\mathrm{pmf}(S_b)`.
+The blocks are independent, so the pmf of *X* is the convolution of those --- :math:`O(B m^2)`, with
+no :math:`2^B` enumeration over live sets and no Monte Carlo. The 200,000-draw sampler this replaced
+agreed to its own noise; the convolution has none.
+
+Composing to quotas
+-------------------
+
+A cassette is usually specified as *quotas*, not as a top-\ *m*: **eight class-I slots of which at
+least two should respond, four class-II of which one, three non-conventional of which one**. That is
+what :func:`~mhcmatch.portfolio.compose` fills.
+
+.. code-block:: python
+
+   comp = portfolio.compose(
+       units,
+       {"mhc1": (8, 2), "mhc2": (4, 1), "nonconventional": (3, 1)},
+       q=0.5,                          # P(a block is live) in this donor
+       universe=donor_allotypes,       # the donor's DISTINCT allotypes -- see homozygosity below
+       weight_evenness=0.0)
+
+   comp.arms["mhc1"]["p_at_least"]     # attained P(>= 2) on the class-I arm
+   comp.joint                          # every quota met at once
+   comp.coverage                       # Gini and H/Hmax over class-I allotypes
+   comp.trace                          # one row per greedy step, with the gain it bought
+
+Or from the command line, which reports the composed cassette **and the same slot budgets filled by
+score alone**, side by side:
+
+.. code-block:: console
+
+   $ mhcmatch vector --candidates units.tsv --n0 20 \
+         --quota 'mhc1=8:2,mhc2=4:1,nonconventional=3:1' --block-live 0.5 \
+         --alleles "$(cat donor.hla)"
+
+**The arms are disjoint on purpose.** A frameshift neoepitope is presented on MHC-I, so if it
+counted toward both budgets, "at least one non-conventional epitope responds" could be satisfied for
+free by the class-I arm and would never change a cassette. Charged to its own arm
+(:func:`~mhcmatch.portfolio.default_arm` reads ``Unit.kind``), it has to earn a slot. It earns one
+because it fails *differently*: a non-conventional product is foreign over a stretch rather than at
+one position, so whatever makes the missense arm miss --- a wrong wild type, a tolerised residue ---
+does not make this arm miss.
+
+Why this is not top-\ *m*, shown rather than asserted
+-------------------------------------------------------
+
+Nine candidates: five strong ones all restricted to ``A*02:01``, four weaker ones spread over four
+other allotypes. Four slots, target "at least one responds", :math:`q = 0.5`.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 18 14 14 28
+
+   * - rule
+     - P(≥ 1)
+     - Gini
+     - H/H\ :sub:`max`
+     - allotypes taken
+   * - top-4 by score
+     - 0.4806
+     - 0.800
+     - 0.000
+     - ``A*02:01`` ×4
+   * - ``compose``
+     - **0.6550**
+     - **0.200**
+     - **0.861**
+     - four distinct
+
+Nothing was told to diversify. The spread falls out of the objective, because a block that is
+already represented contributes less than a fresh one.
+
+**And the instinct is wrong when the target is** :math:`k \ge 2`. Two units in one block need that
+one block live; two units in two blocks need *both* live, which at :math:`q = 0.5` costs a factor of
+two. On the same pool at target 2, ``compose`` concentrates --- P(≥ 2) 0.3829 concentrated against
+0.2929 spread --- and it is right to. "Diversify" is a heuristic for :math:`\Pr(\ge 1)`; the tail
+probability is the thing, and it does not always agree.
+
+Coverage evenness, and homozygosity
+-----------------------------------
+
+When spread matters for reasons the response model does not price --- manufacturing risk, an
+uncertain genotype, provisional typing --- ``weight_evenness`` adds :math:`w\,\Delta(H/H_{\max})`
+to the objective. It **costs**, and the cost is reported: on the pool above at target 2,
+``weight_evenness=0.2`` buys H/H\ :sub:`max` 0.000 → 0.646 for P(≥ 2) 0.3829 → 0.2929.
+
+:func:`~mhcmatch.portfolio.coverage` takes ``universe`` --- **the donor's distinct allotypes** --- and
+this is the whole point when the donor is homozygous. A patient homozygous at *B* has five distinct
+class-I allotypes, not six, so a cassette spread evenly over five is perfectly even; scoring it
+against a denominator of six would report a genotype as a design flaw.
 
 What a scalar score cannot select
 ---------------------------------
