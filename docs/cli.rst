@@ -190,13 +190,6 @@ Environment
      - shared per-allele ``%rank`` calibration. Measured **15×** on a 25-allele sweep (13.3 s →
        0.9 s). Safe to share under concurrency without a lock — entries are written to a tempfile
        and moved with ``os.replace``
-   * - ``MHCMATCH_REFERENCE_CACHE``
-     - directory for the built mimicry reference indexes. **0.82 s to load against a 75.6 s
-       build — 92×.** Point it at *shared* storage and a Nextflow or SLURM fleet builds once and
-       every task loads in under a second; tasks on the same node share the memory-mapped pages
-       through the OS page cache rather than each holding its own ~7.5 GB copy. About 1.0 GB on
-       disk for class I. Keyed on the reference files, the channel projection and
-       ``mimicry.CACHE_VERSION``, so a changed input rebuilds instead of being trusted
    * - ``MHCMATCH_PMHC``
      - the directory *holding* ``pmhc_<tier>.tsv.gz``, rather than the dataset root. Overrides the
        above for the panel specifically

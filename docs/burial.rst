@@ -114,7 +114,8 @@ already carries binding, occupancy, expression, the mimicry channels and the ide
      - —
      - —
    * - 1
-     - **Rose burial propensity, summed over the TCR face**
+     - **Rose burial propensity over the TCR face** (selected as a sum; shipped since
+       0.24.0 as the per-residue mean --- see below)
      - 20.0
      - 4201.4
      - −7.3
@@ -182,8 +183,55 @@ fitted log-odds cell is unbounded and reaches +2.6 nats.
      - +0.6809
    * - ``C_aa`` with ``mask_cys=True``
      - +0.0371
-   * - ``C_phys`` (Rose over the TCR face)
+   * - ``C_phys_rose`` (Rose over the TCR face)
      - **+0.1083**
+
+Per residue, not summed --- and the difference was 91 % of the variance
+-----------------------------------------------------------------------
+
+The scale was selected as a **sum** over the TCR face, and that made it a ruler rather than a
+chemistry term. The class-I face is *L* − 5 residues wide and the Rose scale is strictly positive
+(0.52 to 0.91), so summing it gives roughly 0.75 (*L* − 5). Measured on 60,000 fit-corpus peptides:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 30
+
+   * - column
+     - Pearson with peptide length
+   * - Rose, summed over the face (pre-0.24.0)
+     - **+0.954**
+   * - Rose, averaged over the face (shipped)
+     - **−0.010**
+   * - Kidera KF4, summed
+     - +0.052
+   * - Kidera KF4, averaged
+     - +0.005
+
+A centred scale like KF4 does not have the problem, which is why the two were not comparable and
+why the summed Rose column beat everything it was tried against. Dividing by the face width is the
+same correction :func:`mhcmatch.mimicry.corpus_R` makes with its per-window divisor
+(:doc:`corpus`), for the same reason, and it changes what the pair measures: on the summed scale
+Rose and KF4 correlate −0.20, on the averaged scale **−0.836**. They were always close to one axis;
+the length variance was hiding it.
+
+``burial(..., per_residue=False)`` reproduces a pre-0.24.0 number.
+
+Two scales, carried together
+----------------------------
+
+Since GRAND v3 the model carries ``C_phys_rose`` **and** ``C_phys_hydrop``
+(:data:`mhcmatch.complement.PHYS_SCALE_HYDROP`, Kidera KF4). Rose measures how much surface a
+residue buries on folding; KF4 measures how it partitions between water and oil. They agree at the
+extremes and disagree in the middle, and which one looks stronger depends on the corpus:
+
+* On the **neoantigen** fit, Rose carries the block (sequential *z* +3.53) and KF4 adds nothing
+  beyond it (−0.39) --- unsurprising at *r* = −0.836.
+* On the **Chowell-family** corpora, which is where a chemistry term was motivated in the first
+  place, KF4 is the stronger of the two standalone. ``bench/results/physchem_cv.md`` runs both,
+  five-fold peptide-grouped, on Chowell and Kešmir in human and mouse.
+
+Both are emitted as columns, so the pair is auditable rather than a single number with a footnote.
 
 :func:`mhcmatch.complement.score` grew ``mask_cys=`` for the same reason —
 :mod:`mhcmatch.posbayes` masks cysteine by construction and this module never did. It is off by

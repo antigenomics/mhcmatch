@@ -73,7 +73,8 @@ from . import mimics
 from .complement import ANCHORS
 
 __all__ = ["COMPONENTS", "CHANNELS", "params", "MimicryScore", "masks", "features",
-           "corpus_R", "SHAPES", "RADIUS", "corpus_shapes", "corpus_radius", "score",
+           "corpus_R", "corpus_counts", "contract", "corpus_spectrum", "face_kmers",
+           "SHAPES", "CORPUS_K", "LOCUS_W", "locus_weights", "corpus_shapes", "score",
            "probability", "annotate", "NEOAG_COLUMNS", "load_references", "safety",
            ]
 
@@ -300,40 +301,43 @@ def _sources(pmhc_dir, rel: str) -> dict[str, str]:
     return out
 
 
-#: Fitted ``(k, a0)`` per component, by profile likelihood on the neoantigen corpus
-#: (``bench/immuno/repertoire_luksza.py``). Passed as ``shapes=`` only to re-measure them. The
-#: shipped aggregate records the same values as ``corpus_shapes``; :func:`corpus_shapes` reads that copy so
-#: a re-vendored refit moves the scored column with it, and this one is the fallback.
-SHAPES: dict = {"viral": (2.25, 14.0), "self": (1.5, 24.0), "thymus": (2.25, 14.0)}
-
-#: Search radius the shipped ``C_corpus`` column was built at, and the fallback for the aggregate's
-#: own ``corpus_radius``.
-RADIUS: int = 2
+#: Fitted decay ``kappa`` per component, by profile deviance on the neoantigen corpus
+#: (``bench/immuno/corpus_exact.py``). Passed as ``shapes=`` only to re-measure it. The shipped
+#: aggregate records the same values as ``corpus_shapes``; :func:`corpus_shapes` reads that copy so a
+#: re-vendored refit moves the scored column with it, and this one is the fallback.
+#:
+#: **``a0`` is gone, and the value is one number rather than a pair.** It was a scale the
+#: standardizer absorbed, and the length compensation ``exp(kappa*(L - a0))`` it carried is now the
+#: explicit per-window divisor in :func:`corpus_R`.
+#:
+#: The three differ, and they differ for a reason. Writing ``gamma = (1-beta)/(1+19*beta)`` with
+#: ``beta = exp(-kappa)`` for the fraction of order-1 sequence structure the contraction keeps
+#: (:func:`contract`), ``thymus`` sits at an interior optimum with ``gamma = 0.49`` -- graded
+#: tolerance, near-misses count -- while ``viral`` runs to ``gamma = 0.99``, near-exact 3-mer
+#: matching. ``self`` carries no shape information at all: its profile moves 0.12 deviance units
+#: across a 24-fold range of ``kappa``, because the human proteome occupies essentially every cell
+#: of the 3-mer table, so smoothing cannot change the ordering. That is the mechanism behind
+#: ``self`` reading as *how many* rather than *whether*.
+SHAPES: dict = {"viral": 8.0, "self": 5.0, "thymus": 3.0}
 
 
 def corpus_shapes(artifact: dict | None = None) -> dict:
-    """``{component: (k, a0)}`` -- the shapes ``C_corpus`` was fitted with.
+    """``{component: kappa}`` -- the decay ``C_corpus`` was fitted with.
 
     Reads the shipped aggregate's ``corpus_shapes`` when it carries one, so a refit that is
     re-vendored moves the scored column rather than leaving it on a stale module constant;
     otherwise returns :data:`SHAPES`. Same convention as :func:`mhcmatch.luksza.shape`.
+
+    Accepts the pre-0.24.0 ``(kappa, a0)`` pair form for reading an old artifact and keeps only
+    ``kappa``; nothing writes that form any more.
     """
     if artifact is None:
         from .rank import aggregate
         artifact = aggregate()
     cs = artifact.get("corpus_shapes") or {}
-    return {c: (float(k), float(a0)) for c, (k, a0) in cs.items()} if cs else dict(SHAPES)
-
-
-def corpus_radius(artifact: dict | None = None) -> int:
-    """The search radius ``C_corpus`` was built at, from the artifact's ``corpus_radius``.
-
-    Same convention as :func:`corpus_shapes`: the artifact's copy wins, :data:`RADIUS` is the
-    fallback."""
-    if artifact is None:
-        from .rank import aggregate
-        artifact = aggregate()
-    return int(artifact.get("corpus_radius", RADIUS))
+    if not cs:
+        return dict(SHAPES)
+    return {c: float(v[0] if isinstance(v, (list, tuple)) else v) for c, v in cs.items()}
 
 
 # ------------------------------------------------------------------ the corpus spectrum
@@ -386,8 +390,170 @@ def face_kmers(peptide: str, cls: str = "mhc1", k: int = CORPUS_K, register: int
     return w @ (20 ** np.arange(k, dtype=np.int64)[::-1])
 
 
+#: Substring width at which two peptides are called the same locus by :func:`locus_weights`. Seven
+#: residues links every register of one mutation -- ``VVVGAVGVGK``, ``VVGAVGVGK`` and ``GADGVGKSAL``
+#: are one KRAS G12 locus at 7 and three separate peptides at 11 -- while being long enough that an
+#: incidental match between unrelated proteins is rare: there are 20**7 = 1.28e9 7-mers against
+#: ~1.2e7 windows in a whole proteome.
+LOCUS_W: int = 7
+
+
+def locus_weights(peptides, w: int = LOCUS_W) -> list:
+    """Per-peptide weights that make each **locus** count once, not each peptide.
+
+    Two peptides are the same locus when they share a substring of ``w`` residues; the relation is
+    closed transitively, and every peptide in a component of size ``m`` gets weight ``1/m``, so the
+    component contributes unit mass however many peptides it supplied.
+
+    **Why this exists.** A peptide set is not a set of independent observations. One recurrent
+    hotspot -- KRAS G12, which is both the most-tested and the most-validated public neoantigen --
+    contributes many overlapping registers of the same eleven residues, and an unweighted k-mer
+    table reads that as evidence about immunogenicity when it is evidence about what got assayed.
+    Measured on the immunogenic arm of the neoantigen fit corpus, the effect is large enough to
+    dominate the set's most distinctive 3-mers (``VGA``, ``GAV``, ``AVG`` -- all fragments of
+    ``VVVGA[VDC]GVGKSA``). See ``bench/results/kmer_spectrum.md``.
+
+    Grouping is by sequence rather than by gene symbol because the corpora that need it do not all
+    carry one, and because the register-level overlap is what actually repeats. Where a real source
+    annotation exists, pass its own weights to :func:`corpus_counts` instead.
+
+    >>> [round(x, 3) for x in locus_weights(["VVVGAVGVGK", "VVGAVGVGK", "SIINFEKLAA"])]
+    [0.5, 0.5, 1.0]
+    """
+    peps = [str(p).strip().upper() for p in peptides]
+    parent = list(range(len(peps)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    seen: dict = {}
+    for i, pep in enumerate(peps):
+        for j in range(max(0, len(pep) - w + 1)):
+            key = pep[j:j + w]
+            k = seen.setdefault(key, i)
+            if k != i:
+                a, b = find(k), find(i)
+                if a != b:
+                    parent[b] = a
+    size: dict = {}
+    roots = [find(i) for i in range(len(peps))]
+    for r in roots:
+        size[r] = size.get(r, 0) + 1
+    return [1.0 / size[r] for r in roots]
+
+
+#: Built count tables, keyed on everything that changes one. **Not** keyed on ``kappa``: the counts
+#: are what costs (the ``self`` channel reads 122 M proteome windows), and ``kappa`` enters only in
+#: the contraction, which is sub-millisecond -- so a kappa sweep is free once the counts exist.
+#:
+#: Race-free without a lock, and deliberately so. A table is built into a local, frozen read-only,
+#: and published with a single dict assignment, which is atomic; two threads racing both build the
+#: same array, because the table is a pure function of the reference deposit and the key. Nothing
+#: partially-built is ever visible and nothing shared is ever mutated. There is **no disk cache** --
+#: the artifact is 64 KB and the largest build is under a minute, so a cache directory would only
+#: add a staleness mode. Clear it with ``_COUNTS.clear()``.
+_COUNTS: dict = {}
+
+
+def corpus_counts(pmhc_dir=None, cls: str = "mhc1", comp: str = "thymus", k: int = CORPUS_K,
+                  self_species: str = "human", weights: str | None = None):
+    """``(T, N)``: the sliding-``k``-mer count table over one reference component's TCR faces.
+
+    ``T`` is a flat ``20**k`` array of **window counts with multiplicity** -- one increment per
+    reference peptide per window, the published Luksza form, not per distinct face -- and
+    ``N = T.sum()`` the total reference window mass. Memoised per
+    ``(cls, comp, k, species, weights)`` for the process; see :data:`_COUNTS`.
+
+    ``weights="locus"`` divides each reference peptide's contribution by the size of its
+    :func:`locus_weights` component, so a protein region that appears many times over -- a recurrent
+    hotspot, a family of overlapping registers -- counts once instead of many times. The density
+    stays in [0, 1] because ``N`` is the same weighted mass. Off by default: it changes what the
+    column means, so it is an arm to measure rather than a correction to assume.
+
+    **It applies to the assayed deposits (``thymus``, ``viral``) and is a no-op for ``self``**, and
+    that is the semantics rather than an optimisation. Locus weighting corrects a *sampling* bias:
+    a peptide deposit over-represents whatever was detected or tested most, so one region can enter
+    it many times. A proteome is not a sample -- every window appears exactly once by construction,
+    there is no "assayed more often" to undo, and sliding windows overlap their neighbours by
+    definition, so a sequence-overlap grouping over 122 M of them would collapse each protein (and
+    every homolog of it) into one degenerate component at ruinous cost.
+
+    Every length the class admits contributes, which is the point of sliding: a 9-mer reference
+    informs an 11-mer query because the table is keyed on the k-mer, not on the length. A reference
+    whose face is narrower than ``k`` contributes nothing and is skipped rather than padded.
+    """
+    import numpy as np
+    key = (cls, comp, int(k), self_species if comp == "self" else "", str(pmhc_dir or ""),
+           weights or "")
+    hit = _COUNTS.get(key)
+    if hit is not None:
+        return hit
+    lengths = sorted(mimics._LEN[cls])
+    if comp == "self":
+        cat = "self" if self_species == "human" else "self_mouse"
+        per_len = {L: mimics.proteome_window_array(cat, L) for L in lengths}
+    else:
+        rel = mimics.DEFAULT_REFS["thymus" if comp == "thymus" else "viral"][0]
+        peps = mimics.load_peptides(pmhc_dir, rel, cls)
+        per_len = {L: np.array(_windows(peps, L), dtype=f"S{L}") for L in lengths}
+    if weights not in (None, "locus"):
+        raise ValueError(f"weights must be None or 'locus', got {weights!r}")
+    # One weight per reference peptide, computed over the whole deposit so a locus spanning two
+    # lengths is one locus. `self` windows carry no peptide identity beyond the window itself.
+    wmap: dict = {}
+    if weights == "locus" and comp != "self":
+        allp = sorted({w.decode("ascii") for win in per_len.values() for w in win})
+        wmap = dict(zip(allp, locus_weights(allp)))
+    T = np.zeros(20 ** k)
+    for L, win in per_len.items():
+        if win.size == 0 or L - 5 < k:
+            continue
+        V = _aa_code()[win.view(np.uint8).reshape(len(win), L)]
+        # per-window face: shared columns for class I, per-row for class II's floating core
+        if cls == "mhc2":
+            take = np.array([masks(L, cls, w.decode("ascii"))["tcr"] for w in win], dtype=np.intp)
+            F = np.take_along_axis(V, take, axis=1)
+        else:
+            F = V[:, np.asarray(masks(L, cls)["tcr"], dtype=np.intp)]
+        ok = (F >= 0).all(1)
+        if not ok.any():
+            continue
+        sw = np.lib.stride_tricks.sliding_window_view(F[ok], k, axis=1)
+        packed = (sw @ (20 ** np.arange(k, dtype=np.int64)[::-1])).ravel()
+        wt = None
+        if wmap:
+            per = np.array([wmap[w.decode("ascii")] for w in win[ok]], dtype=float)
+            wt = np.repeat(per, sw.shape[1])
+        T += np.bincount(packed, weights=wt, minlength=20 ** k)
+    T.flags.writeable = False
+    _COUNTS[key] = (T, float(T.sum()))              # atomic publish of a complete, frozen table
+    return _COUNTS[key]
+
+
+def contract(T, kappa: float, k: int = CORPUS_K, kernel=None):
+    """Apply the mismatch kernel along every axis of a ``20**k`` count table. One-time, ~1 ms.
+
+    ``kernel`` defaults to the Hamming form ``K = (1-beta)I + beta*J`` with ``beta = exp(-kappa)``;
+    pass a 20x20 array to use a graded one (``exp(kappa * BLOSUM62)`` reproduces the graded Luksza
+    score exactly, verified to 4.4e-16). Any **position-additive, ungapped** score factorises this
+    way; a gapped alignment does not, which is the one real limit.
+    """
+    import numpy as np
+    if kernel is None:
+        beta = float(np.exp(-kappa))
+        kernel = (1.0 - beta) * np.eye(20) + beta * np.ones((20, 20))
+    C = np.asarray(T, dtype=float).reshape((20,) * k)
+    for ax in range(k):
+        C = np.moveaxis(np.tensordot(kernel, C, axes=([1], [ax])), 0, ax)
+    return C.ravel()
+
+
 def corpus_spectrum(pmhc_dir=None, cls: str = "mhc1", components=None, k: int = CORPUS_K,
-                    shapes: dict | None = None, self_species: str = "human") -> dict:
+                    shapes: dict | None = None, self_species: str = "human",
+                    weights: str | None = None) -> dict:
     """Contracted sliding-k-mer tables over the TCR face, one per component. **No search.**
 
     Returns ``{component: (table, n_kmers, k)}`` where ``table`` is a flat ``20**k`` array and
@@ -405,53 +571,25 @@ def corpus_spectrum(pmhc_dir=None, cls: str = "mhc1", components=None, k: int = 
     a brute-force all-vs-all over every reference k-mer, the contraction agrees to 5.6e-16, while
     the radius-2 search it replaced captured a **median 0.4999** of the true sum (IQR 0.4115-0.5556,
     min 0.1539 over 600 real 9-mers). Cost went from ~46 s to **2.3 ms** for 340,876 queries, and
-    the ~7.5 GB proteome index the ``self`` channel needed became a 1.28 MB table.
+    the ~7.5 GB proteome index the ``self`` channel needed became a 64 KB table.
 
-    Any **position-additive, ungapped** score works the same way -- pass a BLOSUM62 kernel as ``K``
-    and the graded form is exact at identical cost (verified to 4.4e-16). Gapped alignment does not
-    factorise, which is why :func:`features` and :func:`safety` keep their index.
+    The two halves are split on purpose: :func:`corpus_counts` builds the table (expensive, and
+    memoised) and :func:`contract` applies ``kappa`` (~1 ms), so profiling ``kappa`` costs one
+    build, not one per grid point.
 
     ``shapes`` supplies ``kappa`` per component (:func:`corpus_shapes`); ``a0`` is not used and does
     not need to be, because the length compensation it stood in for is now done explicitly by
     normalizing per query window (see :func:`corpus_R`).
+
+    **Species.** ``self_species`` picks the proteome, so mouse self is a mouse proteome. The
+    ``thymus`` and ``viral`` deposits are human-only; a mouse arm is one more ``bincount`` away and
+    is an open roadmap item, not a silent substitution.
     """
-    import numpy as np
     shp = shapes or corpus_shapes()
-    comps = tuple(components or COMPONENTS)
-    lengths = sorted(mimics._LEN[cls])
     out: dict = {}
-    for comp in comps:
-        if comp == "self":
-            cat = "self" if self_species == "human" else "self_mouse"
-            per_len = {L: mimics.proteome_window_array(cat, L) for L in lengths}
-        else:
-            rel = mimics.DEFAULT_REFS["thymus" if comp == "thymus" else "viral"][0]
-            peps = mimics.load_peptides(pmhc_dir, rel, cls)
-            per_len = {L: np.array(_windows(peps, L), dtype=f"S{L}") for L in lengths}
-        T = np.zeros(20 ** k)
-        for L, win in per_len.items():
-            if win.size == 0 or L - 5 < k:
-                continue
-            V = _aa_code()[win.view(np.uint8).reshape(len(win), L)]
-            # per-window face: shared columns for class I, per-row for class II's floating core
-            if cls == "mhc2":
-                take = np.array([masks(L, cls, w.decode("ascii"))["tcr"] for w in win], dtype=np.intp)
-                F = np.take_along_axis(V, take, axis=1)
-            else:
-                F = V[:, np.asarray(masks(L, cls)["tcr"], dtype=np.intp)]
-            ok = (F >= 0).all(1)
-            if not ok.any():
-                continue
-            sw = np.lib.stride_tricks.sliding_window_view(F[ok], k, axis=1)
-            packed = (sw @ (20 ** np.arange(k, dtype=np.int64)[::-1])).ravel()
-            T += np.bincount(packed, minlength=20 ** k)
-        n = float(T.sum())
-        beta = float(np.exp(-shp[comp][0]))
-        K = (1.0 - beta) * np.eye(20) + beta * np.ones((20, 20))
-        C = T.reshape((20,) * k)
-        for ax in range(k):
-            C = np.moveaxis(np.tensordot(K, C, axes=([1], [ax])), 0, ax)
-        out[comp] = (C.ravel(), n, k)
+    for comp in tuple(components or COMPONENTS):
+        T, n = corpus_counts(pmhc_dir, cls, comp, k, self_species, weights)
+        out[comp] = (contract(T, float(shp[comp]), k), n, k)
     return out
 
 

@@ -84,7 +84,16 @@ python -c "from mhcmatch import rank; print(' · '.join(rank.columns()))"
 
 `rank.BASE_COLUMNS` is always emitted; `rank.AGGREGATE_COLUMNS` (the aggregate's own recognition
 features) is appended whenever the aggregate is what scored, because a model emits the features it
-used.
+used. **The schema changed in 0.24.0**: `rank` is now the rank *by score* rather than the row
+number, `p_response` and `variant_type` joined `BASE_COLUMNS`, and the aggregate's own columns went
+from three to five (`C_phys_rose`, `C_phys_hydrop`, `C_corpus_thymus`, `C_corpus_self`,
+`C_corpus_viral`). Nothing downstream should be joining on position; ask the library.
+
+`p_response` is `score` on a probability axis, anchored on `params.mhcmatch_prevalence` — the
+fraction of *this* candidate pool you expect to respond. It is a prior you own, not a model output:
+the fit gave every screen its own intercept precisely so base rate stayed out of the slopes, and the
+nine screens behind it span 0.0060 % to 59.7 % positive. It shifts every probability and moves no
+rank. Unset, the CLI uses TESLA's 37 of 615 (6.0 %).
 
 `params.mhcmatch_rank_extended` appends the fitted mimicry aggregate and its six signed channels;
 `params.mhcmatch_rank_annotate` appends what each channel's nearest reference peptide actually was,
@@ -179,6 +188,8 @@ alleles is unaffected by the default.
 | `mhcmatch_rank_threshold` | `2.0` | %rank below which `predict` emits a row |
 | `mhcmatch_rank_mode` | `fasta` | `rank` input kind: `fasta` or `table` |
 | `mhcmatch_rank_score` | `aggregate` | which model scores: the fitted aggregate, or `gate` (the pre-0.19.0 product-of-sigmoids) |
+| `mhcmatch_prevalence` | `null` (→ 0.0602) | assumed responding fraction of the candidate pool, the anchor for `p_response`. **A prior about your cohort** |
+| `mhcmatch_rank_core` | `false` | append `core` / `core_offset` / `core_source` |
 | `mhcmatch_tumor` | `null` | TCGA study code for tumour-matched expression — **set this** |
 | `mhcmatch_rank_extended` | `false` | append the six mimicry channels to `ranked.tsv` |
 | `mhcmatch_rank_annotate` | `false` | append nearest-reference and known-neoantigen columns |
@@ -189,6 +200,9 @@ alleles is unaffected by the default.
 | `mhcmatch_vector_map` | `true` | emit the cassette map (`*.cassette.map.tsv` / `.json`) |
 | `mhcmatch_vector_map_threshold` | `2.0` | %rank at or below which a window enters the map |
 | `mhcmatch_vector_map_alleles_mhc2` | `null` | the recipient's class-II allotypes; without them the map is class I only and `self_help` is not computed |
+| `mhcmatch_vector_quota` | `null` | compose to quotas instead of the ranked top, e.g. `mhc1=8:2,mhc2=4:1,nonconventional=3:1`. The same slot budgets filled by score alone are reported beside it |
+| `mhcmatch_vector_block_live` | `0.5` | `P(a block is live)` in the response model behind the quota |
+| `mhcmatch_vector_evenness` | `0.0` | weight on class-I allotype evenness (H/H\ :sub:`max`) in the quota objective |
 
 From `slurm.config` only:
 
@@ -197,15 +211,14 @@ From `slurm.config` only:
 | `mhcmatch_slurm_queue` | `normal` | the partition every mhcmatch task is submitted to |
 | `mhcmatch_pmhc_dir` | `${projectDir}/reference/pmhc_data` | shared reference mirror; pre-stage with `mhcmatch bootstrap --reference` |
 | `mhcmatch_calibration_cache` | `${projectDir}/reference/calibration` | shared per-allele %rank calibration, safe to share under concurrency |
-| `mhcmatch_reference_cache` | `${projectDir}/reference/cache` | shared built mimicry reference indexes; memory-mapped, so co-resident tasks share the pages |
 
 ## Build the image (only for `-profile docker`)
 
 ```zsh
-docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.23.0 \
-    --build-arg MHCMATCH_VERSION=0.23.0 \
+docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.24.0 \
+    --build-arg MHCMATCH_VERSION=0.24.0 \
     integrations/nextflow/mhcmatch/
-docker push <ISPRAS_REGISTRY>/mhcmatch:0.23.0
+docker push <ISPRAS_REGISTRY>/mhcmatch:0.24.0
 ```
 
 No data staging: the build runs `mhcmatch bootstrap --reference`, which fetches the ligand panel

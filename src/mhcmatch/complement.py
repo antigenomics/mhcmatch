@@ -425,6 +425,18 @@ def _zone_positions(L: int, anc: np.ndarray, anchor_idx: tuple, cls: str) -> lis
 #: never substituted silently. The shipped aggregate records the same name as ``phys_scale``; this
 #: constant is what :func:`burial` actually reads.
 PHYS_SCALE = "Rose"
+#: The second chemistry scale, carried **alongside** Rose rather than instead of it since GRAND v3.
+#: Kidera KF4 is the hydropathy factor -- the fourth of Kidera et al.'s ten orthogonal factors over
+#: 188 physical properties -- and it is the axis the Chowell-family immunogenicity literature is
+#: usually written against, so it is the comparison a reader expects to see made.
+#:
+#: **The two are not redundant and not interchangeable.** Rose measures how much surface a residue
+#: buries on folding; KF4 measures how it partitions between water and oil. They agree on the
+#: extremes and disagree in the middle, which is why the fit wants both: on the neoantigen corpus
+#: Rose carries the larger coefficient and KF4 keeps an independent one, and on the Chowell-family
+#: corpora KF4 is the stronger of the two standalone. Whichever is dropped, the other does not
+#: recover it. See ``bench/results/physchem_cv.md`` and ``bench/results/grand_corpus.md``.
+PHYS_SCALE_HYDROP = "KIDERA:KF4"
 
 
 def phys_scale(scale=PHYS_SCALE) -> dict:
@@ -451,14 +463,24 @@ def phys_scale(scale=PHYS_SCALE) -> dict:
         f"'FAMILY:COMPONENT' descriptor key (e.g. 'KIDERA:KF4'), or a dict over the 20 residues.")
 
 
-def burial(peptides, cls: str = "mhc1", scale=PHYS_SCALE, registers=None) -> list[float]:
-    """``C_phys``: a residue scale summed over the **TCR-facing** positions.
+def burial(peptides, cls: str = "mhc1", scale=PHYS_SCALE, registers=None,
+           per_residue: bool = True) -> list[float]:
+    """``C_phys``: a residue scale averaged over the **TCR-facing** positions.
 
     With the default ``scale="Rose"`` this is the shipped chemistry term -- the Rose burial
-    propensity, i.e. the average fraction of a residue's surface buried on folding, summed over the
-    face a receptor reads. It has **no fitted residue parameters**: the basis is imported, which is
-    why it cannot memorise the corpus's cysteine gradient (correlation with per-peptide cysteine
-    count +0.108, against +0.688 for the full fitted :func:`score`).
+    propensity, i.e. the average fraction of a residue's surface buried on folding, over the face a
+    receptor reads. It has **no fitted residue parameters**: the basis is imported, which is why it
+    cannot memorise the corpus's cysteine gradient (correlation with per-peptide cysteine count
+    +0.108, against +0.688 for the full fitted :func:`score`).
+
+    **``per_residue=True`` since 0.24.0, and the old sum was a length detector.** The TCR face is
+    ``L - 5`` residues wide and the Rose scale is strictly positive (0.52 to 0.91), so summing it
+    gives roughly ``0.75 (L - 5)``: on 60,000 fit-corpus peptides the summed column correlates with
+    peptide length at **Pearson +0.954**, against **+0.052** for a centred scale like Kidera KF4.
+    A chemistry term that is 91 % length variance is not measuring chemistry, and it made the two
+    scales incomparable -- one carrying length, one not. Dividing by the face width is the same
+    correction :func:`mhcmatch.mimicry.corpus_R` makes with its per-window divisor, for the same
+    reason. Pass ``per_residue=False`` to reproduce a pre-0.24.0 number.
 
     ``scale=`` is for **exploration, not for scoring**. Passing another basis re-parameterises a
     result that was selected by BIC inside the general model over 576 candidates, so a number
@@ -476,7 +498,12 @@ def burial(peptides, cls: str = "mhc1", scale=PHYS_SCALE, registers=None) -> lis
     tab = phys_scale(scale)
     vec = np.array([tab[a] for a in AA], dtype=float)
     _, counts = encode(list(peptides), cls, registers=registers)
-    return (counts["tcr"].astype(float) @ vec).tolist()
+    c = counts["tcr"].astype(float)
+    tot = c @ vec
+    if not per_residue:
+        return tot.tolist()
+    w = c.sum(1)
+    return np.where(w > 0, tot / np.where(w > 0, w, 1.0), np.nan).tolist()
 
 
 def encode(peptides, cls: str = "mhc1", registers=None, positions: str = "mask",

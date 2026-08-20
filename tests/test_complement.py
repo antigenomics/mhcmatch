@@ -466,12 +466,28 @@ def test_an_unknown_encoding_is_refused_rather_than_guessed():
 
 
 def test_burial_reproduces_the_shipped_rose_column():
-    """`burial` is the C_phys column: the Rose scale summed over the TCR face, nothing fitted."""
+    """`burial` is the C_phys column: the Rose scale AVERAGED over the TCR face, nothing fitted."""
     from mhcmatch.data import aa_tables as T
     peps = ["GILGFVFTL", "SIINFEKL", "NLVPMVATV", "LLWNGPMAVT"]
     vec = np.array([T.HYDROPHOBICITY["Rose"][a] for a in CM.AA])
     _, counts = CM.encode(peps, "mhc1")
-    assert np.allclose(CM.burial(peps), counts["tcr"].astype(float) @ vec)
+    tot = counts["tcr"].astype(float) @ vec
+    assert np.allclose(CM.burial(peps, per_residue=False), tot)
+    assert np.allclose(CM.burial(peps), tot / counts["tcr"].astype(float).sum(1))
+
+
+def test_burial_per_residue_is_not_a_length_detector():
+    """The pre-0.24.0 sum was 91% peptide-length variance. The averaged column is not.
+
+    Rose is strictly positive (0.52 to 0.91) and the class-I TCR face is `L - 5` wide, so summing
+    it gives roughly `0.75 (L - 5)` -- a chemistry term that is mostly a ruler. This pins the fix
+    with the cheapest possible witness: hold the chemistry constant and vary only the length.
+    """
+    peps = ["AAA" + "L" * n + "AA" for n in (3, 4, 5, 6)]        # face is L homopolymer, any width
+    summed = CM.burial(peps, per_residue=False)
+    averaged = CM.burial(peps)
+    assert summed[0] < summed[1] < summed[2] < summed[3]         # the sum tracks length alone
+    assert np.allclose(averaged, averaged[0])                    # the average sees one chemistry
 
 
 def test_burial_scale_is_selectable_and_changes_the_column():

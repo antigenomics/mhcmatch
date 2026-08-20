@@ -68,7 +68,10 @@ def test_rank_extended_appends_columns_without_moving_the_ranking(tmp_path, caps
     # a property of those flags, not of the scorer.
     def run(*flags):
         main(["rank", "table", str(p), "--tumor", "SKCM", "--score", "gate", *flags])
-        body = [ln.split("\t") for ln in capsys.readouterr().out.strip().splitlines()]
+        # rstrip newlines only. `.strip()` would eat a trailing TAB, which is exactly what an
+        # empty last column (`variant_type`) emits, and the base and extended runs would then
+        # disagree on width for a reason that is not about the flags under test.
+        body = [ln.split("\t") for ln in capsys.readouterr().out.rstrip("\n").splitlines()]
         return body[0], body[1:]
 
     head, rows = run()
@@ -86,15 +89,28 @@ def test_the_aggregate_no_longer_needs_the_host_proteome_index():
     weight -- and that forced the host-proteome index: 6 min 15 s and ~7.5 GB, the largest single
     cost in the package.
 
-    GRAND takes its corpus term from the thymic channel alone (26,513 peptides), so the proteome
-    index is off the ranking path. This pins that: the model must declare no `self` feature, and
-    the channels the CLI builds must be buildable with `with_self=False`."""
+    GRAND v3 scores `C_corpus_self` again -- but from a 64 KB k-mer count table, not a trie. The
+    proteome index is still off the ranking path, and the property to pin is that rather than the
+    absence of a `self` feature: the channels the CLI builds must be computable without ever
+    calling `load_references`."""
+    import mhcmatch.mimicry as MM
     from mhcmatch import rank
+    from mhcmatch.cli import _aggregate_channels
 
     feats = rank.aggregate()["features"]
-    assert not any("self" in f for f in feats), feats
-    assert "C_corpus_thymus" in feats
+    assert "C_corpus_self" in feats and "C_corpus_thymus" in feats
     assert set(rank.CHANNEL_COLUMNS) <= set(feats)
+
+    def _refuse(*a, **k):                       # the index build, if the corpus path ever calls it
+        raise AssertionError("corpus channels must not build a reference index")
+
+    real, MM.load_references = MM.load_references, _refuse
+    try:
+        got = _aggregate_channels("mhc1", no_self=True)(["GILGFVFTL", "KLVVVGACGV"])
+    finally:
+        MM.load_references = real
+    assert set(got) == set(rank.CHANNEL_COLUMNS)
+    assert all(len(v) == 2 and all(0.0 <= x <= 1.0 for x in v) for v in got.values())
 
 
 def test_cli_coefficients_reports_both_aurocs(capsys):
@@ -389,3 +405,49 @@ def test_probability_refuses_an_unnamed_corpus():
     corpus this model was never calibrated on has to raise rather than pick one."""
     with pytest.raises(ValueError, match="no calibration for corpus"):
         mimicry.probability([_score("GILGFVFTL", {})], corpus="nosuchcorpus")
+
+
+# ------------------------------------------------------------------ locus weighting
+def test_locus_weights_pool_overlapping_registers_of_one_hotspot():
+    """The KRAS G12 family is one locus at seven residues, not a dozen independent observations.
+
+    This is the correction that matters for any statement about a peptide set's k-mer vocabulary:
+    a recurrent public hotspot enters an assayed deposit many times over as overlapping registers,
+    and an unweighted table reads that as evidence about biology when it is evidence about what got
+    tested.
+    """
+    kras = ["KLVVVGAVGV", "KLVVVGADGV", "KLVVVGACGV", "VVGAVGVGK", "VVGADGVGK",
+            "GADGVGKSAL", "GADGVGKSA"]
+    others = ["SIINFEKLAA", "GILGFVFTLA", "NLVPMVATVA"]
+    w = mimicry.locus_weights(kras + others)
+    assert all(x == pytest.approx(1.0 / len(kras)) for x in w[:len(kras)])
+    assert all(x == 1.0 for x in w[len(kras):])
+    assert sum(w) == pytest.approx(1.0 + len(others))     # one locus for KRAS, one each for the rest
+
+
+def test_locus_weights_width_is_the_knob_and_a_short_match_is_not_a_locus():
+    a, b = "AAAAAACCCCC", "CCCCCGGGGGG"                   # share exactly 5
+    assert mimicry.locus_weights([a, b], w=5) == [0.5, 0.5]
+    assert mimicry.locus_weights([a, b], w=6) == [1.0, 1.0]
+
+
+def test_locus_weighting_shrinks_a_deposit_and_leaves_the_proteome_alone():
+    """`weights="locus"` corrects a SAMPLING bias, so it applies to assayed deposits and not to a
+    proteome, where every window appears exactly once by construction."""
+    _t, n_plain = mimicry.corpus_counts(comp="thymus")
+    _t, n_locus = mimicry.corpus_counts(comp="thymus", weights="locus")
+    assert 0.0 < n_locus < n_plain                        # recurrence really was there
+    _s, s_plain = mimicry.corpus_counts(comp="self")
+    _s, s_locus = mimicry.corpus_counts(comp="self", weights="locus")
+    assert s_locus == s_plain                             # and the proteome is untouched
+
+
+def test_weighted_density_is_still_a_density():
+    spec = mimicry.corpus_spectrum(components=("thymus",), weights="locus")
+    v = mimicry.corpus_R(["GILGFVFTL", "SIINFEKL", "NLVPMVATV"], spec)
+    assert all(0.0 <= r["thymus"] <= 1.0 for r in v)
+
+
+def test_an_unknown_weighting_is_refused_rather_than_ignored():
+    with pytest.raises(ValueError, match="weights must be"):
+        mimicry.corpus_counts(comp="thymus", weights="expression")
