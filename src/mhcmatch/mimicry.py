@@ -113,13 +113,35 @@ def params(cls: str = "mhc1") -> dict:
     return p
 
 
-def masks(length: int) -> dict[str, list[int]]:
-    """Positions each channel counts substitutions over, for a peptide of this length.
+def masks(length: int, cls: str = "mhc1", peptide: str | None = None,
+          register: int | None = None) -> dict[str, list[int]]:
+    """Positions each channel counts substitutions over, for one peptide.
 
-    ``anchor`` is :data:`mhcmatch.complement.ANCHORS` -- the same five positions the shipped role
-    model calls MHC-facing -- and ``tcr`` is its complement, so the two channels partition the
-    peptide and no position is counted twice."""
-    anc = {i % length for i in ANCHORS}
+    ``anchor`` is the MHC-facing set and ``tcr`` is its complement, so the two channels partition
+    the peptide and no position is counted twice.
+
+    **The two classes take their anchors from different places, and the class is never inferred.**
+    Class I is anchored at fixed peptide positions (:data:`mhcmatch.complement.ANCHORS`, the same
+    five the shipped role model calls MHC-facing), so ``length`` alone determines the split. A
+    class-II ligand is anchored by a 9-mer core that **floats** inside an 11--25-mer, so its split
+    is a function of the *register*, not the length: pass ``cls="mhc2"`` with the ``peptide``, and
+    optionally a ``register`` to pin the frame instead of using the allele-agnostic heuristic
+    (:func:`mhcmatch.complement.mhc2_anchors`). Reading a class-II ligand on the class-I layout
+    labels the wrong residues as anchors and returns a confident, wrong face.
+
+    >>> masks(9)["anchor"]
+    [0, 1, 2, 7, 8]
+    >>> masks(15, "mhc2", "AAAKFVAAWTLKAAA")["anchor"]      # P1/P4/P6/P9 of the floating core
+    [4, 7, 9, 12]
+    """
+    if cls == "mhc2":
+        if peptide is None:
+            raise ValueError("masks(cls='mhc2') needs the peptide: the class-II anchor set is a "
+                             "function of the floating 9-mer register, not of the length")
+        from .complement import mhc2_anchors
+        anc = {i for i in mhc2_anchors(peptide, register) if 0 <= i < length}
+    else:
+        anc = {i % length for i in ANCHORS}
     return {"anchor": sorted(anc), "tcr": [i for i in range(length) if i not in anc]}
 
 
@@ -393,7 +415,7 @@ SHAPES: dict = {"viral": (2.25, 14.0), "self": (1.5, 24.0), "thymus": (2.25, 14.
 
 
 def corpus_R(peptides, refs: dict, cls: str = "mhc1", shapes: dict | None = None,
-             radius: int = 2, components=None) -> list[dict]:
+             radius: int = 2, components=None, registers=None) -> list[dict]:
     """``R = Z/(1+Z)`` per component over the **TCR face**, the Łuksza form.
 
     A neighbour *density* read as a soft sum over substitution distance rather than as a single
@@ -458,10 +480,11 @@ def corpus_R(peptides, refs: dict, cls: str = "mhc1", shapes: dict | None = None
 
     from seqtree import SearchParams
     out = []
-    for p in peptides:
+    for i, p in enumerate(peptides):
         row: dict = {}
         if all(c in AA for c in p):
-            sel = masks(len(p))["tcr"]
+            reg = registers[i] if registers is not None else None
+            sel = masks(len(p), cls, p, reg)["tcr"]
             q = "".join(p[i] for i in sel)
             for comp in (components or COMPONENTS):
                 key = (comp, "tcr", len(p))

@@ -204,3 +204,20 @@ def test_corpus_R_is_the_fitted_luksza_form():
             for d in (0, 1, 2)}
     r = [mimicry.corpus_R([pep], solo[d], components=("thymus",))[0]["thymus"] for d in (0, 1, 2)]
     assert r[0] > r[1] > r[2]
+
+
+@pytest.mark.parametrize("peptide", ["AAAKFVAAWTLKAAA", "PKYVKQNTLKLATGM", "GELIGILNAAKVPAD"])
+def test_class_ii_masks_follow_the_register_not_the_length(peptide):
+    """A class-II ligand is anchored by a 9-mer core that floats, so its face is a function of the
+    register. `masks` took only a length until 0.21.0 and `corpus_R` accepted `cls` and ignored it,
+    which read every class-II ligand on the class-I layout -- a confident, wrong face."""
+    from mhcmatch import complement
+
+    m = mimicry.masks(len(peptide), "mhc2", peptide)
+    assert sorted(m["anchor"] + m["tcr"]) == list(range(len(peptide)))
+    assert m["anchor"] == sorted(complement.mhc2_anchors(peptide))
+    assert m["anchor"] != mimicry.masks(len(peptide))["anchor"]      # not the class-I split
+
+    # pinning the register moves the face; the class-I mask cannot
+    shifted = mimicry.masks(len(peptide), "mhc2", peptide, register=1)
+    assert shifted["anchor"] == [1, 4, 6, 9]
