@@ -1228,7 +1228,7 @@ def main(argv=None):
     rk.add_argument("--core", action="store_true",
                     help="append the NetMHCpan-style 9-residue binding core, its 0-based offset "
                          "and the register behind it: for class I both anchors are held and the "
-                         "central bulge gives way (a gap pad at 8-mers), for class II the "
+                         "central bulge gives way (an 8-mer is its own core), for class II the "
                          "register-anchored 9-mer. Reported, never scored")
     rk.add_argument("--no-self", action="store_true",
                     help="with --extended/--annotate, skip the host proteome. It is the expensive "

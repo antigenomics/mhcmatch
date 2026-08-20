@@ -123,17 +123,25 @@ The binding core
 
 ``--core`` appends ``core``, ``core_offset`` and ``core_source`` to ``rank``, ``predict`` and
 ``neoag``; the cassette map (``vector --map``) carries ``core`` unconditionally, beside the
-``core_start`` / ``core_end`` it already had. The core is **always nine residues**, so a column of
-them lines up, and it follows NetMHCpan's definition --- "the minimal 9 amino acid binding core
-directly in contact with the MHC" --- with ``core_offset`` its ``Of``, 0-based.
+``core_start`` / ``core_end`` it already had. It follows NetMHCpan's definition --- "the minimal 9
+amino acid binding core directly in contact with the MHC (i.e. excluding potential insertions)" ---
+with ``core_offset`` its ``Of``, 0-based.
+
+**The core is residues, never a padded frame.** The parenthesis in that definition is the operative
+part: where an alignment to a 9-mer motif needs a gap, the inserted position is not part of the
+core. So it is nine residues whenever the peptide can fill nine --- every class-II core, and a
+class-I 9-, 10- or 11-mer --- and the peptide's own residues when it cannot, so a class-I 8-mer's
+core is the 8-mer. A gap character would not be neutral in an amino-acid column in any case:
+``B`` is Asx in IUPAC, and a reader would take it for a real ambiguity code.
 
 **Class I holds both anchors and lets the middle give way.** The footprint is
 :data:`mhcmatch.diffusion.MHC1_CORE` resolved by :func:`mhcmatch.store.mhc1_positions` --- the same
 mapping the scorer uses, so the reported core is the residues the model actually read. A 9-mer is
 its own core. A 10- or 11-mer drops one or two central residues, which is NetMHCpan's ``Gp``/``Gl``
-deletion. An 8-mer has one slot too few, the ``+5`` and ``-4`` positions collide, and the loser
-takes ``seqtree.layout.GAP`` (``B``) --- their ``Ip``/``Il`` insertion. ``core_offset`` is 0: the
-footprint is anchored at both ends, so there is no N-terminal protrusion to report.
+deletion. Below nine the ``+5`` and ``-4`` positions collide and the losing *slot* is dropped ---
+not a residue --- so every residue still appears exactly once and an 8-mer's core is the 8-mer.
+``core_offset`` is 0: the footprint is anchored at both ends, so there is no N-terminal protrusion
+to report.
 
 **Class II is the register-anchored 9-mer**, ``peptide[Of:Of+9]``, matching NetMHCIIpan's ``Core``
 and ``Of``. Which register produced it is a column and not a footnote, because the two available

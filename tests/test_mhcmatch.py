@@ -70,10 +70,14 @@ def test_decompose_mhc2():
 
 # -- the reported binding core (NetMHCpan `core` / `Of`) ---------------------
 @pytest.mark.parametrize("pep", ["SIINFEKL", "GILGFVFTL", "GILGFVFTLA", "GILGFVFTLAV"])
-def test_binding_core_is_always_nine_wide_for_class_i(pep):
-    # A column of cores has to line up, so the width is fixed at every admitted class-I length.
+def test_binding_core_is_residues_and_never_a_padded_frame(pep):
+    """NetMHCpan's core excludes insertions, so a short peptide is not padded up to 9. A gap symbol
+    here would not be neutral either: `B` is Asx in IUPAC and would read as a real residue."""
+    from seqtree import layout
     core, off = mhcmatch.store.binding_core(pep, "mhc1")
-    assert len(core) == 9 and off == 0
+    assert layout.GAP not in core and core.isalpha()
+    assert len(core) == min(9, len(pep)) and off == 0
+    assert set(core) <= set(pep)                     # nothing invented
 
 
 def test_binding_core_class_i_drops_the_bulge_and_keeps_both_ends():
@@ -85,14 +89,13 @@ def test_binding_core_class_i_drops_the_bulge_and_keeps_both_ends():
     assert mhcmatch.store.binding_core("GILGFVFTLAV", "mhc1")[0] == "GILGF" + "TLAV"   # 11-mer: two
 
 
-def test_binding_core_class_i_pads_an_eight_mer_at_the_collision():
-    # <9 gains a pad (their Ip/Il insertion). It lands where `mhc1_positions` reports a collision,
-    # i.e. between the two ends, which is the only place a residue is not already spoken for.
-    from seqtree import layout
-    core, _ = mhcmatch.store.binding_core("SIINFEKL", "mhc1")
-    assert core == "SIINF" + layout.GAP + "EKL"
-    assert core.count(layout.GAP) == 1
-    assert core.replace(layout.GAP, "") == "SIINFEKL"     # every residue survives, none twice
+def test_binding_core_class_i_below_nine_is_the_peptide_itself():
+    # The `+5`/`-4` collision costs a slot, not a residue: `mhc1_positions` returns None for the
+    # loser and that slot is dropped, so every residue still appears exactly once and nothing is
+    # duplicated to reach a fixed width.
+    for pep in ("SIINFEKL", "SIINFEK"):                   # 8-mer, and a 7-mer with two collisions
+        core, off = mhcmatch.store.binding_core(pep, "mhc1")
+        assert core == pep and off == 0
 
 
 def test_binding_core_class_ii_is_the_register_anchored_nine_mer():

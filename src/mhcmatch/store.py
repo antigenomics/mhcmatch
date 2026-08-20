@@ -176,28 +176,33 @@ def anchor_indices(peptide: str, cls: str, register_start: int | None = None) ->
     return tuple(sorted(layout.spec_for(cls).resolve(len(peptide))))
 
 
-#: Width of the reported binding core, both classes. NetMHCpan calls its class-I core "the minimal 9
-#: amino acid binding core directly in contact with the MHC" and NetMHCIIpan's core is the 9-mer
-#: register; :data:`mhcmatch.ligand.CORE_LEN` is the same 9 for the class-II span geometry.
-CORE_WIDTH: int = 9
+#: Length of the class-II binding core, and the length of a class-I core whenever the peptide is
+#: long enough to fill one. Same 9 as :data:`mhcmatch.ligand.CORE_LEN`.
+CORE_LEN: int = 9
 
 
 def binding_core(peptide: str, cls: str, register_start: int | None = None) -> tuple:
-    """The 9-residue binding core of ``peptide`` and its 0-based offset, NetMHCpan-style.
+    """The binding core of ``peptide`` and its 0-based offset, NetMHCpan-style.
 
-    Returns ``(core, offset)``; ``("", -1)`` when the peptide is too short to carry one. The core is
-    **always** :data:`CORE_WIDTH` characters, so a column of them lines up.
+    Returns ``(core, offset)``; ``("", -1)`` when the peptide is too short to carry one.
 
-    **Class I** is the signed footprint :data:`mhcmatch.diffusion.MHC1_CORE` — front P1-P5 plus
-    C-terminal P-4..P-1 — resolved by :func:`mhc1_positions`, which is the same mapping the scorer
-    uses, so the reported core is the residues the model actually read. Both anchors are therefore
-    held in place and the middle gives way, which is NetMHCpan's rule: a peptide longer than 9 loses
-    its central bulge (their ``Gp``/``Gl`` deletion) and a peptide shorter than 9 gains a pad (their
-    ``Ip``/``Il`` insertion). At L=9 the core is the peptide. At L=10 or 11 index 4 or 4-5 drop out.
-    At L=8 the ``+5`` and ``-4`` anchors collide, :func:`mhc1_positions` yields ``None`` for the
-    loser, and that slot takes ``seqtree.layout.GAP`` -- the symbol reserved for exactly this and
-    used nowhere else. The offset is 0: the footprint is anchored at both ends, so there is no
-    N-terminal protrusion to report and nothing here corresponds to NetMHCpan's ``Of > 0``.
+    **The core is residues, never a padded frame.** NetMHCpan defines theirs as "the minimal 9 amino
+    acid binding core directly in contact with the MHC (i.e. excluding potential insertions)", and
+    the parenthesis is the operative part: where an alignment to a 9-mer motif needs a gap, the
+    inserted position is not part of the core. So this returns :data:`CORE_LEN` residues whenever the
+    peptide can fill one and the peptide's own residues when it cannot -- 9 for a class-I 9/10/11-mer
+    and for every class-II core, 8 for a class-I 8-mer. A gap character in an amino-acid column would
+    not be neutral anyway: ``B`` is Asx in IUPAC, so a reader would take it for a real ambiguity.
+
+    **Class I** is the signed footprint :data:`mhcmatch.diffusion.MHC1_CORE` -- front P1-P5 plus
+    C-terminal P-4..P-1 -- resolved by :func:`mhc1_positions`, which is the same mapping the scorer
+    uses, so the reported core is the residues the model actually read. Both ends are therefore held
+    and the middle gives way, which is NetMHCpan's rule: at L=9 the core is the peptide; at L=10 or
+    11 the central one or two residues drop out, their ``Gp``/``Gl`` deletion. Below 9 the ``+5`` and
+    ``-4`` positions collide, :func:`mhc1_positions` yields ``None`` for the loser, and that slot is
+    dropped rather than padded -- every residue still appears exactly once, so an 8-mer's core is the
+    8-mer. The offset is 0: the footprint is anchored at both ends, so there is no N-terminal
+    protrusion and nothing here corresponds to NetMHCpan's ``Of > 0``.
 
     **Class II** is ``peptide[s:s+9]`` at the register ``s``, and the offset is ``s`` -- the same
     quantity NetMHCIIpan reports as ``Of``, "starting position offset of the optimal binding core
@@ -206,23 +211,25 @@ def binding_core(peptide: str, cls: str, register_start: int | None = None) -> t
     disagree often on real ligands (see :func:`anchor_indices`), which is why every caller that
     emits a core also emits where the register came from.
 
-    >>> binding_core("SIINFEKL", "mhc1")            # 8-mer: one gap, both ends intact
-    ('SIINFBEKL', 0)
+    >>> binding_core("SIINFEKL", "mhc1")            # 8-mer: its own core, nothing inserted
+    ('SIINFEKL', 0)
     >>> binding_core("GILGFVFTL", "mhc1")           # 9-mer: the core is the peptide
     ('GILGFVFTL', 0)
+    >>> binding_core("GILGFVFTLA", "mhc1")          # 10-mer: the central residue drops out
+    ('GILGFFTLA', 0)
     >>> binding_core("PKYVKQNTLKLAT", "mhc2")       # HA306-318, heuristic register
     ('YVKQNTLKL', 2)
     """
     if cls == "mhc2":
         s = _mhc2_register(peptide) if register_start is None else register_start
-        if s is None or not 0 <= s <= len(peptide) - CORE_WIDTH:
+        if s is None or not 0 <= s <= len(peptide) - CORE_LEN:
             return "", -1
-        return peptide[s:s + CORE_WIDTH], int(s)
+        return peptide[s:s + CORE_LEN], int(s)
     from .diffusion import MHC1_CORE
     idx = mhc1_positions(len(peptide), MHC1_CORE)
     if idx is None:
         return "", -1
-    return "".join(layout.GAP if i is None else peptide[i] for i in idx), 0
+    return "".join(peptide[i] for i in idx if i is not None), 0
 
 
 def resolve_anchor_index(peptide: str, cls: str, anchor: int):

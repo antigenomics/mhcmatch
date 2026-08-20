@@ -14,16 +14,22 @@ versioning is [SemVer](https://semver.org).
   gain the flag; the cassette map (`vector --map`) carries `core` unconditionally, beside the
   `core_start` / `core_end` it already had but never had residues for. Three columns — `core`,
   `core_offset`, `core_source` — following NetMHCpan's definition, "the minimal 9 amino acid binding
-  core directly in contact with the MHC", with `core_offset` its `Of`, 0-based. **Always nine
-  residues**, so a column of them lines up.
+  core directly in contact with the MHC (i.e. excluding potential insertions)", with `core_offset`
+  its `Of`, 0-based.
+
+  **The core is residues, never a padded frame.** The parenthesis in that definition is the operative
+  part: where an alignment to a 9-mer motif needs a gap, the inserted position is not part of the
+  core. So it is nine residues whenever the peptide can fill nine — every class-II core, and a
+  class-I 9-, 10- or 11-mer — and the peptide's own residues when it cannot. A gap character would
+  not be neutral in an amino-acid column in any case: `B` is Asx in IUPAC, so a reader would take it
+  for a real ambiguity code.
 
   **Class I holds both anchors and lets the middle give way.** `mhcmatch.store.binding_core` resolves
   `diffusion.MHC1_CORE` through `store.mhc1_positions` — the same mapping the scorer uses, so the
   reported core is the residues the model actually read. A 9-mer is its own core; a 10- or 11-mer
-  drops one or two central residues (NetMHCpan's `Gp`/`Gl` deletion); an 8-mer has one slot too few,
-  the `+5` and `-4` positions collide, and the loser takes `seqtree.layout.GAP` — their `Ip`/`Il`
-  insertion. That gap symbol has been defined and documented as the "neutral gap-pad for fixed-width
-  class-I frames" since seqtree shipped it, and used by nothing until now.
+  drops one or two central residues (NetMHCpan's `Gp`/`Gl` deletion); below nine the `+5` and `-4`
+  positions collide and the losing *slot* is dropped rather than padded — not a residue — so every
+  residue still appears exactly once and an 8-mer's core is the 8-mer.
 
   **Class II is the register-anchored 9-mer**, matching NetMHCIIpan's `Core`/`Of`. Which register
   produced it is a column rather than a footnote, because the two disagree often on real ligands:
