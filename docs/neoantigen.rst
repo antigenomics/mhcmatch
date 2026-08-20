@@ -275,7 +275,12 @@ model.
 ``variant_type`` is carried for the cassette layer rather than for the score: a frameshift or fusion
 product is foreign over a stretch rather than at one position, so it fails differently from a
 missense and earns a quota of its own in
-:func:`mhcmatch.portfolio.compose` (:doc:`portfolio`). (``physchem_ipred`` was a column here through 0.21.0; the module behind it was removed in
+:func:`mhcmatch.portfolio.compose` (:doc:`portfolio`). It is the **product class** ---
+``missense``, ``frameshift``, ``inframe_deletion``, ``fusion``, ``isoform``, ``cnv`` --- and not
+the header's ``type`` field, which is provenance (``Somatic``) and says nothing about what the
+variant makes. Through 0.24.0 it was the latter, which sent every candidate of a real donor to the
+non-conventional arm and left the class-I and class-II arms unfillable; see
+:func:`mhcmatch.predict.variant_product`. (``physchem_ipred`` was a column here through 0.21.0; the module behind it was removed in
 0.22.0 --- :ref:`ipred-legacy`.) ``--extended`` appends the remaining mimicry channels and ``--annotate`` what each candidate
 resembles; both add **columns only** and never change the ordering.
 

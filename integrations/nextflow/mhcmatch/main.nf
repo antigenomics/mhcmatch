@@ -28,7 +28,7 @@ process MHCMATCH_PREDICT {
     label 'process_medium'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.24.0"
+    container "mhcmatch:0.24.1"
 
     input:
     tuple val(meta), path(fasta), val(alleles), val(cls)
@@ -84,7 +84,7 @@ process MHCMATCH_RANK {
     label 'process_medium'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.24.0"
+    container "mhcmatch:0.24.1"
 
     // `rank` reads the known-epitope sets, the mimicry references and the expression tables on top
     // of the ligand panel. The image bakes them (`bootstrap --reference`); a bare `bootstrap` image
@@ -150,7 +150,7 @@ process MHCMATCH_NEOAG {
     label 'process_single'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.24.0"
+    container "mhcmatch:0.24.1"
 
     input:
     tuple val(meta), path(peptides), val(cls)
@@ -199,7 +199,7 @@ process MHCMATCH_MIMICRY {
     label 'process_medium'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.24.0"
+    container "mhcmatch:0.24.1"
 
     input:
     tuple val(meta), path(peptides), val(cls)
@@ -246,7 +246,7 @@ process MHCMATCH_VECTOR {
     label 'process_high'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.24.0"
+    container "mhcmatch:0.24.1"
 
     // `--screen` builds one whole-proteome index per register length: ~12 GB peak each and a few
     // minutes apiece, which is why this process carries `process_high` and why the flag is a param.
@@ -283,6 +283,11 @@ process MHCMATCH_VECTOR {
     // Quota composition: fill declared slot budgets so that at least k of each arm is expected to
     // respond, rather than taking the ranked top. Off unless a quota is given, because the arms and
     // their targets are a trial-design decision and there is no defensible default for them.
+    //
+    // With a quota, `.cassette.faa` / `.cassette.fna` carry TWO records -- `cassette_composed` and
+    // `cassette_topk`, the same slot budgets filled by score alone -- so the comparison is on the
+    // recipient's own candidates rather than asserted. The map describes the composed one. Without
+    // a quota each file carries the single `cassette` record it always did.
     def quota  = params.mhcmatch_vector_quota
                      ? "--quota '${params.mhcmatch_vector_quota}' " +
                        "--block-live ${params.mhcmatch_vector_block_live ?: 0.5} " +

@@ -338,8 +338,10 @@ def units_from_context(rows, records, length: int = 27, cls: str = "mhc1") -> li
                         gene=var["gene_name"] or str(r.get("gene", "")).strip(),
                         allele=str(r.get("allele", "")).strip(), p=p,
                         cls=str(r.get("cls", "") or cls),
-                        kind=str(r.get("kind", "") or r.get("variant_type", "")
-                                 or var.get("type", "") or "missense")))
+                        # NOT `var["type"]`: that is provenance (`Somatic`), and reading it here
+                        # charged every candidate to the non-conventional arm. `rank` now emits the
+                        # product class in `variant_type` (predict.variant_product).
+                        kind=str(r.get("kind", "") or r.get("variant_type", "") or "missense")))
     return out
 
 

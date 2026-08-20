@@ -6,6 +6,52 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.24.1] - 2026-08-21
+
+### Fixed
+
+- **`variant_type` was the header's provenance, not the product, so the non-conventional quota could
+  never bite.** A pipeline window header carries `Somatic` in its `type` field and the consequence
+  (`missense_variant`, `frameshift_variant`, ...) in `subtype`; `rank` emitted the former.
+  :func:`mhcmatch.portfolio.default_arm` asks only whether a unit's kind is `"missense"`, so on any
+  real donor FASTA **every** candidate was charged to `nonconventional` — the `mhc1` and `mhc2` arms
+  were unfillable and `--quota mhc1=14:2,...` was unsatisfiable. Measured on a 36-donor cohort:
+  5,948 of 6,437 class-I windows (92.4 %) are missense and all of them were misfiled.
+
+  New `predict.variant_product(var)` returns the product class — `missense` / `frameshift` /
+  `inframe_deletion` / ... for a `Somatic:` window, the lower-cased type (`fusion`, `isoform`,
+  `cnv`) otherwise, because a fusion is non-conventional whether its junction is in frame or not.
+  An unmapped consequence passes through lower-cased rather than defaulting to missense. Both
+  `rank` entry points use it, and `vector.units_from_context` no longer falls back to `var["type"]`.
+
+  Every unit test of the arms built `Unit(kind=...)` by hand, which is why all of them passed; the
+  new one starts at a real header.
+
+- **`vector --quota` composed a cassette and then built the sequence from `select` anyway.** It
+  reported and did not act: `--fasta`, `--fasta-nt` and `--map` all described the n0 stopping rule's
+  output, so the composition was computed and discarded. With a quota the FASTA files now carry
+  **two records** — `cassette_composed` and `cassette_topk`, the same slot budgets filled by score
+  alone — and the map describes the composed one. Without a quota the output is byte-identical to
+  0.24.0. The report's section names are qualified (`composed:unit`, `topk:cassette`) only when
+  there are two.
+
+### Changed
+
+- **`parse_variant_header` reads the three non-`Somatic` families instead of skipping them.**
+  `Fusion:` and `CNV:` are colon-delimited with their own field order, `Isoform:` is pipe-delimited;
+  each order was pinned against the pipeline's own `.epitopes.*.tsv` columns rather than inferred.
+  They yield gene, transcript and — for `Isoform:` and `CNV:` — a real `tpm`. `Fusion:` carries
+  **FFPM, not TPM**, so it lands under its own `ffpm` key and never in the slot `expr` is scored
+  from. These are 7.6 % of a donor cohort's windows and *all* of its non-conventional ones, i.e.
+  exactly the pool a quota's third arm draws from, and they were taking imputed expression under the
+  model's largest coefficient. The returned dict is now the union of all four families' keys, so its
+  shape does not depend on which header it came from.
+
+- Nextflow: `mhcmatch_vector_quota`, `mhcmatch_vector_block_live`, `mhcmatch_vector_evenness` and
+  `mhcmatch_prevalence` were read by `main.nf` and declared nowhere; they now carry defaults and
+  documentation in `nextflow.config`. The `MHCMATCH_RANK` resource note still described 0.21.0's
+  thymus-only corpus term.
+
 ## [0.24.0] - 2026-08-20
 
 ### Changed

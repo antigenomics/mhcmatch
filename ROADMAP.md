@@ -451,6 +451,44 @@ better on 7 of 9 screens.
    `grand_versions.md`.
 3. **HiTIDE loses 0.0128 against v2** on 234 rows / 37 positives, and that one is not explained by
    coverage (77.8 %, every positive present). Recorded as measured.
+4. **Mouse `viral` is one parameter away.** `mimicry.corpus_counts` calls `mimics.load_peptides`
+   without a `species=`, so the viral channel is always human — but the deposit carries **3,639
+   `MusMusculus` rows** of 82,368 (`~/hf/pmhc_data/ligandome/viral_foreign_iedb.tsv.gz`), so a mouse
+   arm is a keyword argument, not new data. It is *not* a free change: it moves a fitted feature's
+   scale, so it ships only behind an arm-vs-arm on the mouse screens, like any refit. The thymic
+   deposit is 53,878 rows and **100 % human**, so item 1 above genuinely needs data.
+
+## 5b-3. EPIC — renaming the shipped scorer (v0.25.0, planned)
+
+The author's name for the model, decided 2026-08-21: **EPIC** — **E**xpression, **P**resentation,
+**I**mmunogenic **C**omplementarity. It names the fitted block structure rather than one letter per
+term, which is what `GRAND`'s successive letters stopped doing once the blocks became the unit of
+inference:
+
+| EPIC letter | block | columns |
+|---|---|---|
+| `E` | `expression` | `expr`, `expr_missing` |
+| `P` | `presentation` | `binder`, `occupancy` |
+| `IC` | `physchem` + `corpus` | `C_phys_rose`, `C_phys_hydrop`, `C_corpus_thymus`, `C_corpus_self`, `C_corpus_viral` |
+
+The letters are a mnemonic for the blocks, **not** their entry order — the fit enters presentation
+first, then expression, and that order is what every conditional coefficient in `grand_corpus.md`
+is reported against. Renaming must not quietly reorder it.
+
+**A pure rename: no coefficient, feature or number moves.** Scope, measured 2026-08-21: ~70
+occurrences in the library (`rank.py`, `cli.py`, `complement.py`, `luksza.py`, `data/aggregate_mhc1.json`,
+seven `docs/*.rst`, `SKILL.md`, `README.md`, the nextflow module, two test files), ~60 in
+`2026-mhcmatch-benchmark` (`MODELS.md`, `ROADMAP.md`, `SOURCES.md`, `bench/immuno/grand_*.py`,
+`bench/results/grand_*.md`), ~88 in `2026-mhcmatch` (`appendix/grand_*.tex`, `chapters/07a-grand.tex`,
+`eq:grand`, `tab:grand-*`). File and label renames on top.
+
+**`MODELS.md` keeps `GRAND` as the former name**, exactly as `V` survived the `ipred` removal: a
+result recorded against 0.21.0–0.24.x cites a model this package used to call something else, and a
+registry that deletes the old name cannot say what those numbers were produced by. Keep
+`"version": 3` in the artifact for the same reason — the v2-vs-v3 head-to-head has to stay readable.
+
+Deferred out of 0.24.1 on purpose: the `all_epitopes_210826_ms` hand-off ships first, so the
+deliverable carries one name rather than straddling two.
 
 ## 5c. Mimicry as immune-response risk (v0.12.0, 2026-08-17)
 

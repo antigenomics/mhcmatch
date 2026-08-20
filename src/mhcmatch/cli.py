@@ -1008,18 +1008,33 @@ def cmd_vector(a):
         print(f"# composed {len(comp.units)} unit(s) over {len(quotas)} arm(s); joint "
               f"P(all quotas met) {comp.joint:.4f} at q={a.block_live}", file=sys.stderr)
 
-    cas = None
-    if len(sel.units) >= 2:
-        store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
-        alleles = _read_alleles(a.alleles) or sorted({u.allele for u in sel.units if u.allele})
-        binder = V.store_binder(store, alleles, cls=a.cls)
-        cas = V.order(sel.units, binder=binder, lengths=lengths, alleles=alleles,
-                      objective=a.objective,
-                      binder_threshold=a.binder_threshold, threshold=a.threshold)
-    elif sel.units:
-        # One unit has no junctions, so `order` returns before it ever calls `binder` -- building the
-        # panel and its calibrators here would be ~10 s spent to lay out a cassette of one.
-        cas = V.order(sel.units, binder=None)
+    # Which unit set becomes a *sequence*. Without `--quota` it is `select`'s, as it always was.
+    # With `--quota` the composed set is the deliverable and the same slot budgets filled by score
+    # alone ride along as a second cassette -- because "a portfolio is not a ranking" is a claim that
+    # has to be laid out on the caller's own candidates, not asserted. Until 0.24.1 `--quota`
+    # composed a set and then built the sequence from `select` anyway, so it reported and did not act.
+    plans = [("cassette", sel.units)]
+    if comp is not None:
+        plans = [("cassette_composed", comp.units),
+                 ("cassette_topk", [u for arm in quotas for u in topk[arm]])]
+
+    built, binder, alleles = [], None, None
+    for name, us in plans:
+        if len(us) >= 2:
+            if binder is None:
+                store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
+                alleles = _read_alleles(a.alleles) or sorted(
+                    {u.allele for _, p_ in plans for u in p_ if u.allele})
+                binder = V.store_binder(store, alleles, cls=a.cls)   # ~10 s, paid once for both
+            built.append((name, V.order(us, binder=binder, lengths=lengths, alleles=alleles,
+                                        objective=a.objective,
+                                        binder_threshold=a.binder_threshold,
+                                        threshold=a.threshold)))
+        elif us:
+            # One unit has no junctions, so `order` returns before it ever calls `binder` -- building
+            # the panel and its calibrators here would be ~10 s spent to lay out a cassette of one.
+            built.append((name, V.order(us, binder=None)))
+    cas = built[0][1] if built else None
 
     o = _Out(a, "row")
     try:
@@ -1069,23 +1084,28 @@ def cmd_vector(a):
             if not t["kept"]:
                 o.row("not selected", "", t["gene"], f"{t['p']:.4f}",
                       f"{t['allele']} threshold {t['threshold']:.4f}")
-        if cas:
-            for i, (u, (lo, hi)) in enumerate(zip(cas.units, cas.boundaries), 1):
-                o.row("unit", i, u.gene, u.allele, f"{lo}-{hi} p={u.p:.4f}")
-            for j in cas.junctions:
-                o.row("junction", j["left"] + 1, f"{j['left'] + 1}|{j['right'] + 1}",
+        for name, c in built:
+            # One cassette keeps the plain section names it has always had; two qualify them, so a
+            # reader can tell the composed layout from the score-only one without counting rows.
+            pre = "" if len(built) == 1 else f"{name.split('_', 1)[-1]}:"
+            for i, (u, (lo, hi)) in enumerate(zip(c.units, c.boundaries), 1):
+                o.row(f"{pre}unit", i, u.gene, u.allele,
+                      f"{lo}-{hi} p={u.p:.4f} {u.kind} {u.cls}")
+            for j in c.junctions:
+                o.row(f"{pre}junction", j["left"] + 1, f"{j['left'] + 1}|{j['right'] + 1}",
                       f"{j['score']:.4f}", f"{j['peptide']} at {j['offset']}")
-            o.row("cassette", len(cas.units), f"spacer={cas.spacer}", f"{cas.cost:.4f}",
-                  f"{len(cas.sequence)} aa, worst junction {cas.worst_junction:.4f}")
-            o.row("sequence", "", "", cas.sequence, "")
+            o.row(f"{pre}cassette", len(c.units), f"spacer={c.spacer}", f"{c.cost:.4f}",
+                  f"{len(c.sequence)} aa, worst junction {c.worst_junction:.4f}")
+            o.row(f"{pre}sequence", "", "", c.sequence, "")
     finally:
         o.close()
 
-    if cas and a.fasta:
+    if built and a.fasta:
         with open(a.fasta, "w") as fh:
-            fh.write(f">cassette units={len(cas.units)} spacer={cas.spacer} "
-                     f"objective={a.objective}\n{cas.sequence}\n")
-        print(f"# wrote {a.fasta}", file=sys.stderr)
+            for name, c in built:
+                fh.write(f">{name} units={len(c.units)} spacer={c.spacer} "
+                         f"objective={a.objective} n0={a.n0:g}\n{c.sequence}\n")
+        print(f"# wrote {a.fasta}: {len(built)} cassette(s)", file=sys.stderr)
 
     if cas and (a.map_tsv or a.map_json):
         alleles1 = _read_alleles(a.alleles) or sorted({u.allele for u in cas.units if u.allele})
@@ -1110,13 +1130,15 @@ def cmd_vector(a):
             if path:
                 print(f"# wrote {path}", file=sys.stderr)
 
-    if cas and a.fasta_nt:
-        cds = V.back_translate(cas.sequence)
+    if built and a.fasta_nt:
         with open(a.fasta_nt, "w") as fh:
-            fh.write(f">cassette_cds units={len(cas.units)} spacer={cas.spacer} "
-                     f"nt={len(cds)}\n{cds}\n")
-        print(f"# wrote {a.fasta_nt}: {len(cds)} nt, "
-              f"{len(V.slippery_sites(cds))} slippery site(s) remaining", file=sys.stderr)
+            for name, c in built:
+                cds = V.back_translate(c.sequence)
+                fh.write(f">{name}_cds units={len(c.units)} spacer={c.spacer} "
+                         f"nt={len(cds)}\n{cds}\n")
+                print(f"# {a.fasta_nt}: {name} {len(cds)} nt, "
+                      f"{len(V.slippery_sites(cds))} slippery site(s) remaining", file=sys.stderr)
+        print(f"# wrote {a.fasta_nt}", file=sys.stderr)
 
 
 def cmd_deslip(a):
