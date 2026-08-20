@@ -516,12 +516,66 @@ def apply_log_odds(counts: dict, source: str, weights) -> np.ndarray:
     return counts[source] @ w
 
 
-def design(peptides, species: str = "human", cls: str = "mhc1", registers=None) -> np.ndarray:
+#: Index of cysteine, the residue :func:`score` can be asked to go blind to -- see :func:`_mask_cys`.
+_CYS = _AAI["C"]
+
+
+def _mask_cys(log_odds: dict, source: dict) -> dict:
+    """The fitted log-odds tables with every cysteine cell zeroed -- a copy, never in place.
+
+    **Why this exists.** :mod:`mhcmatch.posbayes` zeroes cysteine in every shipped table *by
+    construction* and says why: the corpus's positives are synthetic assayed peptides and its
+    negatives are mass-spectrometry-eluted ligands, and free cysteine is systematically
+    under-recovered by MS, so the residue marks the *platform* rather than the label. This module
+    was fitted without that mask, and the artifact is large: the vendored human class-I tables give
+    cysteine ``+1.62`` to ``+2.63`` nats, the largest cell in all thirteen, against a mean
+    ``|cell|`` of 0.24--0.41. One V->C substitution in ``GILGFVFTL`` moves :func:`score` by
+    ``+2.90`` -- 1.8x the entire score of the unsubstituted epitope -- where
+    :func:`mhcmatch.posbayes.llr` moves by ``+0.06``.
+
+    The mask is **off by default** because every recorded number for this model was produced
+    without it; turning it on is a different model and is reported as one.
+
+    ``pair`` is 20x20 flattened, so both the first and the second residue of a dipeptide have to be
+    zeroed, not just one.
+    """
+    out = {}
+    for name, w in log_odds.items():
+        v = np.asarray(w, dtype=np.float64).copy()
+        if source[name] == "pair":
+            v = v.reshape(20, 20)
+            v[_CYS, :] = 0.0
+            v[:, _CYS] = 0.0
+            v = v.reshape(-1)
+        else:
+            v[_CYS] = 0.0
+        out[name] = v
+    return out
+
+
+def _block_mask(features, cls: str, names) -> np.ndarray:
+    """Boolean column mask selecting the features of ``names`` out of the full design."""
+    b = blocks(cls)
+    if isinstance(names, str):
+        names = (names,)
+    names = tuple(names)
+    if not names:
+        raise ValueError(f"blocks=() selects nothing; pass a subset of {tuple(b)} or None")
+    unknown = [n for n in names if n not in b]
+    if unknown:
+        raise ValueError(f"unknown feature block(s) {unknown} (expected {tuple(b)})")
+    want = {c for n in names for c in b[n]}
+    return np.array([f in want for f in features], dtype=bool)
+
+
+def design(peptides, species: str = "human", cls: str = "mhc1", registers=None,
+           mask_cys: bool = False) -> np.ndarray:
     """The (n, k) design matrix in :func:`feature_names` order, before standardization."""
     t = table(species, cls)
     fit = fitted(cls)
+    lo = _mask_cys(t["log_odds"], t["log_odds_source"]) if mask_cys else t["log_odds"]
     feats, counts = encode(peptides, cls, registers)
-    cols = [apply_log_odds(counts, fit[c], t["log_odds"][c]) if c in fit else feats[c]
+    cols = [apply_log_odds(counts, fit[c], lo[c]) if c in fit else feats[c]
             for c in t["features"]]
     return np.column_stack(cols)
 
@@ -573,26 +627,51 @@ def features(peptide: str, species: str = "human", cls: str = "mhc1") -> dict[st
     return dict(zip(feature_names(species, cls), design([peptide], species, cls)[0].tolist()))
 
 
-def score(peptides, species: str = "human", cls: str = "mhc1", registers=None) -> np.ndarray:
+def score(peptides, species: str = "human", cls: str = "mhc1", registers=None,
+          blocks=None, mask_cys: bool = False) -> np.ndarray:
     """Log-odds of immunogenic vs not, one per peptide. **Carries no prior.**
 
     Larger is more immunogenic. The training corpus's own base rate is divided out, so this is
     directly comparable across settings and composes with any prevalence via :func:`posterior`.
 
     Accepts a single string as well, and still returns an array of length 1 -- so a caller never has
-    to branch on whether they passed one peptide or a million."""
+    to branch on whether they passed one peptide or a million.
+
+    ``blocks`` restricts the score to a subset of :data:`BLOCKS`. The head is linear over a fixed
+    block partition, so this is an **exact partial sum of the shipped score**, not a refit: the
+    parts add back to the whole, up to the constant offset that belongs to no block. With
+    ``off = logistic.intercept - log(prev / (1 - prev))`` from :func:`table`,
+
+        score(p, blocks=("phys", "role", "pot", "motif")) + score(p, blocks=("aa", "kmer")) + off
+            == score(p)
+
+    exactly. The offset is dropped from a block score deliberately -- an intercept is not
+    attributable to any block, and a constant cannot change a ranking. **Whole blocks only**:
+    ``aa_tcr`` is fitted at ``-0.8796`` while every per-length ``aa_tcr{8,9,10,11}`` and every
+    ``aa_tcr_{n,m,c}`` is positive, so the pooled column is collinear with its own decompositions
+    and the fit pushed it negative to compensate. Dropping columns *within* a block without
+    refitting inverts the dominant term; dropping a whole block cannot.
+
+    ``mask_cys`` scores with cysteine zeroed out of the fitted log-odds tables, as
+    :mod:`mhcmatch.posbayes` does by construction. See :func:`_mask_cys` for the size of the
+    artifact and why the default is off.
+    """
     if isinstance(peptides, str):
         peptides = [peptides]
     peptides = list(peptides)
     if not peptides:
         return np.empty(0)
     t = table(species, cls)
-    X = design(peptides, species, cls, registers)
+    X = design(peptides, species, cls, registers, mask_cys)
     st = t["standardizer"]
     Z = (X - np.asarray(st["mean"])) / np.asarray(st["std"])
     lo = t["logistic"]
+    coef = np.asarray(lo["coef"])
+    if blocks is not None:
+        keep = _block_mask(t["features"], cls, blocks)
+        return Z[:, keep] @ coef[keep]
     prev = t["prevalence"]
-    return Z @ np.asarray(lo["coef"]) + lo["intercept"] - math.log(prev / (1.0 - prev))
+    return Z @ coef + lo["intercept"] - math.log(prev / (1.0 - prev))
 
 
 def posterior(peptides, prior: float, species: str = "human", cls: str = "mhc1") -> np.ndarray:

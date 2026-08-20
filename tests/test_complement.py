@@ -276,3 +276,115 @@ def test_a_class_ii_length_binned_table_only_sees_its_own_rows():
     full = CM.apply_log_odds(c, "anchor", w)
     parts = [CM.apply_log_odds(c, f"anchor@{b}", w) for b in range(len(CM.MHC2_LEN_EDGES) + 1)]
     assert np.allclose(sum(parts), full)
+
+
+# ---------------------------------------------------------------- block-wise scoring
+
+
+def _offset(species: str = "human", cls: str = "mhc1") -> float:
+    """The constant that belongs to no block: intercept minus the corpus's own logit base rate."""
+    t = CM.table(species, cls)
+    return t["logistic"]["intercept"] - math.log(t["prevalence"] / (1.0 - t["prevalence"]))
+
+
+@pytest.mark.parametrize("cls,peps", [("mhc1", PEPS), ("mhc2", MHC2_PEPS)])
+def test_the_two_halves_add_back_to_the_whole_score(cls, peps):
+    """The decomposition is an exact partial sum of the shipped head, not a refit.
+
+    Every downstream comparison of `C_phys` against `C_aa` rests on this: if the parts do not add
+    back, the two sub-scores are not a decomposition of the score that was benchmarked, and their
+    difference is not attributable to the blocks."""
+    full = CM.score(peps, cls=cls)
+    phys = CM.score(peps, cls=cls, blocks=("phys", "role", "pot", "motif"))
+    aa = CM.score(peps, cls=cls, blocks=("aa", "kmer"))
+    assert np.allclose(phys + aa + _offset(cls=cls), full, atol=1e-12)
+
+
+def test_every_block_taken_alone_sums_to_the_whole_score():
+    """Not just the two-way split -- the partition is complete, so no feature is double-counted
+    and none is orphaned."""
+    parts = sum(CM.score(PEPS, blocks=(b,)) for b in CM.blocks("mhc1"))
+    assert np.allclose(parts + _offset(), CM.score(PEPS), atol=1e-12)
+
+
+def test_a_block_score_carries_no_offset_so_it_is_a_pure_contribution():
+    """A constant cannot change a ranking, and an intercept is not attributable to a block."""
+    zero = CM.score(["GILGFVFTL"], blocks=("phys",))
+    manual = CM.design(["GILGFVFTL"])[0]
+    t = CM.table()
+    z = (manual - np.asarray(t["standardizer"]["mean"])) / np.asarray(t["standardizer"]["std"])
+    keep = np.array([f in CM.blocks("mhc1")["phys"] for f in t["features"]])
+    assert np.allclose(zero, z[keep] @ np.asarray(t["logistic"]["coef"])[keep])
+
+
+def test_a_misspelled_block_is_refused_rather_than_silently_ignored():
+    for bad in (("nope",), ("phys", "kmerr"), ()):
+        with pytest.raises(ValueError):
+            CM.score(["GILGFVFTL"], blocks=bad)
+
+
+# ---------------------------------------------------------------- the cysteine mask
+
+
+def test_the_shipped_tables_are_not_blind_to_cysteine_but_posbayes_is():
+    """Pins the artifact this module ships with, so a refit that fixes it cannot pass unnoticed.
+
+    `posbayes` zeroes cysteine deliberately -- MS under-recovers free cysteine, so in a corpus of
+    assayed positives against eluted negatives the residue marks the platform, not the label. The
+    complementarity fit never applied that mask."""
+    assert PB.HUMAN["anchor"][PB.AA.index("C")] == 0.0
+    lo = CM.table()["log_odds"]
+    ci = CM.AA.index("C")
+    cells = [lo[n][ci] for n, s in CM.table()["log_odds_source"].items() if s != "pair"]
+    assert min(cells) > 1.5, "cysteine is the largest cell in every shipped aa table"
+    assert min(cells) > max(abs(v) for v in lo["aa_anchor"] if v != lo["aa_anchor"][ci])
+
+
+def test_masking_zeroes_cysteine_in_every_table_including_both_sides_of_a_dipeptide():
+    t = CM.table()
+    m = CM._mask_cys(t["log_odds"], t["log_odds_source"])
+    ci = CM.AA.index("C")
+    for name, src in t["log_odds_source"].items():
+        if src == "pair":
+            pair = np.asarray(m[name]).reshape(20, 20)
+            assert not pair[ci, :].any() and not pair[:, ci].any()
+        else:
+            assert m[name][ci] == 0.0
+    assert np.asarray(m["aa_anchor"]).sum() != 0.0, "only cysteine is zeroed, not the table"
+
+
+def test_masking_does_not_mutate_the_vendored_tables():
+    before = list(CM.table()["log_odds"]["aa_anchor"])
+    CM.score(["GILGFVFTL"], mask_cys=True)
+    assert CM.table()["log_odds"]["aa_anchor"] == before
+
+
+def test_one_cysteine_substitution_dominates_the_unmasked_score():
+    """The measurement the mask exists for. `GILGFVFTL` scores 1.63; one V->C adds +2.90, i.e.
+    1.8x the whole score of the real epitope, where posbayes moves +0.06."""
+    d_raw = float(CM.score("GILGFCFTL")[0] - CM.score("GILGFVFTL")[0])
+    d_pb = PB.llr("GILGFCFTL") - PB.llr("GILGFVFTL")
+    assert d_raw == pytest.approx(2.8971, abs=5e-4)
+    assert abs(d_pb) < 0.1
+    d_masked = float(CM.score("GILGFCFTL", mask_cys=True)[0]
+                     - CM.score("GILGFVFTL", mask_cys=True)[0])
+    assert abs(d_masked) < abs(d_raw) / 5
+
+
+def test_masking_touches_only_the_fitted_identity_blocks_not_the_chemistry():
+    """The continuous blocks read cysteine through property scales and must be untouched: the mask
+    removes a memorised label correlate, not the residue's chemistry."""
+    peps = ["GILGFVFTL", "GILGFCFTL", "CCCCCCCCC"]
+    phys = ("phys", "role", "pot", "motif")
+    assert np.allclose(CM.score(peps, blocks=phys), CM.score(peps, blocks=phys, mask_cys=True))
+    assert not np.allclose(CM.score(peps, blocks=("aa", "kmer")),
+                           CM.score(peps, blocks=("aa", "kmer"), mask_cys=True))
+
+
+def test_masking_is_off_by_default_and_is_a_no_op_without_a_cysteine():
+    """Off by default, so every recorded number for this artifact still reproduces. And the mask
+    reaches only peptides that actually carry a cysteine -- none of PEPS does."""
+    assert np.allclose(CM.score(PEPS), CM.score(PEPS, mask_cys=False))
+    assert np.allclose(CM.score(PEPS), CM.score(PEPS, mask_cys=True)), "no C, nothing to mask"
+    withc = ["GILGFCFTL", "CCCCCCCCC", "SIINFEKC"]
+    assert not np.allclose(CM.score(withc), CM.score(withc, mask_cys=True))
