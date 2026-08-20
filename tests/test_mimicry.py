@@ -140,12 +140,16 @@ def test_reference_cache_round_trips_and_agrees_with_a_fresh_build(tmp_path):
 
     assert list(tmp_path.iterdir()), "nothing was written to the cache directory"
     for x, y, z in zip(a, b, c):
-        assert x.logodds == pytest.approx(y.logodds)
-        assert x.logodds == pytest.approx(z.logodds), "cached load disagrees with a fresh build"
+        # with_self=False, so `logodds` is NaN by construction (0.21.0): the fitted coefficients
+        # describe the full component set. The per-channel equality below is the real round-trip.
+        assert x.logodds == pytest.approx(y.logodds, nan_ok=True)
+        assert x.logodds == pytest.approx(z.logodds, nan_ok=True), \
+            "cached load disagrees with a fresh build"
         for comp in mimicry.COMPONENTS:
             if comp in x.components:
                 for ch in mimicry.CHANNELS:
-                    assert x.components[comp][ch] == pytest.approx(z.components[comp][ch])
+                    assert x.components[comp][ch] == pytest.approx(z.components[comp][ch],
+                                                                   nan_ok=True)
 
 
 def test_reference_cache_key_changes_when_the_projection_does(tmp_path, monkeypatch):
@@ -225,3 +229,38 @@ def test_class_ii_masks_follow_the_register_not_the_length(peptide):
     # pinning the register moves the face; the class-I mask cannot
     shifted = mimicry.masks(len(peptide), "mhc2", peptide, register=1)
     assert shifted["anchor"] == [1, 4, 6, 9]
+
+
+def test_an_unmeasured_component_reports_nan_not_zero():
+    """`autoimmune` is a safety read-out. Under `allow_missing` the self component has no reference
+    index, and standardizing its absence to the training mean made it contribute exactly zero --
+    which prints as `0` and reads as "no self-similarity found" when the truth is "never looked".
+
+    Only reachable through `allow_missing=True`, but reachable by default since 0.21.0: GRAND does
+    not score on `self_tcr`, so `--no-self --score aggregate` is now allowed where 0.20.0 refused
+    it, and `--extended` prints these columns beside a score that is perfectly well defined.
+    """
+    import math
+
+    pep = "GILGFVFTL"
+    # a refs dict carrying viral and thymus but not self -- exactly load_references(with_self=False)
+    refs = {(c, ch, 9): (_EmptyIndex(), 1000, None)
+            for c in ("viral", "thymus") for ch in mimicry.CHANNELS}
+
+    with pytest.raises(ValueError, match="would standardize to"):
+        mimicry.score([pep], refs)
+
+    s, = mimicry.score([pep], refs, allow_missing=True)
+    assert all(math.isnan(v) for v in s.components["self"].values()), s.components["self"]
+    assert math.isnan(s.autoimmune), "an unmeasured self channel must not read as zero risk"
+    assert math.isnan(s.logodds), "the fitted coefficients describe the full component set"
+    # the measured components are still numbers
+    assert all(math.isfinite(v) for v in s.components["viral"].values())
+    assert all(math.isfinite(v) for v in s.components["thymus"].values())
+
+
+class _EmptyIndex:
+    """A reference index that matches nothing -- enough to exercise the component bookkeeping."""
+
+    def search(self, q, params):
+        return []

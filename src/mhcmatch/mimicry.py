@@ -549,7 +549,11 @@ def score(peptides, refs: dict, cls: str = "mhc1",
     Raises if ``refs`` is missing a component. A missing feature standardizes to zero, so the
     aggregate would silently be a *different, smaller* model rather than an error -- and the usual
     way to get here is ``load_references(with_self=False)``, which drops the component carrying the
-    largest coefficients. Pass ``allow_missing=True`` to accept that deliberately."""
+    largest coefficients. Pass ``allow_missing=True`` to accept that deliberately --- its channels
+    then come back **NaN**, and so do :attr:`MimicryScore.logodds` and
+    :attr:`MimicryScore.autoimmune`, because the fitted coefficients describe the full set. A zero
+    on ``autoimmune`` reads as "no self-similarity found"; the truth under ``with_self=False`` is
+    "never looked", and those license different decisions."""
     p = params(cls)
     have = {c for c, _, _ in refs}
     if not allow_missing and not set(COMPONENTS) <= have:
@@ -559,14 +563,24 @@ def score(peptides, refs: dict, cls: str = "mhc1",
             f"load_references(), or pass allow_missing=True if that is what you mean.")
     mu, sd = p["standardizer"]["mean"], p["standardizer"]["std"]
     coef = dict(zip(p["features"], p["logistic"]["coef"]))
+    nan = float("nan")
     out = []
     for pep, row in zip(peptides, features(peptides, refs, cls)):
         comp: dict[str, dict[str, float]] = {c: {} for c in COMPONENTS}
         tot = 0.0
         for i, f in enumerate(p["features"]):
+            c, ch = f.rsplit("_", 1)
+            # A component with no reference index was NOT measured. Standardizing its absence to
+            # the training mean makes it contribute exactly zero, which prints as `0` -- and `0`
+            # on `autoimmune` reads as "no self-similarity found" when the truth is "never looked".
+            # NaN says the second thing. This only arises under `allow_missing`; the guard above
+            # is what stops it happening by accident.
+            if c not in have:
+                comp[c][ch] = nan
+                tot = nan
+                continue
             z = (row.get(f, mu[i]) - mu[i]) / (sd[i] or 1.0)
             v = coef[f] * z
-            c, ch = f.rsplit("_", 1)
             comp[c][ch] = v
             tot += v
         near: dict = {}

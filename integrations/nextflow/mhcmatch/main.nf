@@ -25,7 +25,7 @@ process MHCMATCH_PREDICT {
     label 'process_medium'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.20.0"
+    container "mhcmatch:0.21.0"
 
     input:
     tuple val(meta), path(fasta), val(alleles), val(cls)
@@ -80,7 +80,7 @@ process MHCMATCH_RANK {
     label 'process_medium'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.20.0"
+    container "mhcmatch:0.21.0"
 
     // `rank` reads the known-epitope sets, the mimicry references and the expression tables on top
     // of the ligand panel. The image bakes them (`bootstrap --reference`); a bare `bootstrap` image
@@ -140,7 +140,7 @@ process MHCMATCH_NEOAG {
     label 'process_single'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.20.0"
+    container "mhcmatch:0.21.0"
 
     input:
     tuple val(meta), path(peptides), val(cls)
@@ -185,7 +185,7 @@ process MHCMATCH_MIMICRY {
     label 'process_medium'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.20.0"
+    container "mhcmatch:0.21.0"
 
     input:
     tuple val(meta), path(peptides), val(cls)
@@ -232,7 +232,7 @@ process MHCMATCH_VECTOR {
     label 'process_high'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.20.0"
+    container "mhcmatch:0.21.0"
 
     // `--screen` builds one whole-proteome index per register length: ~12 GB peak each and a few
     // minutes apiece, which is why this process carries `process_high` and why the flag is a param.
