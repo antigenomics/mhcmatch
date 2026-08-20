@@ -100,6 +100,80 @@ each exclusion measured rather than assumed:
 Counts, the full filter cascade and the per-cohort breakdown are in
 ``bench/results/neoag_corpus_grand.md`` and ``neoag_corpus_noise.md``.
 
+What to feed it
+---------------
+
+Two entry points with different contracts. ``rank table`` **re-ranks** rows another tool scored;
+``rank fasta`` predicts **de novo** from variant windows.
+
+``rank table`` --- the four things it actually reads
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A CSV in the pipeline ``.scored.csv`` shape, but only these columns are consulted:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 12 70
+
+   * - column
+     - needed?
+     - what it is
+   * - ``epitope``
+     - **yes**
+     - the peptide. Rows with a missing or non-alphabetic value are skipped silently
+   * - ``best_allele``
+     - **yes** to re-score
+     - the restricting allotype, in the panel's own form. **A paired class-II molecule is one
+       composite key, not two columns** --- ``HLA-DPA10103-DPB10401``, ``HLA-DQA10501-DQB10301``
+       --- while DR is the beta chain alone, ``DRB1_1501``, because DRA is effectively monomorphic.
+       Without it, presentation and ``binder`` are ``NaN`` and only the sequence-derived terms
+       survive
+   * - ``tpm``
+     - no
+     - expression. Absent, the fallback below runs and ``expr_imputed`` is set
+   * - ``gene_name``
+     - no
+     - only used to look expression up when ``tpm`` is absent and ``--tissue`` is given
+
+``ref_seq`` / ``seq`` are read when present, and an incoming ``score`` is preserved in
+``components['score_builtin']`` so the two rankings can be compared. Everything else in the
+57-column schema is ignored --- passing it is harmless, omitting it costs nothing.
+
+``rank fasta`` --- expression, in three ways
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The window FASTA header is the pipeline's ``Somatic:`` record, and of its thirteen fields exactly
+two reach the ranker: ``tpm`` and ``gene_name``. When ``tpm`` is in the header, it is used and
+``expr_imputed`` is 0. When it is not, :func:`mhcmatch.rank._expression_for` falls back, in order:
+
+* ``--tumor SKCM`` --- TCGA, keyed on the **peptide**, so it is specific to the epitope;
+* ``--tissue pancreas`` --- GTEx, keyed on the **gene**;
+* neither --- ``expression`` is ``NaN``, ``expr_imputed`` is 1, and the row still ranks. A missing
+  covariate never drops a candidate; the flag travels with it and ``expr_missing`` is a fitted
+  term of the model, so the gap is scored rather than papered over.
+
+.. note::
+
+   **TPM or FPKM: within one sample it cannot change the ranking, and sequence length will not
+   convert between them.**
+
+   The two differ by a single library-wide constant, identical for every transcript:
+
+   .. math::
+
+      \mathrm{TPM}_i = \mathrm{FPKM}_i \cdot \frac{10^6}{\sum_j \mathrm{FPKM}_j}
+
+   Length enters when going from *counts* to either metric and cancels in the ratio between them.
+   Checked on a 20,000-gene simulation: the per-gene ``TPM/FPKM`` ratio is constant to
+   :math:`2.2\times10^{-15}` and uncorrelated with transcript length.
+
+   Two consequences. **Re-ranking one sample is safe either way** --- a constant factor is an offset
+   on the ``log1p`` scale and cannot reorder candidates. **Converting exactly needs the whole
+   table**, not the FASTA: renormalise the sample's FPKM column to sum to :math:`10^6`. If you only
+   hold per-candidate values, the offset is not recoverable, and it matters for cross-sample
+   comparison and for any absolute reading of the score --- ``expr`` is GRAND's largest coefficient
+   at +0.3250 --- but not for the order within a patient.
+
 Reading the output
 ------------------
 
