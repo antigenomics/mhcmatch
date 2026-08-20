@@ -66,6 +66,7 @@ diffusion model, and the downstream predictors.
 | Łuksza `R = Z/(1+Z)` recognition term | `mhcmatch.luksza` | **v0.17.0** |
 | Per-allele `%rank` / `P(present)` / band calibration | `mhcmatch.calibrate` | **v0.9.0** |
 | Variant-window scoring into native + pipeline `.scored.csv` | `mhcmatch.predict` | **v0.9.0** |
+| Binding core (NetMHCpan `core`/`Of`): class-I signed footprint with the bulge dropped and an 8-mer gap-padded, class-II register-anchored 9-mer, with the register's provenance beside it | `mhcmatch.store.binding_core` | **v0.23.0**, `--core` on `rank`/`predict`/`neoag` (`docs/neoantigen.rst`) |
 | **Cassette assembly** — screen, size, order, spacer, map | `mhcmatch.vector` | **v0.16.0** (`docs/safety.rst`) |
 | **Cassette composition** — the portfolio layer above `vector.select` | `mhcmatch.portfolio` | **v0.21.0** (`docs/portfolio.rst`) |
 | Mimicry scan (thymus / viral / neoag references) | `mhcmatch.mimics` | **v0.9.0**, on the slow search path (§6c) |
