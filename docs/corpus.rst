@@ -84,6 +84,49 @@ similarity to *self* peptide sets. A naive tolerance account predicts both negat
 account predicts both the same sign. Opposite signs is what the biased-sample account predicts, and
 no single-mechanism account does.
 
+The formula
+-----------
+
+For a query peptide *p* of length *L* against corpus *D*:
+
+1. **Face.** Mask the anchor positions ``ANCHORS = (0, 1, 2, -2, -1)`` to leave the TCR face, of
+   length *L* − 5 (the ``tcr5`` mask). See :func:`~mhcmatch.mimicry.masks`.
+2. **Neighbour counts.** :math:`n_d(p)` is the number of reference peptides :math:`q \in D` with
+   :math:`|q| = L` whose face lies at **exact Hamming distance** *d* from *p*'s, for
+   *d* = 0, 1, 2. Matching is exact --- not BLOSUM-graded, not over k-mers; both alternatives were
+   measured and neither survived (below).
+3. **Boltzmann sum** over the Łuksza alignment score, where *L* − *d* is the number of matched
+   positions, *k* the inverse temperature and :math:`a_0` the threshold:
+
+   .. math::
+
+      Z_D(p) \;=\; \sum_{d=0}^{2} n_d(p)\, e^{-k\,(a_0 - (L - d))}
+              \;=\; e^{k(L - a_0)} \sum_{d=0}^{2} n_d(p)\, e^{-k d}
+
+   Nearer neighbours weigh **more**, and the exponent carries a per-length factor.
+4. **Normalisation.** :math:`R_D(p) = Z_D / (1 + Z_D) \in [0, 1)`.
+5. **Missing.** A peptide with no reference entry returns no key, and the aggregate carries the gap
+   in ``C_corpus_missing`` rather than filling a zero.
+
+Shapes are fitted per component by profile likelihood and vendored as
+:data:`~mhcmatch.mimicry.SHAPES`:
+
+.. list-table::
+   :header-rows: 1
+
+   * - component
+     - *k*
+     - :math:`a_0`
+   * - ``thymus``
+     - 2.25
+     - 14.0
+   * - ``viral``
+     - 2.25
+     - 14.0
+   * - ``self``
+     - 1.50
+     - 24.0
+
 Using it
 --------
 
@@ -136,11 +179,19 @@ and has to be reported as one; it is never a silent substitution.
 Two things that are easy to assume and false here
 -------------------------------------------------
 
-**The published threshold ``a0`` is not identified.** ``Z`` stays below about 10⁻³ on real data, so
-``R = Z/(1+Z)`` never leaves its linear regime and ``a0`` only multiplies ``Z`` by a constant, which
-any standardizing fit absorbs. The correlation between the feature at ``a0 = 14`` and at ``a0 = 26``
-is 1.000000. Only ``k``, which reweights across distances, changes the ranking --- hence
-:func:`~mhcmatch.mimicry.corpus_R` takes ``k`` and no ``a0``.
+**The published threshold** :math:`a_0` **is not identified --- but its exponent is not droppable.**
+``Z`` stays below 1.320×10⁻³ over 328,276 cached peptides, so ``R = Z/(1+Z)`` never leaves its
+linear regime and :math:`a_0` only multiplies ``Z`` by a constant, which any standardizing fit
+absorbs. The correlation between the feature at :math:`a_0` = 14 and at :math:`a_0` = 26 is
+1.000000.
+
+That holds **at fixed length**. Peptide length varies across a real corpus, so
+:math:`e^{k(L - a_0)}` is a genuine per-row factor spanning :math:`e^{2k}` = 90× between a 9-mer and
+an 11-mer, and the exponent has to be carried. Dropping it --- or flipping the sign on *d*, which
+upweights *distant* neighbours by the same 90× --- saturates ``R``. Measured against the fitted
+column over the same 328,276 peptides, that variant has mean ``R`` 0.771 with 77.2 % of peptides
+above 0.5, against a fitted mean of 3.29×10⁻⁵ and none above 0.5, and it ranks differently
+(Spearman +0.705, Pearson +0.448). It is a different column, not a rescaling of the same one.
 
 **Grading the substitutions buys nothing.** Replacing the Hamming count with a BLOSUM62 score over
 the TCR face (anchors free, so an identical face scores 0 at any length) does not improve on the

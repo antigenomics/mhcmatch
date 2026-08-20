@@ -387,17 +387,29 @@ def _sources(pmhc_dir, rel: str) -> dict[str, str]:
     return out
 
 
-def corpus_R(peptides, refs: dict, cls: str = "mhc1", k: float = 2.25,
+#: Fitted ``(k, a0)`` per component, by profile likelihood on the neoantigen corpus
+#: (``bench/immuno/repertoire_luksza.py``). Passed as ``shapes=`` only to re-measure them.
+SHAPES: dict = {"viral": (2.25, 14.0), "self": (1.5, 24.0), "thymus": (2.25, 14.0)}
+
+
+def corpus_R(peptides, refs: dict, cls: str = "mhc1", shapes: dict | None = None,
              radius: int = 2, components=None) -> list[dict]:
     """``R = Z/(1+Z)`` per component over the **TCR face**, the Łuksza form.
 
     A neighbour *density* read as a soft sum over substitution distance rather than as a single
     thresholded count::
 
-        Z_D(p) = sum_d n_d(p) * exp(k * d),      R_D(p) = Z_D / (1 + Z_D)
+        Z_D(p) = sum_d n_d(p) * exp(-k * (a0 - (L - d))),      R_D(p) = Z_D / (1 + Z_D)
 
     where ``n_d`` counts reference peptides at Hamming distance ``d`` over the TCR-facing positions
-    of :func:`masks`. Returns ``{component: R}`` per peptide, plus ``{component}_n{d}`` counts so a
+    of :func:`masks`, ``L`` is the query length, and ``L - d`` is the Luksza alignment score --- the
+    number of matched positions. Equivalently ``Z = exp(k*(L - a0)) * sum_d n_d * exp(-k*d)``:
+    nearer neighbours weigh **more**, and the exponent carries a per-length factor.
+
+    Matching is **exact Hamming over the face**. Neither BLOSUM62-graded matching nor a k-mer
+    (k = 3,4,5, gapped and ungapped, TF-IDF) parameterisation survived measurement: the fitted
+    BLOSUM grading weight goes to 0 with the deviance flat (4165.0 at 0 -> 4165.2 at 0.2), and
+    grading weight 0 *is* the raw hit count (r = 0.998108). Returns ``{component: R}`` per peptide, plus ``{component}_n{d}`` counts so a
     caller can refit the shape without re-searching.
 
     **The three components are not three flavours of one measurement**, and their fitted signs
@@ -416,12 +428,18 @@ def corpus_R(peptides, refs: dict, cls: str = "mhc1", k: float = 2.25,
         reference channel.
 
 
-    **On the shape parameters.** The published form carries a threshold ``a0`` as well as ``k``.
-    It is **not identified** on this data: ``Z`` stays below ~1e-3, so ``R = Z/(1+Z)`` never leaves
-    its linear regime and ``a0`` only rescales ``Z`` -- a constant any standardizing fit absorbs.
-    Only ``k``, which reweights across distances, changes the ranking. So ``a0`` is not a parameter
-    here, and a caller who wants the published parameterisation should know it is scoring the same
-    column.
+    **On the shape parameters.** ``a0`` is **not identified** on this data: ``Z`` stays below
+    1.320e-3 over 328,276 cached peptides, so ``R = Z/(1+Z)`` never leaves its linear regime and
+    ``a0`` only rescales ``Z`` -- a constant any standardizing fit absorbs. Only ``k`` changes the
+    ranking.
+
+    **``a0`` being unidentified does not make the exponent droppable.** It is unidentified *at
+    fixed length*; peptide length varies across a real corpus, so ``exp(k*(L - a0))`` is a genuine
+    per-row factor spanning exp(2*k) = 90x between a 9-mer and an 11-mer. Dropping it -- or
+    flipping the sign on ``d``, which upweights distant neighbours by exp(2*k) -- saturates ``R``:
+    measured against the fitted column over the same 328,276 peptides, that variant has mean R
+    0.771 with 77.2% of peptides above 0.5, against the fitted mean of 3.29e-5 and none above 0.5,
+    and ranks differently (Spearman +0.705, Pearson +0.448). It is a different column.
 
     ``components=`` selects the channels, defaulting to all of :data:`COMPONENTS`. **Which of them
     belongs in a score is not a free choice.** Only ``thymus`` earns its parameters inside the
@@ -456,7 +474,9 @@ def corpus_R(peptides, refs: dict, cls: str = "mhc1", k: float = 2.25,
                     d = int(h.score)
                     if 0 <= d <= radius:
                         n[d] += 1
-                z = sum(c * math.exp(k * d) for d, c in enumerate(n))
+                k, a0 = (shapes or SHAPES)[comp]
+                z = sum(c * math.exp(max(-60.0, min(60.0, -k * (a0 - (len(p) - d)))))
+                        for d, c in enumerate(n))
                 row[comp] = z / (1.0 + z)
                 for d, c in enumerate(n):
                     row[f"{comp}_n{d}"] = c
