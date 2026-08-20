@@ -76,9 +76,13 @@ EXTENDED_COLUMNS: tuple = ("mimicry_logodds", "autoimmune") + tuple(
 ANNOTATE_COLUMNS: tuple = tuple(
     f"{k}_{c}_{ch}" for c, ch in MIMICRY_PAIRS for k in ("nearest", "source", "subs")
 ) + ("neoag_distance", "neoag_nearest", "neoag_n_within")
+#: Appended by ``--core``: the NetMHCpan ``core``/``Of`` pair plus which register produced it. See
+#: :func:`mhcmatch.store.binding_core`. Reported, never scored -- the aggregate reads the peptide.
+CORE_COLUMNS: tuple = ("core", "core_offset", "core_source")
 
 
-def columns(extended: bool = False, annotate: bool = False, score: str = "aggregate") -> list:
+def columns(extended: bool = False, annotate: bool = False, score: str = "aggregate",
+            core: bool = False) -> list:
     """The exact `mhcmatch rank` header for a given flag combination.
 
     ``score`` matters: the fitted aggregate emits its own four recognition channels, because a row
@@ -92,6 +96,8 @@ def columns(extended: bool = False, annotate: bool = False, score: str = "aggreg
         out += list(EXTENDED_COLUMNS)
     if annotate:
         out += list(ANNOTATE_COLUMNS)
+    if core:
+        out += list(CORE_COLUMNS)
     return out
 
 # ----------------------------------------------------------------- the fitted aggregate (GRAND)
@@ -291,6 +297,13 @@ class Ranked:
     imputed: str = ""
     #: name of the reference set an exact match was found in, "" if none.
     known_epitope: str = ""
+    #: The NetMHCpan ``core``/``Of`` pair and the register behind it -- see
+    #: :func:`mhcmatch.store.binding_core`. Filled on the ``rank fasta`` path, where the class-II
+    #: model register is already in hand; ``rank table`` has no register and reports the heuristic,
+    #: which is what ``core_source`` says. Emitted only under ``--core``, and never scored.
+    core: str = ""
+    core_offset: int = -1
+    core_source: str = ""
     score: float = float("nan")
     components: dict = field(default_factory=dict)
 
@@ -546,7 +559,8 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
                            expression_imputed=imputed, wt_peptide=p.wt_peptide,
                            known_epitope=_known(p.peptide, refs),
                            n_alleles_presenting=p.n_alleles_presenting,
-                           alleles_presenting=p.alleles_presenting))
+                           alleles_presenting=p.alleles_presenting,
+                           core=p.core, core_offset=p.core_offset, core_source=p.core_source))
     _fill_channels(rows, channels)
     return _finish(rows, gate, score)
 
@@ -562,6 +576,8 @@ def rank_table(path: str, *, channels=None,
     one is given, so the ranking is this package's own rather than a re-sort of someone else's; the
     incoming ``score`` is preserved in ``components['score_builtin']`` so the two can be compared."""
     import csv
+
+    from .store import binding_core
     rows = []
     with open(path, newline="", encoding="utf-8-sig") as fh:
         for rec in csv.DictReader(fh):
@@ -589,6 +605,10 @@ def rank_table(path: str, *, channels=None,
                        occupancy=occupancy(nm) if (nm := _ic50_of(rec)) is not None else float("nan"),
                        physchem=_recognition(pep, cls=cls), expression=expr, expression_imputed=imputed,
                        known_epitope=_known(pep, refs))
+            # No model register on this path -- the table was scored elsewhere -- so class II gets
+            # the allele-agnostic one and says so.
+            r.core, r.core_offset = binding_core(pep, cls)
+            r.core_source = ("footprint" if cls != "mhc2" else "heuristic") if r.core else ""
             try:
                 r.components["score_builtin"] = float(rec["score"]) if rec.get("score") else None
             except ValueError:

@@ -371,10 +371,10 @@ def cmd_predict(a):
     preds = P.predict_fasta(store, a.cls, a.fasta, alleles, rank_threshold=a.rank_threshold,
                             top=a.top, background=a.background, footprint=a.footprint, seed=a.seed)
     if a.native:
-        P.write_native(preds, a.native)
+        P.write_native(preds, a.native, core=a.core)
         print(f"# wrote {a.native}")
     if a.scored_csv:
-        P.write_scored_csv(preds, a.scored_csv)
+        P.write_scored_csv(preds, a.scored_csv, core=a.core)
         print(f"# wrote {a.scored_csv}")
     if not a.native and not a.scored_csv:
         print(f"# {len(preds)} predicted binder(s) (%rank <= {a.rank_threshold}) over "
@@ -516,6 +516,8 @@ def cmd_rank(a):
         from . import mimicry as MM
         ann = MM.annotate([r.peptide for r in rows], cls=a.cls)
         cols += list(R.ANNOTATE_COLUMNS)
+    if a.core:
+        cols += list(R.CORE_COLUMNS)
     out = open(a.out, "w") if a.out else sys.stdout
     try:
         print("\t".join(cols), file=out)
@@ -542,6 +544,8 @@ def cmd_rank(a):
                 g = ann[i - 1]
                 cells += [str(g["neoag_distance"]), g["neoag_nearest"] or "",
                           str(g["neoag_n_within"])]
+            if a.core:
+                cells += [r.core, str(r.core_offset), r.core_source]
             print("\t".join(cells), file=out)
     finally:
         if a.out:
@@ -685,16 +689,24 @@ def cmd_neoag(a):
     ann = MM.annotate(peps, cls=a.cls, max_subs=a.max_subs)
     cols = MM.NEOAG_COLUMNS
     extra = [c for c in (rows[0] if rows else {}) if c != "peptide"]
+    # This command has no store and no allele, so a class-II core here is the allele-agnostic
+    # register. `core_source` says `heuristic` rather than the docs saying it somewhere else.
+    from .rank import CORE_COLUMNS
+    from .store import binding_core
     out = _Out(a, "candidate")
-    out.header("peptide", *extra, *cols)
+    out.header("peptide", *extra, *cols, *(CORE_COLUMNS if a.core else ()))
     for i, r in enumerate(ann):
         if a.known_only and not r["known"]:
             continue
         if a.hits_only and r["neoag_distance"] > a.max_subs:
             continue
         s = rows[i] if rows else {}
+        core = binding_core(r["peptide"], a.cls) if a.core else None
         out.row(r["peptide"], *(s.get(c, "") for c in extra),
-                *("" if r[k] is None else r[k] for k in cols))
+                *("" if r[k] is None else r[k] for k in cols),
+                *((core[0], core[1],
+                   ("footprint" if a.cls != "mhc2" else "heuristic") if core[0] else "")
+                  if a.core else ()))
     out.close()
 
 
@@ -1159,6 +1171,10 @@ def main(argv=None):
     pr.add_argument("--background", default="proteome", choices=("ligand", "proteome", "markov"))
     pr.add_argument("--footprint", default="adaptive", choices=("anchor", "core", "adaptive"))
     pr.add_argument("--seed", type=int, default=0)
+    pr.add_argument("--core", action="store_true",
+                    help="append the NetMHCpan-style 9-residue binding core, its 0-based "
+                         "offset and the register behind it. Distinct from --footprint core, "
+                         "which changes what the model scores; this only reports")
     _add_store_opts(pr)
     pr.set_defaults(fn=cmd_predict)
     _add_mhc2_report(pr)
@@ -1209,6 +1225,11 @@ def main(argv=None):
                     help="append what each candidate actually resembles: the nearest self / viral / "
                          "thymic mimic per channel with its source protein, plus the nearest "
                          "validated neoantigen and its distance")
+    rk.add_argument("--core", action="store_true",
+                    help="append the NetMHCpan-style 9-residue binding core, its 0-based offset "
+                         "and the register behind it: for class I both anchors are held and the "
+                         "central bulge gives way (a gap pad at 8-mers), for class II the "
+                         "register-anchored 9-mer. Reported, never scored")
     rk.add_argument("--no-self", action="store_true",
                     help="with --extended/--annotate, skip the host proteome. It is the expensive "
                          "reference (several minutes, ~7 GB) and carries the largest coefficients, "
@@ -1260,6 +1281,10 @@ def main(argv=None):
                     help="keep only exact database matches (distance 0)")
     ng.add_argument("--hits-only", action="store_true",
                     help="drop candidates with nothing inside --max-subs")
+    ng.add_argument("--core", action="store_true",
+                    help="append the binding core, its 0-based offset and the register behind it. "
+                         "This command has no allele, so a class-II core is the allele-agnostic "
+                         "register and `core_source` reads `heuristic`")
     _add_batch_opts(ng, "candidate")
     ng.set_defaults(fn=cmd_neoag)
 

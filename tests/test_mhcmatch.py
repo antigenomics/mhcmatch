@@ -68,6 +68,48 @@ def test_decompose_mhc2():
     assert d.presentation.count("X") == len(d.peptide) - 4
 
 
+# -- the reported binding core (NetMHCpan `core` / `Of`) ---------------------
+@pytest.mark.parametrize("pep", ["SIINFEKL", "GILGFVFTL", "GILGFVFTLA", "GILGFVFTLAV"])
+def test_binding_core_is_always_nine_wide_for_class_i(pep):
+    # A column of cores has to line up, so the width is fixed at every admitted class-I length.
+    core, off = mhcmatch.store.binding_core(pep, "mhc1")
+    assert len(core) == 9 and off == 0
+
+
+def test_binding_core_class_i_drops_the_bulge_and_keeps_both_ends():
+    # NetMHCpan's rule: >9 loses central residues (their Gp/Gl deletion), the anchors stay put.
+    pep = "GILGFVFTLA"                               # 10-mer, indices 0..9
+    core, _ = mhcmatch.store.binding_core(pep, "mhc1")
+    assert core == pep[:5] + pep[6:]                 # index 5 -- and only index 5 -- is gone
+    assert core[:3] == pep[:3] and core[-2:] == pep[-2:]
+    assert mhcmatch.store.binding_core("GILGFVFTLAV", "mhc1")[0] == "GILGF" + "TLAV"   # 11-mer: two
+
+
+def test_binding_core_class_i_pads_an_eight_mer_at_the_collision():
+    # <9 gains a pad (their Ip/Il insertion). It lands where `mhc1_positions` reports a collision,
+    # i.e. between the two ends, which is the only place a residue is not already spoken for.
+    from seqtree import layout
+    core, _ = mhcmatch.store.binding_core("SIINFEKL", "mhc1")
+    assert core == "SIINF" + layout.GAP + "EKL"
+    assert core.count(layout.GAP) == 1
+    assert core.replace(layout.GAP, "") == "SIINFEKL"     # every residue survives, none twice
+
+
+def test_binding_core_class_ii_is_the_register_anchored_nine_mer():
+    pep = "PKYVKQNTLKLAT"                            # HA306-318
+    core, off = mhcmatch.store.binding_core(pep, "mhc2")
+    assert (core, off) == ("YVKQNTLKL", 2)
+    assert core == pep[off:off + 9]                  # the offset is NetMHCIIpan's `Of`
+    # an explicit register wins over the heuristic, as it does for `decompose`
+    assert mhcmatch.store.binding_core(pep, "mhc2", register_start=0) == ("PKYVKQNTL", 0)
+
+
+def test_binding_core_refuses_rather_than_guesses_when_too_short():
+    assert mhcmatch.store.binding_core("SIIN", "mhc1") == ("", -1)
+    assert mhcmatch.store.binding_core("SHORT", "mhc2") == ("", -1)
+    assert mhcmatch.store.binding_core("A" * 15, "mhc2", register_start=99) == ("", -1)
+
+
 def test_decompose_mhc2_register_start():
     # register_start pins the 9-mer core frame (the model register a caller scored with), overriding
     # the heuristic register: P1/P4/P6/P9 of a core starting at index 2 -> {2,5,7,10}. (C4b)

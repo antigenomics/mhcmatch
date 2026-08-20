@@ -996,6 +996,10 @@ class Feature:
     gene: str = ""
     core_start: int = 0
     core_end: int = 0
+    #: The binding core itself (:func:`mhcmatch.store.binding_core`), 9 residues, both classes.
+    #: ``core_start``/``core_end`` stay class-II-only because a class-I core is not a
+    #: contiguous span -- it drops the bulge -- so it has no cassette coordinates to give.
+    core: str = ""
     overlaps: tuple = ()
 
     @property
@@ -1087,16 +1091,13 @@ def epitope_map(cassette: Cassette, ranker1=None, ranker2=None, threshold: float
                     continue
                 n += 1
                 k = in_unit(lo, hi)
-                core = (0, 0)
-                if cls == "mhc2":
-                    from .store import anchor_indices
-                    a = anchor_indices(pep, "mhc2")
-                    if a:
-                        core = (lo + a[0] + 1, lo + a[0] + 9)
+                from .store import binding_core
+                core_seq, off = binding_core(pep, cls)
+                span = (lo + off + 1, lo + off + 9) if (cls == "mhc2" and core_seq) else (0, 0)
                 feats.append(Feature(id=f"e{n}", kind="epitope", start=lo + 1, end=hi, seq=pep,
                                      cls=cls, allele=allele, rank=float(rank), unit=k,
                                      gene=cassette.units[k - 1].gene if k else "",
-                                     core_start=core[0], core_end=core[1]))
+                                     core_start=span[0], core_end=span[1], core=core_seq))
 
     # Cross-class overlap, computed once over the finished list so both directions agree.
     e1 = [f for f in feats if f.kind == "epitope" and f.cls == "mhc1"]
@@ -1112,7 +1113,7 @@ def epitope_map(cassette: Cassette, ranker1=None, ranker2=None, threshold: float
 
 #: Column order of the cassette map, one source of truth for the TSV and the JSON.
 MAP_COLUMNS: tuple = ("id", "kind", "start", "end", "length", "seq", "cls", "allele", "rank",
-                      "unit", "gene", "core_start", "core_end", "overlaps", "n_overlaps")
+                      "unit", "gene", "core", "core_start", "core_end", "overlaps", "n_overlaps")
 
 
 def map_rows(features) -> list:
@@ -1122,7 +1123,7 @@ def map_rows(features) -> list:
         out.append({"id": f.id, "kind": f.kind, "start": f.start, "end": f.end, "length": f.length,
                     "seq": f.seq, "cls": f.cls, "allele": f.allele,
                     "rank": None if f.rank != f.rank else round(f.rank, 4),
-                    "unit": f.unit, "gene": f.gene,
+                    "unit": f.unit, "gene": f.gene, "core": f.core,
                     "core_start": f.core_start or None, "core_end": f.core_end or None,
                     "overlaps": list(f.overlaps), "n_overlaps": len(f.overlaps)})
     return out

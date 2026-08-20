@@ -129,7 +129,8 @@ The commands, by axis
        from the thymic channel alone (26,513 peptides), so since 0.21.0 the host-proteome reference
        index — ~7.5 GB and 6 min 15 s — is off the ranking path and ``--no-self`` is allowed with
        ``--score aggregate``. It still costs that much under ``--extended``/``--annotate``, which
-       report the ``self`` channels
+       report the ``self`` channels.
+       ``--core`` appends the binding core — see :ref:`binding-core`
    * - ``explain``
      - every component of the aggregate for one *(peptide, allele)*
    * - ``expression``

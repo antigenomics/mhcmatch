@@ -738,6 +738,24 @@ def test_map_reports_which_units_carry_their_own_class_ii_help():
     assert s["units"][1]["gene"] == "ERG" and s["units"][1]["self_help"] is False
 
 
+def test_map_carries_the_binding_core_for_both_classes():
+    """`core_start`/`core_end` were cassette coordinates with no residues beside them, and stay
+    class-II-only: a class-I core drops the bulge, so it is not a contiguous span."""
+    from mhcmatch.store import binding_core
+    rows = vector.map_rows(vector.epitope_map(_map_cassette(), _r1, _r2))
+    eps = [r for r in rows if r["kind"] == "epitope"]
+    assert eps, "the fixture must produce at least one epitope for this to mean anything"
+    assert "core" in vector.MAP_COLUMNS
+    for r in eps:
+        assert r["core"] == binding_core(r["seq"], r["cls"])[0]
+        assert len(r["core"]) == 9
+        if r["cls"] == "mhc2":                       # span given, and it locates the core in seq
+            off = r["core_start"] - r["start"]
+            assert r["seq"][off:off + 9] == r["core"]
+        else:
+            assert r["core_start"] is None and r["core_end"] is None
+
+
 def test_map_without_a_class_ii_ranker_reports_no_help_rather_than_guessing():
     cas = _map_cassette()
     s = vector.map_summary(cas, vector.epitope_map(cas, _r1, None))
