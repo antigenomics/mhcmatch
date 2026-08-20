@@ -1263,3 +1263,33 @@ def test_class2_report_compares_like_with_like():
     assert REPORT_MODES == ("pair", "beta", "isotype")
     with pytest.raises(ValueError):
         class2_report(dr1, "gene")
+
+
+def test_package_data_stays_visible_to_git_but_bytecode_does_not(tmp_path):
+    """`.gitignore` carries `*.fasta` for fetched proteomes, and the `!src/mhcmatch/data/**`
+    negation is the only thing keeping a shipped model file out of that glob. Without it a model
+    named `.fasta` goes silently untracked and a fresh clone ships a package that cannot load its
+    own models -- so the negation is pinned here rather than trusted to survive an edit.
+
+    The mirror-image half: bytecode under `data/__pycache__/` must stay ignored. The negation used
+    to re-add it, which produced a spurious diff on every interpreter version and blocked
+    `git worktree remove`.
+    """
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    if not (root / ".git").exists() or shutil.which("git") is None:
+        pytest.skip("not a git checkout")
+
+    def ignored(rel: str) -> bool:
+        r = subprocess.run(["git", "check-ignore", "-q", "--no-index", rel],
+                           cwd=root, capture_output=True)
+        return r.returncode == 0
+
+    assert not ignored("src/mhcmatch/data/some_model.fasta"), \
+        "the !src/mhcmatch/data/** negation is gone; a shipped model would go untracked"
+    assert ignored("proteome/homo_sapiens.fasta"), "the *.fasta glob no longer catches fetches"
+    assert ignored("src/mhcmatch/data/__pycache__/aa_tables.cpython-312.pyc"), \
+        "bytecode is back in the index"

@@ -21,6 +21,10 @@ data/proteomes/
 # escapes the *.fasta rule only by its extension; named .fasta it would have been silently
 # untracked, and every fresh clone would ship a package that cannot load its own models.
 !src/mhcmatch/data/**
+# ...but bytecode is not package data. Without this carve-out the negation above re-adds
+# data/__pycache__/*.pyc to the index, where they produce a spurious diff on every interpreter
+# version and block `git worktree remove`. hatchling already keeps them out of the wheel.
+src/mhcmatch/data/__pycache__/
 
 # Obsidian memory-sync marker (machine-local absolute paths + sync hashes)
 .claude/obsidian-sync.json
