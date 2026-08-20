@@ -115,14 +115,29 @@ what :func:`~mhcmatch.portfolio.compose` fills.
    comp.coverage                       # Gini and H/Hmax over class-I allotypes
    comp.trace                          # one row per greedy step, with the gain it bought
 
-Or from the command line, which reports the composed cassette **and the same slot budgets filled by
-score alone**, side by side:
+Or from the command line, which **emits both** --- the composed cassette and the same slot budgets
+filled by score alone --- so the comparison is laid out on your own candidates rather than asserted:
 
 .. code-block:: console
 
    $ mhcmatch vector --candidates units.tsv --n0 20 \
          --quota 'mhc1=8:2,mhc2=4:1,nonconventional=3:1' --block-live 0.5 \
-         --alleles "$(cat donor.hla)"
+         --alleles "$(cat donor.hla)" \
+         --fasta cassette.faa --fasta-nt cassette.fna --map cassette.map.tsv
+
+With a quota, ``--fasta`` and ``--fasta-nt`` carry two records, ``cassette_composed`` and
+``cassette_topk``; ``--map`` describes the composed one. Without a quota each carries the single
+``cassette`` record it always did. (Through 0.24.0 ``--quota`` composed a set and then built the
+sequence from :func:`mhcmatch.vector.select` anyway --- it reported and did not act.)
+
+.. note::
+
+   ``--block-live`` is a **ceiling on every unit's own** ``p``. A block is an allotype, so a unit
+   cannot respond more often than its allotype is live; a candidate whose ``p`` exceeds ``q`` makes
+   the marginal unrepresentable and :func:`~mhcmatch.portfolio.survival` refuses rather than
+   silently clipping. Feeding ``rank``'s ``p_response`` at a pool prevalence of a few per cent
+   leaves plenty of headroom under the default ``q = 0.5``; feeding a raw sigmoid of the log-odds
+   does not.
 
 **The arms are disjoint on purpose.** A frameshift neoepitope is presented on MHC-I, so if it
 counted toward both budgets, "at least one non-conventional epitope responds" could be satisfied for

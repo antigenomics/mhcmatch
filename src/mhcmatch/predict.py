@@ -48,7 +48,13 @@ SCORED_COLUMNS = (
     "score_agretopicity_scaled,score_expr_gene_scaled,score_expr_local_scaled,"
     "score_affinity_percentile_scaled,score_signature,score,is_driver,driver_class").split(",")
 
-NATIVE_COLUMNS = ("source", "type", "gene_name", "chrom", "pos", "ref", "alt", "peptide", "offset",
+#: ``type`` is the header's provenance (``Somatic`` / ``Fusion`` / ``Isoform`` / ``CNV``);
+#: ``variant_type`` beside it is the **product class** :func:`variant_product` derives, the same
+#: value ``rank`` emits under that name, so the two tables join on it. Added in 0.24.1 -- appended
+#: to the group it belongs with rather than at the end, because this is mhcmatch's own native
+#: format and not the fixed 57-column pipeline contract (:data:`SCORED_COLUMNS`), which is unchanged.
+NATIVE_COLUMNS = ("source", "type", "variant_type", "gene_name", "chrom", "pos", "ref", "alt",
+                  "peptide", "offset",
                   "best_allele", "cls", "percent_rank", "p_present", "band", "affinity_nm",
                   "affinity_rank", "binder_rank", "binder_band",
                   "wt_peptide", "wt_affinity_nm", "agretopicity", "amplitude", "dai",
@@ -130,22 +136,89 @@ def parse_fasta(path: str) -> list:
 _SOMATIC_FIELDS = ("type", "chrom", "pos", "ref", "alt", "subtype", "wt_window", "mut_window",
                    "tpm", "gene_id", "transcript_id", "gene_name", "uniprot_id")
 
+#: ``Fusion:`` is colon-delimited like ``Somatic:`` but carries different fields, and **its
+#: expression is FFPM, not TPM** -- fusion fragments per million, which is not on the TPM axis
+#: ``rank`` scores and is therefore kept under its own key. Field order pinned against the
+#: pipeline's own ``.epitopes.*.tsv`` columns, never inferred: the header
+#: ``Fusion:RGS6--XYLT1:INFRAME:<wt>|<mut>:ENST..--ENST..:ENSG..--ENSG..:--:0.3655:12:0``
+#: matches the row ``gene_name=RGS6--XYLT1, ffpm=0.3655``.
+_FUSION_FIELDS = ("type", "gene_name", "subtype", "windows", "transcript_id", "gene_id",
+                  "uniprot_id", "ffpm")
+
+#: ``CNV:`` -- same pinning. ``CNV:chr6:32530190:59610:<windows>:26:0.14:79:6:0:0`` matches the row
+#: ``sv_len=59610.0, cnv_score=26.0, tpm=0.14``. There is no gene: a copy-number segment is a locus,
+#: not a transcript.
+_CNV_FIELDS = ("type", "chrom", "pos", "sv_len", "windows", "cnv_score", "tpm")
+
+#: ``Isoform:`` is **pipe-delimited** after its type, and its numeric triple is (cov, fpkm, tpm) in
+#: that order. Pinned: ``Isoform:STRG.35712.1|ENST00000324225|ENSG00000149577|SIDT2|Q8NBJ9-1|
+#: 22.121262|3.332689|5.124321|...`` against the row ``cov=22.121262, fpkm=3.332689, tpm=5.124465``.
+_ISOFORM_FIELDS = ("isoform", "transcript_id", "gene_id", "gene_name", "uniprot_id",
+                   "cov", "fpkm", "tpm")
+
+#: Pipeline consequence term -> the product class :func:`mhcmatch.portfolio.default_arm` splits on.
+#: An unlisted consequence passes through lower-cased, so a term nobody has mapped yet is charged to
+#: the non-conventional arm rather than silently counted as a missense.
+_PRODUCT = {"missense_variant": "missense", "frameshift_variant": "frameshift",
+            "inframe_deletion": "inframe_deletion", "inframe_insertion": "inframe_insertion",
+            "stop_lost": "stop_lost", "start_lost": "start_lost",
+            "protein_altering_variant": "protein_altering"}
+
 
 def parse_variant_header(header: str) -> dict:
     """Parse a pipeline window header into variant-annotation fields.
 
-    ``Somatic:`` headers follow the fixed colon schema. ``Fusion:`` / ``CNV:`` use different internal
-    delimiters, so only their ``type`` (and any of the shared trailing fields that line up) is
-    extracted -- best-effort, never raising: unknown fields come back empty."""
+    Four header families, each with its own schema, all keyed into the same ``Somatic:`` field names
+    so a consumer reads one dict: ``Somatic:`` and ``Fusion:`` / ``CNV:`` are colon-delimited,
+    ``Isoform:`` is pipe-delimited after its type. Best-effort and never raising -- a field the
+    header does not carry comes back empty.
+
+    **The non-``Somatic`` families are parsed rather than skipped because they are the
+    non-conventional neoepitopes**, the ones a cassette holds a quota for, and dropping their gene
+    and expression on the floor imputes the model's largest coefficient on exactly the candidates
+    that most need it."""
     parts = header.split(":")
-    var = {k: "" for k in _SOMATIC_FIELDS}
-    var["type"] = parts[0] if parts else ""
-    if var["type"] == "Somatic":
-        for i, k in enumerate(_SOMATIC_FIELDS):
-            if i < len(parts):
-                var[k] = parts[i]
+    # The union, so the dict shape does not depend on which family the header came from: a consumer
+    # that asks a Somatic window for `ffpm` gets "" rather than a KeyError.
+    var = {k: "" for fs in (_SOMATIC_FIELDS, _FUSION_FIELDS, _CNV_FIELDS, _ISOFORM_FIELDS)
+           for k in fs}
+    kind = parts[0] if parts else ""
+    var["type"] = kind
+    if kind == "Somatic":
+        fields = _SOMATIC_FIELDS
+    elif kind == "Fusion":
+        fields = _FUSION_FIELDS
+    elif kind == "CNV":
+        fields = _CNV_FIELDS
+    elif kind == "Isoform":
+        # pipe-delimited, and the type is not one of its fields
+        fields, parts = _ISOFORM_FIELDS, ":".join(parts[1:]).split("|")
+    else:
+        fields = ()
+    for i, k in enumerate(fields):
+        if i < len(parts):
+            var[k] = parts[i]
     var["source"] = header
     return var
+
+
+def variant_product(var: dict) -> str:
+    """The **product class** of a parsed header -- what kind of neoepitope this is.
+
+    ``Somatic`` is only the provenance of a variant; the product is its consequence, which lives in
+    ``subtype``. Returning the former is what let every candidate be charged to the non-conventional
+    arm, since :func:`mhcmatch.portfolio.default_arm` asks only whether the kind is ``"missense"``.
+
+    ``missense`` / ``frameshift`` / ``inframe_deletion`` / ... for a ``Somatic:`` window; the
+    lower-cased type (``fusion``, ``isoform``, ``cnv``) otherwise, because a fusion is
+    non-conventional whether its junction is in frame or not. Empty when the header says nothing --
+    the caller's own default then applies, rather than a guess made here.
+    """
+    kind = str(var.get("type", "") or "").strip()
+    if kind and kind != "Somatic":
+        return kind.lower()
+    sub = str(var.get("subtype", "") or "").strip().lower()
+    return _PRODUCT.get(sub, sub)
 
 
 def _strip_marker(window: str) -> str:
@@ -514,7 +587,8 @@ def write_native(preds, path: str, core: bool = False) -> None:
         w.writerow(NATIVE_COLUMNS + (CORE_COLUMNS if core else ()))
         for p in preds:
             v = p.var
-            w.writerow([p.source, v.get("type", ""), v.get("gene_name", ""), v.get("chrom", ""),
+            w.writerow([p.source, v.get("type", ""), variant_product(v), v.get("gene_name", ""),
+                        v.get("chrom", ""),
                         v.get("pos", ""), v.get("ref", ""), v.get("alt", ""), p.peptide, p.offset,
                         p.allele, p.cls, p.percent_rank, p.p_present, p.band, p.affinity_nm,
                         _blank_nan(p.affinity_rank), _blank_nan(p.binder_rank), p.binder_band,

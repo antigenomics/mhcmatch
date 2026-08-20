@@ -193,6 +193,38 @@ def test_compose_charges_a_non_missense_variant_to_its_own_arm():
     assert [u.gene for u in c.arms["mhc2"]["units"]] == ["D1"]
 
 
+def test_the_arm_survives_the_trip_from_a_real_pipeline_header():
+    """The end-to-end gap that let the arms be unfillable in 0.24.0.
+
+    Every unit test above builds ``Unit(kind=...)`` by hand, so all of them passed while `rank` was
+    emitting the header's ``type`` field -- ``"Somatic"`` -- as ``variant_type``. Read through
+    :func:`~mhcmatch.portfolio.default_arm` that is "not missense", so **every** candidate of a real
+    donor was charged to ``nonconventional`` and the class-I arm could never be filled. This starts
+    where the pipeline starts: at the header.
+    """
+    from mhcmatch.predict import parse_variant_header, variant_product
+    from mhcmatch.vector import units_from_context
+
+    def hdr(sub, i):
+        ctx = "ACDEFGHIKLMNPQRSTVWYACDEFGH" + "(M)" + "YWVTSRQPNMLKIHGFEDCAYWVTSRQ"
+        return (f"Somatic:chr1:{100 + i}:G:C:{sub}:{ctx}:{ctx}:9.9:"
+                f"ENSG{i}:ENST{i}:GENE{i}:U{i}:0.9:5:9")
+
+    records = [(hdr(sub, i), "") for i, sub in enumerate(("missense_variant",
+                                                          "frameshift_variant",
+                                                          "inframe_deletion"))]
+    records = [(h, h.split(":")[7].replace("(", "").replace(")", "")) for h, _ in records]
+    rows = [{"peptide": seq[24:33], "gene": f"GENE{i}", "allele": "HLA-A*02:01", "p": "0.2",
+             "cls": "mhc1", "variant_type": variant_product(parse_variant_header(h))}
+            for i, (h, seq) in enumerate(records)]
+
+    units = units_from_context(rows, records, length=27, cls="mhc1")
+    arms = {u.gene: pf.default_arm(u) for u in units}
+    assert arms == {"GENE0": "mhc1",                       # the 92 % that used to be misfiled
+                    "GENE1": "nonconventional",
+                    "GENE2": "nonconventional"}
+
+
 def test_compose_fills_no_more_than_the_slots_and_records_why_each_was_taken():
     units = _cands([(f"G{i}", f"A*{i:02d}:01", 0.2, "mhc1", "missense") for i in range(9)])
     c = pf.compose(units, {"mhc1": (3, 1)}, 0.6)

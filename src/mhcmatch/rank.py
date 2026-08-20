@@ -673,7 +673,7 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
                 and p.affinity_nm > 0:
             dai = math.log10(p.wt_affinity_nm / p.affinity_nm)
         rows.append(Ranked(peptide=p.peptide, allele=p.allele, gene=gene, source=p.source,
-                           variant_type=str(var.get("type", "") or ""),
+                           variant_type=P.variant_product(var),
                            presentation=_neglog10(p.percent_rank),
                            binder=_neglog10(p.binder_rank) if p.binder_rank == p.binder_rank
                            else float("nan"),
@@ -701,6 +701,7 @@ def rank_table(path: str, *, channels=None,
     incoming ``score`` is preserved in ``components['score_builtin']`` so the two can be compared."""
     import csv
 
+    from . import predict as P
     from .store import binding_core
     rows = []
     with open(path, newline="", encoding="utf-8-sig") as fh:
@@ -717,7 +718,6 @@ def rank_table(path: str, *, channels=None,
             expr, imputed = _expression_for(gene, tpm, tissue, tumor, pep)
             pres = float("nan")
             if store is not None and allele:
-                from . import predict as P
                 bs = P.binder_score(store, pep, alleles=[allele], cls=cls)
                 if bs:
                     pres = _neglog10(bs[0].binder_rank)
@@ -729,7 +729,10 @@ def rank_table(path: str, *, channels=None,
                        occupancy=occupancy(nm) if (nm := _ic50_of(rec)) is not None else float("nan"),
                        physchem=_recognition(pep, cls=cls), expression=expr, expression_imputed=imputed,
                        known_epitope=_known(pep, refs),
-                       variant_type=(rec.get("type") or rec.get("variant_type") or "").strip())
+                       # `type` on a pipeline table is provenance (`Somatic`); the product is in
+                       # `subtype`. An explicit `variant_type` column, if the table has one, wins.
+                       variant_type=(str(rec.get("variant_type") or "").strip()
+                                     or P.variant_product(rec)))
             # No model register on this path -- the table was scored elsewhere -- so class II gets
             # the allele-agnostic one and says so.
             r.core, r.core_offset = binding_core(pep, cls)

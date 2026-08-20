@@ -55,7 +55,7 @@ presentation %rank) and — for k-mers spanning the somatic mutation — `agreto
 against the position-aligned wild type). It leaves expression, `CDR3`/`TCR-score` and the composite
 `score*` columns to their own modules.
 
-**`native.tsv` is mhcmatch's own 27 columns** (`mhcmatch.predict.NATIVE_COLUMNS`), which the fixed
+**`native.tsv` is mhcmatch's own 28 columns** (`mhcmatch.predict.NATIVE_COLUMNS`), which the fixed
 schema has nowhere to put:
 
 `source · type · gene_name · chrom · pos · ref · alt · peptide · offset · best_allele · cls ·
@@ -165,6 +165,11 @@ with sections `withdrawn`, `allotype`, `not selected`, `unit`, `junction`, `cass
   of its own class-I epitopes. `self_help` needs `params.mhcmatch_vector_map_alleles_mhc2` — without
   the recipient's class-II allotypes there is nothing to compute it from, and the process says so
   on stderr rather than emitting a silently empty column.
+- **With `mhcmatch_vector_quota` set, `.cassette.faa` and `.cassette.fna` carry two records** —
+  `cassette_composed` and `cassette_topk`. The first fills each arm's slots to maximise
+  `P(at least target responses)` under the block model; the second fills the same budgets by score
+  alone. `.cassette.map.*` describes the composed one. Without a quota each file carries the single
+  `cassette` record it always did, byte-for-byte.
 - **`.cassette.fna` is the epitope cassette only** — no start codon, no stop, no leader, no
   trafficking domain, because those flanks belong to the vector rather than the payload. Codons are
   the highest-usage human ones, backed off to shorten homopolymers, then deslipped so no `TTT`
@@ -200,7 +205,7 @@ alleles is unaffected by the default.
 | `mhcmatch_vector_map` | `true` | emit the cassette map (`*.cassette.map.tsv` / `.json`) |
 | `mhcmatch_vector_map_threshold` | `2.0` | %rank at or below which a window enters the map |
 | `mhcmatch_vector_map_alleles_mhc2` | `null` | the recipient's class-II allotypes; without them the map is class I only and `self_help` is not computed |
-| `mhcmatch_vector_quota` | `null` | compose to quotas instead of the ranked top, e.g. `mhc1=8:2,mhc2=4:1,nonconventional=3:1`. The same slot budgets filled by score alone are reported beside it |
+| `mhcmatch_vector_quota` | `null` | compose to quotas instead of the ranked top, e.g. `mhc1=14:2,mhc2=4:1,nonconventional=2:1`. **Emits two cassettes** — the composed one and the same slot budgets filled by score alone |
 | `mhcmatch_vector_block_live` | `0.5` | `P(a block is live)` in the response model behind the quota |
 | `mhcmatch_vector_evenness` | `0.0` | weight on class-I allotype evenness (H/H\ :sub:`max`) in the quota objective |
 
@@ -215,10 +220,10 @@ From `slurm.config` only:
 ## Build the image (only for `-profile docker`)
 
 ```zsh
-docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.24.0 \
-    --build-arg MHCMATCH_VERSION=0.24.0 \
+docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.24.1 \
+    --build-arg MHCMATCH_VERSION=0.24.1 \
     integrations/nextflow/mhcmatch/
-docker push <ISPRAS_REGISTRY>/mhcmatch:0.24.0
+docker push <ISPRAS_REGISTRY>/mhcmatch:0.24.1
 ```
 
 No data staging: the build runs `mhcmatch bootstrap --reference`, which fetches the ligand panel

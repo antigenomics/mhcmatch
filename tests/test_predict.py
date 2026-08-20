@@ -32,9 +32,52 @@ def test_parse_variant_header():
     assert v["transcript_id"] == "ENST00000377346" and v["uniprot_id"] == "A0A8V8TML5"
     assert v["tpm"] == "10.34"
     assert "(N)" in v["mut_window"] and "(S)" in v["wt_window"]
-    # non-Somatic: type is captured, other fields stay empty, never raises
-    f = P.parse_variant_header("Fusion:GENEA|GENEB|stuff")
-    assert f["type"] == "Fusion" and f["gene_name"] == ""
+    # a header of an unknown family: the type is captured, everything else stays empty, never raises
+    f = P.parse_variant_header("Whatever:GENEA|GENEB|stuff")
+    assert f["type"] == "Whatever" and f["gene_name"] == "" and f["tpm"] == ""
+
+
+#: The three non-``Somatic`` families, verbatim from the pipeline, with the fields each is expected
+#: to yield. Field order was pinned against the pipeline's own ``.epitopes.*.tsv`` columns -- the
+#: ``Fusion:`` row below matches ``gene_name=RGS6--XYLT1, ffpm=0.3655``, the ``Isoform:`` row
+#: ``cov=22.121262, fpkm=3.332689, tpm=5.124...``, the ``CNV:`` row ``sv_len=59610, cnv_score=26,
+#: tpm=0.14``. These are 7.6 % of the donor cohort's windows and all of its non-conventional ones.
+_NONSOMATIC = [
+    ("Fusion:RGS6--XYLT1:INFRAME:AQGSGDQ|DPHPSPL:ENST00000404301.6--ENST00000261381.7:"
+     "ENSG00000182732.18--ENSG00000103489.12:--:0.3655:12:0",
+     "fusion", {"gene_name": "RGS6--XYLT1", "subtype": "INFRAME", "ffpm": "0.3655",
+                "transcript_id": "ENST00000404301.6--ENST00000261381.7", "tpm": ""}),
+    ("Isoform:STRG.35712.1|ENST00000324225|ENSG00000149577|SIDT2|Q8NBJ9-1|"
+     "22.121262|3.332689|5.124321|975:124-1098:0-133",
+     "isoform", {"gene_name": "SIDT2", "gene_id": "ENSG00000149577", "uniprot_id": "Q8NBJ9-1",
+                 "cov": "22.121262", "fpkm": "3.332689", "tpm": "5.124321"}),
+    ("CNV:chr6:32530190:59610:MVCLKLPGGSY|I|SLSETCLLLW:26:0.14:79:6:0:0",
+     "cnv", {"chrom": "chr6", "pos": "32530190", "sv_len": "59610", "cnv_score": "26",
+             "tpm": "0.14", "gene_name": ""}),
+]
+
+
+@pytest.mark.parametrize("hdr,product,fields", _NONSOMATIC)
+def test_parse_variant_header_reads_the_non_somatic_families(hdr, product, fields):
+    v = P.parse_variant_header(hdr)
+    for k, want in fields.items():
+        assert v[k] == want, k
+    assert P.variant_product(v) == product
+
+
+def test_variant_product_is_the_consequence_not_the_provenance():
+    """``Somatic`` is where a variant came from; the product is what it makes.
+
+    Returning the former sent every candidate to the cassette's non-conventional arm, because
+    :func:`mhcmatch.portfolio.default_arm` asks only whether the kind is ``"missense"``.
+    """
+    assert P.variant_product(P.parse_variant_header(_HDR)) == "missense"
+    fs = _HDR.replace("missense_variant", "frameshift_variant")
+    assert P.variant_product(P.parse_variant_header(fs)) == "frameshift"
+    assert P.variant_product({"type": "Somatic", "subtype": "inframe_deletion"}) == "inframe_deletion"
+    # an unmapped consequence passes through rather than being counted as a missense
+    assert P.variant_product({"type": "Somatic", "subtype": "SPLICE_ACCEPTOR"}) == "splice_acceptor"
+    assert P.variant_product({"type": "", "subtype": ""}) == ""
 
 
 def test_tile_offsets():

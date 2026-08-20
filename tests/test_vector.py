@@ -810,3 +810,55 @@ def test_write_map_round_trips_through_both_formats(tmp_path):
     assert len(blob["features"]) == len(feats)
     ov = [r for r in rows if r["overlaps"]]
     assert ov and all("," not in r["id"] for r in rows)
+
+
+# ------------------------------------------------------- `vector --quota` writes what it composes
+def _quota_case(tmp_path, n):
+    """`n` candidate windows through the CLI's own readers: a context FASTA and a unit table."""
+    from mhcmatch.predict import parse_variant_header, variant_product
+    fa, tsv = tmp_path / "ctx.fasta", tmp_path / "cand.tsv"
+    subs = ("missense_variant", "frameshift_variant")
+    rows = ["peptide\tgene\tallele\tp\tcls\tvariant_type"]
+    with open(fa, "w") as fh:
+        for i in range(n):
+            left = "ACDEFGHIKLMNPQRSTVWYACDEFGH"
+            right = "YWVTSRQPNMLKIHGFEDCAYWVTSRQ"
+            ctx = f"{left}({'ACDEFGHIKL'[i % 10]}){right}"
+            h = (f"Somatic:chr1:{100 + i}:G:C:{subs[i % 2]}:{ctx}:{ctx}:9.9:"
+                 f"ENSG{i}:ENST{i}:GENE{i}:U{i}:0.9:5:9")
+            seq = ctx.replace("(", "").replace(")", "")
+            fh.write(f">{h}\n{seq}\n")
+            rows.append(f"{seq[24:33]}\tGENE{i}\tHLA-A*02:01\t{0.30 - 0.02 * i:.4f}\tmhc1\t"
+                        f"{variant_product(parse_variant_header(h))}")
+    tsv.write_text("\n".join(rows) + "\n")
+    return str(tsv), str(fa)
+
+
+def _run_vector(tmp_path, n, extra):
+    from mhcmatch import cli
+    cand, ctx = _quota_case(tmp_path, n)
+    faa, fna = tmp_path / "c.faa", tmp_path / "c.fna"
+    cli.main(["vector", "--candidates", cand, "--context", ctx, "--n0", "8",
+              "--fasta", str(faa), "--fasta-nt", str(fna),
+              "--out", str(tmp_path / "r.tsv")] + extra)
+    heads = [ln[1:].split()[0] for ln in faa.read_text().splitlines() if ln.startswith(">")]
+    nt = [ln[1:].split()[0] for ln in fna.read_text().splitlines() if ln.startswith(">")]
+    return heads, nt, (tmp_path / "r.tsv").read_text()
+
+
+def test_quota_emits_the_composed_cassette_and_the_score_only_one(tmp_path):
+    """Through 0.24.0 ``--quota`` composed a set and then built the sequence from ``select`` anyway.
+
+    It reported and did not act. Both cassettes now reach the FASTA, so the caller can compare the
+    layout the portfolio chose against the one a ranked list gives on the *same* slot budget.
+    """
+    heads, nt, report = _run_vector(tmp_path, 4, ["--quota", "mhc1=1:1,nonconventional=1:1"])
+    assert heads == ["cassette_composed", "cassette_topk"]
+    assert nt == ["cassette_composed_cds", "cassette_topk_cds"]
+    # both arms filled, so the non-conventional quota actually bit
+    assert "\tnonconventional\t" in report and "\tmhc1\t" in report
+
+
+def test_without_quota_the_output_is_the_single_cassette_it_always_was(tmp_path):
+    heads, nt, _ = _run_vector(tmp_path, 1, [])
+    assert heads == ["cassette"] and nt == ["cassette_cds"]
