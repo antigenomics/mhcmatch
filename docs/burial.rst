@@ -297,3 +297,26 @@ ablation and the reduced form is not yet measured on class II. The chemistry col
 it. And the identity half is rejected *by the parameter penalty in this model*, not shown
 uninformative: it holds the third-largest coefficient when fitted without the chemistry term, and it
 carries the Kešmir-construction arms where the corpora invert.
+
+
+Recomputing it, and swapping the basis
+--------------------------------------
+
+:func:`mhcmatch.complement.burial` returns this column directly:
+
+.. code-block:: python
+
+   from mhcmatch import complement
+   complement.burial(["GILGFVFTL"])                       # the shipped Rose basis
+   complement.burial(["GILGFVFTL"], scale="KIDERA:KF4")   # exploration only
+
+``scale=`` accepts any of the 45 keys of
+:data:`mhcmatch.data.aa_tables.HYDROPHOBICITY`, a ``"FAMILY:COMPONENT"`` key into
+:data:`~mhcmatch.data.aa_tables.DESCRIPTORS` (``"KIDERA:KF4"``, ``"CRUCIANI:PP1"``, ...), or a dict
+over the twenty residues, and raises on an unknown name rather than guessing.
+
+It exists for **comparison, not for scoring**. ``"Rose"`` was selected out of 576 candidates by the
+BIC change it produced inside the general model; a column computed on another basis re-parameterises
+that result and must be reported as a comparison. The Kidera factors are the ones worth quoting,
+since the Chowell-family literature is usually written against them --- and they lose to ``"Rose"``
+on the neoantigen corpus.

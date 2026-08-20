@@ -88,7 +88,7 @@ import numpy as np
 from . import immuno, ipred
 from .data import aa_tables
 
-__all__ = ["AA", "ANCHORS", "PARATOPE", "PARATOPE_CONTACT", "PARAMS", "TABLES", "SPECIES", "CLASSES", "BLOCKS",
+__all__ = ["AA", "ANCHORS", "PARATOPE", "PARATOPE_CONTACT", "PARAMS", "TABLES", "SPECIES", "CLASSES", "BLOCKS", "burial",
            "BLOCKS_MHC2", "FITTED", "FITTED_MHC2", "ZONES", "MHC2_ZONES", "LENGTH_BINS",
            "MHC2_LEN_EDGES", "mhc2_length_bin",
            "blocks", "fitted", "mhc2_anchors", "table",
@@ -402,6 +402,66 @@ def _zone_positions(L: int, anc: np.ndarray, anchor_idx: tuple, cls: str) -> lis
     return [[j for j in tcr_pos if j < s],
             [j for j in tcr_pos if s <= j < s + 9],
             [j for j in tcr_pos if j >= s + 9]]
+
+
+#: The chemistry half of the recognition axis, as a scale name. ``"Rose"`` is the shipped choice --
+#: the average fractional area a residue buries on folding -- selected out of 576 candidates by the
+#: BIC change it produced *inside the general model*, not by standalone AUROC. Any other name here
+#: is exploratory: it re-parameterises a published result and should be reported as a comparison,
+#: never substituted silently.
+PHYS_SCALE = "Rose"
+
+
+def phys_scale(scale=PHYS_SCALE) -> dict:
+    """Resolve a residue scale by name to ``{residue: value}``.
+
+    Accepts a key of :data:`mhcmatch.data.aa_tables.HYDROPHOBICITY` (45 scales, including the
+    shipped ``"Rose"``), a ``"FAMILY:COMPONENT"`` key into
+    :data:`~mhcmatch.data.aa_tables.DESCRIPTORS` (e.g. ``"KIDERA:KF4"``), or a ready dict over
+    :data:`AA`. Raises rather than guessing on an unknown name."""
+    from .data import aa_tables as _T
+    if isinstance(scale, dict):
+        miss = set(AA) - set(scale)
+        if miss:
+            raise ValueError(f"scale is missing {sorted(miss)}")
+        return scale
+    if scale in _T.HYDROPHOBICITY:
+        return _T.HYDROPHOBICITY[scale]
+    if ":" in scale:
+        fam, comp = scale.split(":", 1)
+        if fam in _T.DESCRIPTORS and comp in _T.DESCRIPTORS[fam]:
+            return _T.DESCRIPTORS[fam][comp]
+    raise ValueError(
+        f"unknown scale {scale!r}. Use a HYDROPHOBICITY key (e.g. 'Rose'), a "
+        f"'FAMILY:COMPONENT' descriptor key (e.g. 'KIDERA:KF4'), or a dict over the 20 residues.")
+
+
+def burial(peptides, cls: str = "mhc1", scale=PHYS_SCALE, registers=None) -> list[float]:
+    """``C_phys``: a residue scale summed over the **TCR-facing** positions.
+
+    With the default ``scale="Rose"`` this is the shipped chemistry term -- the Rose burial
+    propensity, i.e. the average fraction of a residue's surface buried on folding, summed over the
+    face a receptor reads. It has **no fitted residue parameters**: the basis is imported, which is
+    why it cannot memorise the corpus's cysteine gradient (correlation with per-peptide cysteine
+    count +0.108, against +0.688 for the full fitted :func:`score`).
+
+    ``scale=`` is for **exploration, not for scoring**. Passing another basis re-parameterises a
+    result that was selected by BIC inside the general model over 576 candidates, so a number
+    produced with a different scale is a comparison and must be reported as one. The obvious
+    comparisons -- Kidera factors, against which the Chowell-family literature is usually
+    written -- are reachable as ``"KIDERA:KF4"``, ``"KIDERA:KF2"`` and so on; on the neoantigen
+    corpus they lose to ``"Rose"``.
+
+    >>> burial(["GILGFVFTL"])[0] > 0
+    True
+    >>> abs(burial(["GILGFVFTL"], scale="KIDERA:KF4")[0]) >= 0
+    True
+    """
+    import numpy as np
+    tab = phys_scale(scale)
+    vec = np.array([tab[a] for a in AA], dtype=float)
+    _, counts = encode(list(peptides), cls, registers=registers)
+    return (counts["tcr"].astype(float) @ vec).tolist()
 
 
 def encode(peptides, cls: str = "mhc1", registers=None, positions: str = "mask",

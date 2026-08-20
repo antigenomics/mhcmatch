@@ -463,3 +463,26 @@ def test_an_unknown_encoding_is_refused_rather_than_guessed():
                {"paratope": "tcren"}):
         with pytest.raises(ValueError):
             CM.score(["GILGFVFTL"], **kw)
+
+
+def test_burial_reproduces_the_shipped_rose_column():
+    """`burial` is the C_phys column: the Rose scale summed over the TCR face, nothing fitted."""
+    from mhcmatch.data import aa_tables as T
+    peps = ["GILGFVFTL", "SIINFEKL", "NLVPMVATV", "LLWNGPMAVT"]
+    vec = np.array([T.HYDROPHOBICITY["Rose"][a] for a in CM.AA])
+    _, counts = CM.encode(peps, "mhc1")
+    assert np.allclose(CM.burial(peps), counts["tcr"].astype(float) @ vec)
+
+
+def test_burial_scale_is_selectable_and_changes_the_column():
+    """`scale=` is the exploration hook. It must actually change the answer, or it is decoration."""
+    peps = ["GILGFVFTL", "SIINFEKL", "NLVPMVATV"]
+    rose = CM.burial(peps)
+    kf4 = CM.burial(peps, scale="KIDERA:KF4")
+    assert rose != kf4
+    assert CM.burial(peps, scale="Rose") == rose
+
+
+def test_an_unknown_scale_is_refused_rather_than_guessed():
+    with pytest.raises(ValueError, match="unknown scale"):
+        CM.burial(["GILGFVFTL"], scale="not_a_scale")

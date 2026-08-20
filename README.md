@@ -237,6 +237,26 @@ over the crystallographic per-position TCR-contact profile rather than a binary 
 `paratope="contact"` (marginalise TCRen over the receptor residues that actually contact, rather
 than over the whole CDR3 loop).
 
+The other half of that axis is not chemistry and is not fitted on labels either. `C_aa` — the
+residue log-odds — is estimated on Chowell, which separates **foreign** from **self and presented**:
+a statement about *passing thymic selection*, not about whether a T cell responds to a somatic
+mutation. `mimicry.corpus_R` replaces it with a label-free neighbour density against three
+references, split by *when a T cell meets them*:
+
+| channel | what it is | reads as | fitted sign |
+|---|---|---|--:|
+| `thymus` | thymic immunopeptidome — **the only one that enters selection** | danger | +0.1761 (z +3.35) |
+| `self` | host proteome, met in the periphery | tolerance | −0.1812 (z −1.44) |
+| `viral` | foreign ligandome — **never seen during selection** | reference | +0.0166 (z +0.23) |
+
+The thymic channel is positive because the thymus is not a random sample of self: mTECs
+promiscuously express tissue-restricted antigens under *Aire* and *Fezf2* precisely to purge the
+clones that would cause autoimmunity, so thymic display is enriched for the self **worth tolerising
+against**. Measured on the burial axis, thymic ligands sit above *non-thymic presented* self at
+Cohen's d = +0.1650 (p = 1.0×10⁻⁸⁰) — presentation held constant, so the effect is thymus-specific.
+`thymus` and `self` are both similarity to *self* sets, and their opposite signs are what no
+single-mechanism account gives. See [docs/corpus.rst](docs/corpus.rst).
+
 **Evidence that outranks a model.** `mhcmatch.known` carries five reference sets built from the
 public deposits — confirmed tumour neoantigens, peptides the screens tested and found
 non-immunogenic, IEDB-immunogenic epitopes, the thymic self-immunopeptidome, the viral ligandome. An
@@ -307,26 +327,6 @@ tolerance-side reference" fires on almost everything — influenza `GILGFVFTL` d
 essential-tissue hits — because anchor-masked similarity to a *presented* reference is presentation,
 not recognition. Exclusion goes through `vector.self_origin_risk`
 (`bench/results/vector_safety_screen.md`).
-
-The other half of that axis is not chemistry and is not fitted on labels either. `C_aa` — the
-residue log-odds — is estimated on Chowell, which separates **foreign** from **self and presented**:
-a statement about *passing thymic selection*, not about whether a T cell responds to a somatic
-mutation. `mimicry.corpus_R` replaces it with a label-free neighbour density against three
-references, split by *when a T cell meets them*:
-
-| channel | what it is | reads as | fitted sign |
-|---|---|---|--:|
-| `thymus` | thymic immunopeptidome — **the only one that enters selection** | danger | +0.1761 (z +3.35) |
-| `self` | host proteome, met in the periphery | tolerance | −0.1812 (z −1.44) |
-| `viral` | foreign ligandome — **never seen during selection** | reference | +0.0166 (z +0.23) |
-
-The thymic channel is positive because the thymus is not a random sample of self: mTECs
-promiscuously express tissue-restricted antigens under *Aire* and *Fezf2* precisely to purge the
-clones that would cause autoimmunity, so thymic display is enriched for the self **worth tolerising
-against**. Measured on the burial axis, thymic ligands sit above *non-thymic presented* self at
-Cohen's d = +0.1650 (p = 1.0×10⁻⁸⁰) — presentation held constant, so the effect is thymus-specific.
-`thymus` and `self` are both similarity to *self* sets, and their opposite signs are what no
-single-mechanism account gives. See [docs/corpus.rst](docs/corpus.rst).
 
 ## Model names
 

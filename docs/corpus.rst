@@ -100,6 +100,39 @@ over the TCR face --- so the shape parameter can be refitted without re-searchin
 
 Opt-in and default-off: nothing in the shipped aggregate calls this.
 
+Exploration options, and which of them belong in a score
+--------------------------------------------------------
+
+``components=`` selects the channels. **This is not a free choice.**
+
+.. code-block:: python
+
+   mimicry.corpus_R(peps, refs, components=("thymus",))   # the scoring column
+   mimicry.corpus_R(peps, refs)                           # all three -- the ladder
+
+Only ``thymus`` earns its parameters inside the general model. Adding ``self`` costs BIC and adding
+``viral`` costs more: ``viral`` correlates 0.83 with ``thymus`` at this resolution (their raw
+neighbour counts correlate 0.96 at *d*\ =1 and 0.98 at *d*\ =2, so the two references are close to
+the same measurement here), and ``self`` never reaches significance.
+
+Report the full ladder anyway. The thymus/self **sign dissociation** is the evidence for the
+mechanism, and it is worth showing even though two of its three channels are not fitted.
+
+The matching option on the chemistry side is
+:func:`mhcmatch.complement.burial`'s ``scale=``, which selects the residue basis:
+
+.. code-block:: python
+
+   from mhcmatch import complement
+   complement.burial(peps)                          # "Rose" -- the shipped basis
+   complement.burial(peps, scale="KIDERA:KF4")      # exploration only
+
+``"Rose"`` was chosen out of 576 candidates by the BIC change it produced *inside the general
+model*, not by standalone AUROC. Kidera factors --- against which the Chowell-family literature is
+usually written --- are reachable as ``"KIDERA:KF4"``, ``"KIDERA:KF2"`` and so on, and lose to
+``"Rose"`` on the neoantigen corpus. A number produced with a different scale is a **comparison**
+and has to be reported as one; it is never a silent substitution.
+
 Two things that are easy to assume and false here
 -------------------------------------------------
 

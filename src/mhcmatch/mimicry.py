@@ -388,7 +388,7 @@ def _sources(pmhc_dir, rel: str) -> dict[str, str]:
 
 
 def corpus_R(peptides, refs: dict, cls: str = "mhc1", k: float = 2.25,
-             radius: int = 2) -> list[dict]:
+             radius: int = 2, components=None) -> list[dict]:
     """``R = Z/(1+Z)`` per component over the **TCR face**, the Łuksza form.
 
     A neighbour *density* read as a soft sum over substitution distance rather than as a single
@@ -423,6 +423,14 @@ def corpus_R(peptides, refs: dict, cls: str = "mhc1", k: float = 2.25,
     here, and a caller who wants the published parameterisation should know it is scoring the same
     column.
 
+    ``components=`` selects the channels, defaulting to all of :data:`COMPONENTS`. **Which of them
+    belongs in a score is not a free choice.** Only ``thymus`` earns its parameters inside the
+    general model; adding ``self`` costs BIC and adding ``viral`` costs more, because ``viral``
+    correlates 0.83 with ``thymus`` at this resolution and ``self`` never reaches significance. Pass
+    ``components=("thymus",)`` for the scoring column and the full set for the ladder --- the
+    thymus/self sign dissociation is the evidence for the mechanism and is worth reporting even
+    though two of its three channels are not fitted.
+
     Opt-in and default-off: nothing in the shipped aggregate calls this.
 
     >>> refs = load_references(cls="mhc1")              # doctest: +SKIP
@@ -437,7 +445,7 @@ def corpus_R(peptides, refs: dict, cls: str = "mhc1", k: float = 2.25,
         if all(c in AA for c in p):
             sel = masks(len(p))["tcr"]
             q = "".join(p[i] for i in sel)
-            for comp in COMPONENTS:
+            for comp in (components or COMPONENTS):
                 key = (comp, "tcr", len(p))
                 if key not in refs:
                     continue
