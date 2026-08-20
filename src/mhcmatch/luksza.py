@@ -1,10 +1,11 @@
 """The Łuksza recognition term :math:`R = Z/(1+Z)`, computable without the benchmark repo.
 
-The fitted aggregate (:func:`mhcmatch.rank.aggregate`) carries a ``viral_R`` coefficient, but until
-now nothing in the library could *produce* that column: the Boltzmann sum lived only in the
-benchmark's ``bench/neoag/luksza_r.py``, so an installed user could call
-:func:`mhcmatch.rank.aggregate_score` and had no way to supply one of its nine features. This closes
-that.
+``viral_R`` was a term of the ``BOECRT`` aggregate, and nothing in the library could *produce* that
+column: the Boltzmann sum lived only in the benchmark's ``bench/neoag/luksza_r.py``, so an installed
+user had no way to supply one of the features the fitted model then wanted. This module closed that.
+``GRAND`` retired the term in 0.21.0 (see :data:`SHAPE`), so the shipped aggregate does **not** score
+with it -- but the quantity is still the published recognition term, still computable here, and still
+what a refit or a head-to-head against the Łuksza model needs.
 
 **The model.** A soft partition function over near-matches, replacing a hard distance cut
 (Balachandran, Łuksza et al., *Nature* 551:512--516, 2017, ``doi:10.1038/nature24462``; Łuksza et al.,
@@ -122,11 +123,13 @@ def counts_by_distance(peptides, hits: dict, category: str, max_subs: int = FIT_
 
 def viral_r(peptides, ref_sets=None, *, max_subs: int = FIT_MAX_SUBS, k: float | None = None,
             a0: float | None = None, threads: int = 0, category: str = "viral") -> np.ndarray:
-    """The ``viral_R`` column :func:`mhcmatch.rank.aggregate_score` expects, end to end.
+    """``viral_R`` end to end -- the published recognition term, computed standalone.
 
     Searches ``peptides`` against the viral ligandome with
     :func:`mhcmatch.mimics.neighbours` and turns the per-distance counts into ``R``. With
-    ``ref_sets=None`` it loads the same default reference the coefficient was fitted against.
+    ``ref_sets=None`` it loads the same default reference the coefficient was fitted against. The
+    shipped aggregate does not consume this column -- :func:`mhcmatch.rank.aggregate_score` scores
+    ``GRAND``, which has no ``viral_R`` feature.
 
     >>> from mhcmatch import luksza                      # doctest: +SKIP
     >>> luksza.viral_r(["NLVPMVATV", "GILGFVFTL"])       # doctest: +SKIP

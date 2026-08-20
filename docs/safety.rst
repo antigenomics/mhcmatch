@@ -90,6 +90,12 @@ essential-tissue genes:
      - **0.020**
      - 0.940
 
+.. note::
+
+   ``bench/results/...`` paths on this page resolve in the benchmark repository,
+   `2026-mhcmatch-benchmark <https://github.com/antigenomics/2026-mhcmatch-benchmark>`_, not in the
+   library repo.
+
 **Equal sensitivity, 35× the false positives.** Anchor-channel similarity to a presented reference
 is *presentation*, not recognition, so a masked match fires for every peptide sharing the allele's
 motif — the influenza epitope ``GILGFVFTL`` draws 14 essential-tissue hits. A screen that flags
@@ -197,6 +203,9 @@ cassette can always name its own assumption.
 
 Screening runs **before** selection, for the same reason: capacity spent on a unit that will be
 withdrawn is capacity not spent on a safe one.
+
+Once a set is selected, what that set is *worth* — coverage, redundancy, :math:`\Pr(\ge k)` — is
+:doc:`portfolio`.
 
 
 The cassette map: coordinates, linkers, and who helps whom

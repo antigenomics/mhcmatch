@@ -16,14 +16,14 @@ k-mer indexing. Authoritative context: [`ROADMAP.md`](../../ROADMAP.md) (phase s
 
 ```python
 import mhcmatch
-store = mhcmatch.Store.from_pmhc("~/hf/pmhc_data/pmhc/pmhc_shortlist.tsv.gz")   # or $MHCMATCH_PMHC
+store = mhcmatch.Store.from_pmhc(tier="shortlist", species="human")   # fetched from HF, cached
 ```
 
 | method | does |
 |---|---|
-| `Store.from_pmhc(path, tier=)` / `from_records(rows)` | build the panel (`tier="full"`/`"shortlist"`) |
+| `Store.from_pmhc(tier=, species=, classes=)` / `from_records(rows)` | build the panel (`tier="full"`/`"shortlist"`); no path — it bootstraps from `isalgo/pmhc_data`. `$MHCMATCH_PMHC_DIR` points at a local mirror instead |
 | `store.restriction(peptide, cls=, alleles=, calibrated=)` | **rank presenting alleles**; `calibrated=True` gives cross-allele-comparable `%rank` + `p_present` + band |
-| `store.scan_protein(seq, correction="bonferroni"|"bh")` | slide binding-length windows, FDR-controlled |
+| `store.scan_protein(protein, correction="bonferroni"|"bh")` | slide binding-length windows, FDR-controlled |
 | `store.decompose(peptide)` | anchor / TCR-facing split with `X` masks |
 | `store.anchor_model(cls, ...)` | the forward scorer — see below |
 | `store.affinity_model` | `PottsAffinity`; IC50 (nM) + Łuksza amplitude / DAI |
@@ -76,15 +76,19 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 | `mhcmatch.calibrate` | `RankCalibrator` | per-allele `%rank` / `P(present)` / band |
 | `mhcmatch.predict` | `predict_fasta`, `predict_windows` | variant-window scoring; native table carries `binder_rank`/`binder_band`/`affinity_rank` (the generalized binder score) alongside %rank/IC50/agretopicity. `.scored.csv` keeps the fixed 57-col pipeline schema |
 | `mhcmatch.structure` | `StructureScorer` | MJ ΔΔG; **optional `[structure]` extra** (needs `tcren`) |
-| `mhcmatch.complement` | `score`, `design`, `feature_names`, `posterior` | the recognition axis: six blocks, per species, **never pooled across hosts**. Vectorised — pass a list. `posbayes` and `ipred` are strict special cases. `cls="mhc2"` selects the separately fitted class-II table (v0.16.0), whose `aa` block is keyed on register zone **and** length; `recognition.score_mhc2` is a different, unfitted thing — do not confuse them |
-| `mhcmatch.rank` | `rank_fasta`, `rank_table`, `occupancy` | scores with the fitted `BOECRT` aggregate since 0.19.0; `--score gate` is the pre-0.19.0 product-of-sigmoids. Emits `occupancy` — equilibrium fraction of MHC held, `a/(1+a)` with `a = [P]/Kd` — which is **absolute** where the binder `%rank` is allele-relative, and is defined for a frameshift or fusion product that has no wild type. `agretopicity` is reported, not fitted: it does not resolve in any parameterisation tested. `rank --extended` appends the mimicry contributions and `--annotate` what each candidate resembles — **columns only, the ordering is unchanged** |
+| `mhcmatch.complement` | `score`, `burial`, `design`, `feature_names`, `posterior` | the recognition axis: six blocks, per species, **never pooled across hosts**. Vectorised — pass a list. `posbayes` and `ipred` are strict special cases. **`burial` is `C_phys`** — the Rose burial propensity summed over the TCR face, an imported basis with **no fitted residue parameters**, and one of the two Complementarity factors the shipped aggregate carries ([docs/burial.rst](../../docs/burial.rst)). `cls="mhc2"` selects the separately fitted class-II table (v0.16.0), whose `aa` block is keyed on register zone **and** length; `recognition.score_mhc2` is a different, unfitted thing — do not confuse them |
+| `mhcmatch.rank` | `rank_fasta`, `rank_table`, `occupancy` | scores with the fitted `GRAND` aggregate since 0.21.0 (`BOECRT` from 0.19.0 to 0.20.0); `--score gate` is the pre-0.19.0 product-of-sigmoids. Emits `occupancy` — equilibrium fraction of MHC held, `a/(1+a)` with `a = [P]/Kd` — which is **absolute** where the binder `%rank` is allele-relative, and is defined for a frameshift or fusion product that has no wild type. `agretopicity` is reported, not fitted: it does not resolve in any parameterisation tested. `rank --extended` appends the mimicry contributions and `--annotate` what each candidate resembles — **columns only, the ordering is unchanged** |
 | `mhcmatch.known` | five built-in reference sets | exact-match lookup. An exact match outranks any model output, so `rank` flags it and never folds it into the score |
 | `mhcmatch.expression` | `lookup`, `safety_profile`, `matched_tissues`, `tumor_types`, `TUMOR_TISSUE` | GTEx `SMTSD` tissues and TCGA study abbreviations — **two vocabularies, never merged, neither clinical**. **Always pass the caller's own tumour type**; the benchmark's cross-tissue median exists for fit/holdout comparability, not as a default |
 | `mhcmatch.mimics` | `neighbours`, `KINDS`, `DEFAULT_REFS` | the raw scan, per category, **never summed** — each category argues something different |
-| `mhcmatch.mimicry` | `score`, `probability`, `annotate`, `safety`, `masks` | the *fitted* form: `viral`/`self`/`thymus` × `anchor`/`tcr` as signed log-odds. `probability` demands a **named** corpus. `annotate` (tested-neoantigen DB) is prior evidence and **never a fitted term** |
+| `mhcmatch.mimicry` | `score`, `probability`, `annotate`, `safety`, `masks`, `corpus_R`, `features`, `load_references` | the *fitted* form: `viral`/`self`/`thymus` × `anchor`/`tcr` as signed log-odds. `probability` demands a **named** corpus. `annotate` (tested-neoantigen DB) is prior evidence and **never a fitted term**. **`corpus_R` is `C_corpus`** — the Łuksza `R = Z/(1+Z)` neighbour density over the TCR face, shapes in `SHAPES`, `components=("thymus",)` for the scoring column ([docs/corpus.rst](../../docs/corpus.rst)). `load_references` builds the index the search needs; cache it with `$MHCMATCH_REFERENCE_CACHE` |
 | `mhcmatch.vector` | `screen`, `self_origin_risk`, `select`, `order`, `slippery_sites`, `epitope_map`, `write_map` | **cassette assembly**, the step after `rank`: withdraw on safety, then how many units per allotype, in what order, joined by what. `screen` **excludes**, never down-ranks. Scoring is injected (`binder`, `risk`), so the layout logic needs no panel. `epitope_map`/`write_map` (v0.16.0) emit the TSV/JSON cassette map — unit, linker and epitope rows with 1-based coordinates, the class-II core, cross-class overlaps and per-unit `self_help`; **one row per (peptide, allele)**, so a heterozygote is duplicated by construction |
 | `mhcmatch.portfolio` | `pareto_front`, `linearly_supported`, `chebyshev_score`, `corner`, `p_at_least`, `n_effective`, `dispersion`, `betabinom_rho` | **cassette composition**, the layer above `vector.select`. Fits nothing: it says what a proposed *set* is worth. `vector.select` now takes `block=` (a callable `Unit -> hashable`, default the allotype) so the budget can saturate against allotype **x** mechanism; `Selection.expected_yield` follows whatever partition the rule used, and `per_block()` reports it. `linearly_supported` is exact (LP), the sampled searches in the benchmark repo are not. SciPy is a **lazy** import — `linearly_supported` and `betabinom_rho` need it, nothing else does |
-| `mhcmatch.luksza` | `viral_r`, `r_term`, `counts_by_distance`, `shape` | the Łuksza `R = Z/(1+Z)` term (v0.17.0). `viral_R` is one of the fitted aggregate's nine features and used to be computable only in the benchmark repo. `k`/`a0` are **read from the artifact**, never hardcoded. The neighbour search is 98.6% of the runtime — do not micro-optimise the rest |
+| `mhcmatch.luksza` | `viral_r`, `r_term`, `counts_by_distance`, `shape` | the Łuksza `R = Z/(1+Z)` term (v0.17.0). `viral_R` was a term of the retired `BOECRT` aggregate and used to be computable only in the benchmark repo; `GRAND` does not score with it. `k`/`a0` are **read from the artifact**, never hardcoded. The neighbour search is 98.6% of the runtime — do not micro-optimise the rest |
+| `mhcmatch.recognition` | `score`, `default_head`, `lowest_bic_head`, `roles_for`, `score_mhc2` | the head dispatcher over the recognition axis: `complement` (the **default**), `posbayes`, `physchem_glm`, `esm64_glm`. `default_head` and `lowest_bic_head` answer different questions and do not agree — see [docs/complementarity.rst](../../docs/complementarity.rst) |
+| `mhcmatch.immuno` | `features`, `ANCHOR_SCHEMES`, `contact_profile` | 141 physicochemical features per peptide over selectable TCR-facing position schemes ([docs/immunogenicity.rst](../../docs/immunogenicity.rst)); no store, no download |
+| `mhcmatch.posbayes` | `llr`, `posterior`, `roles`, `table` | naive Bayes over residue identity conditioned on face; two 20-cell tables, three parameters, no dependencies. A strict special case of `complement`'s `aa` block |
+| `mhcmatch.ipred` | `score`, `log_p`, `p_immunogenic`, `features` | the 13-parameter calibrated physicochemical log-odds — the **old** recognition term, `V` in the model naming. Reported by `rank` as `physchem_ipred`, **not** in the model |
 | `mhcmatch.precursor` | re-export of `vdjmatch.precursor` | moved there; **optional `[precursor]` extra** |
 
 ## CLI
@@ -109,6 +113,13 @@ whole cost: the presentation/affinity calibrators ~5 s, a human-proteome length 
 process over a list is the difference between seconds per peptide and thousands per second.
 `--threads` exists **only** on `source` and `mimics`, whose neighbour search runs in C++ with the GIL
 released; elsewhere it is absent rather than accepted and ignored.
+
+**Set `$MHCMATCH_REFERENCE_CACHE` on a cluster.** The mimicry reference indexes are built once into
+that directory and memory-mapped thereafter; pointed at shared storage, a Nextflow or SLURM fleet
+builds once and every task loads, and co-resident tasks share the mapped pages instead of each
+holding a copy. Figures in `CHANGELOG.md` under 0.20.0. `$MHCMATCH_PMHC_DIR` and
+`$MHCMATCH_CALIBRATION_CACHE` are the other two a cluster wants; `integrations/nextflow/mhcmatch/slurm.config`
+exports all three.
 
 ## The shipped scorer (2026-08-19)
 
@@ -184,9 +195,9 @@ tumour-matched refit across all eight cohorts at once (ROADMAP §6).
 - **`portfolio.corner` is a proxy, not a latent variable.** It reports which objective a candidate is
   relatively strongest on. That is a defensible stand-in for *why* it might work and nothing more.
 
-- **Two MHC-II registers coexist by design — never merge them.** The *heuristic* register
-  (`store._mhc2_register`, allele-agnostic) backs signatures/`decompose`/logos; the *model* register
-  (`AnchorModel.best_register`, per-allele) backs scoring and benchmarks. They disagree often.
+- **Two MHC-II registers coexist by design — never merge them**, and **anchors are parametrized —
+  never hardcode positions.** Both traps are stated once, in `ROADMAP.md` §7; read them there rather
+  than from a copy that can drift.
 - **`mimicry` is a scoring term, not a safety screen.** Flagging cassette candidates by "resembles a
   tolerance-side reference" fires on almost everything: influenza `GILGFVFTL` drew 14
   essential-tissue hits against the shipped thymic set. Anchor-masked similarity to a *presented*
@@ -194,10 +205,9 @@ tumour-matched refit across all eight cohorts at once (ROADMAP §6).
   sharing the allele motif. Exclusion uses `vector.self_origin_risk` — `Proteome.find_source` at
   ≤1 substitution, joined to `expression.safety_profile` — which resolves titin `ESDPIVAQY` to
   `TITIN_HUMAN` and viral epitopes to nothing (`bench/results/vector_safety_screen.md`).
-- **Anchors are parametrized** — never hardcode positions. MHC-I masking comes from `seqtree.layout`;
-  MHC-II anchors are mhcmatch's own `MHC2_ANCHORS` (`diffusion.py`), since seqtree exposes none — reference
-  the constant, never a literal.
 - **Benchmarks live in a separate repo**: [`2026-mhcmatch-benchmark`](https://github.com/antigenomics/2026-mhcmatch-benchmark). `bench/results/...` resolves there.
 - **`from_records`' `weight` field is inert** in production; a ligand's training weight is its row count
   (publication count). Measured to not matter (ΔAUC −0.001).
-- Repo-local `.venv`; datasets at `~/hf/pmhc_data`.
+- Repo-local `.venv`. Everything in **this** repo bootstraps its data from HuggingFace
+  (`isalgo/pmhc_data`) so a `pip install mhcmatch` user can run every example; `~/hf/pmhc_data` is a
+  benchmark-repo convenience mirror, reachable here only via `$MHCMATCH_PMHC_DIR`.

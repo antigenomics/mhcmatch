@@ -3,6 +3,12 @@
 **Status:** design, with the measurements that motivate it. One piece (`register_em="converge"`) is
 built and benchmarked; the rest is specified, not built.
 
+**Not a Sphinx page.** This file is a design record, not library documentation: it is markdown, the
+docs build reads reStructuredText only, and it is deliberately outside `index.rst`'s toctree. Every
+`bench/...` path and every `*.md` result table cited below resolves in the **benchmark repository**,
+[2026-mhcmatch-benchmark](https://github.com/antigenomics/2026-mhcmatch-benchmark), under
+`bench/results/` — not in this repo.
+
 ## The observation
 
 Every per-allele capacity knob in `AnchorModel` is either **already self-adapting** or **a global
@@ -25,7 +31,7 @@ The law the first four obey:
 > *identically* at the thin end, and uses no threshold set at an evaluation boundary.**
 
 `rare_max=30` violates the last clause outright: it is *exactly* the benchmark's rare-stratum boundary
-(`bench/compare/task.py`, `rare_max=30`), which is the failure the mixture work explicitly avoided
+(benchmark repo `bench/compare/task.py`, `rare_max=30`), which is the failure the mixture work explicitly avoided
 ("*no ligand-count threshold is used anywhere — in particular capacity is not gated at n≥200, which
 would have made the training boundary the eval stratum's own boundary*", `motif_mixture_mhc2.md`).
 
@@ -76,7 +82,7 @@ Three levels, each shrunk toward its parent, with the strength **derived** rathe
 global (class × species)
    └── family        kernel community — already built and validated:
    │                 modularity Q = 0.94 (MHC-I) / 0.90 (MHC-II), "respect allele families"
-   │                 (Pseudoseq.cluster, bench/promiscuity_graph.py, ROADMAP §4)
+   │                 (Pseudoseq.cluster, benchmark repo bench/promiscuity_graph.py, ROADMAP §4)
    └── allele        own counts
 ```
 

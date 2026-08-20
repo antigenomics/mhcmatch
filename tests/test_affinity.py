@@ -7,15 +7,7 @@ import pytest
 from mhcmatch.affinity import AffinityModel, PottsAffinity, _EPS_OVER_L, ic50_to_y, y_to_ic50
 from mhcmatch.pseudoseq import resolve_allele
 
-
-class _Stub:
-    """Deterministic AnchorModel stub: 'binding strength' = hydrophobic-residue count."""
-
-    def score(self, pep, allele):
-        return float(sum(c in "AILMFWVY" for c in pep))
-
-    def anchor_terms(self, pep, allele):
-        return [float(c in "AILMFWVY") for c in pep]
+from conftest import HydrophobicStub as _Stub
 
 
 def _fitted():
@@ -167,6 +159,7 @@ def _potts_y_reference(m, peptide, allele):
     return s
 
 
+@pytest.mark.hfdata
 def test_potts_effective_table_is_bit_identical_to_the_triple_loop():
     """`_effective` pre-contracts the pocket side, which is ~20x faster and must not move a single
     score -- these are shipped IC50 values.

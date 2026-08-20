@@ -55,12 +55,21 @@ diffusion model, and the downstream predictors.
 | Vendored AA property tables (17 families, 102 components, 45 hydrophobicity scales) | `mhcmatch.data.aa_tables` | **v0.9.0** (§5a) |
 | Calibrated physicochemical `log P(immunogenic)`, 13 parameters | `mhcmatch.ipred` | **v0.9.0** (§5a) |
 | Position-role naive Bayes over residue identity (prior-free LLR) | `mhcmatch.posbayes` | **v0.9.0** (§5a) |
-| **Complementarity** — six feature blocks, linear head, vectorised | `mhcmatch.complement` | **v0.10-dev** (§5b) |
+| **Complementarity** — six feature blocks, linear head, vectorised | `mhcmatch.complement` | **v0.16.0**, class I + class II (§5b) |
+| Recognition-head dispatcher (`complement` / `posbayes` / `physchem_glm` / `esm64_glm`) | `mhcmatch.recognition` | **v0.16.0** |
+| `C_phys` — the imported chemistry factor of Complementarity | `mhcmatch.complement.burial` | **v0.21.0** (`docs/burial.rst`) |
+| `C_corpus` — the label-free corpus factor of Complementarity | `mhcmatch.mimicry.corpus_R` | **v0.21.0** (`docs/corpus.rst`) |
 | TCR precursor frequency (six estimators) | `mhcmatch.precursor` | **v0.12.0** re-export of `vdjmatch.precursor` (§5a) |
 | Reference expression by GTEx tissue / TCGA tumour type | `mhcmatch.expression` | **v0.9.0** |
-| Neoantigen ranking: noisy-AND gate over presentation × recognition | `mhcmatch.rank` | **v0.10-dev** (§5b) |
+| Neoantigen ranking: the fitted `GRAND` aggregate (`--score gate` is the pre-0.19.0 noisy-AND) | `mhcmatch.rank` | **v0.21.0** (§5b) |
+| Known-epitope reference sets, exact-match lookup | `mhcmatch.known` | **v0.18.0** |
+| Łuksza `R = Z/(1+Z)` recognition term | `mhcmatch.luksza` | **v0.17.0** |
+| Per-allele `%rank` / `P(present)` / band calibration | `mhcmatch.calibrate` | **v0.9.0** |
+| Variant-window scoring into native + pipeline `.scored.csv` | `mhcmatch.predict` | **v0.9.0** |
+| **Cassette assembly** — screen, size, order, spacer, map | `mhcmatch.vector` | **v0.16.0** (`docs/safety.rst`) |
+| **Cassette composition** — the portfolio layer above `vector.select` | `mhcmatch.portfolio` | **v0.21.0** (`docs/portfolio.rst`) |
 | Mimicry scan (thymus / viral / neoag references) | `mhcmatch.mimics` | **v0.9.0**, on the slow search path (§6c) |
-| **Mimicry risk** — viral/self/thymus × anchor/TCR-facing, signed log-odds | `mhcmatch.mimicry` | **v0.12.0**, class I only (§5c) |
+| **Mimicry risk** — viral/self/thymus × anchor/TCR-facing, signed log-odds | `mhcmatch.mimicry` | **v0.12.0**; the face is class-aware since v0.21.0, the fitted aggregate is class I only (§5c) |
 | Stability | — | Phase 2 |
 | NetMHCpan / MixMHCpred head-to-head benchmark + paper | separate repo | Phase 3 |
 
@@ -832,7 +841,9 @@ NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2)
   ~66% of ligands — so collapsing them would silently change every `bench/results/` number. The span
   model sidesteps both: it is register-free (terminus-relative).
 - **Anchors are parametrized** via `seqtree.layout` (presets per class, overridable) — never hardcode
-  positions; allele-specific anchors come from the learned pocket weights.
+  positions; allele-specific anchors come from the learned pocket weights. MHC-II anchors are
+  mhcmatch's own `MHC2_ANCHORS` (`diffusion.py`), since seqtree exposes none — reference the
+  constant, never a literal.
 - **Never fabricate citations** — verify every DOI via a tool (PubMed/arXiv) before adding it to
   `../../manuscripts/2026-mhcmatch/appendix/refs.bib`.
 - **gitflow**: feature → `dev` → `master`; end commit messages with the `Co-Authored-By` trailer; no

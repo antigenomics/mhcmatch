@@ -125,10 +125,12 @@ The commands, by axis
        ``n_alleles_presenting`` / ``alleles_presenting`` and ``physchem_ipred`` (reported, **not in
        the model**). ``--extended`` appends the remaining mimicry channels, ``--annotate`` what each
        candidate resembles — **columns only, the ordering is unchanged**.
-       **Since 0.20.0 the aggregate computes all nine of its features before scoring**, which loads
-       the self-mimicry reference: ~7.5 GB and 6 min 15 s, paid once for the whole list.
-       ``--no-self`` is refused with ``--score aggregate`` because it removes ``self_tcr``; use
-       ``--score gate``, which does not use it
+       **The aggregate computes every one of its features before scoring** — a model emits the
+       features it used and refuses to run without them (0.20.0). ``GRAND`` takes its corpus term
+       from the thymic channel alone (26,513 peptides), so since 0.21.0 the host-proteome reference
+       index — ~7.5 GB and 6 min 15 s — is off the ranking path and ``--no-self`` is allowed with
+       ``--score aggregate``. It still costs that much under ``--extended``/``--annotate``, which
+       report the ``self`` channels
    * - ``explain``
      - every component of the aggregate for one *(peptide, allele)*
    * - ``expression``

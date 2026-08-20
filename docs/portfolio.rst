@@ -8,7 +8,8 @@ Sorting by a score and keeping the top :math:`m` maximises :math:`\sum_{i \in S}
 
 :mod:`mhcmatch.portfolio` is what the difference costs. It computes nothing new about a peptide ---
 it takes the scores the rest of the library produces and says what a proposed *set* of them is
-worth. :func:`mhcmatch.vector.select` is the rule; this module is the diagnostics.
+worth. :func:`mhcmatch.vector.select` is the rule and :doc:`safety` derives it, expected-yield formula
+included; this module is the diagnostics.
 
 Why the naive objective is wrong
 --------------------------------
@@ -67,10 +68,9 @@ allotype; pass ``block`` a key that pairs it with the mechanism a unit was selec
    sel.expected_yield          # computed against the partition the rule actually used
    sel.per_block()             # where the budget went
 
-``n0`` is per-block capacity and has no default, deliberately: the dose-matched trial that would
-measure it does not exist in the public record. Sweeping it retrospectively on 178
-validated-immunogenic neoantigens puts the selection-layer optimum near 20, which is a starting
-point for that trial and not a substitute for it.
+``n0`` is per-block capacity and has **no default**; :doc:`safety` owns that argument. Sweeping it
+retrospectively on 178 validated-immunogenic neoantigens puts the selection-layer optimum near 20,
+which is a starting point for the dose-matched trial and not a substitute for it.
 
 Read the cassette back
 ----------------------

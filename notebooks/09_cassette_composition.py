@@ -177,16 +177,16 @@ def _(mo):
 def _(Z, np, portfolio):
     best_linear = np.full(len(Z), len(Z))
     for w0 in np.linspace(0, 1, 2001):
-        s = Z @ np.array([w0, 1 - w0])
-        r = 1 + (s > s[:, None]).sum(1)
-        best_linear = np.minimum(best_linear, r)
+        scal = Z @ np.array([w0, 1 - w0])
+        rank_w = 1 + (scal > scal[:, None]).sum(1)
+        best_linear = np.minimum(best_linear, rank_w)
     print("best rank over 2001 weighted sums:", best_linear)
 
-    i = 4
-    d = (Z.max(0) + 1e-6) - Z[i]
-    w = (1.0 / d) / (1.0 / d).sum()                       # the closed-form Chebyshev witness
-    cheb = portfolio.chebyshev_score(Z, w)
-    print(f"\nChebyshev with lambda ∝ 1/(z* - z_4) = {w.round(3)}  ->  argmax = {cheb.argmax()}")
+    witness = 4
+    shortfall = (Z.max(0) + 1e-6) - Z[witness]
+    lam = (1.0 / shortfall) / (1.0 / shortfall).sum()     # the closed-form Chebyshev witness
+    cheb = portfolio.chebyshev_score(Z, lam)
+    print(f"\nChebyshev with lambda ∝ 1/(z* - z_4) = {lam.round(3)}  ->  argmax = {cheb.argmax()}")
     return
 
 
@@ -216,14 +216,14 @@ def _(mo):
 def _(portfolio):
     # the trial's own per-patient counts, unlabelled: 13 patients with an ex vivo bulk-PBMC
     # readout, most on the full 20-unit cassette. Two returned nothing; two returned eight.
-    m = [20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 10, 5, 1]
-    k = [8, 8, 6, 3, 2, 2, 2, 2, 2, 1, 0, 5, 0]
+    assayed = [20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 10, 5, 1]
+    positive = [8, 8, 6, 3, 2, 2, 2, 2, 2, 1, 0, 5, 0]
 
-    d = portfolio.dispersion(m, k)
-    print(f"pooled per-unit rate   {d['p_pooled']:.4f}")
-    print(f"variance ratio         {d['ratio']:.2f}x the independent-Bernoulli expectation")
+    disp = portfolio.dispersion(assayed, positive)
+    print(f"pooled per-unit rate   {disp['p_pooled']:.4f}")
+    print(f"variance ratio         {disp['ratio']:.2f}x the independent-Bernoulli expectation")
 
-    lrt = portfolio.betabinom_rho(m, k)
+    lrt = portfolio.betabinom_rho(assayed, positive)
     print(f"\nintra-patient rho      {lrt['rho']:.3f}")
     print(f"LRT vs binomial        D = {lrt['D']:.1f}, p = {lrt['p_value']:.2e}")
     return

@@ -35,7 +35,7 @@ one the benchmark repo produced and recorded. `bench/results/...` paths anywhere
 in the benchmark repo, not here.
 
 **Everything in *this* repo bootstraps its data from HuggingFace.** Docs, notebooks and examples fetch
-through `mhcmatch.bootstrap` / `Store` from `isalgo/pmhc_data` and friends — never from a hard-coded
+through `mhcmatch bootstrap` (the CLI command) / `Store` from `isalgo/pmhc_data` and friends — never from a hard-coded
 `~/hf/...` or `~/vcs/projects/...` path, so a `pip install mhcmatch` user can run every example. Local
 mirrors are for the benchmark repo, where the data is large and the analysis is one-off.
 
@@ -110,5 +110,7 @@ spec. See `bench/results/compare_mhc2_human_hard_ligandbg_elonly.md`.
 
 ## Environment
 
-- Repo-local `.venv` for the library; the `bench/` head-to-heads use the conda `mhcmatch-bench` env
-  (mmseqs2, gnuplot, editable `../tcren-ms`) — see `environment.yml`. Datasets at `~/hf/pmhc_data`.
+- Repo-local `.venv` for the library. `environment.yml` is the heavier **notebooks** env
+  (`mhcmatch-bench`: mmseqs2, graphviz, gnuplot, editable `../tcren-ms`); the `bench/` head-to-heads
+  it was originally written for live in the benchmark repo now, along with their datasets at
+  `~/hf/pmhc_data`.

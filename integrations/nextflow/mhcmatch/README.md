@@ -74,12 +74,17 @@ presented and binds. Rank class-I candidates by it, **not** by raw `affinity_nm`
 | **in** | `tuple val(meta), path(input), val(alleles), val(cls)` — `input` is a window FASTA (`params.mhcmatch_rank_mode = 'fasta'`) or a scored table (`'table'`) |
 | **out** | `ranked` → `${prefix}.${cls}.mhcmatch.ranked.tsv` · `versions` |
 
-The fitted **`BOECRT`** aggregate, one ordered table. `params.mhcmatch_rank_score` selects
-`aggregate` (default) or `gate` (the pre-0.19.0 product-of-sigmoids). Base columns
-(`mhcmatch.rank.BASE_COLUMNS`):
+The fitted **`GRAND`** aggregate, one ordered table. `params.mhcmatch_rank_score` selects
+`aggregate` (default) or `gate` (the pre-0.19.0 product-of-sigmoids). The column list is not
+reproduced here, deliberately — ask the installed library, which is what the stub does:
 
-`rank · peptide · allele · gene · score · presentation · occupancy · agretopicity · physchem · expression ·
-expr_imputed · wt_peptide · known_epitope`
+```zsh
+python -c "from mhcmatch import rank; print(' · '.join(rank.columns()))"
+```
+
+`rank.BASE_COLUMNS` is always emitted; `rank.AGGREGATE_COLUMNS` (the aggregate's own recognition
+features) is appended whenever the aggregate is what scored, because a model emits the features it
+used.
 
 `params.mhcmatch_rank_extended` appends the fitted mimicry aggregate and its six signed channels;
 `params.mhcmatch_rank_annotate` appends what each channel's nearest reference peptide actually was,
@@ -142,7 +147,7 @@ with sections `withdrawn`, `allotype`, `not selected`, `unit`, `junction`, `cass
   Without it *no safety check runs at all* and the cassette carries whatever it was handed. It costs
   one whole-proteome index per register length — ~12 GB peak each, a few minutes apiece, four for
   class I — which is why `nextflow.config` gives this process its own memory and time.
-- **The map (v0.19.0)** is one row per unit, linker and predicted epitope, in 1-based inclusive
+- **The map (v0.16.0)** is one row per unit, linker and predicted epitope, in 1-based inclusive
   coordinates over the cassette. It is emitted by default because it re-scores one short sequence
   and costs almost nothing next to the screen. Three properties are structural: a **heterozygote is
   duplicated by construction** (a row is a *(peptide, allele)* pair, which is what a coverage count
@@ -173,6 +178,7 @@ alleles is unaffected by the default.
 | `mhcmatch_tier` | `full` | reference panel tier |
 | `mhcmatch_rank_threshold` | `2.0` | %rank below which `predict` emits a row |
 | `mhcmatch_rank_mode` | `fasta` | `rank` input kind: `fasta` or `table` |
+| `mhcmatch_rank_score` | `aggregate` | which model scores: the fitted aggregate, or `gate` (the pre-0.19.0 product-of-sigmoids) |
 | `mhcmatch_tumor` | `null` | TCGA study code for tumour-matched expression — **set this** |
 | `mhcmatch_rank_extended` | `false` | append the six mimicry channels to `ranked.tsv` |
 | `mhcmatch_rank_annotate` | `false` | append nearest-reference and known-neoantigen columns |
@@ -191,14 +197,15 @@ From `slurm.config` only:
 | `mhcmatch_slurm_queue` | `normal` | the partition every mhcmatch task is submitted to |
 | `mhcmatch_pmhc_dir` | `${projectDir}/reference/pmhc_data` | shared reference mirror; pre-stage with `mhcmatch bootstrap --reference` |
 | `mhcmatch_calibration_cache` | `${projectDir}/reference/calibration` | shared per-allele %rank calibration, safe to share under concurrency |
+| `mhcmatch_reference_cache` | `${projectDir}/reference/cache` | shared built mimicry reference indexes; memory-mapped, so co-resident tasks share the pages |
 
 ## Build the image (only for `-profile docker`)
 
 ```zsh
-docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.20.0 \
-    --build-arg MHCMATCH_VERSION=0.20.0 \
+docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.21.0 \
+    --build-arg MHCMATCH_VERSION=0.21.0 \
     integrations/nextflow/mhcmatch/
-docker push <ISPRAS_REGISTRY>/mhcmatch:0.20.0
+docker push <ISPRAS_REGISTRY>/mhcmatch:0.21.0
 ```
 
 No data staging: the build runs `mhcmatch bootstrap --reference`, which fetches the ligand panel
@@ -303,7 +310,7 @@ register length and a re-run without it repeats hours of work that has not chang
 | process | cpus | memory | time | why |
 |---|--:|--:|--:|---|
 | `MHCMATCH_PREDICT` | 8 | 16 GB | 4 h | per-allele scoring, parallel over alleles |
-| `MHCMATCH_RANK` | 8 | 24 GB | 6 h | the above plus the mimicry references |
+| `MHCMATCH_RANK` | 8 | 8 GB | 1 h | the aggregate alone; **24 GB / 6 h** under `--mhcmatch_rank_extended`, which loads the self-mimicry reference |
 | `MHCMATCH_NEOAG` | 4 | 32 GB | 4 h | one seqtree index over the reference window set |
 | `MHCMATCH_MIMICRY` | 4 | 32 GB | 4 h | the same, six channels |
 | `MHCMATCH_VECTOR` | 4 | **48 GB** | 8 h | one whole-proteome index **per register length**, ~12 GB peak each |
@@ -319,8 +326,11 @@ task slower.
 ## A note on the stubs
 
 **No stub in this module types a column header.** Each asks the installed library for its own schema
-(`predict.SCORED_COLUMNS`, `predict.NATIVE_COLUMNS`, `rank.columns()`), so `-stub-run` produces
-files with exactly the real shape and cannot drift from it. That is a repair, not a flourish: this
+(`predict.SCORED_COLUMNS`, `predict.NATIVE_COLUMNS`, `rank.columns()`, `rank.MIMICRY_PAIRS`,
+`mimicry.NEOAG_COLUMNS`), so `-stub-run` produces files with exactly the real shape and cannot drift
+from it. One thing a stub cannot know: `neoag` and `mimicry` carry every non-`peptide` column of a
+`--peptides` TSV through unchanged, so a real run fed `ranked.tsv` emits those ahead of the schema
+the command adds. The stub types what the command adds. That is a repair, not a flourish: this
 module shipped an 18-column `scored.csv` stub against a 57-column real table, and a 5-column
 `native.tsv` stub against 27, until 2026-08-18.
 

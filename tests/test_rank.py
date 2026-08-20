@@ -234,9 +234,14 @@ def test_scan_exclude_query_keeps_real_neighbours_only():
     assert [(r.n_exact, r.n_near) for r in a] == [(r.n_exact, r.n_near) for r in b]
 
 
+@pytest.mark.hfdata
 def test_every_tumour_type_has_a_matched_normal_that_resolves():
     """`TUMOR_TISSUE` is hand-curated, so the thing that can rot is a tissue name that no longer
-    exists in the reference table -- which would make the safety read silently empty."""
+    exists in the reference table -- which would make the safety read silently empty.
+
+    6.6 s, all of it decompressing and parsing the full GTEx/TCGA reference table: the names have
+    to be checked against the real one, which is the whole point, so the `tiny_reference` fixture
+    above cannot serve here."""
     from mhcmatch import expression as EX
     tissues, tumors = set(EX.tissues()), set(EX.tumor_types())
     assert set(EX.TUMOR_TISSUE) == tumors, "a tumour type gained or lost its entry"

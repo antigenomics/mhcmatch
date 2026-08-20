@@ -651,7 +651,7 @@ class Store:
         MHC-I alleles differ strongly here (9-mer share ranges ~0.32-0.96; ``HLA-B*52:01`` is ~65%
         8-mers), and the anchor log-odds is blind to it: its term count is length-invariant, so a
         9-mer and a 10-mer with the same anchor residues score identically. This feeds
-        :meth:`mhcmatch.diffusion.AnchorModel._length_logodds`, which restores the missing factor.
+        :meth:`mhcmatch.diffusion.AnchorModel.length_logodds`, which restores the missing factor.
 
         ``logo.motif`` computes a per-allele length histogram too, but unshrunk and for display only.
         """

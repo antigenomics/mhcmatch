@@ -132,9 +132,7 @@ def log_p(peptide: str) -> float:
     reference where 51% of tested epitopes are immunogenic. It is deliberately not the base rate of
     an exome screen, which is a property of the screen (roughly 1 in 2,000) and not of the peptide.
     """
-    cal = PARAMS["calibration"]
-    t = cal["a"] * score(peptide) + cal["b"]
-    return -math.log1p(math.exp(-t)) if t > 0 else t - math.log1p(math.exp(t))
+    return _platt_logp(score(peptide))
 
 
 def p_immunogenic(peptide: str) -> float:

@@ -68,8 +68,9 @@ from . import mimics
 from .complement import ANCHORS
 
 __all__ = ["COMPONENTS", "CHANNELS", "params", "MimicryScore", "masks", "features",
-           "corpus_R", "score",
-           "probability", "annotate", "load_references", "safety"]
+           "corpus_R", "SHAPES", "RADIUS", "corpus_shapes", "corpus_radius", "score",
+           "probability", "annotate", "NEOAG_COLUMNS", "load_references", "safety",
+           "CACHE_VERSION", "REFERENCE_CACHE_ENV"]
 
 AA = "ACDEFGHIKLMNPQRSTVWY"
 
@@ -264,7 +265,7 @@ def _cache_read(d, cls: str, with_self: bool, lengths):
         if comp == "self" and not with_self:
             continue
         for L in lengths:
-            for ch in masks(L):
+            for ch in CHANNELS:
                 stem = d / f"{comp}_{ch}_{L}"
                 idx, win, src = (stem.with_suffix(".idx"), stem.with_suffix(".win.npy"),
                                  stem.with_suffix(".src.npy"))
@@ -356,25 +357,34 @@ def load_references(pmhc_dir=None, cls: str = "mhc1", with_self: bool = True,
             rel = mimics.DEFAULT_REFS["thymus" if comp == "thymus" else "viral"][0]
             peps = mimics.load_peptides(pmhc_dir, rel, cls)
             src = _sources(pmhc_dir, rel)
-            per_len = {L: np.array(sorted({w for r in peps
-                                           for i in range(len(r) - L + 1)
-                                           for w in (r[i:i + L],)
-                                           if all(c in AA for c in w)}), dtype=f"S{L}")
-                       for L in lengths}
+            per_len = {L: np.array(_windows(peps, L), dtype=f"S{L}") for L in lengths}
         for L in lengths:
             win = per_len[L]                                   # sorted, fixed width
             if win.size == 0:
-                for ch in masks(L):
+                for ch in CHANNELS:
                     out[(comp, ch, L)] = (Index.build([], alphabet="aa"), 0, _Backing(win, win))
                 continue
             V = win.view(np.uint8).reshape(len(win), L)
             srcs = (np.array([src.get(w.decode("ascii"), "") for w in win], dtype="S")
                     if src else np.zeros(len(win), dtype="S1"))
-            for ch, sel in masks(L).items():
+            # **The index is projected on the same face the query is read on.** A class-II window is
+            # anchored by a 9-mer core that floats, so its channels are a function of its own
+            # register and not of `L`: each window gets its own mask. The widths stay constant --
+            # the core contributes exactly four anchors -- so the `np.unique` over a fixed-width
+            # byte view still applies, with the column set varying per row rather than being shared.
+            # Class I takes the shared-column path and is bit-identical: `masks` ignores `peptide`.
+            rows = [masks(L, cls, w.decode("ascii")) for w in win] if cls == "mhc2" else None
+            for ch in CHANNELS:
                 # `win` is sorted, so the first occurrence of a projection is the lexicographically
                 # smallest full window carrying it -- the same representative the old
                 # `setdefault` over sorted windows chose.
-                proj = np.ascontiguousarray(V[:, list(sel)]).view(f"S{len(sel)}").ravel()
+                if rows is None:
+                    sel = masks(L)[ch]
+                    cols = np.ascontiguousarray(V[:, sel])
+                else:
+                    take = np.array([m[ch] for m in rows], dtype=np.intp)
+                    cols = np.ascontiguousarray(np.take_along_axis(V, take, axis=1))
+                proj = cols.view(f"S{cols.shape[1]}").ravel()
                 keys, first = np.unique(proj, return_index=True)
                 out[(comp, ch, L)] = (
                     Index.build([k.decode("ascii") for k in keys], alphabet="aa"),
@@ -382,6 +392,14 @@ def load_references(pmhc_dir=None, cls: str = "mhc1", with_self: bool = True,
     if d is not None:
         _cache_write(d, out)
     return out
+
+
+def _windows(peptides, L: int) -> list[str]:
+    """Sorted unique valid ``L``-windows of a peptide list -- the reference set at one length."""
+    return sorted({w for r in peptides
+                   for i in range(len(r) - L + 1)
+                   for w in (r[i:i + L],)
+                   if all(c in AA for c in w)})
 
 
 def _sources(pmhc_dir, rel: str) -> dict[str, str]:
@@ -410,12 +428,43 @@ def _sources(pmhc_dir, rel: str) -> dict[str, str]:
 
 
 #: Fitted ``(k, a0)`` per component, by profile likelihood on the neoantigen corpus
-#: (``bench/immuno/repertoire_luksza.py``). Passed as ``shapes=`` only to re-measure them.
+#: (``bench/immuno/repertoire_luksza.py``). Passed as ``shapes=`` only to re-measure them. The
+#: shipped aggregate records the same values as ``corpus_shapes``; :func:`corpus_shapes` reads that copy so
+#: a re-vendored refit moves the scored column with it, and this one is the fallback.
 SHAPES: dict = {"viral": (2.25, 14.0), "self": (1.5, 24.0), "thymus": (2.25, 14.0)}
+
+#: Search radius the shipped ``C_corpus`` column was built at, and the fallback for the aggregate's
+#: own ``corpus_radius``.
+RADIUS: int = 2
+
+
+def corpus_shapes(artifact: dict | None = None) -> dict:
+    """``{component: (k, a0)}`` -- the shapes ``C_corpus`` was fitted with.
+
+    Reads the shipped aggregate's ``corpus_shapes`` when it carries one, so a refit that is
+    re-vendored moves the scored column rather than leaving it on a stale module constant;
+    otherwise returns :data:`SHAPES`. Same convention as :func:`mhcmatch.luksza.shape`.
+    """
+    if artifact is None:
+        from .rank import aggregate
+        artifact = aggregate()
+    cs = artifact.get("corpus_shapes") or {}
+    return {c: (float(k), float(a0)) for c, (k, a0) in cs.items()} if cs else dict(SHAPES)
+
+
+def corpus_radius(artifact: dict | None = None) -> int:
+    """The search radius ``C_corpus`` was built at, from the artifact's ``corpus_radius``.
+
+    Same convention as :func:`corpus_shapes`: the artifact's copy wins, :data:`RADIUS` is the
+    fallback."""
+    if artifact is None:
+        from .rank import aggregate
+        artifact = aggregate()
+    return int(artifact.get("corpus_radius", RADIUS))
 
 
 def corpus_R(peptides, refs: dict, cls: str = "mhc1", shapes: dict | None = None,
-             radius: int = 2, components=None, registers=None) -> list[dict]:
+             radius: int | None = None, components=None, registers=None) -> list[dict]:
     """``R = Z/(1+Z)`` per component over the **TCR face**, the Łuksza form.
 
     A neighbour *density* read as a soft sum over substitution distance rather than as a single
@@ -471,7 +520,14 @@ def corpus_R(peptides, refs: dict, cls: str = "mhc1", shapes: dict | None = None
     thymus/self sign dissociation is the evidence for the mechanism and is worth reporting even
     though two of its three channels are not fitted.
 
-    Opt-in and default-off: nothing in the shipped aggregate calls this.
+    ``mhcmatch rank --score aggregate`` calls this for the ``thymus`` channel, which the shipped
+    aggregate scores as ``C_corpus_thymus``; the other two channels are opt-in and default-off.
+
+    The same ``R = Z/(1+Z)`` algebra is written vectorised in :func:`mhcmatch.luksza.r_term`, over
+    the same clip bound. The duplication is deliberate: this path scores one peptide at a time
+    beside its own search, which is 98.6 % of the run either way (:mod:`mhcmatch.luksza`), so
+    routing a scalar through an ``np.atleast_2d`` round trip buys nothing and would move the column
+    off ``math.exp``.
 
     >>> refs = load_references(cls="mhc1")              # doctest: +SKIP
     >>> corpus_R(["GILGFVFTL"], refs)[0]["thymus"]      # doctest: +SKIP
@@ -479,6 +535,8 @@ def corpus_R(peptides, refs: dict, cls: str = "mhc1", shapes: dict | None = None
     import math
 
     from seqtree import SearchParams
+    shp = shapes or corpus_shapes()
+    rad = corpus_radius() if radius is None else int(radius)
     out = []
     for i, p in enumerate(peptides):
         row: dict = {}
@@ -491,13 +549,13 @@ def corpus_R(peptides, refs: dict, cls: str = "mhc1", shapes: dict | None = None
                 if key not in refs:
                     continue
                 index, _nwin, _back = refs[key]
-                hits = index.search(q, SearchParams(max_subs=radius, engine="seqtm"))
-                n = [0] * (radius + 1)
+                hits = index.search(q, SearchParams(max_subs=rad, engine="seqtm"))
+                n = [0] * (rad + 1)
                 for h in hits:
                     d = int(h.score)
-                    if 0 <= d <= radius:
+                    if 0 <= d <= rad:
                         n[d] += 1
-                k, a0 = (shapes or SHAPES)[comp]
+                k, a0 = shp[comp]
                 z = sum(c * math.exp(max(-60.0, min(60.0, -k * (a0 - (len(p) - d)))))
                         for d, c in enumerate(n))
                 row[comp] = z / (1.0 + z)
@@ -530,7 +588,7 @@ def features(peptides, refs: dict, cls: str = "mhc1") -> list[dict]:
                     if key not in refs:
                         continue
                     index, nwin, back = refs[key]
-                    q = "".join(p[i] for i in masks(len(p))[ch])
+                    q = "".join(p[i] for i in masks(len(p), cls, p)[ch])
                     hits = index.search(q, SearchParams(max_subs=rad[ch], engine="seqtm"))
                     row[f"{comp}_{ch}"] = math.log1p(1e6 * len(hits) / max(nwin, 1))
                     if hits:
@@ -610,6 +668,13 @@ def probability(scores, corpus: str = "screens", cls: str = "mhc1") -> list[floa
     return [1.0 / (1.0 + math.exp(-max(min(a * s.logodds + b, 30.0), -30.0))) for s in scores]
 
 
+#: The columns :func:`annotate` appends, in order, after ``peptide``. It lives here rather than
+#: inline in the CLI or in a pipeline stub for the same reason :data:`mhcmatch.rank.BASE_COLUMNS`
+#: does: a consumer has to be able to name the schema without running the command, and a schema
+#: typed out a second time is a schema that drifts.
+NEOAG_COLUMNS: tuple = ("neoag_distance", "neoag_nearest", "neoag_n_within", "known")
+
+
 def annotate(peptides, pmhc_dir=None, cls: str = "mhc1", max_subs: int = 2) -> list[dict]:
     """Nearest validated-immunogenic neoantigen and its distance. **Prior evidence, not a score.**
 
@@ -626,8 +691,7 @@ def annotate(peptides, pmhc_dir=None, cls: str = "mhc1", max_subs: int = 2) -> l
             by_len.setdefault(len(p), []).append(p)
     best = {}
     for L, qs in by_len.items():
-        win = sorted({w for r in ref for i in range(len(r) - L + 1)
-                      for w in (r[i:i + L],) if all(c in AA for c in w)})
+        win = _windows(ref, L)
         if not win:
             continue
         index = Index.build(win, alphabet="aa")
@@ -660,7 +724,7 @@ def safety(scores, tumor: str | None = None, top: int = 5, symbols=None) -> list
     a map: pass ``symbols=`` from
     :func:`mhcmatch.proteome.gene_symbols(path, key="accession")`. Without it an accession simply
     fails to resolve and ``profile`` comes back empty -- which reads as *no risk found* and is the
-    dangerous direction to be wrong in, so :func:`mhcmatch.vector.mimicry_risk` refuses to run
+    dangerous direction to be wrong in, so :func:`mhcmatch.vector.self_origin_risk` refuses to run
     without the map rather than defaulting it.
 
     **One gap remains and it returns an empty ``profile`` rather than a guess.** The ``self``

@@ -486,3 +486,28 @@ def test_burial_scale_is_selectable_and_changes_the_column():
 def test_an_unknown_scale_is_refused_rather_than_guessed():
     with pytest.raises(ValueError, match="unknown scale"):
         CM.burial(["GILGFVFTL"], scale="not_a_scale")
+
+
+def test_phys_scale_resolves_the_three_forms_it_documents():
+    """`phys_scale` is what `burial` reads its basis through: a HYDROPHOBICITY key, a
+    FAMILY:COMPONENT descriptor key, or a ready dict -- and it raises rather than guessing."""
+    from mhcmatch.data import aa_tables as T
+    assert CM.phys_scale() == T.HYDROPHOBICITY[CM.PHYS_SCALE]        # the shipped default
+    assert CM.phys_scale("KIDERA:KF4") == T.DESCRIPTORS["KIDERA"]["KF4"]
+    ready = {a: 1.0 for a in CM.AA}
+    assert CM.phys_scale(ready) is ready
+    with pytest.raises(ValueError, match="is missing"):
+        CM.phys_scale({a: 1.0 for a in CM.AA[:19]})                  # a short dict is not a scale
+    with pytest.raises(ValueError, match="unknown scale"):
+        CM.phys_scale("KIDERA:KF99")
+
+
+def test_parameters_hands_back_a_copy_of_the_vendored_artifact():
+    """`parameters` is the read-only view of a fitted table. Mutating what it returns must not move
+    the module-level table every score in the process reads."""
+    p = CM.parameters("human", "mhc1")
+    assert p["features"] == CM.feature_names("human", "mhc1")
+    assert len(p["logistic"]["coef"]) == len(p["features"])
+    before = CM.score(["GILGFVFTL"])[0]
+    p["logistic"]["coef"][0] = 999.0
+    assert CM.score(["GILGFVFTL"])[0] == before

@@ -16,7 +16,10 @@
 //  * **No stub types a header.** Every stub asks the installed library for its own schema, because a
 //    hand-copied header is one that drifts -- this module shipped an 18-column `scored.csv` stub
 //    against a 57-column real table until 2026-08-18. `predict.SCORED_COLUMNS`,
-//    `predict.NATIVE_COLUMNS` and `rank.columns()` are the sources of truth.
+//    `predict.NATIVE_COLUMNS`, `rank.columns()` and `mimicry.NEOAG_COLUMNS` are the sources of
+//    truth. What a stub cannot know is the caller's own columns: `neoag` and `mimicry` carry every
+//    non-`peptide` column of a `--peptides` TSV straight through, so a real run fed `ranked.tsv`
+//    emits those ahead of the ones below. A stub types the schema the command *adds*.
 //  * **Species follows `params.genome`**, mapped in nextflow.config via ext.args exactly as the ARDA
 //    module does, so there is no extra parameter to configure.
 
@@ -169,8 +172,9 @@ process MHCMATCH_NEOAG {
     stub:
     def prefix = task.ext.prefix ?: "${meta.id}"
     """
-    printf 'peptide\\tneoag_distance\\tneoag_nearest\\tneoag_n_within\\tknown\\n' \\
-        > ${prefix}.${cls}.mhcmatch.neoag.tsv
+    python -c "
+from mhcmatch.mimicry import NEOAG_COLUMNS
+print('\\t'.join(('peptide',) + NEOAG_COLUMNS))" > ${prefix}.${cls}.mhcmatch.neoag.tsv
 
     cat <<-END_VERSIONS > versions.yml
     "${task.process}":

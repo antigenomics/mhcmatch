@@ -7,8 +7,8 @@ productionizes the reference ``seqtree.pmhc`` methodology and adds a pseudoseque
 cross-allele **diffusion** model that rescues rare alleles by borrowing from groove-similar
 frequent ones.
 
-The mathematical and statistical theory lives in the technical appendix
-(the theory appendix); the development plan is in ``ROADMAP.md``.
+The mathematical and statistical theory lives in the technical appendix,
+``appendix/mhcmatch.tex`` in the manuscript repository; the development plan is in ``ROADMAP.md``.
 
 .. raw:: html
 
@@ -27,7 +27,12 @@ The mathematical and statistical theory lives in the technical appendix
      </a>
      <a class="proj-card" href="complementarity.html">
        <h3>Complementarity</h3>
-       <p>The recognition axis: six feature blocks, one score, class I and class II.</p>
+       <p>The recognition axis: two factors in the shipped model, six feature blocks in the full
+       one, class I and class II.</p>
+     </a>
+     <a class="proj-card" href="neoantigen.html">
+       <h3>Ranking neoantigens</h3>
+       <p>The shipped scorer end to end: the seven terms, what each was fitted on, what it does not do.</p>
      </a>
      <a class="proj-card" href="safety.html">
        <h3>Safety &amp; cassettes</h3>
@@ -53,17 +58,23 @@ Capabilities
   rescues rare alleles (anchor-factored, with learned per-pocket groove weights).
 - **Physicochemical immunogenicity** — 141 features per peptide over selectable TCR-facing position
   schemes (:doc:`immunogenicity`), plus a shipped 13-parameter calibrated ``P(immunogenic)``.
-- **TCR precursor frequency** — six estimators of how much of a repertoire can recognise an epitope
-  (optional ``[precursor]`` extra).
-- **Complementarity** — the recognition axis as one prior-free log-odds over six feature blocks,
-  fitted separately for **class I and class II** and for each host (:doc:`complementarity`).
+- **TCR precursor frequency** — estimators of how much of a repertoire can recognise an epitope:
+  the original six plus the four vdjmatch added (optional ``[precursor]`` extra).
+- **Complementarity** — the recognition axis. In the shipped model it is exactly two factors,
+  ``C_phys`` (:doc:`burial`) and ``C_corpus`` (:doc:`corpus`); the full prior-free log-odds over six
+  feature blocks, fitted separately for **class I and class II** and for each host, is
+  :doc:`complementarity`.
 - **Mimicry as risk** — viral / self / thymus resemblance split by anchor and TCR-facing channel,
   as signed log-odds rather than a single distance.
-- **Neoantigen ranking** — the fitted ``BOECRT`` aggregate: binder, equilibrium occupancy,
-  expression, complementarity, Łuksza recognition and TCR-face mimicry, with agretopicity and
-  near-exact matches to already-tested neoantigens reported beside the score.
+- **Neoantigen ranking** — the fitted ``GRAND`` aggregate: binder, equilibrium occupancy,
+  expression and its missing flag, and Complementarity as ``C_phys`` + ``C_corpus_thymus`` with its
+  missing flag, with agretopicity and near-exact matches to already-tested neoantigens reported
+  beside the score (:doc:`neoantigen`).
 - **Cassette assembly** — withdraw unsafe units, size each allotype, order them, choose the spacer,
   back-translate, and emit a map of the result (:doc:`safety`).
+- **Cassette composition** — which units to put in one cassette, read as a portfolio rather than a
+  ranking: coverage, redundancy and the scalarizer that reaches a given trade-off
+  (:doc:`portfolio`).
 
 .. toctree::
    :maxdepth: 2

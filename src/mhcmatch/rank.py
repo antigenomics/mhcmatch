@@ -142,7 +142,10 @@ def aggregate() -> dict:
     **There is no intercept and that is deliberate.** Each screen was given its own, unpenalised,
     precisely so prevalence and candidate generation stayed out of the slopes; no single intercept
     transfers, and a new cohort has its own base rate. What ships is a **ranking**. A probability
-    needs a named corpus -- the seven screens behind this fit run from 0.048% to 46.8% positive.
+    needs a named corpus, and the nine screens behind this fit span four orders of magnitude of
+    base rate -- from **0.0060 % positive** (Neopep, 19 of 318,197 candidates) to **59.7 %**
+    (ITSNdb, 89 of 149). A probability quoted without naming the corpus is quoting one of those
+    prevalences by accident.
     """
     global _AGG
     if _AGG is None:

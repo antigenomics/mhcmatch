@@ -685,7 +685,7 @@ def cmd_neoag(a):
     if not peps:
         raise SystemExit("no peptides: pass them as arguments or with --peptides")
     ann = MM.annotate(peps, cls=a.cls, max_subs=a.max_subs)
-    cols = ("neoag_distance", "neoag_nearest", "neoag_n_within", "known")
+    cols = MM.NEOAG_COLUMNS
     extra = [c for c in (rows[0] if rows else {}) if c != "peptide"]
     out = _Out(a, "candidate")
     out.header("peptide", *extra, *cols)

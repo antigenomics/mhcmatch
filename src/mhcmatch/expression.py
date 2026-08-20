@@ -36,7 +36,8 @@ import functools
 import gzip
 import os
 
-__all__ = ["REFERENCE_FILE", "TUMOR_TISSUE", "matched_tissues",
+__all__ = ["REFERENCE_FILE", "COLUMNS", "TUMOR_TISSUE", "TUMOR_TISSUE_APPROXIMATE",
+           "matched_tissues",
            "fetch_reference", "load", "lookup", "impute", "tissues",
            "tumor_types", "safety_profile"]
 

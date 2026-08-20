@@ -23,7 +23,7 @@ One letter per parameter, in a fixed canonical order — presentation, then reco
      - what it measures
    * - ``P``
      - presentation
-     - :class:`mhcmatch.AnchorModel`
+     - :class:`mhcmatch.diffusion.AnchorModel`
      - ``-log10`` of the per-allele ``%rank``. Fitted on **observed ligands**
    * - ``B``
      - binder score
@@ -31,7 +31,7 @@ One letter per parameter, in a fixed canonical order — presentation, then reco
      - ``-log10`` of the calibrated combined ``%rank`` (Fisher of ``P`` and ``A``)
    * - ``A``
      - affinity
-     - :class:`mhcmatch.PottsAffinity`
+     - :class:`mhcmatch.affinity.PottsAffinity`
      - ``-log10`` of the Potts IC50 ``%rank``. Fitted on **measured IC50**
    * - ``D``
      - differential agretopicity
@@ -54,7 +54,11 @@ One letter per parameter, in a fixed canonical order — presentation, then reco
    * - ``C``
      - complementarity
      - :mod:`mhcmatch.complement`
-     - the six-block recognition log-odds
+     - the six-block recognition log-odds. **Two factors**: ``C_phys``
+       (:func:`mhcmatch.complement.burial`, an imported residue scale over the TCR face, no fitted
+       residue parameters) and ``C_corpus`` = ``K`` below. ``C_aa``, the 40 Chowell-fitted residue
+       log-odds, is retired: +6.7 BIC to add back, and a +0.695 cysteine loading against
+       ``C_phys``'s +0.108
    * - ``F``
      - foreignness
      - the viral IEDB ligandome
@@ -72,6 +76,11 @@ One letter per parameter, in a fixed canonical order — presentation, then reco
      - TCR-facing mimicry
      - :mod:`mhcmatch.mimicry`
      - the three TCR-facing channels only; the anchor ones are dropped as collinear with ``B``
+   * - ``K``
+     - corpus complementarity (``C_corpus``)
+     - :func:`mhcmatch.mimicry.corpus_R`
+     - the Łuksza-form neighbour density against the thymic immunopeptidome over the TCR face.
+       Label-free — only its coefficient is estimated (:doc:`corpus`)
 
 ``V`` is "vanilla", not "ipred"
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -81,6 +90,10 @@ it — the same axis at two generations, with ``ipred`` a strict special case of
 Naming the letter after the module would have hidden that. Naming it after the generation makes
 ``BDEVF`` legible as "the old model" at a glance, and ``V`` and ``C`` are not summed into one design
 without saying why.
+
+There is now a third generation, and the same rule applies to it: ``C_phys`` + ``K`` is what
+``C`` reduces to once each half has to justify its parameters (:doc:`burial`, :doc:`corpus`). It
+gets its own letters rather than quietly re-defining ``C``.
 
 ``P`` is not a second affinity term
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -97,8 +110,8 @@ targets.
      - ``A`` — affinity
      - ``P`` — presentation
    * - model
-     - :class:`mhcmatch.PottsAffinity` — fields plus peptide×pocket couplings
-     - :class:`mhcmatch.AnchorModel`, with cross-allele pseudosequence diffusion
+     - :class:`mhcmatch.affinity.PottsAffinity` — fields plus peptide×pocket couplings
+     - :class:`mhcmatch.diffusion.AnchorModel`, with cross-allele pseudosequence diffusion
    * - fitted on
      - **measured IEDB IC50**
      - the **observed ligand panel** (``Store.from_pmhc(tier="full")``)
@@ -131,13 +144,13 @@ The searches live elsewhere, and only some of them enter these designs:
    * - capability
      - what it searches
      - in the acronym?
-   * - :meth:`mhcmatch.Store.restriction`
+   * - :meth:`mhcmatch.store.Store.restriction`
      - the reference epitope panel, anchor-masked
      - no
    * - :func:`mhcmatch.mimics.neighbours`, :mod:`mhcmatch.mimicry`
      - thymic, viral and proteome windows under a channel mask
      - yes, as ``M``
-   * - :meth:`mhcmatch.Proteome.find_source`
+   * - :meth:`mhcmatch.proteome.Proteome.find_source`
      - the proteome, for the 1-substitution self origin
      - only via ``D`` and ``E``, which need the wild type and its gene
    * - foreignness
@@ -192,9 +205,16 @@ The models
      - **best within-screen median (0.6707).** ``T``'s own coefficients do not resolve
    * - ``BOECRT``
      - binder, occupancy, expression, complementarity, Łuksza ``R``, TCR mimicry
-     - **the shipped scorer** (``data/aggregate_mhc1.json``, default since 0.19.0). Fitted on the
+     - the scorer shipped from 0.19.0 to 0.20.0, **superseded by** ``GRAND``. Fitted on the
        cleaned corpus: 355,052 rows / 1,101 positive / 10 screens, within-screen median 0.6504.
        Not comparable to the ``BECRT`` row above — different corpus and screen count
+   * - ``GRAND``
+     - binder, occupancy, expression + ``expr_missing``, ``C_phys``, ``K`` + ``C_corpus_missing``
+     - **the shipped scorer** (``data/aggregate_mhc1.json``, default since 0.21.0). Seven terms,
+       one unpenalised intercept per screen, no global intercept. 354,909 rows / 958 positive /
+       9 screens, BIC 4160.1, leave-one-screen-out median AUROC 0.6391
+       (``bench/results/grand_corpus.md``). It replaces ``BOECRT``'s four recognition columns with
+       two, neither fitted on immunogenicity labels
    * - ``BDEVF``
      - binder, agretopicity, expression, vanilla physicochemistry, foreignness
      - the older design; folds presentation into ``B``
@@ -405,6 +425,9 @@ The mapping, for when a result cites one:
    * - ``mimicry_mhc1.json``
      - viral/self/thymus × anchor/TCR
      - ``M``
+   * - ``aggregate_mhc1.json``
+     - the seven shipped rank terms, with their standardizer
+     - ``GRAND``
    * - :data:`mhcmatch.rank.GATE`
      - presentation × recognition
      - not a GLM — a product of sigmoids, so it has no acronym

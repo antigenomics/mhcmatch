@@ -98,7 +98,15 @@ versioning is [SemVer](https://semver.org).
 - `mimicry.corpus_R(peptides, refs, cls=, shapes=, radius=, components=, registers=)` — `C_corpus`.
   `components=` reaches the `self` and `viral` channels for the ladder; only `thymus` earns its
   parameters inside the model. Report the ladder anyway — the sign dissociation is the evidence.
-- `mimicry.SHAPES`, `luksza.SHAPE`, `rank.CHANNEL_COLUMNS`.
+- `mimicry.SHAPES`, `mimicry.RADIUS`, `mimicry.corpus_shapes()`, `mimicry.corpus_radius()`,
+  `mimicry.NEOAG_COLUMNS`, `luksza.SHAPE`, `rank.CHANNEL_COLUMNS`.
+- **`mhcmatch.portfolio` — cassette composition read as a portfolio rather than a ranking.** It
+  computes nothing new about a peptide: it takes the scores the rest of the library produces and
+  says what a proposed *set* of them is worth. Ten functions, none of them fitted —
+  `pareto_front`, `nondominated_rank`, `crowding_distance`, `linearly_supported`,
+  `chebyshev_score`, `corner`, `p_at_least`, `n_effective`, `dispersion`, `betabinom_rho`.
+  `vector.select` stays the rule; this is the diagnostics. `docs/portfolio.rst` and
+  `notebooks/09_cassette_composition.py`.
 - `docs/burial.rst` and `docs/corpus.rst`, with the `C_corpus` formula, its five steps and the
   fitted shape table.
 

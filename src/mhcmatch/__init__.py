@@ -10,8 +10,9 @@
 - :mod:`predict` -- score a variant peptide-window FASTA into native + pipeline-``.scored.csv`` output.
 - :mod:`vector` -- assemble a polyepitope vaccine cassette: how many units per allotype, in what
   order, joined by what spacer.
-- :mod:`luksza` -- the ``R = Z/(1+Z)`` recognition term, so ``viral_R`` -- one of the fitted
-  aggregate's nine features -- is computable without the benchmark repo.
+- :mod:`luksza` -- the ``R = Z/(1+Z)`` recognition term, so ``viral_R`` -- a term of the retired
+  ``BOECRT`` aggregate, and the published Łuksza quantity -- is computable without the benchmark
+  repo.
 
 Theory: the theory appendix. Roadmap: ``ROADMAP.md``.
 """

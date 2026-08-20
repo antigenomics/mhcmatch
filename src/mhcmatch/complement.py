@@ -74,6 +74,14 @@ argument and never inferred from the length.
 
 Parameters per class and species in ``complement_{mhc1,mhc2}_{human,mouse}.json``. Validation is in
 ``bench/results/complementarity.md`` and ``complementarity_mhc2.md``.
+
+**The shipped model's recognition term lives here too, under a different name.** :func:`score` is
+the thirty-column fitted head above; :func:`burial` is ``C_phys``, one of the two Complementarity
+factors the fitted aggregate carries (:mod:`mhcmatch.rank`) -- a single imported residue scale
+(:data:`PHYS_SCALE`) summed over the TCR face, with **no fitted residue parameters**, which is why
+it cannot memorise the corpus. What it buys over the fitted head, and how the scale was chosen, is
+on :func:`burial` itself and in ``docs/burial.rst``. Its partner ``C_corpus`` is
+:func:`mhcmatch.mimicry.corpus_R`.
 """
 from __future__ import annotations
 
@@ -85,13 +93,13 @@ from statistics import median
 
 import numpy as np
 
-from . import immuno, ipred
+from . import immuno
 from .data import aa_tables
 
-__all__ = ["AA", "ANCHORS", "PARATOPE", "PARATOPE_CONTACT", "PARAMS", "TABLES", "SPECIES", "CLASSES", "BLOCKS", "burial",
-           "BLOCKS_MHC2", "FITTED", "FITTED_MHC2", "ZONES", "MHC2_ZONES", "LENGTH_BINS",
-           "MHC2_LEN_EDGES", "mhc2_length_bin",
-           "blocks", "fitted", "mhc2_anchors", "table",
+__all__ = ["AA", "ANCHORS", "PARATOPE", "PARATOPE_CONTACT", "PARAMS", "TABLES", "SPECIES", "CLASSES", "BLOCKS",
+           "BLOCKS_MHC2", "FITTED", "FITTED_MHC2", "ZONES", "MHC2_ZONES", "TCR_THIRDS", "LENGTH_BINS",
+           "MHC2_LEN_EDGES", "mhc2_length_bin", "length_bin", "KD_THRESHOLD", "PHYS_SCALE",
+           "blocks", "fitted", "mhc2_anchors", "table", "phys_scale", "burial",
            "encode", "apply_log_odds", "design", "feature_names", "features", "score", "kidera_design", "kidera_names",
            "posterior", "parameters"]
 
@@ -315,10 +323,13 @@ def _basis(paratope: str = "loop") -> dict[str, np.ndarray]:
     tab = {"loop": PARATOPE, "contact": PARATOPE_CONTACT}.get(paratope)
     if tab is None:
         raise ValueError(f"unknown paratope={paratope!r} (expected 'loop' or 'contact')")
-    rs = ipred.residue_scores()
     return {
-        "pc1": np.array([rs[a][0] for a in AA]),
-        "pc2": np.array([rs[a][1] for a in AA]),
+        # The two property PCs are read from the vendored table beside the other three vectors
+        # below, not back out of `ipred_mhc1.json`: a basis that only exists inside a fitted
+        # artifact makes `import mhcmatch.complement` -- and with it `burial`, the shipped `C_phys`
+        # term -- depend on that artifact still shipping.
+        "pc1": _scale_vec(aa_tables.PROPERTY_PC1),
+        "pc2": _scale_vec(aa_tables.PROPERTY_PC2),
         "kf4": _scale_vec(aa_tables.DESCRIPTORS["KIDERA"]["KF4"]),
         "mj": _scale_vec(aa_tables.MJ_PARTITION),
         "para": np.array([tab[a][0] for a in AA]),
@@ -408,7 +419,8 @@ def _zone_positions(L: int, anc: np.ndarray, anchor_idx: tuple, cls: str) -> lis
 #: the average fractional area a residue buries on folding -- selected out of 576 candidates by the
 #: BIC change it produced *inside the general model*, not by standalone AUROC. Any other name here
 #: is exploratory: it re-parameterises a published result and should be reported as a comparison,
-#: never substituted silently.
+#: never substituted silently. The shipped aggregate records the same name as ``phys_scale``; this
+#: constant is what :func:`burial` actually reads.
 PHYS_SCALE = "Rose"
 
 
@@ -494,6 +506,13 @@ def encode(peptides, cls: str = "mhc1", registers=None, positions: str = "mask",
 
     ``registers`` (class II only) pins each peptide's core to an explicit frame, element for element
     with ``peptides``; ``None`` uses the allele-agnostic heuristic register.
+
+    ``positions`` selects which peptide positions the TCR-facing chemistry is read over -- the
+    binary anchor mask (``"mask"``, the shipped default) or the positional contact profile
+    (``"profile"``). ``paratope`` selects which marginalisation of the TCRen potential the ``pot``
+    block projects onto -- :data:`PARATOPE` (``"loop"``, the shipped default) or
+    :data:`PARATOPE_CONTACT` (``"contact"``). The two compose, and both are explained in full on
+    :func:`score`, which is where the measured consequences of changing either are recorded.
 
     **The hydropathy stretch, exactly.** A residue enters the ``motif`` block when all three hold:
     it is **TCR-facing** (an anchor is buried in the groove and is not part of any stretch the
@@ -703,7 +722,10 @@ def _block_mask(features, cls: str, names) -> np.ndarray:
 def design(peptides, species: str = "human", cls: str = "mhc1", registers=None,
            mask_cys: bool = False, positions: str = "mask",
            paratope: str = "loop") -> np.ndarray:
-    """The (n, k) design matrix in :func:`feature_names` order, before standardization."""
+    """The (n, k) design matrix in :func:`feature_names` order, before standardization.
+
+    ``mask_cys``, ``positions`` and ``paratope`` are forwarded unchanged; see :func:`score` for what
+    each one does and what it costs."""
     t = table(species, cls)
     fit = fitted(cls)
     lo = _mask_cys(t["log_odds"], t["log_odds_source"]) if mask_cys else t["log_odds"]

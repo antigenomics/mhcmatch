@@ -20,8 +20,11 @@ def test_anchor_channel_is_the_complement_role_scheme():
     assert set(mimicry.masks(9)["anchor"]) == {i % 9 for i in ANCHORS}
 
 
+@pytest.mark.hfdata
 def test_annotate_finds_a_known_neoantigen_and_needs_no_fitted_model():
-    """annotate() is prior evidence and must work whether or not mimicry_mhc1.json ships."""
+    """annotate() is prior evidence and must work whether or not mimicry_mhc1.json ships.
+
+    Needs the deposit: it builds the tested-neoantigen index from `isalgo/pmhc_data`."""
     out = {r["peptide"]: r for r in mimicry.annotate(["KLVVVGACGV", "AAAWYLWEV"])}
     kras = out["KLVVVGACGV"]                     # KRAS G12C, assayed and immunogenic
     assert kras["known"] and kras["neoag_distance"] == 0
@@ -45,9 +48,14 @@ def test_score_refuses_a_silently_smaller_model():
         mimicry.score(["GILGFVFTL"], {("viral", "anchor", 9): None}, cls="mhc1")
 
 
+@pytest.mark.hfdata
 def test_rank_extended_appends_columns_without_moving_the_ranking(tmp_path, capsys):
     """--extended/--annotate are columns, not a re-score. If they ever move the order, mimicry has
-    silently entered the gate, which is the thing that is explicitly not settled."""
+    silently entered the gate, which is the thing that is explicitly not settled.
+
+    **The slowest test in the suite (13.1 s).** The `--score gate` note below buys back the 6 min
+    15 s / ~7.5 GB self reference; what remains is building the viral and thymic reference indexes
+    and running the whole CLI end to end, twice."""
     from mhcmatch.cli import main
     p = tmp_path / "c.scored.csv"
     p.write_text("epitope,best_allele,gene_name,tpm,score\n"
@@ -123,6 +131,7 @@ def test_self_is_the_recipients_proteome_not_a_constant():
 
 
 # ------------------------------------------------------------------ the reference cache (0.20.0)
+@pytest.mark.hfdata
 def test_reference_cache_round_trips_and_agrees_with_a_fresh_build(tmp_path):
     """A cached reference set must score identically to the one it was built from.
 
@@ -152,6 +161,7 @@ def test_reference_cache_round_trips_and_agrees_with_a_fresh_build(tmp_path):
                                                                    nan_ok=True)
 
 
+@pytest.mark.hfdata
 def test_reference_cache_key_changes_when_the_projection_does(tmp_path, monkeypatch):
     """A cache entry is keyed on what produced it. Bumping CACHE_VERSION must miss, not reuse --
     a stale projection is a silently wrong feature."""
@@ -264,3 +274,77 @@ class _EmptyIndex:
 
     def search(self, q, params):
         return []
+
+
+# ------------------------------------------------------------------ the safety read-out
+def _score(peptide, nearest, autoimmune=-0.5):
+    """A `MimicryScore` built by hand. `safety` reads only `.nearest`, `.peptide` and `.autoimmune`,
+    so no reference index is needed to exercise the join."""
+    return mimicry.MimicryScore(peptide=peptide, components={}, logodds=0.0,
+                                autoimmune=autoimmune, nearest=nearest)
+
+
+def _hit(pep, source, subs=1, n=1):
+    return {"subs": subs, "peptide": pep, "source": source, "n": n}
+
+
+def test_safety_needs_the_symbol_map_to_resolve_an_accession(monkeypatch):
+    """The thymus deposit names sources as UniProt accessions and `expression.safety_profile` is
+    keyed on HGNC symbols. Without a map the accession does not resolve and `profile` comes back
+    empty -- which reads as *no risk found*, the dangerous direction to be wrong in."""
+    from mhcmatch import expression as EX
+    monkeypatch.setattr(EX, "safety_profile",
+                        lambda gene, top=10: [("Heart", 812.0)] if gene == "TTN" else [])
+
+    s = _score("ESDPIVAQY", {"thymus": {"tcr": _hit("ESDPIVAQF", "Q8WZ42")}})
+
+    with_map, = mimicry.safety([s], symbols={"Q8WZ42": "TTN"})
+    hit, = with_map["hits"]
+    assert hit["gene"] == "TTN"                       # resolved through the map
+    assert hit["source"] == "Q8WZ42"                  # ... and the deposit's own id is preserved
+    assert hit["profile"] == [("Heart", 812.0)]
+    assert hit["component"] == "thymus" and hit["mimic"] == "ESDPIVAQF"
+
+    without, = mimicry.safety([s])
+    assert without["hits"][0]["profile"] == [], "an unresolved accession must not invent a profile"
+    assert without["hits"][0]["gene"] == "Q8WZ42", "the raw source is still reported"
+
+
+def test_safety_returns_the_self_mimic_even_though_it_has_no_source(monkeypatch):
+    """The `self` component is built from proteome windows, which carry no source column, so it is
+    not resolvable to a gene however good the map is. The mimic itself is still returned."""
+    from mhcmatch import expression as EX
+    monkeypatch.setattr(EX, "safety_profile", lambda gene, top=10: [("Lung", 1.0)])
+
+    s = _score("GILGFVFTL", {"self": {"tcr": _hit("GILGFVFTV", "")}})
+    out, = mimicry.safety([s])
+    hit, = out["hits"]
+    assert hit["component"] == "self" and hit["mimic"] == "GILGFVFTV"
+    assert hit["gene"] == "" and hit["profile"] == []
+    assert out["autoimmune_logodds"] == -0.5
+
+
+def test_safety_reports_only_the_tolerance_side():
+    """`viral` is a priming argument, not a withdrawal one, so it is not a safety hit."""
+    s = _score("GILGFVFTL", {"viral": {"tcr": _hit("GILGFVFTV", "P03485")}})
+    out, = mimicry.safety([s])
+    assert out["hits"] == []
+
+
+# ------------------------------------------------------------------ the calibrated read-out
+def test_probability_is_in_the_unit_interval_and_monotone_in_the_logodds():
+    """`probability` maps the aggregate log-odds against a *named* corpus. Whatever the corpus, the
+    map is a probability and it must not reorder -- ranking is `logodds`' job and stays its job."""
+    scores = [_score(f"P{i}", {}, autoimmune=0.0) for i in range(5)]
+    for s, lo in zip(scores, (-8.0, -2.0, 0.0, 1.5, 6.0)):
+        s.logodds = lo
+    ps = mimicry.probability(scores, corpus="screens")
+    assert all(0.0 < p < 1.0 for p in ps)
+    assert all(ps[i] < ps[i + 1] for i in range(len(ps) - 1))
+
+
+def test_probability_refuses_an_unnamed_corpus():
+    """An absolute probability is a property of the corpus's prevalence, not of the peptide, so a
+    corpus this model was never calibrated on has to raise rather than pick one."""
+    with pytest.raises(ValueError, match="no calibration for corpus"):
+        mimicry.probability([_score("GILGFVFTL", {})], corpus="nosuchcorpus")

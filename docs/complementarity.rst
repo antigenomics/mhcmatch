@@ -9,6 +9,13 @@ It decomposes by *where a residue sits* (buried in the groove vs facing the rece
 of statistic* is being asked for (a property average vs a contiguous motif vs residue identity), and
 the pieces disagree — which is why they are separate features rather than a single average.
 
+**Two factors, and three pages.** In the shipped aggregate Complementarity is exactly two terms:
+``C_phys``, an imported residue scale over the TCR face with no fitted residue parameters
+(:doc:`burial`), and ``C_corpus``, a label-free neighbour density against the reference sets a
+repertoire was shaped by (:doc:`corpus`). This page owns the thing they were reduced *from* — the
+thirty-column six-block :func:`mhcmatch.complement.score`, how to call it, its cross-validation and
+transfer, its class-II arm, and the :mod:`mhcmatch.recognition` head dispatcher.
+
 Install and self-check
 ----------------------
 
@@ -17,7 +24,7 @@ Install and self-check
    pip install mhcmatch
 
    python -m mhcmatch.complement
-   # ok - 30 features over 6 blocks, fitted on 464,161 rows (chowell_rebuilt/human); ...
+   # ok - 30 features over 6 blocks, human: 464,161 rows / mouse: 47,140 rows; score(GILGFVFTL) = +1.6299, P@corpus = 0.1431
 
 The fitted parameters are vendored in the package, so nothing on this page needs a download except
 the corpus in the last section.
@@ -358,9 +365,15 @@ length carries *which residue is preferred where*, not a global reweighting.
 Where it sits in the ranker
 ---------------------------
 
-Recognition is the ``C`` term of the fitted ``BOECRT`` aggregate that :mod:`mhcmatch.rank` scores
-with — coefficient **+0.1790**, z **+4.24** on the cleaned corpus (:doc:`neoantigen`). It is one of
-the four terms whose direction is established.
+In the ``BOECRT`` aggregate this whole page was the ``C`` term — coefficient **+0.1790**, z
+**+4.24** on the cleaned corpus. It was one of the four terms whose direction is established.
+
+``GRAND`` replaced it in 0.21.0 with the two factors it reduces to: ``C_phys`` at **+0.2579**, z
+**+4.30** (:doc:`burial`) and ``C_corpus_thymus`` at **+0.1871**, z **+5.48** with its missing flag
+at **−0.3510**, z **−3.96** (:doc:`corpus`), over 354,909 rows and 958 positives at BIC 4160.1
+(``bench/results/grand_corpus.md``, and :doc:`neoantigen` for the shipped model end to end). The
+thirty-column score is still what :func:`mhcmatch.recognition.score` uses when no head is named; it
+is no longer a term of the ranker.
 
 Before 0.19.0 the ranker instead combined presentation and recognition as a **gate**, a product of
 two sigmoids rather than a sum, on the argument that the axes are close to orthogonal and a
@@ -379,7 +392,7 @@ rank so the aggregate can be taken apart.
    **Class I only.** The role split is the class-I one (P1-P3, POmega-1, POmega). A class-II ligand
    is anchored by the P1/P4/P6/P9 core of a 9-mer register floating inside a longer peptide, so
    applying this scheme to it labels the wrong residues as anchors and returns a confident, wrong
-   number. :func:`mhcmatch.rank._recognition` returns ``NaN`` for class II rather than guessing.
+   number. ``mhcmatch.rank``'s recognition column returns ``NaN`` for class II rather than guessing.
 
 Shipping it: :mod:`mhcmatch.recognition`
 ----------------------------------------

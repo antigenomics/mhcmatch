@@ -1,10 +1,10 @@
 """Unit tests for mhcmatch.predict (variant-window FASTA -> native + pipeline .scored.csv).
 
-Parsing / header / writer tests are pure; the scoring test needs the ~/hf/pmhc_data panel and skips
-when it is absent.
+Parsing / header / writer tests are pure; the two scoring tests need the shortlist panel and reach it
+the way everything else in this repo does -- ``Store.from_pmhc`` with no path, bootstrapped from
+``isalgo/pmhc_data``. They carry ``@pytest.mark.hfdata`` (see ``tests/conftest.py``).
 """
 import csv
-import os
 
 import pytest
 
@@ -15,9 +15,6 @@ _HDR = ("Somatic:chr1:9715752:G:A:missense_variant:"
         "DVQPFLPVLRLVAREGDRVKKLINSQI(N)LLIGKGLHEFDSLCDPEVNDFRAKMCQ:"
         "10.34:ENSG00000171608:ENST00000377346:PIK3CD:A0A8V8TML5::5:226")
 _SEQ = "DRVKKLINSQINLLIGKGLHEFD"
-
-_PMHC = os.path.expanduser("~/hf/pmhc_data/pmhc/pmhc_shortlist.tsv.gz")
-_HAS_PMHC = os.path.exists(_PMHC)
 
 
 def test_parse_fasta(tmp_path):
@@ -117,10 +114,10 @@ def test_write_native(tmp_path):
     assert rows[0]["anchors"] == "1;8" and rows[0]["tcr_facing"] == "KXINSQINX"
 
 
-@pytest.mark.skipif(not _HAS_PMHC, reason="needs ~/hf/pmhc_data panel")
+@pytest.mark.hfdata
 def test_predict_windows_end_to_end():
     from mhcmatch import Store
-    store = Store.from_pmhc(_PMHC, tier="shortlist", species="human", classes=("mhc1",))
+    store = Store.from_pmhc(tier="shortlist", species="human", classes=("mhc1",))
     preds = P.predict_windows(store, "mhc1", [(_HDR, _SEQ)], ["HLA-A*02:01"], rank_threshold=2.0)
     assert preds, "expected at least one A*02:01 binder in the PIK3CD window"
     # the mutated neoantigen KLINSQINL is a known-strong A*02:01 binder in this window
@@ -179,10 +176,10 @@ def test_vendored_guard_rejects_mismatch():
     assert D.load_vendored_anchor_model(object(), cls, {**meta["params"], "background": "ligand"}) is None
 
 
-@pytest.mark.skipif(not _HAS_PMHC, reason="needs ~/hf/pmhc_data panel")
+@pytest.mark.hfdata
 def test_binder_score():
     from mhcmatch import Store
-    store = Store.from_pmhc(_PMHC, tier="shortlist", species="human", classes=("mhc1",))
+    store = Store.from_pmhc(tier="shortlist", species="human", classes=("mhc1",))
     res = store.binder_score("NLVPMVATV", alleles="HLA-A*02:01,HLA-B*07:02", cls="mhc1")
     assert res and res[0].allele == "HLA-A*02:01"          # the canonical A*02:01 epitope ranks first
     top = res[0]

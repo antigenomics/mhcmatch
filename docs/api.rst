@@ -200,12 +200,19 @@ head, because
 a diagonal Gaussian cannot represent a summed log-odds; the EM Gaussian parameters ship alongside
 for comparison. **Vectorised** — pass a list, not a loop. See :doc:`complementarity`.
 
-.. automodule:: mhcmatch.recognition
+.. automodule:: mhcmatch.complement
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. automodule:: mhcmatch.complement
+mhcmatch.recognition module
+---------------------------
+
+The head dispatcher over the recognition axis: ``complement`` (the six-block model above, and the
+default), plus ``posbayes``, ``physchem_glm`` and ``esm64_glm``, each fitted alone so their BIC is
+comparable. See :doc:`complementarity`.
+
+.. automodule:: mhcmatch.recognition
    :members:
    :undoc-members:
    :show-inheritance:
@@ -215,10 +222,12 @@ mhcmatch.luksza module
 
 The Łuksza recognition term :math:`R = Z/(1+Z)` -- a soft partition function over near-matches,
 replacing a hard distance cut, so **how many** near-matches a candidate has and **how near** they
-are both enter. ``viral_R`` is one of the fitted aggregate's nine features and before 0.17.0 the
-sum lived only in the benchmark repo, which made :func:`mhcmatch.rank.aggregate_score` callable with
-a feature no installed user could supply. ``k`` and ``a0`` are read from the shipped artifact rather
-than hardcoded, so a refit needs no code change.
+are both enter. ``viral_R`` was a term of the retired ``BOECRT`` aggregate — before 0.17.0 the sum
+lived only in the benchmark repo, which made :func:`mhcmatch.rank.aggregate_score` callable with a
+feature no installed user could supply. ``GRAND`` retired the term in 0.21.0, so the shipped
+aggregate no longer scores with it; the quantity is still the published recognition term and is
+still computed here. ``k`` and ``a0`` are read from the shipped artifact when one carries them, so
+a refit needs no code change.
 
 .. automodule:: mhcmatch.luksza
    :members:
@@ -275,7 +284,9 @@ mhcmatch.rank module
 --------------------
 
 Neoantigen candidate ranking, from a mutation-spanning window FASTA or an already-scored table.
-Combines presentation and recognition through a **gate** (a product of sigmoids) rather than a sum.
+The default score is the fitted aggregate vendored at ``mhcmatch/data/aggregate_mhc1.json``
+(``--score aggregate``); the noisy-AND **gate** — a product of sigmoids, the default before
+0.19.0 — is still reachable as ``--score gate`` / :data:`mhcmatch.rank.GATE`.
 
 .. automodule:: mhcmatch.rank
    :members:
@@ -306,6 +317,7 @@ The vendored amino-acid property tables. Their values are not reproduced here �
 ``dict[str, float]`` and large; :doc:`property_basis` states what their principal components are.
 
 .. automodule:: mhcmatch.data.aa_tables
+   :members:
 
 mhcmatch.data.contact_profile module
 ------------------------------------

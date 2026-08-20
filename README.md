@@ -118,19 +118,21 @@ Full treatment, including why a gradient-boosted score fixes the geometry but no
 
 ## What `rank` costs, and why it did not before
 
-Since 0.20.0 `rank --score aggregate` computes **all nine** of the model's features before scoring.
-That loads the self-mimicry reference: ~7.5 GB and 6 min 15 s, paid once for the whole candidate
-list.
+Since 0.20.0 `rank --score aggregate` computes **every one** of the model's features before scoring:
+a model emits the features it used and refuses to run without them. Since 0.21.0 `GRAND` takes its
+corpus term from the **thymic** channel alone (26,513 peptides), so the host-proteome reference index
+— ~7.5 GB and 6 min 15 s — is off the ranking path and `--no-self` is allowed with
+`--score aggregate`. That index is still what `--extended` and `--annotate` cost, because they
+report the `self` channels.
 
-It used to be free because four of the nine were never computed. `aggregate_score` substituted their
-training means, so each contributed `coef × 0` to every candidate — inert, not neutral — and
-`mhcmatch rank` reported `BOECRT` while scoring `BOEC`, with or without `--extended`. That left
-**38.0% of the model's total absolute weight** (`sum |coef| = 1.3875`) at zero, `self_tcr` at
-+0.3154 among it. The emitted *ordering* was unaffected, since a constant offset cannot reorder
+It used to be free because four of `BOECRT`'s nine were never computed. `aggregate_score`
+substituted their training means, so each contributed `coef × 0` to every candidate — inert, not
+neutral — and `mhcmatch rank` reported `BOECRT` while scoring `BOEC`, with or without `--extended`.
+That left **38.0% of the model's total absolute weight** (`sum |coef| = 1.3875`) at zero, `self_tcr`
+at +0.3154 among it. The emitted *ordering* was unaffected, since a constant offset cannot reorder
 anything; what was wrong was the model the output named.
 
-`--score gate` uses the two-term noisy-AND and stays cheap. `--no-self` is refused with the
-aggregate, because it is what removes `self_tcr`.
+`--score gate` uses the two-term noisy-AND and stays cheap.
 
 **Cache it.** The build is 75.6 s (down from 6 min 15 s — the window enumeration is vectorized now),
 and **0.82 s from cache**:
@@ -196,10 +198,13 @@ numpy product and a thread pool would buy nothing, so the flag is absent rather 
 ## The two axes
 
 Presentation is necessary and not sufficient: most presented peptides are ignored. mhcmatch keeps
-the two questions apart and scores them with the fitted **`BOECRT`** aggregate, whose `C` term is
-the recognition axis (z +4.24) and whose `B`/`O` terms are the presentation one. The older
-**gate** — a product of sigmoids rather than a sum, so a candidate failing either axis cannot be
-rescued by the other — is still reachable as `mhcmatch rank --score gate`.
+the two questions apart and scores them with the fitted **`GRAND`** aggregate (0.21.0), whose
+`C_phys` and `C_corpus_thymus` terms are the recognition axis and whose `binder`/`occupancy` terms
+are the presentation one. Its predecessor **`BOECRT`** carried recognition as the 30-column `C`
+term (z +4.24) plus `R` and `T`; those four columns collapse to two, neither fitted on
+immunogenicity labels. The older **gate** — a product of sigmoids rather than a sum, so a candidate
+failing either axis cannot be rescued by the other — is still reachable as
+`mhcmatch rank --score gate`.
 
 **Presentation** — per-allele %rank / `P(present)` / band from a learned anchor model with
 cross-allele **pseudosequence diffusion** (rare alleles borrow from groove-similar frequent ones), a
@@ -347,10 +352,13 @@ letter per parameter, in a fixed canonical order:
 | `R` | Łuksza recognition | `mhcmatch.luksza` | `Z/(1+Z)`, a soft sum over near-matches rather than a distance cut |
 | `F` | foreignness | viral IEDB ligandome | distance to the nearest viral epitope |
 | `M` | mimicry | `mhcmatch.mimicry` | the six-channel signed aggregate |
+| `T` | TCR-facing mimicry | `mhcmatch.mimicry` | the three TCR-facing channels only; the anchor ones are dropped as collinear with `B` |
+| `K` | corpus complementarity (`C_corpus`) | `mimicry.corpus_R` | the Łuksza-form neighbour density against the thymic immunopeptidome over the TCR face |
 
 So `PADEC` is presentation + affinity + agretopicity + expression + complementarity, and `PADECM`
-adds mimicry. Suffixes are fitting choices rather than parameters: `-bal` (every screen weighted to
-the same total mass), `-scr` (screen indicators as nuisance columns).
+adds mimicry. Suffixes are fitting choices rather than parameters: `-scr` (screen indicators as
+nuisance columns). The screen-balanced refits were measured and dropped; the benchmark's `MODELS.md`
+records what they were.
 
 **`V` is "vanilla", not "ipred".** `ipred` is the *old* recognition term and `complement` is what
 replaced it — the same axis at two generations, with `ipred` a strict special case of `complement`.
@@ -402,7 +410,7 @@ pm.find_sources(peptides, max_subs=1, threads=0)     # batch; find_source() is t
 pm.wildtype("NLVPMVATV")                             # the WT counterpart, for agretopicity
 ```
 
-Full API: [antigenomics.github.io/mhcmatch](https://antigenomics.github.io/mhcmatch/). Eight
+Full API: [antigenomics.github.io/mhcmatch](https://antigenomics.github.io/mhcmatch/). Nine
 [marimo](https://marimo.io) notebooks in [`notebooks/`](notebooks/README.md) run the workflows end to
 end on whole published deposits (`pip install 'mhcmatch[notebooks]'`).
 

@@ -5,6 +5,8 @@ through seqtree's find_mimics, so it needs the compiled seqtree core (present in
 """
 import os
 
+import pytest
+
 from mhcmatch import mimics as M
 
 
@@ -50,8 +52,6 @@ def test_write_table(tmp_path):
 
 if __name__ == "__main__":
     import sys
-
-    import pytest
     sys.exit(pytest.main([__file__, "-v"]))
 
 
@@ -101,14 +101,18 @@ def test_kinds_covers_every_category_and_says_what_a_hit_argues():
 def test_proteome_reference_sets_are_rejected_for_class_II():
     """15 class-II lengths x several proteomes is tens of millions of windows; fail loudly --
     and before any download, not after."""
-    import pytest
     with pytest.raises(ValueError, match="class II"):
         M.load_reference_sets(None, "mhc2", proteomes=("bacterial",))
 
 
+@pytest.mark.skipif(not os.getenv("RUN_HF_FETCH"),
+                    reason="deposit-liveness check; set RUN_HF_FETCH=1 to run it")
 def test_default_reference_paths_exist_in_the_deposit():
     """Regression: `neoag` pointed at immunogenicity/ after the deposit moved it to neoantigens/,
-    so the documented default set 404'd for anyone without a local mirror."""
+    so the documented default set 404'd for anyone without a local mirror.
+
+    Deliberately opt-in: this asserts something about the **deposit**, not about the library, so it
+    is a liveness check rather than a unit test and must not download on a default run."""
     from mhcmatch.store import fetch_file
     for name, (rel, _) in M.DEFAULT_REFS.items():
         assert os.path.exists(fetch_file(rel)), f"{name}: {rel}"

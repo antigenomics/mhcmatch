@@ -1,8 +1,17 @@
 """Recognition score for MHC epitopes: how immunogenic a peptide looks, given how it is presented.
 
-Three heads, each fitted alone so that their fit criteria are comparable and each score is readable
-on its own terms. The default is whichever wins BIC on the training arm, which is currently
-``posbayes`` for both species:
+Four heads. :func:`default_head` -- what :func:`score` uses when none is named -- is ``complement``,
+the six-block, 30-feature model of :mod:`mhcmatch.complement`, which is served by its own module and
+has no vendored table here. The other three are each fitted alone so that their fit criteria are
+comparable and each score is readable on its own terms; :func:`lowest_bic_head` reports the
+parsimony winner among those three, currently ``posbayes`` for both species. The two answer
+different questions -- BIC asks which head buys its parameters on one training arm, the default asks
+which recognition term to score with -- so they do not have to agree, and they do not.
+
+``complement``
+    Six feature blocks over roles, contact potentials, hydropathy runs, residue identity and
+    adjacent residue pairs; 30 features, linear head. :mod:`mhcmatch.complement`, and the source of
+    the shipped ``C_phys`` term. The **default**.
 
 ``posbayes``
     Naive Bayes over amino-acid identity conditioned on **face** -- MHC-facing or TCR-facing --
@@ -65,10 +74,14 @@ def _data(name: str) -> str:
 
 @functools.lru_cache(maxsize=None)
 def table(head: str = None, species: str = "human") -> dict:
-    """Fitted parameters for one head. ``head=None`` resolves to the BIC-chosen default."""
+    """Fitted parameters for one head.
+
+    ``head=None`` resolves to :func:`lowest_bic_head`, not to :func:`default_head`: this returns a
+    *vendored table*, and the default head is ``complement``, which has none -- it is
+    :mod:`mhcmatch.complement`, whose parameters come from ``complement.parameters(species)``."""
     if species not in SPECIES:
         raise KeyError(f"no recognition table for {species!r}; have {', '.join(SPECIES)}")
-    head = head or default_head(species)
+    head = head or lowest_bic_head(species)
     if head == "complement":
         raise KeyError("the 'complement' head has no vendored recognition table of its own; "
                        "it is mhcmatch.complement -- use complement.parameters(species)")
@@ -104,6 +117,7 @@ def lowest_bic_head(species: str = "human") -> str:
 
 
 def feature_names(head: str = None, species: str = "human") -> list[str]:
+    """Column names of :func:`design`, in order. ``head=None`` follows :func:`table`."""
     return list(table(head, species)["features"])
 
 
@@ -116,11 +130,21 @@ def log_odds_table(species: str = "human") -> dict:
 
 # ------------------------------------------------------------------ faces
 
-def roles_for(peptides, mhc=None, anchors=None, store=None, cls="MHCI"):
+def roles_for(peptides, mhc=None, anchors=None, store=None, cls: str = "mhc1"):
     """Per-peptide boolean masks, ``True`` where the residue faces the MHC.
 
-    Resolution order is explicit ``anchors``, then the allele's layout via ``store``, then the
-    class-I default. Everything downstream reads this, so it is the one thing worth getting right.
+    Resolution order is explicit ``anchors``, then the store's layout via
+    :meth:`mhcmatch.store.Store.decompose`, then the class-I default. Everything downstream reads
+    this, so it is the one thing worth getting right.
+
+    **The two non-explicit routes report different anchor sets, deliberately.** The default is the
+    five-pocket set the shipped ``posbayes`` tables were fitted on (P1--P3, PΩ-1, PΩ). The store
+    route is the store's own layout: class-I P2/PΩ, or -- the reason to take this route --
+    class-II's P1/P4/P6/P9 within the floating 9-mer core, which no length-only default can give.
+    Pass ``cls="mhc2"`` with a ``store`` for a class-II ligand.
+
+    ``mhc`` is forwarded to ``decompose`` as its ``allele``, which accepts it for forward-compat;
+    the layout it returns is the class default and is **not** allele-conditioned today.
     """
     out = []
     default = tuple(table("posbayes")["anchors"])
@@ -129,9 +153,9 @@ def roles_for(peptides, mhc=None, anchors=None, store=None, cls="MHCI"):
         if anchors is not None:
             a = anchors[i] if isinstance(anchors[0], (list, tuple, set, np.ndarray)) else anchors
             idx = {int(x) % L for x in a}
-        elif store is not None and mhc is not None:
+        elif store is not None:
             allele = mhc[i] if isinstance(mhc, (list, tuple)) else mhc
-            idx = {int(x) % L for x in store.anchor_indices(p, cls, allele)}
+            idx = {int(x) % L for x in store.decompose(p, cls, allele).anchors}
         else:
             idx = {x % L for x in default}
         out.append([j in idx for j in range(L)])
@@ -224,9 +248,13 @@ def _esm64(peptides, t):
 
 
 def design(peptides, species: str = "human", head: str = None, *, mhc=None, anchors=None,
-           store=None, cls: str = "MHCI", roles=None) -> np.ndarray:
-    """The design matrix for one head, in :func:`feature_names` order, before standardization."""
-    head = head or default_head(species)
+           store=None, cls: str = "mhc1", roles=None) -> np.ndarray:
+    """The design matrix for one head, in :func:`feature_names` order, before standardization.
+
+    ``head=None`` resolves the same way :func:`table` does -- to :func:`lowest_bic_head` -- because
+    only the three separately fitted heads have a design matrix here. The ``complement`` default is
+    encoded by :func:`mhcmatch.complement.design`."""
+    head = head or lowest_bic_head(species)
     t = table(head, species)
     peptides = list(peptides)
     if roles is None:

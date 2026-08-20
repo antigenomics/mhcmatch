@@ -1,18 +1,19 @@
 Corpus complementarity: what the repertoire was shaped by
 =========================================================
 
-:mod:`mhcmatch.complement` scores recognition from a corpus of labelled peptides. The chemistry half
-of that reduces to a single imported scale (:doc:`burial`). This page is about the other half, and
-about why the term that used to carry it is fitted on the wrong question.
+Complementarity is two factors (:doc:`complementarity`). The chemistry one, ``C_phys``, is a single
+imported scale and is :doc:`burial`. This page owns the other one, ``C_corpus``, and the reason the
+term that used to carry it was fitted on the wrong question.
 
-The residue-identity half, ``C_aa``, is forty log-odds cells estimated on the Chowell corpus.
-Chowell separates peptides that are **foreign** from peptides that are **self and presented** --- a
-statement about *passing thymic selection*. A neoantigen is a self peptide carrying a somatic
-mutation, and whether a T cell responds to it is a different question. So ``C_aa`` imports a
-selection discriminator into a neoantigen model.
+That term was ``C_aa``, the residue-identity half of :mod:`mhcmatch.complement`: forty log-odds
+cells estimated on the Chowell corpus. Chowell separates peptides that are **foreign** from peptides
+that are **self and presented** --- a statement about *passing thymic selection*. A neoantigen is a
+self peptide carrying a somatic mutation, and whether a T cell responds to it is a different
+question. So ``C_aa`` imports a selection discriminator into a neoantigen model.
 
-:func:`mhcmatch.mimicry.corpus_R` is the label-free replacement. It reads how close a candidate sits
-to reference peptide sets a real repertoire was actually shaped by.
+:func:`mhcmatch.mimicry.corpus_R` is the label-free replacement, and since 0.21.0 its ``thymus``
+channel is what the shipped aggregate scores as ``C_corpus_thymus``. It reads how close a candidate
+sits to reference peptide sets a real repertoire was actually shaped by.
 
 Three references, separated by when a T cell meets them
 -------------------------------------------------------
@@ -141,7 +142,8 @@ Using it
 Each row also carries ``{component}_n{d}`` --- the raw neighbour count at Hamming distance ``d``
 over the TCR face --- so the shape parameter can be refitted without re-searching.
 
-Opt-in and default-off: nothing in the shipped aggregate calls this.
+``mhcmatch rank --score aggregate`` calls this for the ``thymus`` channel and nothing else; the
+other two channels are opt-in and default-off.
 
 Exploration options, and which of them belong in a score
 --------------------------------------------------------
@@ -161,20 +163,9 @@ the same measurement here), and ``self`` never reaches significance.
 Report the full ladder anyway. The thymus/self **sign dissociation** is the evidence for the
 mechanism, and it is worth showing even though two of its three channels are not fitted.
 
-The matching option on the chemistry side is
-:func:`mhcmatch.complement.burial`'s ``scale=``, which selects the residue basis:
-
-.. code-block:: python
-
-   from mhcmatch import complement
-   complement.burial(peps)                          # "Rose" -- the shipped basis
-   complement.burial(peps, scale="KIDERA:KF4")      # exploration only
-
-``"Rose"`` was chosen out of 576 candidates by the BIC change it produced *inside the general
-model*, not by standalone AUROC. Kidera factors --- against which the Chowell-family literature is
-usually written --- are reachable as ``"KIDERA:KF4"``, ``"KIDERA:KF2"`` and so on, and lose to
-``"Rose"`` on the neoantigen corpus. A number produced with a different scale is a **comparison**
-and has to be reported as one; it is never a silent substitution.
+The matching option on the chemistry side is :func:`mhcmatch.complement.burial`'s ``scale=``, which
+selects the residue basis; :doc:`burial` owns it, together with the 576-candidate selection that
+settled on ``"Rose"``.
 
 Two things that are easy to assume and false here
 -------------------------------------------------

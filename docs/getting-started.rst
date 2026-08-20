@@ -6,12 +6,23 @@ Install
 
 .. code-block:: bash
 
+   pip install mhcmatch
+   mhcmatch bootstrap       # pre-fetch the reference proteomes (optional; they fetch on first use)
+
+From a checkout
+~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
    bash setup.sh            # repo-local .venv + editable install (uses sibling ../seqtree if present)
    bash setup.sh --tests    # + pytest
    bash setup.sh --logo     # + logomaker/matplotlib for rendering logos
 
 Quickstart
 ----------
+
+Every command line behind these calls is in :doc:`cli`; the recognition axis is
+:doc:`complementarity`, and the shipped neoantigen scorer end to end is :doc:`neoantigen`.
 
 .. code-block:: python
 
@@ -78,8 +89,8 @@ Data
 ----
 
 - **Reference ligands** — ``isalgo/pmhc_data`` (full / shortlist tiers); pass the path to
-  :meth:`mhcmatch.Store.from_pmhc` or set ``MHCMATCH_PMHC``.
+  :meth:`mhcmatch.store.Store.from_pmhc` or set ``MHCMATCH_PMHC``.
 - **Pseudosequences** — 34-mer groove pseudosequences vendored in ``src/mhcmatch/data/``.
-- **Reference proteomes** — :meth:`mhcmatch.Proteome.from_hf` auto-fetches the human (UP000005640),
+- **Reference proteomes** — :meth:`mhcmatch.proteome.Proteome.from_hf` auto-fetches the human (UP000005640),
   mouse (UP000000589), and pathogen proteomes from HF on first use (cached); ``mhcmatch bootstrap``
-  pre-fetches them. Pass your own FASTA to :meth:`mhcmatch.Proteome.from_fasta` to override.
+  pre-fetches them. Pass your own FASTA to :meth:`mhcmatch.proteome.Proteome.from_fasta` to override.

@@ -233,6 +233,6 @@ No data download, no benchmark repo, numpy only:
    "".join(np.array(AA)[np.argsort(-pc1)])  # IFLWVMCYAPGTHSQNEKDR (up to overall sign)
 
 The two claims are asserted as regression tests in ``tests/test_mhcmatch.py``
-(``test_property_matrix_pc1_is_a_hydropathy_axis``, ``test_kidera_table_is_orthogonal``,
+(``test_property_matrix_pc1_is_a_hydropathy_axis``, ``test_kidera_table_is_orthogonal_so_pca_on_it_is_degenerate``,
 ``test_kidera_degeneracy_is_specific_to_the_uniform_alphabet_measure``), so a table regenerated with
 different provenance cannot silently change them.

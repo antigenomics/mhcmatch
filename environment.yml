@@ -2,7 +2,8 @@
 #
 # mhcmatch's library runtime needs only `pip install mhcmatch` (seqtree from PyPI). This heavier
 # env adds the figure/graph toolchain and tcren -- which ships arda + mmseqs (structure annotation
-# and MHC labeling) and the fast C++ pseudosequence aligner used by bench/structural_pockets.py.
+# and MHC labeling) and a fast C++ pseudosequence aligner. The analysis scripts that used it moved
+# to the benchmark repo (2026-mhcmatch-benchmark); this file stays here for the notebooks.
 #
 #   conda env create -f environment.yml
 #   conda activate mhcmatch-bench
@@ -16,17 +17,17 @@ channels:
   - bioconda
 dependencies:
   - python=3.12
-  - mmseqs2          # arda chain typing / MHC mapping (only bench/structural_pockets.py)
+  - mmseqs2          # arda chain typing / MHC mapping (benchmark repo: bench/structural_pockets.py)
   - cxx-compiler     # builds the seqtree + tcren C++ extensions on install
   - cmake
-  - graphviz         # bench/promiscuity_graph.py  (dot/fdp)
-  - gnuplot          # bench/make_figures.py
+  - graphviz         # benchmark repo: bench/promiscuity_graph.py  (dot/fdp)
+  - gnuplot          # benchmark repo: figure generators
   - numpy
   - scipy
   - biopython
   - pip
   - pip:
-      - -e .             # mhcmatch (pulls seqtree>=0.1.0 from PyPI)
+      - -e .             # mhcmatch (pulls seqtree>=0.7.0 from PyPI, per pyproject.toml)
       - -e ../tcren-ms   # tcren + arda-mapper: structure annotation + the C++ fitting aligner
       - networkx
       - logomaker

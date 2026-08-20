@@ -5,10 +5,7 @@ calibrate.py's ``__main__`` self-check, which pytest never ran -- so ``band()`` 
 """
 from mhcmatch.calibrate import RankCalibrator, band
 
-
-class _Stub:
-    def score(self, pep, allele):
-        return float(sum(c in "AILMFWVY" for c in pep))
+from conftest import HydrophobicStub as _Stub
 
 
 def _cal():

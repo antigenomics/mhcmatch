@@ -34,6 +34,10 @@ from dataclasses import dataclass
 
 from .search import find_mimics
 
+__all__ = ["KINDS", "DEFAULT_REFS", "PROTEOME_REFS", "MimicResult", "NATIVE_COLUMNS",
+           "load_peptides", "proteome_peptides", "proteome_window_array", "load_reference_sets",
+           "neighbours", "scan", "patient_summary", "write_table"]
+
 csv.field_size_limit(10 ** 7)
 
 _SPECIES = {"human": "HomoSapiens", "mouse": "MusMusculus"}
@@ -103,7 +107,7 @@ class MimicResult:
     top_subs: int            # substitutions to the closest mimic (-1 if none)
     e_value: float           # aggregate presentation-aware E-value (raw)
     n_hits: int              # raw fuzzy-search hit count
-    significant: bool        # has a mimic within near_subs (n_near > 0)
+    significant: bool        # always True: `scan` emits a row only on a hit, exact or near
 
 
 def load_peptides(pmhc_dir, rel_path: str, cls: str, species: str = "human") -> list:
@@ -332,8 +336,7 @@ def patient_summary(results, binders) -> dict:
     ``binders`` is the full strong-binder list (so "0 mimics" binders are counted too)."""
     n_binders = len({(p, a) for p, a in binders})
     cats = sorted({r.category for r in results})
-    sig = {c: {(r.binder, r.allele) for r in results if r.category == c and r.significant}
-           for c in cats}
+    sig = {c: {(r.binder, r.allele) for r in results if r.category == c} for c in cats}
     summary = {"n_strong_binders": n_binders}
     for c in cats:
         summary[f"n_{c}_mimic"] = len(sig[c])

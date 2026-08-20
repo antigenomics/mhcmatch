@@ -38,7 +38,21 @@ mhcmatch = "mhcmatch.cli:main"
 Homepage = "https://github.com/antigenomics/mhcmatch"
 Repository = "https://github.com/antigenomics/mhcmatch"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "hfdata: needs the isalgo/pmhc_data deposit (a staged mirror, a warm HF cache, or RUN_HF_FETCH=1). Deselect with -m 'not hfdata'.",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/mhcmatch"]
 # data/ (pseudosequence FASTAs, structural pocket TSVs) ships automatically under the package above;
 # a force-include here would double-add those files and break the wheel build.
+
+[tool.hatch.build.targets.sdist]
+# `.claude/` is machine-local harness config -- absolute /Users/... paths and a permission
+# allowlist -- and worktree checkouts live under it. A guard, not a fix for a leak: the published
+# 0.20.0 sdist carries 0 `.claude` entries of 132, because hatchling's VCS-aware file selection
+# already honours the `.claude/` gitignore rule. This keeps that true if the ignore rule ever
+# moves. The wheel target above is untouched.
+exclude = [".claude"]
