@@ -77,5 +77,6 @@ Capabilities
    safety
    portfolio
    models
+   burial
    property_basis
    api
