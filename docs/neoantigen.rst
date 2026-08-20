@@ -103,10 +103,29 @@ Reading the output
 
    mhcmatch rank fasta candidates.fasta --alleles donor.txt --tumor SKCM --out ranked.tsv
 
-``score`` is the aggregate; higher is better. ``occupancy``, ``binder``, ``agretopicity``,
-``physchem`` and ``expression`` are the components, kept separate so a rank can be explained.
-``--extended`` appends the mimicry channels and ``--annotate`` what each candidate resembles; both
-add **columns only** and never change the ordering.
+``score`` is the aggregate; higher is better. Every one of the model's nine features is a column,
+because a row should report what produced it: ``binder``, ``occupancy``, ``expression`` (with
+``expr_imputed``), ``physchem``, and the four recognition channels ``viral_R``, ``viral_tcr``,
+``self_tcr``, ``thymus_tcr``. ``agretopicity``, ``physchem_ipred`` and
+``n_alleles_presenting`` / ``alleles_presenting`` are reported beside them and are **not** in the
+model. ``--extended`` appends the remaining mimicry channels and ``--annotate`` what each candidate
+resembles; both add **columns only** and never change the ordering.
+
+.. warning::
+
+   **This costs what the model costs.** Computing the four recognition channels loads the
+   self-mimicry reference — ~7.5 GB and 6 min 15 s, paid once for the whole candidate list. Before
+   0.20.0 it was free, because those four were never computed: ``aggregate_score`` substituted
+   their training means, so each contributed ``coef × 0`` to every candidate and ``rank`` reported
+   ``BOECRT`` while scoring ``BOEC``. That put **38.0 % of the model's total absolute weight**
+   (``sum |coef| = 1.3875``) permanently at zero, including ``self_tcr`` at +0.3154 — its
+   second-largest coefficient. The *ordering* was unaffected, since a constant offset cannot
+   reorder; the reported model was wrong. ``--score gate`` does not use these features and stays
+   cheap.
+
+   The ``imputed`` column names any feature that had to take its training mean for **that row** — a
+   candidate with no IC50 has no occupancy, a frameshift has no wild type. Those are candidates with
+   incomplete data, not a different model, so they are scored and the substitution is declared.
 
 Honest limits
 -------------

@@ -63,6 +63,7 @@ mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor 
 | What is the IC50, and vs its wild type? | `mhcmatch affinity PEP --wt WTPEP` | `store.affinity_model` |
 | Will a T cell respond to it? | `mhcmatch complement --peptides p.txt` | `complement.score` |
 | Rank neoantigen candidates for a donor | `mhcmatch rank fasta ...` | `rank.rank_fasta` |
+| How many of the donor's own allotypes present it? | (a `rank` column) | `predict.Prediction.n_alleles_presenting` |
 | …with mimicry risk and what each one resembles | `mhcmatch rank ... --extended --annotate` | `mimicry.score` |
 | Why did *this* candidate rank there? | `mhcmatch explain PEP --allele A` | — |
 | What self / viral / bacterial peptide does it mimic? | `mhcmatch mimics --peptides p.txt` | `mimics.neighbours` |
@@ -85,6 +86,22 @@ Full command reference, grouped by task: [the CLI page](https://antigenomics.git
 `restriction` is the specificity axis (**which allele**). They answer different questions and a
 peptide can top one and not the other — `NLVPMVATV` is unambiguously A\*02:01-restricted yet bands
 mid-pack against A\*02:01's own ligands.
+
+## What `rank` costs, and why it did not before
+
+Since 0.20.0 `rank --score aggregate` computes **all nine** of the model's features before scoring.
+That loads the self-mimicry reference: ~7.5 GB and 6 min 15 s, paid once for the whole candidate
+list.
+
+It used to be free because four of the nine were never computed. `aggregate_score` substituted their
+training means, so each contributed `coef × 0` to every candidate — inert, not neutral — and
+`mhcmatch rank` reported `BOECRT` while scoring `BOEC`, with or without `--extended`. That left
+**38.0% of the model's total absolute weight** (`sum |coef| = 1.3875`) at zero, `self_tcr` at
++0.3154 among it. The emitted *ordering* was unaffected, since a constant offset cannot reorder
+anything; what was wrong was the model the output named.
+
+`--score gate` uses the two-term noisy-AND and stays cheap. `--no-self` is refused with the
+aggregate, because it is what removes `self_tcr`.
 
 ## Caching calibration across jobs
 

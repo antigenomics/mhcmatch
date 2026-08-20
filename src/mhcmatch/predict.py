@@ -80,6 +80,14 @@ class Prediction:
     affinity_rank: float = float("nan")  # Potts affinity %rank for this allele (lower = stronger)
     binder_rank: float = float("nan")    # calibrated combined %rank (presentation x affinity, Fisher)
     binder_band: str = ""                # strong / weak / non-binder, banded on binder_rank
+    #: How many of the queried allotypes present this peptide, and which, banded on the
+    #: **presentation** %rank. The scoring loop already computes that rank for every allele and
+    #: keeps only the best, so counting the rest is free; banding on `binder_rank` instead would
+    #: mean an affinity call and a Fisher combine per allele, which is not.
+    #: A peptide presented by three of a donor's six class-I allotypes is a different bet from one
+    #: presented by one: it spans three blocks of the response model in `mhcmatch.portfolio`.
+    n_alleles_presenting: int = 0
+    alleles_presenting: str = ""
     synth_peptide: str = ""              # peptide to SYNTHESISE (long-peptide vaccine; ~21mer for II)
     model_peptide: str = ""              # peptide to MODEL structurally (TCR:pMHC; ~13mer for II)
     var: dict = field(default_factory=dict)   # parsed variant header
@@ -397,6 +405,7 @@ def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
         base = base if base >= 0 else 0
         for pep, off in tile(seq, lengths):
             best = None
+            presenting: list = []
             for a in alleles:
                 s = model.score(pep, a)
                 if s == float("-inf"):
@@ -404,6 +413,8 @@ def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
                 pr = cal.percent_rank(a, s)
                 if pr != pr:                       # nan: allele has no background
                     continue
+                if pr <= rank_threshold:
+                    presenting.append((pr, a))
                 if best is None or pr < best[1]:
                     best = (a, pr, cal.p_present(a, s))
             if best is None:
@@ -417,6 +428,9 @@ def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
             d = store.decompose(pep, cls, a, register_start=rstart)
             p = Prediction(header, pep, a, off, cls, round(pr, 3), round(pp, 4), band_of(pr),
                            d.anchors, d.tcr_facing, var=var)
+            presenting.sort()
+            p.n_alleles_presenting = len(presenting)
+            p.alleles_presenting = ";".join(x[1] for x in presenting)
             if aff is not None:
                 nm = aff.predict_ic50(pep, a)
                 p.affinity_nm = _round(nm)

@@ -122,8 +122,9 @@ process MHCMATCH_RANK {
     def prefix = task.ext.prefix ?: "${meta.id}"
     def ext    = params.mhcmatch_rank_extended ? 'True' : 'False'
     def ann    = params.mhcmatch_rank_annotate ? 'True' : 'False'
+    def sc     = params.mhcmatch_rank_score ?: 'aggregate'
     """
-    python -c "from mhcmatch import rank; print('\\t'.join(rank.columns(extended=${ext}, annotate=${ann})))" \\
+    python -c "from mhcmatch import rank; print('\\t'.join(rank.columns(extended=${ext}, annotate=${ann}, score='${sc}')))" \\
         > ${prefix}.${cls}.mhcmatch.ranked.tsv
 
     cat <<-END_VERSIONS > versions.yml

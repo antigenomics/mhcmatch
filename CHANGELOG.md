@@ -6,6 +6,71 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.20.0] - 2026-08-20
+
+### Changed
+
+- **A model now reports the features it used, and refuses to run without them.** `BOECRT` declares
+  nine features. Four of them — `viral_R`, `viral_tcr`, `self_tcr`, `thymus_tcr` — were **never
+  written by anything in the package**, so `aggregate_score` substituted their training means and
+  each contributed `coef × 0` to every candidate. `--extended` did not repair it: the CLI computed
+  those channels at `cli.py:465`, *after* `rank_fasta` had already scored, and only printed them.
+  **`mhcmatch rank` therefore scored `BOEC` on every run, with or without the flag, while reporting
+  `BOECRT`** — and the Nextflow `RANK`/`VECTOR` path inherited it.
+
+  Three measures of the damage, which disagree, and all three are worth knowing:
+  **38.0 %** of the model's total absolute weight was inert (`sum |coef| = 1.3875`, of which
+  `self_tcr` alone is +0.3154 — its second-largest coefficient, above `complement` at +0.1790 and
+  `binder` at +0.1418); the emitted **ordering was unaffected**, because a constant offset cannot
+  reorder anything, so no shipped output was numerically wrong; and the **accuracy cost is +0.008
+  AUROC** (`BEC` 0.6628 → `BECRT` 0.6707, within-screen median over 7 screens,
+  `bench/results/neoag_cohorts.md`). What was wrong was the reported model, not the ranking.
+
+  `rank_fasta` / `rank_table` take a `channels` callable that supplies the four before scoring;
+  `aggregate_score` raises, naming the feature, when a declared one is absent.
+
+- **`rank` no longer falls back to the gate in silence.** The whole aggregate branch sat inside a
+  bare `except Exception: score = "gate"`, so a missing artifact or an absent numpy swapped in a
+  different model — a two-term noisy-AND returning a probability where the aggregate returns
+  log-odds — said nothing, and left `components["model"]` unset. Asking for the aggregate and
+  getting the gate is not a degraded answer; it is a different one.
+
+- **`--no-self` cannot be combined with `--score aggregate`.** The self-mimicry reference supplies
+  `self_tcr`. The combination is refused before any work starts, naming the feature. Use
+  `--score gate`, which does not use it.
+
+- **`rank --score aggregate` now costs what the model costs**: ~7.5 GB and 6 min 15 s for the
+  self-proteome reference index, paid once for the whole candidate list. Before 0.20.0 this was
+  free because four of the nine features were never computed. The Nextflow `MHCMATCH_RANK` process
+  is sized accordingly (16 GB / 4 h, or 8 GB / 1 h under `--score gate`).
+
+- **A non-finite value inside a supplied column is imputed *visibly*, not silently.** One candidate
+  with no IC50, or a frameshift with no wild type, still takes the training mean — dropping it would
+  lose a real candidate — but the new `imputed` column names which features that row had to impute.
+  A placeholder nobody can see is the defect; a placeholder the row declares is incomplete data.
+
+- **`rank.columns()` takes `score=`.** The header carries the model's own features: the four
+  recognition channels are columns when the aggregate scored and absent when the gate did.
+  `binder` — a model feature — was missing from the header entirely and is now in it.
+
+### Added
+
+- **`n_alleles_presenting` / `alleles_presenting`**: how many of the queried allotypes present this
+  peptide, and which, banded on the presentation %rank at `--rank-threshold`. `predict_windows`
+  already scored every allele and kept only the best, so this is free. A peptide presented by three
+  of a donor's six class-I allotypes is a different bet from one presented by one — in the response
+  model of `mhcmatch.portfolio` it spans three blocks by itself. **Column only**, not a fitted term.
+
+- **`physchem_ipred`**: `mhcmatch.ipred.log_p` as a reported column, explicitly **not in the
+  model**. It is the best single feature on both cohorts where the fitted aggregate sits at chance
+  (VACCIMEL AUROC 0.6324 on 93 rows / 27 positives; GBM 0.6450 on 109 / 26 — against `binder` at
+  0.5065 and 0.5767; `bench/results/neoag_cohort_scan.md`), which is worth being able to see.
+
+### Fixed
+
+- `aggregate_score`'s docstring quoted `viral_R`'s fitted sigma as `3.8e-8`; the shipped artifact
+  has `4.729e-11`, three orders of magnitude apart. The docstring was stale.
+
 ## [0.19.0] - 2026-08-19
 
 ### Changed

@@ -121,9 +121,14 @@ The commands, by axis
    * - ``rank``
      - rank neoantigen candidates, from a FASTA of windows or an already-scored table. Emits
        ``occupancy`` (equilibrium fraction of MHC held, defined with or without a wild type) beside
-       ``agretopicity`` (reported, not fitted — see :ref:`occupancy-vs-agretopicity`).
-       ``--extended`` appends the mimicry channels, ``--annotate`` what each candidate resembles —
-       **columns only, the ordering is unchanged**
+       ``agretopicity`` (reported, not fitted — see :ref:`occupancy-vs-agretopicity`), plus
+       ``n_alleles_presenting`` / ``alleles_presenting`` and ``physchem_ipred`` (reported, **not in
+       the model**). ``--extended`` appends the remaining mimicry channels, ``--annotate`` what each
+       candidate resembles — **columns only, the ordering is unchanged**.
+       **Since 0.20.0 the aggregate computes all nine of its features before scoring**, which loads
+       the self-mimicry reference: ~7.5 GB and 6 min 15 s, paid once for the whole list.
+       ``--no-self`` is refused with ``--score aggregate`` because it removes ``self_tcr``; use
+       ``--score gate``, which does not use it
    * - ``explain``
      - every component of the aggregate for one *(peptide, allele)*
    * - ``expression``

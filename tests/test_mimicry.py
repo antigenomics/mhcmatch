@@ -54,8 +54,12 @@ def test_rank_extended_appends_columns_without_moving_the_ranking(tmp_path, caps
                  "GILGFVFTL,HLA-A*02:01,PMEL,3.0,0.9\n"
                  "KLVVVGACGV,HLA-A*02:01,KRAS,12.0,0.8\n")
 
+    # `--score gate` throughout: since 0.20.0 the aggregate computes all nine of its features
+    # before scoring, which loads the self-mimicry reference (6 min 15 s, ~7.5 GB). The property
+    # under test is that --extended/--annotate append columns without moving the order, and that is
+    # a property of those flags, not of the scorer.
     def run(*flags):
-        main(["rank", "table", str(p), "--tumor", "SKCM", *flags])
+        main(["rank", "table", str(p), "--tumor", "SKCM", "--score", "gate", *flags])
         body = [ln.split("\t") for ln in capsys.readouterr().out.strip().splitlines()]
         return body[0], body[1:]
 
@@ -66,6 +70,19 @@ def test_rank_extended_appends_columns_without_moving_the_ranking(tmp_path, caps
     for c, ch in (("viral", "anchor"), ("self", "tcr"), ("thymus", "anchor")):
         assert f"{c}_{ch}" in ehead and f"source_{c}_{ch}" in ehead
     assert "neoag_distance" in ehead
+
+
+def test_no_self_cannot_be_combined_with_the_aggregate(tmp_path):
+    """--no-self drops the self mimicry reference, which supplies `self_tcr` -- BOECRT's
+    second-largest coefficient at +0.3154 of 1.3875 total absolute weight. Until 0.20.0 the
+    combination ran and silently scored a five-feature model while reporting the nine-feature one.
+    """
+    from mhcmatch.cli import main
+    p = tmp_path / "c.scored.csv"
+    p.write_text("epitope,best_allele,gene_name,tpm,score\n"
+                 "GILGFVFTL,HLA-A*02:01,PMEL,3.0,0.9\n")
+    with pytest.raises(SystemExit, match="self_tcr"):
+        main(["rank", "table", str(p), "--score", "aggregate", "--no-self"])
 
 
 def test_cli_coefficients_reports_both_aurocs(capsys):

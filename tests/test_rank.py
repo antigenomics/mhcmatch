@@ -12,6 +12,26 @@ from mhcmatch import rank as R
 
 # ----------------------------------------------------------------- the noisy-AND gate
 
+
+#: Plausible values for the aggregate's four recognition channels, on the scales it was fitted with
+#: (``viral_R`` sits near 4e-11; the three mimicry channels are log1p per-million window densities).
+#: Since 0.20.0 the model refuses to score without them, so any test exercising the aggregate has to
+#: supply them -- which is the point: a model scores on the features it declares or not at all.
+CHANNELS = {"viral_R": 4.0e-11, "viral_tcr": 8.0, "self_tcr": 16.0, "thymus_tcr": 8.0}
+
+
+def with_channels(rows):
+    """Fill CHANNELS into every row's ``components``, as ``rank_fasta(channels=...)`` would."""
+    for r in rows:
+        r.components.update(CHANNELS)
+    return rows
+
+
+def channel_fn(peptides):
+    """A ``channels`` callable for ``rank_fasta`` / ``rank_table``."""
+    return {k: [v] * len(peptides) for k, v in CHANNELS.items()}
+
+
 def test_gate_is_monotone_in_both_axes():
     """A gate that is not monotone would rank a better-presented peptide below a worse one."""
     base = R.gate_probability(0.0, 0.0)
@@ -66,7 +86,7 @@ def test_known_epitopes_sort_into_the_top_tier():
     strong = R.Ranked(peptide="AAAAAAAAA", allele="HLA-A*02:01", presentation=4.0, physchem=2.0)
     known = R.Ranked(peptide="CCCCCCCCC", allele="HLA-A*02:01", presentation=-4.0, physchem=-2.0,
                      known_epitope="nci")
-    out = R._finish([strong, known], None)
+    out = R._finish(with_channels([strong, known]), None)
     assert out[0].peptide == "CCCCCCCCC"
     assert out[0].score < out[1].score      # ranked first *despite* the lower model score
 
@@ -75,7 +95,7 @@ def test_finish_keeps_components_set_before_scoring():
     """`rank_table` stashes the incoming built-in score before `_finish` runs; it must survive."""
     r = R.Ranked(peptide="AAAAAAAAA", allele="X", presentation=1.0, physchem=0.0)
     r.components["score_builtin"] = 0.42
-    R._finish([r], None)
+    R._finish(with_channels([r]), None)
     assert r.components["score_builtin"] == 0.42
     assert "presentation" in r.components
 
@@ -162,7 +182,7 @@ def test_rank_table_reads_the_pipeline_schema_and_keeps_the_builtin_score(tmp_pa
                  "AAAAAAAAA,HLA-A*02:01,PMEL,3.0,0.9\n"
                  "CCCCCCCCC,HLA-A*02:01,PMEL,,0.1\n"
                  ",,,,\n")
-    rows = R.rank_table(str(p), tissue="Skin")
+    rows = R.rank_table(str(p), tissue="Skin", channels=channel_fn)
     assert [r.peptide for r in sorted(rows, key=lambda r: r.peptide)] == ["AAAAAAAAA", "CCCCCCCCC"]
     by = {r.peptide: r for r in rows}
     assert by["AAAAAAAAA"].components["score_builtin"] == pytest.approx(0.9)
@@ -176,7 +196,7 @@ def test_rank_table_reads_the_pipeline_schema_and_keeps_the_builtin_score(tmp_pa
 def test_rank_table_skips_blank_rows(tmp_path):
     p = tmp_path / "y.scored.csv"
     p.write_text("epitope,best_allele\n,\nAAAAAAAAA,HLA-A*02:01\n")
-    assert len(R.rank_table(str(p))) == 1
+    assert len(R.rank_table(str(p), channels=channel_fn)) == 1
 
 
 # ----------------------------------------------------------------- mimics: the circularity guard
@@ -247,25 +267,33 @@ def test_aggregate_artifact_is_self_consistent():
     assert a["fit"]["per_screen_intercept"] is True
 
 
-def test_aggregate_score_is_monotone_in_binder_and_tolerates_missing_columns():
-    """A candidate with no wild type or no expression is scored on what it has, not dropped.
+def test_aggregate_score_is_monotone_in_binder_and_refuses_a_subset():
+    """Higher binder ranks higher, and a model that was handed 4 of its 9 features does not score.
 
-    The fit used the same convention (`neoclf._std` sends non-finite to the training mean), so a
-    missing column has to contribute its mean here too -- not NaN, which would poison the whole
-    ranking, and not zero on the raw scale, which is a different peptide.
+    Until 0.20.0 a missing column became the training mean. That reads as "no information" and is
+    not: after standardization it contributes ``coef * 0`` to *every* candidate, so the feature is
+    inert rather than neutral and the emitted score names a model that never ran. Four of BOECRT's
+    nine were never populated on the shipped path, which left 38.0% of its total absolute weight
+    (sum |coef| = 1.3875) permanently at zero.
     """
     import math
 
-    s = R.aggregate_score({"binder": [2.0, 0.1, -1.0]})
+    full = {f: [0.0] * 3 for f in R.AGGREGATE_FEATURES}
+    full["binder"] = [2.0, 0.1, -1.0]
+    s = R.aggregate_score(full)
     assert all(math.isfinite(v) for v in s)
     assert s[0] > s[1] > s[2]
 
-    # a NaN inside a supplied column behaves the same as omitting the value
-    with_nan = R.aggregate_score({"binder": [1.0, 1.0], "occupancy": [0.5, float("nan")]})
-    without = R.aggregate_score({"binder": [1.0, 1.0]})
-    assert with_nan[1] == pytest.approx(without[1])
-    assert with_nan[0] != pytest.approx(without[0])
+    with pytest.raises(ValueError, match="were not supplied"):
+        R.aggregate_score({"binder": [2.0, 0.1, -1.0]})
 
+    # a non-finite value in a SUPPLIED column is one candidate with incomplete data, not a
+    # different model: it takes the training mean and the row is required to say so.
+    one_row_short = dict(full)
+    one_row_short["occupancy"] = [0.5, float("nan"), 0.5]
+    imputed = [[], [], []]
+    R.aggregate_score(one_row_short, imputed_out=imputed)
+    assert imputed == [[], ["occupancy"], []]
 
 def test_aggregate_carries_the_fit_provenance_a_reader_needs():
     """A shipped scorer that cannot say what it was fitted on is not reproducible."""
@@ -383,15 +411,17 @@ def test_default_score_is_the_fitted_aggregate_not_the_gate():
     """Until 0.19.0 `rank` scored with the two-term noisy-AND while the fitted aggregate sat
     vendored with no internal caller -- the shipped ranking and the published coefficients were two
     different models. This pins the default and keeps `gate` reachable."""
-    from mhcmatch.rank import Ranked, _finish, aggregate, aggregate_score
+    from mhcmatch.rank import AGGREGATE_COLUMNS, Ranked, _finish, aggregate, aggregate_score
+    chan = {"viral_R": 4.0e-11, "viral_tcr": 8.0, "self_tcr": 16.0, "thymus_tcr": 8.0}
     rows = [Ranked(peptide="SIINFEKL", allele="H2-Kb", binder=2.0, occupancy=0.9,
-                   physchem=1.5, expression=3.0),
+                   physchem=1.5, expression=3.0, components=dict(chan)),
             Ranked(peptide="SIINFEKV", allele="H2-Kb", binder=0.1, occupancy=0.01,
-                   physchem=-1.0, expression=0.5)]
+                   physchem=-1.0, expression=0.5, components=dict(chan))]
     out = _finish([Ranked(**vars(r)) for r in rows], None)
     want = aggregate_score({"binder": [2.0, 0.1], "occupancy": [0.9, 0.01],
                             "expr": [3.0, 0.5], "expr_missing": [0.0, 0.0],
-                            "complement": [1.5, -1.0]})
+                            "complement": [1.5, -1.0],
+                            **{c: [chan[c], chan[c]] for c in AGGREGATE_COLUMNS}})
     assert [r.peptide for r in out] == ["SIINFEKL", "SIINFEKV"]
     assert abs(out[0].score - float(want[0])) < 1e-10
     assert out[0].components["model"] == aggregate()["model"]
@@ -399,24 +429,37 @@ def test_default_score_is_the_fitted_aggregate_not_the_gate():
     gated = _finish([Ranked(**vars(r)) for r in rows], None, score="gate")
     assert 0.0 <= gated[0].score <= 1.0        # the gate is a probability; the aggregate is log-odds
 
+def test_scoring_without_the_recognition_channels_is_an_error_naming_the_feature():
+    """`_finish` must not score BOECRT when the four recognition channels were never computed.
 
-def test_a_missing_feature_contributes_its_training_mean():
-    """A candidate with no expression, or a run without the mimicry channels, must be scored on the
-    terms it has -- not dropped, and not given a zero that the standardizer would read as extreme."""
-    from mhcmatch.rank import aggregate_score
-    both = aggregate_score({"binder": [1.0], "occupancy": [0.5], "expr": [2.0],
-                            "complement": [0.5]})
-    less = aggregate_score({"binder": [1.0], "occupancy": [0.5], "complement": [0.5]})
-    assert both[0] == both[0] and less[0] == less[0]      # neither is nan
-    assert abs(both[0] - less[0]) > 0                     # expression did contribute something
+    This is the 0.20.0 behaviour change. The old path substituted their training means, so
+    `mhcmatch rank` reported BOECRT and scored BOEC on every run, with or without `--extended` --
+    the CLI computed the channels *after* scoring and only printed them. The ordering was
+    unaffected (a constant offset cannot reorder), but the reported model was wrong.
+    """
+    from mhcmatch.rank import Ranked, _finish
+    rows = [Ranked(peptide="SIINFEKL", allele="H2-Kb", binder=2.0, occupancy=0.9,
+                   physchem=1.5, expression=3.0)]
+    with pytest.raises(ValueError, match="viral_R"):
+        _finish(rows, None)
+
+
+def test_the_header_carries_the_features_the_model_used():
+    """A row reports the features that produced it: the aggregate's four channels are columns when
+    the aggregate scored, and absent when the gate did."""
+    agg, gate = R.columns(score="aggregate"), R.columns(score="gate")
+    for c in R.AGGREGATE_COLUMNS:
+        assert c in agg and c not in gate
+    assert "binder" in agg and "binder" in gate         # a model feature, missing from the header
+    assert agg[:len(R.BASE_COLUMNS)] == list(R.BASE_COLUMNS)   # --extended still only appends
 
 
 def test_known_epitopes_still_sort_first():
     """The ordering rule is unchanged by the scorer swap: a known epitope outranks a higher score."""
     from mhcmatch.rank import Ranked, _finish
-    out = _finish([Ranked(peptide="AAAAAAAAA", allele="A", binder=5.0),
-                   Ranked(peptide="CCCCCCCCC", allele="A", binder=0.0,
-                          known_epitope="iedb")], None)
+    out = _finish(with_channels([Ranked(peptide="AAAAAAAAA", allele="A", binder=5.0),
+                                 Ranked(peptide="CCCCCCCCC", allele="A", binder=0.0,
+                                        known_epitope="iedb")]), None)
     assert out[0].peptide == "CCCCCCCCC"
 
 
