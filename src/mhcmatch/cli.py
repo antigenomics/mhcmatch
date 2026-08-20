@@ -438,9 +438,43 @@ def _mimicry_scores(peptides, cls: str, no_self: bool):
     return MM.score(peptides, refs, cls=cls, allow_missing=no_self)
 
 
+def _aggregate_channels(cls: str, no_self: bool):
+    """Build the ``channels`` callable ``rank`` needs to score with the fitted aggregate.
+
+    Returns ``list[peptide] -> {viral_R, viral_tcr, self_tcr, thymus_tcr}``. The self-proteome
+    reference index dominates the cost (6 min 15 s, ~7.5 GB, paid once for the whole list), and
+    that is now the price of an aggregate score rather than something a flag can quietly skip:
+    ``--no-self`` removes ``self_tcr``, which is the model's second-largest coefficient, so the
+    combination is refused in :func:`cmd_rank` before any work starts.
+    """
+    from . import luksza as LK
+
+    def channels(peptides):
+        scores = _mimicry_scores(peptides, cls, no_self)
+        out = {"viral_R": list(LK.viral_r(peptides))}
+        for name, comp, ch in (("viral_tcr", "viral", "tcr"), ("self_tcr", "self", "tcr"),
+                               ("thymus_tcr", "thymus", "tcr")):
+            out[name] = [s.components[comp][ch] for s in scores]
+        return out
+
+    return channels
+
+
 def cmd_rank(a):
-    """Rank neoantigen candidates from a window FASTA or an already-scored table."""
+    """Rank neoantigen candidates from a window FASTA or an already-scored table.
+
+    With ``--score aggregate`` (the default) every one of the model's nine features is computed
+    *before* scoring and emitted as a column. That costs the self-mimicry reference index -- see
+    :func:`_aggregate_channels`. Before 0.20.0 four of the nine were computed after scoring, or not
+    at all, and contributed a constant to every candidate while the output still said ``BOECRT``.
+    """
     from . import rank as R
+    if a.score == "aggregate" and getattr(a, "no_self", False):
+        raise SystemExit(
+            "mhcmatch rank: --no-self cannot be combined with --score aggregate. The self mimicry "
+            "reference supplies `self_tcr`, which is BOECRT's second-largest coefficient (+0.3154 "
+            "of 1.3875 total absolute weight), and this model scores on the features it declares "
+            "or not at all. Use --score gate, which does not use it, or drop --no-self.")
     # None -> mhcmatch.known's built-in sets; --no-known-refs -> {} -> lookup off
     refs = _load_refs(getattr(a, "refs", None)) if getattr(a, "refs", None) else \
         ({} if getattr(a, "no_known_refs", False) else None)
@@ -448,15 +482,24 @@ def cmd_rank(a):
         store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
         rows = R.rank_fasta(store, a.input, _read_alleles(a.alleles), cls=a.cls,
                             tissue=a.tissue, tumor=a.tumor, refs=refs,
-                            rank_threshold=a.rank_threshold, score=a.score)
+                            rank_threshold=a.rank_threshold, score=a.score,
+                            channels=_aggregate_channels(a.cls, a.no_self)
+                            if a.score == "aggregate" else None)
     else:
         store = None
         if a.recompute_presentation:
             store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
         rows = R.rank_table(a.input, tissue=a.tissue, tumor=a.tumor, refs=refs,
-                            store=store, cls=a.cls, score=a.score)
+                            store=store, cls=a.cls, score=a.score,
+                            channels=_aggregate_channels(a.cls, a.no_self)
+                            if a.score == "aggregate" else None)
     rows = rows[:a.top] if a.top else rows
     cols = list(R.BASE_COLUMNS)
+    if a.score == "aggregate":
+        cols += list(R.AGGREGATE_COLUMNS)
+        model = rows[0].components.get("model", "") if rows else ""
+        print(f"# scored with {model or 'aggregate'}: "
+              f"{', '.join(R.AGGREGATE_FEATURES)}", file=sys.stderr)
     # The mimicry columns are appended, never folded into `score`. Whether mimicry belongs inside
     # the gate is a benchmark question that is not settled, and quietly moving the ranking on an
     # unvalidated term is the failure mode worth avoiding -- so the ordering is identical with and
@@ -475,11 +518,15 @@ def cmd_rank(a):
         print("\t".join(cols), file=out)
         for i, r in enumerate(rows, 1):
             cells = [str(i), r.peptide, _allele(a, r.allele), r.gene, f"{r.score:.6g}",
-                     f"{r.presentation:.4g}", f"{r.occupancy:.4g}",
+                     f"{r.presentation:.4g}", f"{r.binder:.4g}", f"{r.occupancy:.4g}",
                      f"{r.agretopicity:.4g}",
                      f"{r.physchem:.4g}", f"{r.expression:.4g}",
-                     "1" if r.expression_imputed else "0", r.wt_peptide,
+                     "1" if r.expression_imputed else "0",
+                     str(r.n_alleles_presenting), r.alleles_presenting,
+                     f"{r.physchem_ipred:.4g}", r.imputed, r.wt_peptide,
                      r.known_epitope]
+            if a.score == "aggregate":
+                cells += [f"{r.components[c]:.6g}" for c in R.AGGREGATE_COLUMNS]
             if a.extended:
                 s = mim[i - 1]
                 cells += [f"{s.logodds:.6g}", f"{s.autoimmune:.6g}"]

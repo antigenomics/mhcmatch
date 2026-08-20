@@ -121,9 +121,14 @@ The commands, by axis
    * - ``rank``
      - rank neoantigen candidates, from a FASTA of windows or an already-scored table. Emits
        ``occupancy`` (equilibrium fraction of MHC held, defined with or without a wild type) beside
-       ``agretopicity`` (reported, not fitted — see :ref:`occupancy-vs-agretopicity`).
-       ``--extended`` appends the mimicry channels, ``--annotate`` what each candidate resembles —
-       **columns only, the ordering is unchanged**
+       ``agretopicity`` (reported, not fitted — see :ref:`occupancy-vs-agretopicity`), plus
+       ``n_alleles_presenting`` / ``alleles_presenting`` and ``physchem_ipred`` (reported, **not in
+       the model**). ``--extended`` appends the remaining mimicry channels, ``--annotate`` what each
+       candidate resembles — **columns only, the ordering is unchanged**.
+       **Since 0.20.0 the aggregate computes all nine of its features before scoring**, which loads
+       the self-mimicry reference: ~7.5 GB and 6 min 15 s, paid once for the whole list.
+       ``--no-self`` is refused with ``--score aggregate`` because it removes ``self_tcr``; use
+       ``--score gate``, which does not use it
    * - ``explain``
      - every component of the aggregate for one *(peptide, allele)*
    * - ``expression``
@@ -183,6 +188,13 @@ Environment
      - shared per-allele ``%rank`` calibration. Measured **15×** on a 25-allele sweep (13.3 s →
        0.9 s). Safe to share under concurrency without a lock — entries are written to a tempfile
        and moved with ``os.replace``
+   * - ``MHCMATCH_REFERENCE_CACHE``
+     - directory for the built mimicry reference indexes. **0.82 s to load against a 75.6 s
+       build — 92×.** Point it at *shared* storage and a Nextflow or SLURM fleet builds once and
+       every task loads in under a second; tasks on the same node share the memory-mapped pages
+       through the OS page cache rather than each holding its own ~7.5 GB copy. About 1.0 GB on
+       disk for class I. Keyed on the reference files, the channel projection and
+       ``mimicry.CACHE_VERSION``, so a changed input rebuilds instead of being trusted
    * - ``MHCMATCH_PMHC``
      - the directory *holding* ``pmhc_<tier>.tsv.gz``, rather than the dataset root. Overrides the
        above for the panel specifically

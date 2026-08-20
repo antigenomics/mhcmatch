@@ -54,8 +54,12 @@ def test_rank_extended_appends_columns_without_moving_the_ranking(tmp_path, caps
                  "GILGFVFTL,HLA-A*02:01,PMEL,3.0,0.9\n"
                  "KLVVVGACGV,HLA-A*02:01,KRAS,12.0,0.8\n")
 
+    # `--score gate` throughout: since 0.20.0 the aggregate computes all nine of its features
+    # before scoring, which loads the self-mimicry reference (6 min 15 s, ~7.5 GB). The property
+    # under test is that --extended/--annotate append columns without moving the order, and that is
+    # a property of those flags, not of the scorer.
     def run(*flags):
-        main(["rank", "table", str(p), "--tumor", "SKCM", *flags])
+        main(["rank", "table", str(p), "--tumor", "SKCM", "--score", "gate", *flags])
         body = [ln.split("\t") for ln in capsys.readouterr().out.strip().splitlines()]
         return body[0], body[1:]
 
@@ -66,6 +70,19 @@ def test_rank_extended_appends_columns_without_moving_the_ranking(tmp_path, caps
     for c, ch in (("viral", "anchor"), ("self", "tcr"), ("thymus", "anchor")):
         assert f"{c}_{ch}" in ehead and f"source_{c}_{ch}" in ehead
     assert "neoag_distance" in ehead
+
+
+def test_no_self_cannot_be_combined_with_the_aggregate(tmp_path):
+    """--no-self drops the self mimicry reference, which supplies `self_tcr` -- BOECRT's
+    second-largest coefficient at +0.3154 of 1.3875 total absolute weight. Until 0.20.0 the
+    combination ran and silently scored a five-feature model while reporting the nine-feature one.
+    """
+    from mhcmatch.cli import main
+    p = tmp_path / "c.scored.csv"
+    p.write_text("epitope,best_allele,gene_name,tpm,score\n"
+                 "GILGFVFTL,HLA-A*02:01,PMEL,3.0,0.9\n")
+    with pytest.raises(SystemExit, match="self_tcr"):
+        main(["rank", "table", str(p), "--score", "aggregate", "--no-self"])
 
 
 def test_cli_coefficients_reports_both_aurocs(capsys):
@@ -99,3 +116,50 @@ def test_self_is_the_recipients_proteome_not_a_constant():
     p = inspect.signature(mimicry.load_references).parameters
     assert "self_species" in p
     assert p["self_species"].default == "human", "the fitted coefficients are the human ones"
+
+
+# ------------------------------------------------------------------ the reference cache (0.20.0)
+def test_reference_cache_round_trips_and_agrees_with_a_fresh_build(tmp_path):
+    """A cached reference set must score identically to the one it was built from.
+
+    Exercised with `with_self=False` so it stays a unit test: the self proteome is the 6-minute,
+    ~7.5 GB part, and what is under test here is the persistence, not the size.
+    """
+    peps = ["GILGFVFTL", "NLVPMVATV"]
+    fresh = mimicry.load_references(cls="mhc1", with_self=False)
+    a = mimicry.score(peps, fresh, cls="mhc1", allow_missing=True)
+
+    built = mimicry.load_references(cls="mhc1", with_self=False, cache=tmp_path)
+    b = mimicry.score(peps, built, cls="mhc1", allow_missing=True)
+    loaded = mimicry.load_references(cls="mhc1", with_self=False, cache=tmp_path)
+    c = mimicry.score(peps, loaded, cls="mhc1", allow_missing=True)
+
+    assert list(tmp_path.iterdir()), "nothing was written to the cache directory"
+    for x, y, z in zip(a, b, c):
+        assert x.logodds == pytest.approx(y.logodds)
+        assert x.logodds == pytest.approx(z.logodds), "cached load disagrees with a fresh build"
+        for comp in mimicry.COMPONENTS:
+            if comp in x.components:
+                for ch in mimicry.CHANNELS:
+                    assert x.components[comp][ch] == pytest.approx(z.components[comp][ch])
+
+
+def test_reference_cache_key_changes_when_the_projection_does(tmp_path, monkeypatch):
+    """A cache entry is keyed on what produced it. Bumping CACHE_VERSION must miss, not reuse --
+    a stale projection is a silently wrong feature."""
+    lengths = [9]
+    before = mimicry._fingerprint(None, "mhc1", False, "human", lengths)
+    monkeypatch.setattr(mimicry, "CACHE_VERSION", mimicry.CACHE_VERSION + 1)
+    assert mimicry._fingerprint(None, "mhc1", False, "human", lengths) != before
+    # and the same inputs are stable
+    monkeypatch.undo()
+    assert mimicry._fingerprint(None, "mhc1", False, "human", lengths) == before
+
+
+def test_backing_reads_str_pairs_from_arrays():
+    """`features` indexes the backing only for a best hit, so it stays memory-mapped; it still has
+    to hand back plain strings."""
+    import numpy as np
+    b = mimicry._Backing(np.array([b"GILGFVFTL"], dtype="S9"), np.array([b"FLU"], dtype="S3"))
+    assert len(b) == 1
+    assert b[0] == ("GILGFVFTL", "FLU")

@@ -50,9 +50,16 @@ __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
 #: the columns without running the command, and a schema typed out a second time is a schema that
 #: drifts. That is not hypothetical: the nextflow module's stub carried an 18-column header against
 #: a 57-column table until 2026-08-18.
-BASE_COLUMNS: tuple = ("rank", "peptide", "allele", "gene", "score", "presentation",
+BASE_COLUMNS: tuple = ("rank", "peptide", "allele", "gene", "score", "presentation", "binder",
                        "occupancy", "agretopicity", "physchem", "expression", "expr_imputed",
-                       "wt_peptide", "known_epitope")
+                       "n_alleles_presenting", "alleles_presenting", "physchem_ipred",
+                       "imputed", "wt_peptide", "known_epitope")
+#: The aggregate's four recognition/mimicry features, emitted whenever the aggregate is what
+#: scored. Until 0.20.0 these were reachable only under ``--extended``, and even then they were
+#: computed *after* scoring and never reached the model -- so ``rank`` reported ``BOECRT`` and
+#: scored ``BOEC``, silently, on every run. A model now emits the features it used and refuses to
+#: run without them.
+AGGREGATE_COLUMNS: tuple = ("viral_R", "viral_tcr", "self_tcr", "thymus_tcr")
 #: (reference, channel) in the order the mimicry columns are emitted.
 MIMICRY_PAIRS: tuple = tuple((c, ch) for c in ("viral", "self", "thymus")
                              for ch in ("anchor", "tcr"))
@@ -66,9 +73,16 @@ ANNOTATE_COLUMNS: tuple = tuple(
 ) + ("neoag_distance", "neoag_nearest", "neoag_n_within")
 
 
-def columns(extended: bool = False, annotate: bool = False) -> list:
-    """The exact `mhcmatch rank` header for a given flag combination."""
+def columns(extended: bool = False, annotate: bool = False, score: str = "aggregate") -> list:
+    """The exact `mhcmatch rank` header for a given flag combination.
+
+    ``score`` matters: the fitted aggregate emits its own four recognition channels, because a row
+    should carry the features that produced it and nothing else. ``score="gate"`` does not use them
+    and does not emit them.
+    """
     out = list(BASE_COLUMNS)
+    if score == "aggregate":
+        out += list(AGGREGATE_COLUMNS)
     if extended:
         out += list(EXTENDED_COLUMNS)
     if annotate:
@@ -106,7 +120,7 @@ def aggregate() -> dict:
     return _AGG
 
 
-def aggregate_score(features) -> "np.ndarray":
+def aggregate_score(features, imputed_out: list | None = None) -> "np.ndarray":
     """Rank-score candidates with the fitted aggregate. ``features`` is ``{name: sequence}``.
 
     Every column in :data:`AGGREGATE_FEATURES` is standardized with the mu and sigma it was
@@ -123,25 +137,37 @@ def aggregate_score(features) -> "np.ndarray":
     * **``viral_R`` is on a 1e-8 scale** -- its fitted sigma is 3.8e-8, because the Boltzmann sum
       saturates near zero for almost every peptide. The standardizer is therefore specific to the
       reference set and radius it was fitted with, and an ``R`` computed against a different viral
-      ligandome is not on the same axis. Omit the column rather than supply an incomparable one; it
-      then contributes its mean, which is what "no information" should do.
+      ligandome is not on the same axis. There is no longer a way to omit it: an incomparable R is
+      a wrong R, and the fix is to compute it against the fitted reference, not to leave it out.
 
-    >>> import numpy as np
-    >>> s = aggregate_score({"binder": [2.0, 0.1], "complement": [1.5, -1.0]})
-    >>> bool(s[0] > s[1])
+    >>> full = {f: [0.0, 0.0] for f in AGGREGATE_FEATURES}
+    >>> full["binder"] = [2.0, 0.1]
+    >>> bool(aggregate_score(full)[0] > aggregate_score(full)[1])
     True
     """
     import numpy as np
 
     a = aggregate()
     n = max((len(v) for v in features.values()), default=0)
+    missing = [f for f in a["features"] if f not in features]
+    if missing:
+        raise ValueError(
+            f"aggregate_score: {a.get('model', 'the model')} declares {len(a['features'])} "
+            f"features and {len(missing)} were not supplied: {', '.join(missing)}. "
+            "A model scores on the features it declares or not at all; supplying a subset would "
+            "score a different model under this one's coefficients.")
     out = np.zeros(n, dtype=float)
     for name, coef, mu, sg in zip(a["features"], a["coef"], a["mu"], a["sigma"]):
-        v = np.asarray(features.get(name, []), dtype=float)
+        v = np.asarray(features[name], dtype=float)
         if v.size != n:
-            v = np.full(n, np.nan)
+            raise ValueError(f"aggregate_score: feature {name!r} has {v.size} values, expected {n}")
         z = (v - mu) / (sg or 1.0)
-        z[~np.isfinite(z)] = 0.0
+        bad = ~np.isfinite(z)
+        if bad.any():
+            z = np.where(bad, 0.0, z)          # 0 on the z scale IS the training mean
+            if imputed_out is not None:
+                for i in np.flatnonzero(bad):
+                    imputed_out[int(i)].append(name)
         out += coef * z
     return out
 
@@ -213,6 +239,24 @@ class Ranked:
     expression: float = float("nan")
     expression_imputed: bool = False
     wt_peptide: str = ""
+    #: How many of the queried allotypes present this peptide at or below the breadth band, and
+    #: which. A peptide presented by three of a donor's six class-I allotypes is a different bet
+    #: from one presented by one: in the block model of :mod:`mhcmatch.portfolio` it spans three
+    #: blocks by itself. Derived from the per-allele :func:`mhcmatch.predict.binder_score` the
+    #: ranker already runs, so it costs nothing extra. **Column only** -- not a term of any fitted
+    #: model until a benchmark says it earns one.
+    n_alleles_presenting: int = 0
+    alleles_presenting: str = ""
+    #: :func:`mhcmatch.ipred.log_p` -- the legacy physicochemical predictor, reported and
+    #: **explicitly not in the model**. It is the best single feature on both cohorts where the
+    #: fitted aggregate sits at chance (VACCIMEL AUROC 0.6324 on 93 rows / 27 positives, GBM 0.6450
+    #: on 109 / 26; ``bench/results/neoag_cohort_scan.md``), which is worth being able to see.
+    physchem_ipred: float = float("nan")
+    #: Which of the model's features had to take their training mean for **this** row, joined by
+    #: ";". Empty when every feature was observed. A candidate with no IC50 has no occupancy and a
+    #: frameshift has no wild type; those are candidates with incomplete data, not a different
+    #: model, so they are scored and the substitution is declared here instead of being silent.
+    imputed: str = ""
     #: name of the reference set an exact match was found in, "" if none.
     known_epitope: str = ""
     score: float = float("nan")
@@ -346,31 +390,43 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate") -> list:
     sat vendored with no internal caller, so ``mhcmatch rank`` and the published coefficients were
     two different models. ``score="gate"`` keeps the old path for comparability.
 
-    A feature the caller cannot supply contributes its **training mean**, which is what "no
-    information" should do -- so a candidate with no expression value, or a run without the mimicry
-    channels, is scored on the terms it does have rather than dropped. The mimicry terms
-    (``viral_R`` and the three TCR-face channels) are only computed under ``--extended``; without it
-    they contribute their means and the ranking rests on ``B``, ``O``, ``E`` and ``C``.
+    Since 0.20.0 a feature the caller cannot supply is an **error**, not a substituted mean. The
+    four recognition channels (``viral_R`` and the three TCR-face mimicry terms) have to be filled
+    into ``Ranked.components`` before this runs -- :func:`rank_fasta` and :func:`rank_table` do that
+    through their ``channels`` argument. Until 0.20.0 they were computed by the CLI *after* this
+    function had already scored, so they never reached the model and every run reported ``BOECRT``
+    while scoring ``BOEC``.
+
+    There is also **no silent fallback to the gate**. Until 0.20.0 the whole aggregate branch sat
+    inside a bare ``except Exception: score = "gate"``, so a missing artifact, an unreadable file or
+    an absent numpy swapped in a different model -- a two-term noisy-AND returning a probability
+    where the aggregate returns log-odds -- and said nothing, leaving ``components["model"]`` unset.
+    Asking for the aggregate and getting the gate is not a degraded answer, it is a different one.
     """
     if score == "aggregate":
-        try:
-            a = aggregate()
-            cols = {"binder": [r.binder for r in rows],
-                    "occupancy": [r.occupancy for r in rows],
-                    "expr": [r.expression for r in rows],
-                    "expr_missing": [1.0 if r.expression_imputed else 0.0 for r in rows],
-                    "complement": [r.physchem for r in rows]}
-            for name in ("viral_R", "viral_tcr", "self_tcr", "thymus_tcr"):
-                v = [r.components.get(name, float("nan")) for r in rows]
-                if any(x == x for x in v):
-                    cols[name] = v
-            vals = aggregate_score(cols)
-            for r, v in zip(rows, vals):
-                r.score = float(v)
-                r.components["model"] = a.get("model", "")
-        except Exception:                      # no artifact, or numpy absent -- fall back, loudly
-            score = "gate"
-    if score != "aggregate":
+        a = aggregate()
+        cols = {"binder": [r.binder for r in rows],
+                "occupancy": [r.occupancy for r in rows],
+                "expr": [r.expression for r in rows],
+                "expr_missing": [1.0 if r.expression_imputed else 0.0 for r in rows],
+                "complement": [r.physchem for r in rows]}
+        for name in AGGREGATE_COLUMNS:
+            if not all(name in r.components for r in rows):
+                raise ValueError(
+                    f"rank: scoring with {a.get('model', 'the aggregate')} needs the "
+                    f"recognition channel {name!r}, which was not computed. Pass "
+                    "`channels=` to rank_fasta/rank_table (the CLI builds one from "
+                    "mhcmatch.mimicry and mhcmatch.luksza), or score with `gate`, which does "
+                    "not use it. It is not substituted: a model scores on the features it "
+                    "declares or not at all.")
+            cols[name] = [r.components[name] for r in rows]
+        imputed: list = [[] for _ in rows]
+        vals = aggregate_score(cols, imputed_out=imputed)
+        for r, v, imp in zip(rows, vals, imputed):
+            r.score = float(v)
+            r.imputed = ";".join(imp)
+            r.components["model"] = a.get("model", "")
+    else:
         for r in rows:
             r.score = gate_probability(
                 0.0 if r.presentation != r.presentation else r.presentation,
@@ -384,10 +440,39 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate") -> list:
     return rows
 
 
+def _ipred_logp(peptide: str) -> float:
+    """:func:`mhcmatch.ipred.log_p`, or NaN when the peptide is out of its fitted range."""
+    try:
+        from . import ipred
+        return float(ipred.log_p(peptide))
+    except Exception:
+        return float("nan")
+
+
+def _fill_channels(rows: list, channels) -> None:
+    """Write the aggregate's four recognition channels into ``Ranked.components`` before scoring.
+
+    ``channels`` is a callable ``list[peptide] -> {name: sequence}`` covering
+    :data:`AGGREGATE_COLUMNS`. It is injected rather than imported so the library does not decide
+    for the caller whether to pay for the self-proteome reference index -- 6 min 15 s and ~7.5 GB,
+    the largest single cost in the package -- and so the same rank path serves a CLI run, a
+    notebook and a pipeline.
+    """
+    if channels is None:
+        return
+    got = channels([r.peptide for r in rows])
+    for name in AGGREGATE_COLUMNS:
+        if name not in got:
+            raise ValueError(f"channels() did not return {name!r}; it must cover all of "
+                             f"{', '.join(AGGREGATE_COLUMNS)}")
+        for r, v in zip(rows, got[name]):
+            r.components[name] = float(v)
+
+
 def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: str | None = None,
                tumor: str | None = None, refs: dict | None = None, rank_threshold: float = 2.0,
                top: int | None = None, gate: dict | None = None, score: str = "aggregate",
-               **kw) -> list[Ranked]:
+               channels=None, **kw) -> list[Ranked]:
     """Rank every presented k-mer in a mutation-spanning window FASTA.
 
     ``store`` is a :class:`mhcmatch.Store`; ``alleles`` the donor's HLA types in pipeline form.
@@ -399,7 +484,13 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
     The wild type comes from :func:`mhcmatch.predict.predict_fasta`, which recovers the
     position-aligned WT k-mer from the window's own wild-type sequence; where the header has none,
     the nearest self peptide is the WT by construction -- it is the first hit of a self-similarity
-    search, which is the same operation."""
+    search, which is the same operation.
+
+    ``channels`` supplies the aggregate's four recognition features (:data:`AGGREGATE_COLUMNS`) as a
+    callable ``list[peptide] -> {name: sequence}``. With ``score="aggregate"`` it is **required**:
+    the model scores on the features it declares or not at all. ``score="gate"`` does not use them.
+    ``rank_threshold`` doubles as the band for ``n_alleles_presenting`` -- an allele counts as
+    presenting when its own presentation %rank clears the same bar the candidate had to clear."""
     from . import predict as P
     preds = P.predict_fasta(store, cls, fasta_path, list(alleles),
                             rank_threshold=rank_threshold, top=top, **kw)
@@ -424,11 +515,16 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
                            occupancy=occupancy(p.affinity_nm), agretopicity=dai,
                            physchem=_recognition(p.peptide, cls=cls), expression=expr,
                            expression_imputed=imputed, wt_peptide=p.wt_peptide,
-                           known_epitope=_known(p.peptide, refs)))
+                           known_epitope=_known(p.peptide, refs),
+                           physchem_ipred=_ipred_logp(p.peptide),
+                           n_alleles_presenting=p.n_alleles_presenting,
+                           alleles_presenting=p.alleles_presenting))
+    _fill_channels(rows, channels)
     return _finish(rows, gate, score)
 
 
-def rank_table(path: str, *, tissue: str | None = None, tumor: str | None = None,
+def rank_table(path: str, *, channels=None,
+               tissue: str | None = None, tumor: str | None = None,
                refs: dict | None = None, store=None, cls: str = "mhc1",
                gate: dict | None = None, score: str = "aggregate") -> list[Ranked]:
     """Rank a table already scored by another tool, recomputing what this package can compute.
@@ -464,10 +560,11 @@ def rank_table(path: str, *, tissue: str | None = None, tumor: str | None = None
                        source=os.path.basename(path), presentation=pres, binder=pres,
                        occupancy=occupancy(nm) if (nm := _ic50_of(rec)) is not None else float("nan"),
                        physchem=_recognition(pep, cls=cls), expression=expr, expression_imputed=imputed,
-                       known_epitope=_known(pep, refs))
+                       known_epitope=_known(pep, refs), physchem_ipred=_ipred_logp(pep))
             try:
                 r.components["score_builtin"] = float(rec["score"]) if rec.get("score") else None
             except ValueError:
                 r.components["score_builtin"] = None
             rows.append(r)
+    _fill_channels(rows, channels)
     return _finish(rows, gate, score)
