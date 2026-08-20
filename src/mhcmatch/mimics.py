@@ -154,6 +154,22 @@ def proteome_peptides(category: str, lengths) -> list:
     return sorted(out)
 
 
+def proteome_window_array(category: str, L: int):
+    """Sorted ``|S{L}`` array of every distinct standard-AA window of a :data:`PROTEOME_REFS`
+    category -- the vectorized counterpart of :func:`proteome_peptides` for one length.
+
+    A consumer that projects or indexes these windows wants the array; materialising a 12 M-element
+    Python set to hand it one is most of what :func:`proteome_peptides` costs.
+    """
+    import numpy as np
+
+    from .proteome import Proteome
+    from .store import fetch_proteome
+    parts = [Proteome.from_fasta(fetch_proteome(stem)).window_array(L)
+             for stem in PROTEOME_REFS[category]]
+    return parts[0] if len(parts) == 1 else np.unique(np.concatenate(parts))
+
+
 def load_reference_sets(pmhc_dir=None, cls: str = "mhc1", species: str = "human", refs=None,
                         proteomes=()) -> tuple:
     """``(self_set, foreign_sets)`` for :func:`scan`. ``self_set`` is the single tolerance reference

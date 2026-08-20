@@ -59,6 +59,7 @@ recovers 0.08-0.34 of a screen's positives where exact lookup recovers 0.00-0.26
 """
 from __future__ import annotations
 
+import contextlib
 import json
 from dataclasses import dataclass, field
 from importlib import resources
@@ -150,17 +151,173 @@ class MimicryScore:
         return out
 
 
+#: Bump when the on-disk layout **or** the projection that produces the keys changes. A cache entry
+#: built under a different value is ignored rather than trusted, because a stale projection is a
+#: silently wrong feature and the whole point of this module is not doing that.
+CACHE_VERSION = 1
+
+#: Directory for built reference indexes. Point it at shared storage and a nextflow or SLURM fleet
+#: builds once and every task loads: ``Index.load`` and the two memory-mapped arrays cost
+#: milliseconds against the 6 min 15 s and ~7.5 GB the build costs, and tasks co-resident on a node
+#: share the mapped pages through the OS page cache rather than each holding a copy.
+REFERENCE_CACHE_ENV = "MHCMATCH_REFERENCE_CACHE"
+
+
+class _Backing:
+    """Representative ``(window, source)`` per index key, read from two memory-mapped arrays.
+
+    :func:`features` touches this only for the *best* hit of a query -- one lookup per
+    (peptide, component, channel) -- so the access is sparse and there is no reason to materialise
+    several million tuples to serve it. Memory-mapping also means N processes on one node share one
+    physical copy, which a list of Python tuples cannot do.
+    """
+
+    __slots__ = ("_win", "_src")
+
+    def __init__(self, win, src):
+        self._win, self._src = win, src
+
+    def __len__(self):
+        return len(self._win)
+
+    def __getitem__(self, i):
+        return (self._win[i].decode("ascii"), self._src[i].decode("ascii"))
+
+
+def _reference_paths(pmhc_dir, cls: str, with_self: bool, self_species: str) -> list:
+    """Concrete paths of every file the built index depends on, in a stable order."""
+    import os
+
+    from .store import fetch_file, fetch_proteome
+    out = []
+    for comp in COMPONENTS:
+        if comp == "self":
+            if not with_self:
+                continue
+            for stem in mimics.PROTEOME_REFS["self" if self_species == "human" else "self_mouse"]:
+                out.append(fetch_proteome(stem))
+        else:
+            rel = mimics.DEFAULT_REFS["thymus" if comp == "thymus" else "viral"][0]
+            out.append(fetch_file(rel) if pmhc_dir is None else os.path.join(pmhc_dir, rel))
+    return out
+
+
+def _fingerprint(pmhc_dir, cls: str, with_self: bool, self_species: str, lengths) -> str:
+    """Identity of a built reference set: its inputs, its projection, and the layout version.
+
+    Files enter by ``(name, size, mtime_ns)`` rather than by content hash -- hashing a 12 M-window
+    proteome to decide whether to skip a 6-minute build is most of the saving spent on the check.
+    """
+    import hashlib
+    import json
+    import os
+
+    parts = []
+    for path in _reference_paths(pmhc_dir, cls, with_self, self_species):
+        try:
+            st = os.stat(path)
+            parts.append([os.path.basename(path), st.st_size, st.st_mtime_ns])
+        except OSError:
+            parts.append([os.path.basename(path), -1, -1])
+    spec = {"v": CACHE_VERSION, "cls": cls, "self": bool(with_self), "species": self_species,
+            "lengths": list(lengths), "channel_mask": params(cls).get("channel_mask"),
+            "files": parts}
+    return hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def _cache_dir(cache, fp: str):
+    import os
+    from pathlib import Path
+    root = cache if cache is not None else os.environ.get(REFERENCE_CACHE_ENV)
+    return None if not root else Path(root).expanduser() / f"mimicry_{fp}"
+
+
+def _cache_read(d, cls: str, with_self: bool, lengths):
+    """Load every (component, channel, length) entry, or return None if any is absent."""
+    import numpy as np
+    from seqtree import Index
+    out = {}
+    for comp in COMPONENTS:
+        if comp == "self" and not with_self:
+            continue
+        for L in lengths:
+            for ch in masks(L):
+                stem = d / f"{comp}_{ch}_{L}"
+                idx, win, src = (stem.with_suffix(".idx"), stem.with_suffix(".win.npy"),
+                                 stem.with_suffix(".src.npy"))
+                if not (idx.exists() and win.exists() and src.exists()):
+                    return None
+                w = np.load(win, mmap_mode="r")
+                out[(comp, ch, L)] = (Index.load(str(idx)), len(w),
+                                      _Backing(w, np.load(src, mmap_mode="r")))
+    return out
+
+
+def _cache_write(d, refs) -> None:
+    """Write every entry, atomically.
+
+    A shared cache is the point -- a whole SLURM array pointed at one directory -- so two tasks
+    finishing a build at the same moment is the normal case, not an edge one. Each file is written
+    to a unique tempfile beside its destination and moved with ``os.replace``, which is atomic on
+    POSIX: a concurrent reader sees either the old file or the complete new one, never a partial
+    write. This is what :data:`MHCMATCH_CALIBRATION_CACHE` already does, for the same reason.
+    """
+    import os
+    import tempfile
+
+    import numpy as np
+    d.mkdir(parents=True, exist_ok=True)
+
+    def atomic(dest, write):
+        fd, tmp = tempfile.mkstemp(dir=str(d), prefix=".tmp-", suffix=dest.suffix)
+        os.close(fd)
+        try:
+            write(tmp)
+            os.replace(tmp, dest)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
+
+    for (comp, ch, L), (index, _n, back) in refs.items():
+        stem = d / f"{comp}_{ch}_{L}"
+        atomic(stem.with_suffix(".idx"), lambda t, i=index: i.save(t))
+        atomic(stem.with_suffix(".win.npy"),
+               lambda t, b=back, L=L: np.save(t, np.array([w for w, _ in b], dtype=f"S{L}")))
+        atomic(stem.with_suffix(".src.npy"),
+               lambda t, b=back: np.save(t, np.array([s for _, s in b], dtype="S")))
+
+
 def load_references(pmhc_dir=None, cls: str = "mhc1", with_self: bool = True,
-                   self_species: str = "human") -> dict:
+                   self_species: str = "human", cache=None) -> dict:
     """Reference window sets per (component, channel, length), ready for :func:`features`.
 
-    ``with_self=False`` skips the host proteome, which dominates the cost: ~12 M windows per length,
-    and **measured at 6 min 15 s and ~7.5 GB peak** for class I's four lengths, against 1.9 s
-    without it. That is paid once per process, so it amortizes over a candidate list and is absurd
-    for a single peptide. The aggregate is **not defined** without ``self`` -- it carries the largest
-    coefficients in the fit -- so :func:`score` raises unless the caller passes ``allow_missing``."""
+    ``with_self=False`` skips the host proteome, which dominates the cost. The aggregate is **not
+    defined** without ``self`` -- it carries the largest coefficients in the fit -- so :func:`score`
+    raises unless the caller passes ``allow_missing``, and ``mhcmatch rank --score aggregate``
+    refuses the combination outright.
+
+    **Cache it.** Set ``$MHCMATCH_REFERENCE_CACHE`` (or pass ``cache=``) to a directory and the
+    built indexes are written once and memory-mapped thereafter. Point it at shared storage and a
+    nextflow or SLURM fleet builds once and every task loads in milliseconds; tasks co-resident on a
+    node share the mapped pages through the OS page cache instead of each holding its own copy. The
+    entry is keyed on the reference files, the channel projection and :data:`CACHE_VERSION`, so a
+    changed input rebuilds rather than being trusted.
+
+    The build itself is vectorized: :meth:`mhcmatch.proteome.Proteome.window_array` replaces a
+    per-window Python loop (2.7x), and the per-channel projection is one ``np.unique`` over a
+    fixed-width byte view rather than a ``setdefault`` over 12 M strings.
+    """
+    import numpy as np
     from seqtree import Index
+
     lengths = sorted(mimics._LEN[cls])
+    d = _cache_dir(cache, _fingerprint(pmhc_dir, cls, with_self, self_species, lengths))
+    if d is not None and d.exists():
+        hit = _cache_read(d, cls, with_self, lengths)
+        if hit is not None:
+            return hit
+
     out: dict = {}
     for comp in COMPONENTS:
         src = {}
@@ -170,25 +327,37 @@ def load_references(pmhc_dir=None, cls: str = "mhc1", with_self: bool = True,
             # `self` is the RECIPIENT's proteome. The fitted coefficients were estimated with the
             # human one, so a mouse run reports its mouse-self channel beside that rather than
             # silently substituting a differently-scaled feature into the same weight.
-            peps = mimics.proteome_peptides(
-                "self" if self_species == "human" else "self_mouse", lengths)
+            cat = "self" if self_species == "human" else "self_mouse"
+            per_len = {L: mimics.proteome_window_array(cat, L) for L in lengths}
         else:
             rel = mimics.DEFAULT_REFS["thymus" if comp == "thymus" else "viral"][0]
             peps = mimics.load_peptides(pmhc_dir, rel, cls)
             src = _sources(pmhc_dir, rel)
+            per_len = {L: np.array(sorted({w for r in peps
+                                           for i in range(len(r) - L + 1)
+                                           for w in (r[i:i + L],)
+                                           if all(c in AA for c in w)}), dtype=f"S{L}")
+                       for L in lengths}
         for L in lengths:
-            win = sorted({w for r in peps for i in range(len(r) - L + 1)
-                          for w in (r[i:i + L],) if all(c in AA for c in w)})
-            # projection -> a representative (full peptide, source protein). Deduplicated
-            # projections can have several origins; the first in sorted order is kept, and the
-            # count in `features` is what says how many there were.
+            win = per_len[L]                                   # sorted, fixed width
+            if win.size == 0:
+                for ch in masks(L):
+                    out[(comp, ch, L)] = (Index.build([], alphabet="aa"), 0, _Backing(win, win))
+                continue
+            V = win.view(np.uint8).reshape(len(win), L)
+            srcs = (np.array([src.get(w.decode("ascii"), "") for w in win], dtype="S")
+                    if src else np.zeros(len(win), dtype="S1"))
             for ch, sel in masks(L).items():
-                b: dict[str, tuple[str, str]] = {}
-                for w in win:
-                    b.setdefault("".join(w[i] for i in sel), (w, src.get(w, "")))
-                keys = sorted(b)
-                out[(comp, ch, L)] = (Index.build(keys, alphabet="aa"), len(keys),
-                                      [b[k] for k in keys])
+                # `win` is sorted, so the first occurrence of a projection is the lexicographically
+                # smallest full window carrying it -- the same representative the old
+                # `setdefault` over sorted windows chose.
+                proj = np.ascontiguousarray(V[:, list(sel)]).view(f"S{len(sel)}").ravel()
+                keys, first = np.unique(proj, return_index=True)
+                out[(comp, ch, L)] = (
+                    Index.build([k.decode("ascii") for k in keys], alphabet="aa"),
+                    len(keys), _Backing(win[first], srcs[first]))
+    if d is not None:
+        _cache_write(d, out)
     return out
 
 

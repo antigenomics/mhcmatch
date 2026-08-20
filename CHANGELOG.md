@@ -39,10 +39,11 @@ versioning is [SemVer](https://semver.org).
   `self_tcr`. The combination is refused before any work starts, naming the feature. Use
   `--score gate`, which does not use it.
 
-- **`rank --score aggregate` now costs what the model costs**: ~7.5 GB and 6 min 15 s for the
-  self-proteome reference index, paid once for the whole candidate list. Before 0.20.0 this was
-  free because four of the nine features were never computed. The Nextflow `MHCMATCH_RANK` process
-  is sized accordingly (16 GB / 4 h, or 8 GB / 1 h under `--score gate`).
+- **`rank --score aggregate` now costs what the model costs** — but far less than it used to, and
+  once rather than every run. Building the self-proteome reference was 6 min 15 s; it is now
+  **75.6 s**, and **0.82 s** from cache (92×). Before 0.20.0 it was free only because four of the
+  nine features were never computed. The Nextflow `MHCMATCH_RANK` process is sized accordingly
+  (16 GB / 4 h, or 8 GB / 1 h under `--score gate`).
 
 - **A non-finite value inside a supplied column is imputed *visibly*, not silently.** One candidate
   with no IC50, or a frameshift with no wild type, still takes the training mean — dropping it would
@@ -54,6 +55,31 @@ versioning is [SemVer](https://semver.org).
   `binder` — a model feature — was missing from the header entirely and is now in it.
 
 ### Added
+
+- **A reference cache, `$MHCMATCH_REFERENCE_CACHE`.** Point it at a directory and the built mimicry
+  indexes are written once and memory-mapped thereafter: **0.82 s against a 75.6 s build, 92×**.
+  Point it at *shared* storage and a Nextflow or SLURM fleet builds once and every task loads in
+  under a second — and tasks co-resident on a node share the mapped pages through the OS page cache
+  instead of each holding its own ~7.5 GB copy. Entries are keyed on the reference files, the
+  channel projection and `CACHE_VERSION`, so a changed input rebuilds rather than being trusted.
+  `seqtree.Index` already had `save`/`load`; the representative windows and sources are two
+  `|S` arrays loaded with `mmap_mode="r"`, and `features()` touches them only for a best hit, so
+  the access stays sparse.
+
+- **`Proteome.window_array(L)`** — the vectorized counterpart of `windows(L)`: a sorted `|S{L}`
+  array via `sliding_window_view` + one `np.unique`, replacing a per-window Python loop that ran
+  `all(c in _AA for c in w)` over 12 M windows × 9 residues. **11.0 s against 30.0 s** on the human
+  proteome for 12,073,995 distinct 9-mers, identical output. `windows()` still returns a `set` for
+  the O(1) membership its own callers need.
+
+  Packing residues into `uint64` (5 bits each) and sorting integers instead was tried and is **4×
+  slower** — 44.5 s — because the shift/or loop costs more than numpy's fixed-width byte sort saves.
+  Measured, not assumed.
+
+- The per-channel projection in `load_references` is now one `np.unique` over a fixed-width byte
+  view rather than a `setdefault` over 12 M strings. Because the window array is sorted, the first
+  occurrence of a projection is the lexicographically smallest window carrying it — the same
+  representative the old loop chose, so the features are byte-identical.
 
 - **`n_alleles_presenting` / `alleles_presenting`**: how many of the queried allotypes present this
   peptide, and which, banded on the presentation %rank at `--rank-threshold`. `predict_windows`

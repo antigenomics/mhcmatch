@@ -103,6 +103,17 @@ anything; what was wrong was the model the output named.
 `--score gate` uses the two-term noisy-AND and stays cheap. `--no-self` is refused with the
 aggregate, because it is what removes `self_tcr`.
 
+**Cache it.** The build is 75.6 s (down from 6 min 15 s — the window enumeration is vectorized now),
+and **0.82 s from cache**:
+
+```bash
+export MHCMATCH_REFERENCE_CACHE=/shared/mhcmatch-cache   # ~1.0 GB for class I
+```
+
+Point that at shared storage and a Nextflow or SLURM fleet builds once and every task loads in under
+a second, sharing the memory-mapped pages through the OS page cache instead of each holding its own
+copy.
+
 ## Caching calibration across jobs
 
 Scoring a peptide needs the allele's random-peptide background: 10,000 draws scored through the

@@ -116,3 +116,50 @@ def test_self_is_the_recipients_proteome_not_a_constant():
     p = inspect.signature(mimicry.load_references).parameters
     assert "self_species" in p
     assert p["self_species"].default == "human", "the fitted coefficients are the human ones"
+
+
+# ------------------------------------------------------------------ the reference cache (0.20.0)
+def test_reference_cache_round_trips_and_agrees_with_a_fresh_build(tmp_path):
+    """A cached reference set must score identically to the one it was built from.
+
+    Exercised with `with_self=False` so it stays a unit test: the self proteome is the 6-minute,
+    ~7.5 GB part, and what is under test here is the persistence, not the size.
+    """
+    peps = ["GILGFVFTL", "NLVPMVATV"]
+    fresh = mimicry.load_references(cls="mhc1", with_self=False)
+    a = mimicry.score(peps, fresh, cls="mhc1", allow_missing=True)
+
+    built = mimicry.load_references(cls="mhc1", with_self=False, cache=tmp_path)
+    b = mimicry.score(peps, built, cls="mhc1", allow_missing=True)
+    loaded = mimicry.load_references(cls="mhc1", with_self=False, cache=tmp_path)
+    c = mimicry.score(peps, loaded, cls="mhc1", allow_missing=True)
+
+    assert list(tmp_path.iterdir()), "nothing was written to the cache directory"
+    for x, y, z in zip(a, b, c):
+        assert x.logodds == pytest.approx(y.logodds)
+        assert x.logodds == pytest.approx(z.logodds), "cached load disagrees with a fresh build"
+        for comp in mimicry.COMPONENTS:
+            if comp in x.components:
+                for ch in mimicry.CHANNELS:
+                    assert x.components[comp][ch] == pytest.approx(z.components[comp][ch])
+
+
+def test_reference_cache_key_changes_when_the_projection_does(tmp_path, monkeypatch):
+    """A cache entry is keyed on what produced it. Bumping CACHE_VERSION must miss, not reuse --
+    a stale projection is a silently wrong feature."""
+    lengths = [9]
+    before = mimicry._fingerprint(None, "mhc1", False, "human", lengths)
+    monkeypatch.setattr(mimicry, "CACHE_VERSION", mimicry.CACHE_VERSION + 1)
+    assert mimicry._fingerprint(None, "mhc1", False, "human", lengths) != before
+    # and the same inputs are stable
+    monkeypatch.undo()
+    assert mimicry._fingerprint(None, "mhc1", False, "human", lengths) == before
+
+
+def test_backing_reads_str_pairs_from_arrays():
+    """`features` indexes the backing only for a best hit, so it stays memory-mapped; it still has
+    to hand back plain strings."""
+    import numpy as np
+    b = mimicry._Backing(np.array([b"GILGFVFTL"], dtype="S9"), np.array([b"FLU"], dtype="S3"))
+    assert len(b) == 1
+    assert b[0] == ("GILGFVFTL", "FLU")
