@@ -67,7 +67,8 @@ from importlib import resources
 from . import mimics
 from .complement import ANCHORS
 
-__all__ = ["COMPONENTS", "CHANNELS", "params", "MimicryScore", "masks", "features", "score",
+__all__ = ["COMPONENTS", "CHANNELS", "params", "MimicryScore", "masks", "features",
+           "corpus_R", "score",
            "probability", "annotate", "load_references", "safety"]
 
 AA = "ACDEFGHIKLMNPQRSTVWY"
@@ -383,6 +384,75 @@ def _sources(pmhc_dir, rel: str) -> dict[str, str]:
             s = (row.get("source_protein") or row.get("source_organism") or "").strip()
             if p and s:
                 out.setdefault(p, s)
+    return out
+
+
+def corpus_R(peptides, refs: dict, cls: str = "mhc1", k: float = 2.25,
+             radius: int = 2) -> list[dict]:
+    """``R = Z/(1+Z)`` per component over the **TCR face**, the Łuksza form.
+
+    A neighbour *density* read as a soft sum over substitution distance rather than as a single
+    thresholded count::
+
+        Z_D(p) = sum_d n_d(p) * exp(k * d),      R_D(p) = Z_D / (1 + Z_D)
+
+    where ``n_d`` counts reference peptides at Hamming distance ``d`` over the TCR-facing positions
+    of :func:`masks`. Returns ``{component: R}`` per peptide, plus ``{component}_n{d}`` counts so a
+    caller can refit the shape without re-searching.
+
+    **The three components are not three flavours of one measurement**, and their fitted signs
+    differ because a T cell meets them at different times:
+
+    ``thymus``
+        the only reference that enters selection. Because mTECs promiscuously express
+        tissue-restricted antigens under *Aire* and *Fezf2* precisely to purge the clones that
+        would otherwise cause autoimmunity, the thymic immunopeptidome is a **biased** sample of
+        self, enriched for the peptides worth tolerising against. Similarity to it reads as
+        **danger**, not tolerance, and its coefficient is positive.
+    ``self``
+        the proteome, met in the periphery. Reads as tolerance; negative.
+    ``viral``
+        never seen during selection at all -- a statement about peripheral priming. Reported as a
+        reference channel.
+
+
+    **On the shape parameters.** The published form carries a threshold ``a0`` as well as ``k``.
+    It is **not identified** on this data: ``Z`` stays below ~1e-3, so ``R = Z/(1+Z)`` never leaves
+    its linear regime and ``a0`` only rescales ``Z`` -- a constant any standardizing fit absorbs.
+    Only ``k``, which reweights across distances, changes the ranking. So ``a0`` is not a parameter
+    here, and a caller who wants the published parameterisation should know it is scoring the same
+    column.
+
+    Opt-in and default-off: nothing in the shipped aggregate calls this.
+
+    >>> refs = load_references(cls="mhc1")              # doctest: +SKIP
+    >>> corpus_R(["GILGFVFTL"], refs)[0]["thymus"]      # doctest: +SKIP
+    """
+    import math
+
+    from seqtree import SearchParams
+    out = []
+    for p in peptides:
+        row: dict = {}
+        if all(c in AA for c in p):
+            sel = masks(len(p))["tcr"]
+            q = "".join(p[i] for i in sel)
+            for comp in COMPONENTS:
+                key = (comp, "tcr", len(p))
+                if key not in refs:
+                    continue
+                index, _nwin, _back = refs[key]
+                hits = index.search(q, SearchParams(max_subs=radius, engine="seqtm"))
+                n = [0] * (radius + 1)
+                for h in hits:
+                    d = int(h.score)
+                    if 0 <= d <= radius:
+                        n[d] += 1
+                z = sum(c * math.exp(k * d) for d, c in enumerate(n))
+                row[comp] = z / (1.0 + z)
+                for d, c in enumerate(n):
+                    row[f"{comp}_n{d}"] = c
+        out.append(row)
     return out
 
 

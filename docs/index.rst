@@ -78,5 +78,6 @@ Capabilities
    portfolio
    models
    burial
+   corpus
    property_basis
    api
