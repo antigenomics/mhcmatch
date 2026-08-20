@@ -6,6 +6,102 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.21.0] - 2026-08-20
+
+### Changed
+
+- **The shipped model is `GRAND`: seven terms, and Complementarity is exactly two factors.**
+  `rank` scored `BOECRT` while the benchmark had moved on. Fitted by
+  `bench/immuno/grand_corpus.py` over 354,909 rows / 958 positives across nine screens, one
+  unpenalised intercept per screen and no global one, BIC 4160.1:
+
+  | term | coefficient | z | ΔBIC if dropped |
+  |---|--:|--:|--:|
+  | `expr` | **+0.3250** | +5.99 | +23.3 |
+  | `C_phys` | +0.2579 | +4.30 | +5.7 |
+  | `C_corpus_thymus` | +0.1871 | +5.48 | +6.1 |
+  | `binder` | +0.1408 | +4.01 | +3.5 |
+  | `occupancy` | +0.1072 | +5.33 | +14.6 |
+  | `expr_missing` | +0.0994 | **+6.37** | **+28.1** |
+  | `C_corpus_missing` | −0.3510 | −3.96 | +7.0 |
+
+  Leave-one-screen-out median AUROC **0.6391** (0.5174 VACCIMEL to 0.8744 Neopep), scored with the
+  mean intercept — what a new cohort gets in deployment. Coefficient signs stable over 400
+  **patient-cluster** resamples (rows from one patient share a tumour, an HLA type and a
+  sequencing run, so a row bootstrap reports intervals several times too narrow).
+
+  The four recognition columns collapse to two, and **neither is fitted on neoantigen labels**:
+
+  - **`C_phys`** — `complement.burial`, the Rose burial propensity summed over the TCR face.
+    Chosen from 576 candidate scales by ΔBIC *inside this model*, not by standalone AUROC. An
+    imported basis means **zero fitted residue parameters**, and it carries a cysteine loading of
+    **+0.108** against the retired `complement`'s **+0.693**.
+  - **`C_corpus_thymus`** — `mimicry.corpus_R` on the thymic channel. Positive, because the thymic
+    immunopeptidome is a *biased* sample of self: mTECs promiscuously express tissue-restricted
+    antigens under *Aire* and *Fezf2* precisely to purge the clones worth purging. Thymic ligands
+    score 0.7303 against 0.7222 for non-thymic **presented** self (Cohen's *d* = +0.1650,
+    p = 1.0×10⁻⁸⁰, presentation held constant). The `thymus`(+)/`self`(−) sign dissociation is the
+    evidence for the mechanism; no single-mechanism account produces it.
+
+  Every alternative was measured and each costs BIC to add back: Kidera KF4 +9.0, KF2 +12.8, the
+  `self` corpus channel +8.1, `viral` +11.6, `viral_R` +11.6, `C_aa` +6.7.
+
+- **An aggregate score no longer needs the host-proteome index.** `self_tcr` was `BOECRT`'s
+  second-largest coefficient, so scoring forced 6 min 15 s and ~7.5 GB — the largest single cost in
+  the package — and `--no-self --score aggregate` had to be refused outright. `GRAND`'s corpus term
+  is thymic only (26,513 peptides). Measured uncached: **2.0 s** to build the index, **0.22 ms per
+  peptide** to query, **11.8 s** for a whole `rank table` run. The refusal is gone and the Nextflow
+  `MHCMATCH_RANK` profile now sizes on `--extended`/`--annotate`, which is what actually loads the
+  self reference.
+
+- **An unmeasured component reports NaN, not 0.** Under `allow_missing` a component with no
+  reference index standardized to the training mean and contributed exactly `coef × 0` — printing
+  as `0` on `autoimmune`, which reads as "no self-similarity found" when the truth is "never
+  looked". `logodds` and `autoimmune` are NaN when any component is absent, because the fitted
+  coefficients describe the full set.
+
+### Fixed
+
+- **`C_corpus` is the Łuksza form with its length term.** `mimicry.corpus_R` shipped
+  `Z = Σ_d n_d e^{+k d}` against the column the model was fitted on,
+  `Z = Σ_d n_d e^{-k(a_0-(L-d))}`. Two defects in one expression: the sign on `d` was flipped, so a
+  neighbour 2 substitutions away weighed e^{2k} = 90× *more* than an identical one instead of 90×
+  less; and the `e^{k(L-a_0)}` factor was dropped on the reasoning that `a_0` is unidentified. It
+  is — *at fixed length*. Peptide length varies across a real corpus, so that factor is a genuine
+  per-row term spanning the same 90× between a 9-mer and an 11-mer.
+
+  Measured over the 328,276 peptides with a thymus `tcr5` cache entry, the shipped variant was a
+  different column and not a rescaling: mean *R* 0.771 with 77.2 % of peptides above 0.5, against
+  the fitted mean of 3.29×10⁻⁵ with none above 0.5 (fitted *Z* stays under 1.320×10⁻³, the linear
+  regime). Spearman +0.705, Pearson +0.448. Fitted shapes now vendored as `mimicry.SHAPES`.
+
+- **`mimicry.masks` is class-aware, so `cls` stops being a parameter that does nothing.** `masks`
+  took only a length and hardcoded the class-I anchor set; `corpus_R` accepted `cls` and never
+  passed it anywhere. Every class-II ligand was read on the class-I layout — for
+  `AAAKFVAAWTLKAAA` the real anchor set is `[4, 7, 9, 12]` against the class-I `[0, 1, 2, 13, 14]`,
+  sharing **no position at all**. `masks(length, cls, peptide, register)` delegates class II to
+  `complement.mhc2_anchors` and refuses to guess a register. `complement.burial` already passed
+  `cls` through, so `C_phys` was correct at class II throughout.
+
+- Bytecode under `src/mhcmatch/data/__pycache__/` is no longer tracked. The `!src/mhcmatch/data/**`
+  negation — which exists so a model file named `.fasta` cannot be swallowed by the `*.fasta` glob
+  — was re-adding five `.pyc` files to the index, producing a spurious diff on every interpreter
+  version. Both halves are now pinned by a test. hatchling already kept them out of the wheel, so
+  this was index hygiene, not a release defect.
+
+### Added
+
+- `complement.burial(peptides, cls=, scale=, registers=)` — `C_phys`. `scale=` reaches the Kidera
+  factors (`"KIDERA:KF4"`, `"KIDERA:KF2"`) for comparison against the Chowell-family literature;
+  they lose to `"Rose"` on the neoantigen corpus, and a number produced with a different scale is a
+  **comparison**, never a silent substitution.
+- `mimicry.corpus_R(peptides, refs, cls=, shapes=, radius=, components=, registers=)` — `C_corpus`.
+  `components=` reaches the `self` and `viral` channels for the ladder; only `thymus` earns its
+  parameters inside the model. Report the ladder anyway — the sign dissociation is the evidence.
+- `mimicry.SHAPES`, `luksza.SHAPE`, `rank.CHANNEL_COLUMNS`.
+- `docs/burial.rst` and `docs/corpus.rst`, with the `C_corpus` formula, its five steps and the
+  fitted shape table.
+
 ## [0.20.0] - 2026-08-20
 
 ### Changed
