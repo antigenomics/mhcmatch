@@ -118,25 +118,50 @@ released; elsewhere it is absent rather than accepted and ignored.
 nothing left to cache. `$MHCMATCH_PMHC_DIR` and `$MHCMATCH_CALIBRATION_CACHE` are the two a cluster
 still wants; `integrations/nextflow/mhcmatch/slurm.config` exports both.
 
-## The shipped scorer (2026-08-19)
+## The shipped scorer (2026-08-21)
+
+`GRAND` **v3** — nine terms in four **hierarchical blocks**, entered in pipeline order so a
+recognition coefficient is what it is worth *after* presentation and expression. Vendored at
+`data/aggregate_mhc1.json`; `mhcmatch rank` scores with it by default. 354,909 rows / 958 positive /
+9 screens, per-screen intercept, `tau = 0.25`. **Leave-one-screen-out median AUROC 0.6500, mean
+0.6927** — better than v2 on 7 of 9 held-out screens (`bench/results/grand_versions.md`).
+
+| block | term | coefficient | z | sequential z |
+|---|---|--:|--:|--:|
+| `presentation` | `binder` | +0.1392 | +4.00 | +7.70 |
+| `presentation` | `occupancy` | +0.1062 | +5.27 | +5.15 |
+| `expression` | `expr` | +0.3474 | +6.45 | +6.39 |
+| `expression` | `expr_missing` | +0.0935 | +6.03 | +5.96 |
+| `physchem` | `C_phys_rose` | +0.1012 | +1.22 | **+3.53** |
+| `physchem` | `C_phys_hydrop` | +0.0180 | +0.22 | −0.39 |
+| `corpus` | `C_corpus_thymus` | +0.2459 | +2.93 | **+2.53** |
+| `corpus` | `C_corpus_self` | −0.2409 | −2.82 | **−2.63** |
+| `corpus` | `C_corpus_viral` | +0.0750 | +1.13 | +1.13 |
+
+- **Read the block test, not the per-term `z`.** `C_phys_rose` against `C_phys_hydrop` is Pearson
+  −0.836 and the three corpus channels run +0.71 to +0.79, so a conditional `z` splits one shared
+  axis across several coefficients and understates all of them. The block likelihood ratios are
+  physchem χ²(2) = 11.0 (p = 4.0e-3) and corpus χ²(3) = 15.7 (p = 1.3e-3), both **after**
+  presentation and expression. The *sequential* column above is the same fit in its Gram–Schmidt
+  basis (same span, max |Δη| = 3.1e-3); reversing the order inside a block moves the significance
+  to the other member, which is what a shared axis looks like.
+- **`C_corpus` is exact and searches nothing.** The Łuksza weight factorises over positions, so the
+  sum over the whole reference set is a k-mer table contraction: 2.3 ms for 340,876 queries against
+  ~46,000 ms, agreeing with a literal all-vs-all to 5.5e-16 where the radius-2 search it replaced
+  recovered a median 0.4999. That is why `self` and `viral` are back — 64 kB tables, not a 7.5 GB
+  trie. `mimicry.corpus_counts` + `contract`; `docs/corpus.rst`.
+- **`C_phys` averages over the face, it does not sum.** The summed form was Pearson **+0.954** with
+  peptide length — 91 % of a chemistry term was a ruler. `burial(..., per_residue=False)` reproduces
+  a pre-0.24.0 number.
+- **`C_corpus_missing` is retired.** On IEDB_neoag the v2 cache reached 3.0 % of rows and those rows
+  were 76.9 % positive against 46.0 % for the rest, so the flag with v2's largest coefficient
+  magnitude (−0.3510) was a within-screen label proxy for our own index coverage.
+
+### The previous scorer, for comparison
 
 `BOECRT` — binder, **occupancy**, expression, complementarity, the refitted Łuksza `R`, and the
-three TCR-facing mimicry channels. Vendored at `data/aggregate_mhc1.json`; `mhcmatch rank` scores
-with it by default as of 0.19.0 (before that it scored with the two-term gate while this artifact
-sat uncalled). Fitted on the **cleaned** corpus: 355,052 rows / 1,101 positive / 10 screens,
-per-screen intercept, `tau = 0.25`. Within-screen median AUROC **0.6504**.
-
-| term | coefficient | z |
-|---|--:|--:|
-| `expr` | +0.3410 | +6.31 |
-| `expr_missing` | +0.0929 | +5.98 |
-| **`occupancy`** | +0.1050 | **+5.16** |
-| `complement` | +0.1790 | +4.24 |
-| `binder` | +0.1418 | +4.00 |
-| `self_tcr` | +0.3154 | +3.45 |
-| `viral_R` | +0.1020 | +1.41 |
-| `viral_tcr` | +0.0995 | +0.87 |
-| `thymus_tcr` | −0.0110 | −0.11 |
+three TCR-facing mimicry channels. Shipped 0.19.0–0.20.0 on the cleaned corpus: 355,052 rows /
+1,101 positive / 10 screens. Within-screen median AUROC **0.6504**.
 
 - **`O` replaced `D`.** Agretopicity does not resolve in any of seven parameterisations, and the one
   that appears to is 0.9955 correlated with mutant affinity — it improves by deleting itself.

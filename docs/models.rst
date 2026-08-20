@@ -216,13 +216,19 @@ The models
      - the scorer shipped from 0.19.0 to 0.20.0, **superseded by** ``GRAND``. Fitted on the
        cleaned corpus: 355,052 rows / 1,101 positive / 10 screens, within-screen median 0.6504.
        Not comparable to the ``BECRT`` row above — different corpus and screen count
-   * - ``GRAND``
+   * - ``GRAND`` v2
      - binder, occupancy, expression + ``expr_missing``, ``C_phys``, ``K`` + ``C_corpus_missing``
-     - **the shipped scorer** (``data/aggregate_mhc1.json``, default since 0.21.0). Seven terms,
-       one unpenalised intercept per screen, no global intercept. 354,909 rows / 958 positive /
-       9 screens, BIC 4160.1, leave-one-screen-out median AUROC 0.6391
-       (``bench/results/grand_corpus.md``). It replaces ``BOECRT``'s four recognition columns with
-       two, neither fitted on immunogenicity labels
+     - the scorer shipped 0.21.0 to 0.23.0, **superseded by** ``GRAND`` v3. Seven terms, 354,909
+       rows / 958 positive / 9 screens, BIC 4160.1, leave-one-screen-out median AUROC 0.6391
+   * - ``GRAND`` v3
+     - the same four blocks with Complementarity kept whole: ``C_phys_rose`` + ``C_phys_hydrop``,
+       and ``K`` as ``C_corpus_thymus`` / ``_self`` / ``_viral``
+     - **the shipped scorer** (``data/aggregate_mhc1.json``, default since 0.24.0). Nine terms in
+       four **hierarchical blocks** (:data:`mhcmatch.rank.AGGREGATE_BLOCKS`), one unpenalised
+       intercept per screen, no global intercept. Same corpus; leave-one-screen-out median AUROC
+       **0.6500**, mean 0.6927, better than v2 on 7 of 9 held-out screens
+       (``bench/results/grand_versions.md``). ``C_corpus_missing`` is retired -- the corpus term is
+       now exact and defined for every canonical peptide, so the flag would be identically zero
    * - ``BDEVF``
      - binder, agretopicity, expression, vanilla physicochemistry, foreignness
      - the older design; folds presentation into ``B``

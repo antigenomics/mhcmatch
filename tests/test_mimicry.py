@@ -451,3 +451,50 @@ def test_weighted_density_is_still_a_density():
 def test_an_unknown_weighting_is_refused_rather_than_ignored():
     with pytest.raises(ValueError, match="weights must be"):
         mimicry.corpus_counts(comp="thymus", weights="expression")
+
+
+# ------------------------------------------------------------ the division of labour, pinned
+def test_the_kmer_tables_are_for_the_corpus_term_and_nothing_else():
+    """`corpus_R` is a weighted sum and cannot name a hit. Everything that must name one still
+    searches.
+
+    This is a contract, not an implementation note. The contraction gives
+    `sum_r w(q, r)` over the whole reference set, which is the right object for a scored feature and
+    the wrong one for safety: `mimicry.safety` has to say *which* self protein a candidate resembles
+    so `expression.safety_profile` can say what tissue presents it, and a density cannot be
+    interrogated for that. `annotate` has the same requirement for the tested-neoantigen listing.
+    So the indexed search stays on exactly those paths and this test fails if it is ever quietly
+    swapped for a lookup.
+    """
+    import inspect
+
+    import mhcmatch.mimicry as MM
+    import mhcmatch.proteome as PR
+
+    # the search paths, by the seqtree symbols they name
+    for fn in (MM.features, MM.annotate):
+        src = inspect.getsource(fn)
+        assert "seqtree" in src or "index.search" in src, fn.__name__
+    assert "Index" in inspect.getsource(PR)                    # self-origin safety scan
+
+    # and the corpus path, which must NOT
+    for fn in (MM.corpus_counts, MM.contract, MM.corpus_R, MM.corpus_spectrum):
+        assert "seqtree" not in inspect.getsource(fn), fn.__name__
+
+
+def test_annotate_names_the_neoantigen_it_matched():
+    """The known-neoantigen listing reports an identity and a distance, which is what a search is
+    for. A density would give neither."""
+    got = mimicry.annotate(["KLVVVGACGV", "AAAAAAAAA"], cls="mhc1")
+    assert set(got[0]) >= {"neoag_distance", "neoag_nearest", "neoag_n_within"}
+    assert got[0]["neoag_nearest"] and got[0]["neoag_distance"] == 0     # it is a tested neoantigen
+    assert isinstance(got[0]["neoag_n_within"], int)
+
+
+def test_features_keeps_the_source_protein_that_safety_needs():
+    """`safety` resolves a tissue from the mimic's SOURCE, so `features` must carry it through."""
+    refs = mimicry.load_references(cls="mhc1", with_self=False)
+    f = mimicry.features(["GILGFVFTL"], refs, cls="mhc1")[0]
+    near = f.get("nearest_thymus_tcr")
+    assert near is not None and near.get("peptide")
+    assert "source" in near                    # the field safety() joins on
