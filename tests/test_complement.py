@@ -388,3 +388,78 @@ def test_masking_is_off_by_default_and_is_a_no_op_without_a_cysteine():
     assert np.allclose(CM.score(PEPS), CM.score(PEPS, mask_cys=True)), "no C, nothing to mask"
     withc = ["GILGFCFTL", "CCCCCCCCC", "SIINFEKC"]
     assert not np.allclose(CM.score(withc), CM.score(withc, mask_cys=True))
+
+
+# ------------------------------------------- the positional contact profile and the TCRen measure
+
+
+def test_the_profile_encoding_leaves_the_identity_blocks_bit_identical():
+    """`aa` and `kmer` are count matrices keyed on a role. A weighted count is a different object,
+    so the profile deliberately does not reach them -- which is what makes the two encodings a
+    controlled comparison of the chemistry rather than of everything at once."""
+    for cls, peps in (("mhc1", PEPS), ("mhc2", MHC2_PEPS)):
+        a = CM.score(peps, cls=cls, blocks=("aa", "kmer"))
+        b = CM.score(peps, cls=cls, blocks=("aa", "kmer"), positions="profile")
+        assert np.array_equal(a, b)
+
+
+def test_the_profile_encoding_leaves_the_anchor_face_alone():
+    """The profile is a TCR-contact frequency. It carries no information about burial in the
+    groove, so re-weighting the MHC-facing side with it would be meaningless."""
+    f0, _ = CM.encode(PEPS)
+    f1, _ = CM.encode(PEPS, positions="profile")
+    for c in ("pc1_anchor", "pc2_anchor", "kf4_anchor", "mj_anchor", "pc1", "pc2", "length"):
+        assert np.array_equal(f0[c], f1[c]), c
+    for c in ("pc1_tcr", "kf4_tcr", "para_tcr"):
+        assert not np.allclose(f0[c], f1[c]), c
+
+
+def test_the_profile_finds_the_anchors_without_being_told_they_exist():
+    """On a class-I 9-mer the profile zeroes P1/P2/P3/POmega from crystal contact frequency alone.
+    That is `ANCHORS` minus POmega-1 -- and POmega-1 reading as TCR-facing is what the contact data
+    says, so the two encodings differ at exactly one position by construction."""
+    w = CM.immuno.contact_profile("mhc1")(9)
+    assert [i for i, x in enumerate(w) if x == 0.0] == [0, 1, 2, 8]
+    assert set(CM.ANCHORS) == {0, 1, 2, -2, -1}
+
+
+def test_the_two_contact_knobs_are_independent():
+    """`positions` chooses which peptide positions are read; `paratope` chooses which receptor
+    residues the TCRen potential was averaged over. If either were a no-op given the other, the
+    wrong object is wired."""
+    peps = PEPS
+    four = [CM.score(peps, positions=p, paratope=q)
+            for p in ("mask", "profile") for q in ("loop", "contact")]
+    for i in range(4):
+        for j in range(i + 1, 4):
+            assert not np.allclose(four[i], four[j]), (i, j)
+
+
+def test_the_contact_paratope_is_a_different_vector_not_a_rescaling():
+    """Spearman +0.7549 against the shipped vector with 19 of 20 residues changing rank: a monotone
+    rescaling would leave the ranking alone and could not move a ranking downstream."""
+    a = np.array([CM.PARATOPE[x][0] for x in CM.AA])
+    b = np.array([CM.PARATOPE_CONTACT[x][0] for x in CM.AA])
+    assert set(CM.PARATOPE_CONTACT) == set(CM.AA)
+    assert not np.array_equal(np.argsort(a), np.argsort(b))
+    assert np.ptp(b) > np.ptp(a), "the contact-conditioned spread is wider"
+
+
+def test_the_paratope_choice_reaches_only_the_pot_block():
+    f0, _ = CM.encode(PEPS)
+    f1, _ = CM.encode(PEPS, paratope="contact")
+    for c in ("para_tcr", "para_sd_tcr"):
+        assert not np.allclose(f0[c], f1[c]), c
+    for c in ("pc1", "pc2", "length", "kf4_tcr", "mj_tcr", "kd_run_max", "kd_run_frac"):
+        assert np.array_equal(f0[c], f1[c]), c
+
+
+def test_both_knobs_default_to_the_shipped_encoding():
+    assert np.array_equal(CM.score(PEPS), CM.score(PEPS, positions="mask", paratope="loop"))
+
+
+def test_an_unknown_encoding_is_refused_rather_than_guessed():
+    for kw in ({"positions": "contact"}, {"positions": ""}, {"paratope": "flat"},
+               {"paratope": "tcren"}):
+        with pytest.raises(ValueError):
+            CM.score(["GILGFVFTL"], **kw)
