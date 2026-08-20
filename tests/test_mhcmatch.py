@@ -1112,8 +1112,8 @@ def _spearman(x, y):
 def test_property_matrix_pc1_is_a_hydropathy_axis():
     """PC1 of the 20 x 142 residue-by-scale matrix is hydropathy, and PC2 is not.
 
-    Stated in docs/property_basis.rst and relied on by mhcmatch.ipred, whose shipped basis is this
-    eigenvector. A property of the vendored tables only -- no labels, no peptide set.
+    Stated in docs/property_basis.rst and relied on by mhcmatch.complement's `phys` block, whose
+    shipped basis (aa_tables.PROPERTY_PC1/PC2) is this eigenvector. A property of the vendored tables only -- no labels, no peptide set.
     """
     import numpy as np
     from mhcmatch.data import aa_tables as t

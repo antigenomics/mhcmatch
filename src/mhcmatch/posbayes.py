@@ -1,6 +1,7 @@
 """Position-role naive Bayes: amino-acid evidence for immunogenicity, split by anchor / TCR-facing.
 
-`ipred` scores a peptide from pooled physicochemical descriptors and does not distinguish where a
+The retired `ipred` predictor (shipped v0.9.0-0.21.0, removed in 0.22.0; :ref:`ipred-legacy`)
+scored a peptide from pooled physicochemical descriptors and did not distinguish where a
 residue sits. But anchor and TCR-facing positions are different channels -- an anchor residue is
 buried in the MHC groove and a TCR-facing one is contacted by the receptor -- and the benchmark
 finds their contributions carry **opposite signs** for several amino acids. Pooling averages that
@@ -26,14 +27,14 @@ operational one overstates it by 11-66x.
 Measured performance, peptide-grouped 5-fold cross-validation (no peptide in both train and test),
 on the IEDB positive-T-cell-assay vs self-eluted-ligand corpus:
 
-===================================  ========  ========
-metric                                 human     mouse
-===================================  ========  ========
-rows                                  464,310    47,203
-immunogenic                            14,712     5,154
-**AUROC (this model)**                  0.712     0.758
-AUROC (``ipred``, in-sample)            0.607     0.668
-===================================  ========  ========
+====================================  ========  ========
+metric                                  human     mouse
+====================================  ========  ========
+rows                                   464,310    47,203
+immunogenic                             14,712     5,154
+**AUROC (this model)**                   0.712     0.758
+AUROC (retired ``ipred``, in-sample)     0.607     0.668
+====================================  ========  ========
 
 Size-matched cross-species transfer, mean over 10 matched subsamples:
 
@@ -42,7 +43,8 @@ Size-matched cross-species transfer, mean over 10 matched subsamples:
 
 ``ipred``'s figures above are **in-sample** -- that corpus is its training set -- so the comparison
 is not like-for-like. It is quoted because an in-sample baseline that still loses is the
-conservative direction, not because it is a fair contest.
+conservative direction, not because it is a fair contest. The module is gone as of 0.22.0; the
+measurement is not, and neither is this row.
 
 .. warning::
 
@@ -55,7 +57,7 @@ conservative direction, not because it is a fair contest.
    It is therefore zeroed here. The cost is small and measured: grouped-CV AUROC 0.712 -> 0.690.
 
    Any model trained on MS-eluted negatives against assayed positives inherits this, including
-   `ipred`, whose training corpus is built the same way.
+   the retired `ipred`, whose training corpus was built the same way.
 """
 from __future__ import annotations
 

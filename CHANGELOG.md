@@ -6,6 +6,85 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.22.0] - 2026-08-20
+
+### Removed
+
+- **`mhcmatch.ipred` is gone, and so is `mhcmatch/data/ipred_mhc1.json`.** The legacy
+  physicochemical immunogenicity predictor — three features summed over the whole peptide (`pc1`,
+  `pc2`, `length`), two class-conditional diagonal Gaussians fitted by EM, a two-parameter Platt
+  calibration, **13 fitted parameters** — shipped from **v0.9.0** and is removed here. **0.21.0 is
+  the last released version that carries it.** `from mhcmatch import ipred` now raises
+  `ImportError`; the whole `__all__` (`PARAMS`, `feature_names`, `features`, `score`, `log_p`,
+  `p_immunogenic`, `residue_scores`, `parameters`) and the `python -m mhcmatch.ipred` entry point
+  go with it.
+
+  It was never a term of any shipped scorer, and it does not earn one. On **355,052 peptide ×
+  allele rows / 1,101 immunogenic over 10 screens** of the cleaned grand corpus, one unpenalised
+  intercept per screen (`bench/results/neoag_ipred_vs_complement.md`):
+
+  | model | `ipred` z | within-screen median AUROC | BIC |
+  |---|--:|--:|--:|
+  | `BOECRT` (shipped) | — | **0.6504** | **4201.7** |
+  | `BOECRT` + `ipred` | +0.22 | 0.6506 | 4214.5 |
+  | `ipred` instead of `complement` | +1.12 | 0.6399 | 4218.4 |
+
+  Adding it moves within-screen median AUROC **+0.0002** (0.6504 → 0.6506) and worsens BIC
+  **+12.7** (4201.7 → 4214.5), against a per-column penalty of log(355,052) = 12.78. Swapping it in
+  for complementarity costs **0.0105** AUROC (0.6504 → 0.6399) at z = +1.12. It is not redundant —
+  r(`ipred` log-odds, `complement` log-odds) = **+0.2018** over those 355,052 rows, and **+0.2045**
+  over 362,324 human rows in a separate measurement, with all six `complement` blocks together
+  explaining R² = **0.5113** of its variance (`bench/results/ipred_residual.md`) — the variance it
+  carries alone simply does not help once complementarity is present.
+
+  **The record survives in full**, in `docs/complementarity.rst`, section "`ipred`: the retired
+  predecessor": the shipped configuration's pooled out-of-fold AUROC **0.712** / macro **0.607** on
+  peptide-grouped 5-fold CV over **694,507 rows / 35,595 immunogenic across 7 label sources**; its
+  **+0.059** pooled / **+0.030** macro margin over the summed-Kidera baseline (Chowell 2015 /
+  Pogorelyy 2018) at 0.653 / 0.577, and that baseline's own win on `chowell` at **0.703** vs 0.680
+  on 9,806 peptides / 5,035 immunogenic; calibration Brier **0.2282**, ECE **0.0661**, AUROC
+  **0.6804** on n = 9,806; parameter stability `d[pc1]` **+0.2395** CI [+0.1844, +0.3020] and
+  `d[length]` **−0.2189** CI [−0.2692, −0.1632] over 1,000 peptide bootstraps; human↔mouse transfer
+  **0.733**/**0.648** human-trained vs 0.654/0.625 mouse-trained on 649,466 / 45,041 rows; and the
+  two cohorts where it **beat** complementarity as a single unfitted feature — VACCIMEL AUROC
+  **0.6324** vs 0.5774 (93 rows / 27 immunogenic) and GBM **0.6450** vs 0.6186 (109 / 26).
+
+- **`rank` output loses the `physchem_ipred` column.** `rank.BASE_COLUMNS` drops it, so
+  `rank.columns()` returns one fewer column in every mode and every `mhcmatch rank` TSV is one
+  column narrower; the `Ranked.physchem_ipred` field is gone, so `Ranked(..., physchem_ipred=...)`
+  is now a `TypeError`. `Ranked.physchem` — the complementarity recognition term — is a different
+  field and stays. The Nextflow `MHCMATCH_RANK` stub derives its header from `rank.columns()` at
+  runtime and needed no edit, which is what that design was for.
+
+- **`mhcmatch explain` loses two outputs.** `explain --peptides` drops the `ipred_logp` TSV column
+  (13 columns → 12); single-peptide `explain` drops the printed `ipred log P` line. No flag or
+  subcommand is removed.
+
+### Changed
+
+- **The property basis outlived the artifact that first carried it.** `PROPERTY_PC1` /
+  `PROPERTY_PC2` in `mhcmatch/data/aa_tables.py` are now sourced, in code and in
+  `data/PROVENANCE.md`, to what they actually are: **derived/computed, label-free** — the first two
+  principal components of the 20 × 142 property matrix, column-standardized over the 20 residues,
+  by SVD, regenerated with `python bench/ipred/pca.py`. PC1 carries **32.79 %** of total variance
+  with residue order `I F L W V M C Y A P G T H S Q N E K D R`, PC1+PC2 **51.2 %**, 10 components
+  **91.3 %** (`bench/results/ipred_pca.md`). They previously pointed at `ipred_mhc1.json`
+  (`residue_scores`), a file that no longer ships.
+
+- **`data/PROVENANCE.md` keeps the `ipred_mhc1.json` entry, marked retired.** A result recorded
+  against 0.21.0 or earlier cites a file this package used to carry; a provenance record that
+  deletes retired artifacts cannot say where that number came from.
+
+- **The letter `V` stays defined.** `BDEVF` is a published model name with recorded coefficients —
+  `ipred` at **+0.2707**, 95 % bootstrap CI [+0.2349, +0.3075], second of seven, on 16,802
+  peptide × allele rows / 8,258 immunogenic (`bench/results/neoag_glm.md`) — and `mhcmatch.mimicry`
+  is documented as fitted residual to it. `V` was always named after the *generation* (vanilla
+  physicochemistry), not the module, which is exactly what lets the name survive the removal.
+
+- **The shipped model is untouched.** `GRAND`'s seven terms, its coefficients and
+  `data/aggregate_mhc1.json` are unchanged; `physchem_ipred` was a reported column, never a
+  feature. Vendored anchor models are re-stamped for the version bump.
+
 ## [0.21.0] - 2026-08-20
 
 ### Changed

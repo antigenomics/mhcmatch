@@ -1,15 +1,17 @@
 """Complementarity: how well a presented peptide complements a T-cell repertoire.
 
-This is the recognition axis, and it is what :mod:`mhcmatch.ipred` was reaching for. `ipred` summed
-two principal components of the amino-acid property matrix over the whole peptide and added its
-length -- 13 parameters, fitted by EM. That construction is kept and five blocks are added, each
+This is the recognition axis, and it is what ``ipred`` was reaching for. ``ipred`` -- the legacy
+physicochemical predictor, shipped v0.9.0-0.21.0 and removed in 0.22.0 (:ref:`ipred-legacy`) --
+summed two principal components of the amino-acid property matrix over the whole peptide and added
+its length: 13 parameters, fitted by EM. That construction is kept and five blocks are added, each
 answering something the pooled version provably cannot:
 
 ============  =========================================================================
 block         what it adds
 ============  =========================================================================
 ``phys``      PC1/PC2 of the property matrix summed over the peptide, plus length. **The
-              `ipred` feature set**, kept as the floor everything else is measured against.
+              retired `ipred` feature set**, kept as the floor everything else is measured
+              against.
 ``role``      The same components computed **separately over MHC-facing and TCR-facing**
               residues, plus Kidera KF4 (hydropathy) per role. The two channels carry
               opposite-sign contributions for several residues; a pooled sum reports
@@ -325,9 +327,10 @@ def _basis(paratope: str = "loop") -> dict[str, np.ndarray]:
         raise ValueError(f"unknown paratope={paratope!r} (expected 'loop' or 'contact')")
     return {
         # The two property PCs are read from the vendored table beside the other three vectors
-        # below, not back out of `ipred_mhc1.json`: a basis that only exists inside a fitted
-        # artifact makes `import mhcmatch.complement` -- and with it `burial`, the shipped `C_phys`
-        # term -- depend on that artifact still shipping.
+        # below, rather than out of a fitted artifact: a basis that only exists inside one makes
+        # `import mhcmatch.complement` -- and with it `burial`, the shipped `C_phys` term --
+        # depend on that artifact still shipping. It stopped shipping: `ipred_mhc1.json`, which
+        # first carried these vectors, was removed in 0.22.0 and this line kept working.
         "pc1": _scale_vec(aa_tables.PROPERTY_PC1),
         "pc2": _scale_vec(aa_tables.PROPERTY_PC2),
         "kf4": _scale_vec(aa_tables.DESCRIPTORS["KIDERA"]["KF4"]),

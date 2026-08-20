@@ -81,9 +81,11 @@ monotone reparametrization, a projection onto this one axis. So:
   a disagreement between two such features is a disagreement about scaling, not about chemistry.
 - A result that changes when the hydrophobicity scale is swapped is telling you something about the
   scale, not about the peptides.
-- :mod:`mhcmatch.ipred` ships this basis rather than recomputing it: ``ipred.residue_scores()``
-  returns the frozen per-residue PC1/PC2 loadings, and its ``pc1`` feature is the sum of PC1 along
-  the sequence.
+- **The package ships this basis rather than recomputing it**:
+  :data:`mhcmatch.data.aa_tables.PROPERTY_PC1` and :data:`~mhcmatch.data.aa_tables.PROPERTY_PC2` are
+  the frozen per-residue loadings, and the ``phys`` block of :func:`mhcmatch.complement.score` sums
+  PC1 along the sequence. Until 0.21.0 they were reached through ``ipred.residue_scores()``; that
+  module was removed in 0.22.0 (:ref:`ipred-legacy`) and the basis, being label-free, outlived it.
 
 2. PCA on the Kidera factors is a no-op
 ---------------------------------------

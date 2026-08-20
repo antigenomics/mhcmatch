@@ -60,7 +60,8 @@ Each answers something the block above it cannot express.
 
 ``phys``
    PC1/PC2 of the 142-scale amino-acid property matrix summed over the peptide, plus length. This
-   is exactly the :mod:`mhcmatch.ipred` feature set, kept as the floor.
+   is exactly the feature set of the retired ``ipred`` predictor, kept as the floor
+   (:ref:`ipred-legacy`).
 
 ``role``
    The same components over **MHC-facing and TCR-facing residues separately**, plus Kidera KF4
@@ -212,8 +213,9 @@ Each answers something the block above it cannot express.
 Why the head is linear
 ----------------------
 
-:mod:`mhcmatch.ipred` fits two Gaussians by EM, and that estimator is kept and vendored. But the
-score that ships is a **linear** head over the same design, for a structural reason rather than a
+The retired ``ipred`` predictor (:ref:`ipred-legacy`) fitted two Gaussians by EM, and that
+estimator is kept and vendored here — in ``complement_mhc1_*.json``, so it outlived the module. But
+the score that ships is a **linear** head over the same design, for a structural reason rather than a
 preference: the ``posbayes`` score is a *sum* of the two role log-odds — weights fixed at 1 on two
 of these columns. A diagonal-covariance Gaussian classifier cannot represent that. It maps each
 column through its own quadratic and re-weights by inverse class variances, so the additive form is
@@ -640,3 +642,467 @@ The register comes from :func:`mhcmatch.store.anchor_indices`, which is an allel
 unless one is supplied; as with :func:`~mhcmatch.recognition.score_mhc2`, an error in the frame moves
 every residue from one face to the other, so pass ``registers=`` from
 :meth:`mhcmatch.diffusion.AnchorModel.best_register` where a per-allele register is available.
+
+.. _ipred-legacy:
+
+``ipred``: the retired predecessor
+----------------------------------
+
+:mod:`mhcmatch.ipred` was the first generation of this axis. It **shipped in v0.9.0 and was removed
+in 0.22.0**; **0.21.0 is the last released version that carries it**, together with its parameter
+artifact ``mhcmatch/data/ipred_mhc1.json``. ``from mhcmatch import ipred`` raises ``ImportError``
+from 0.22.0 onwards, ``mhcmatch rank`` no longer emits the ``physchem_ipred`` column, and
+``mhcmatch explain`` no longer prints its log P.
+
+This section is the record. Every number below was measured before the removal and is unchanged by
+it; each carries the row and positive counts it rests on, and the ``bench/results/*.md`` file in the
+2026-mhcmatch-benchmark repo that produced it. Nothing else in the documentation restates them.
+
+What it was
+~~~~~~~~~~~
+
+Three features summed over the whole peptide — ``pc1``, ``pc2`` and ``length``, where ``pc1`` and
+``pc2`` are the first two principal components of the 20 × 142 amino-acid property matrix
+(:doc:`property_basis`) summed residue by residue — scored by two class-conditional Gaussians with
+diagonal covariance fitted by EM, then mapped to a probability by a two-parameter Platt calibration.
+**13 fitted parameters**: 2 × 3 means, 2 × 3 variances, and a mixing proportion. The PCA basis
+carried no labels and was not counted among them.
+
+Its public surface was ``PARAMS``, ``feature_names()``, ``features()``, ``score()``, ``log_p()``,
+``p_immunogenic()``, ``residue_scores()``, ``parameters()``, plus a ``demo()`` runnable as
+``python -m mhcmatch.ipred``. The worked outputs the documentation used to show, kept here because
+they are the only executable numbers this page ever quoted for the module (function evaluations on
+one peptide each, not estimates):
+
+.. code-block:: text
+
+   ipred.feature_names()               ['pc1', 'pc2', 'length']
+   ipred.features("GILGFVFTL")         [49.41, 23.156, 9.0]     pc1 sum, pc2 sum, length
+   ipred.p_immunogenic("GILGFVFTL")    0.6806
+   ipred.p_immunogenic("AAAKKKDDD")    0.3052
+
+``log P`` meant **P(immunogenic) for a peptide on a Chowell-like tested-epitope set** — 51.3%
+positive, within-assay negatives — deliberately not the base rate of an exome screen, which is a
+property of the screen rather than of the peptide.
+
+Why it was retired
+~~~~~~~~~~~~~~~~~~
+
+Because it does not earn a place beside complementarity, and complementarity is the shipped axis.
+Three arrangements fitted on the cleaned grand corpus, **355,052 peptide × allele rows / 1,101
+immunogenic over 10 screens**, one unpenalised intercept per screen
+(``bench/results/neoag_ipred_vs_complement.md``):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 16 24 20
+
+   * - model
+     - ``ipred`` z
+     - within-screen median AUROC
+     - BIC
+   * - ``BOECRT`` (shipped)
+     - —
+     - **0.6504**
+     - **4201.7**
+   * - ``BOECRT`` + ``ipred``
+     - +0.22
+     - 0.6506
+     - 4214.5
+   * - ``ipred`` instead of ``complement``
+     - +1.12
+     - 0.6399
+     - 4218.4
+
+Adding ``ipred`` moves within-screen median AUROC by **+0.0002** (0.6504 → 0.6506) and worsens BIC
+by **+12.7** (4201.7 → 4214.5) — the per-column BIC penalty at this row count is
+:math:`\log(355{,}052) = 12.78`, so the term buys essentially nothing back. Swapping it *in* for
+complementarity costs **0.0105** within-screen median AUROC (0.6504 → 0.6399) and leaves it
+unresolved at z = +1.12.
+
+It is **not** redundant in the ordinary sense. Pearson r(``ipred`` log-odds, ``complement``
+log-odds) = **+0.2018** over the same 355,052 rows: ``ipred`` carries real variance complementarity
+does not, and that variance simply does not help once complementarity is present.
+
+A second, independent measurement of the same correlation on a different row set — **362,324 human
+rows** of the grand corpus — gives r = **+0.2045**, and regressing ``ipred`` on the six blocks of
+:func:`mhcmatch.complement.score` explains :math:`R^2` = **0.5113** of its variance
+(``bench/results/ipred_residual.md``):
+
+.. list-table:: Variance of ``ipred`` explained by ``complement``'s blocks, 362,324 human rows
+   :header-rows: 1
+   :widths: 34 33 33
+
+   * - block
+     - :math:`R^2` alone
+     - :math:`R^2` cumulative
+   * - ``phys``
+     - **0.0315**
+     - 0.0315
+   * - ``role``
+     - 0.0543
+     - 0.0635
+   * - ``pot``
+     - **0.2775**
+     - 0.4748
+   * - ``motif``
+     - 0.0508
+     - 0.4800
+   * - ``aa``
+     - 0.0059
+     - 0.4881
+   * - ``kmer``
+     - 0.0088
+     - **0.5113**
+
+``phys`` *is* ``ipred``'s own three features read inside ``complement``, so its 0.0315 is the ceiling
+any single block can reach; the rest is what the extra machinery reconstructs.
+
+The head-to-head on the deposited corpus goes the same way. Complementarity beats ``ipred.log_p`` on
+peptide-grouped 5-fold CV over all four deposited corpus arms × both hosts, winning every one:
+chowell/human **0.7188** vs 0.7111, chowell/mouse **0.7718** vs 0.7582, kesmir/human **0.6580** vs
+0.6369. Row and positive counts were not recorded per cell; the fitted tables behind them are human
+464,161 rows and mouse 47,140. ``ipred``'s figures on that corpus are *in-sample* — it is its
+training set — which is the conservative direction for a baseline that still loses.
+
+Position-role naive Bayes beats it too, on **464,310 human rows (14,712 immunogenic)** and **47,203
+mouse rows (5,154 immunogenic)**: :func:`mhcmatch.posbayes.llr` scores peptide-grouped 5-fold CV
+AUROC **0.712** human / **0.758** mouse against ``ipred`` in-sample at 0.607 / 0.668.
+
+How it performed
+~~~~~~~~~~~~~~~~
+
+The shipped configuration — arm ``all``, k = 2 components, diagonal covariance, mask ``full``,
+aggregation ``sum``, 13 fitted parameters — on **peptide-grouped 5-fold CV over 694,507 rows /
+35,595 immunogenic across 7 label sources** (``bench/results/ipred_arms.md``): pooled out-of-fold
+AUROC **0.712**, macro-over-sources AUROC **0.607**. Per source:
+
+.. list-table:: Shipped ``ipred`` configuration, out-of-fold AUROC per label source
+   :header-rows: 1
+   :widths: 30 20 25 25
+
+   * - source
+     - AUROC
+     - source
+     - AUROC
+   * - ``calis``
+     - 0.652
+     - ``iedb``
+     - 0.629
+   * - ``cedar``
+     - 0.578
+     - ``nci``
+     - **0.717**
+   * - ``chowell``
+     - 0.680
+     - ``tesla``
+     - 0.486
+   * - ``h2kb``
+     - 0.508
+     -
+     -
+
+Against the field's summed-descriptor baseline, on identical peptide-grouped folds and
+source-balanced weights over the same 694,507 rows / 35,595 immunogenic
+(``bench/results/ipred_baselines.md``):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 46 27 27
+
+   * - model
+     - pooled AUROC
+     - macro AUROC
+   * - summed Kidera f1..f10 (Chowell 2015 / Pogorelyy 2018)
+     - 0.653
+     - 0.577
+   * - ``ipred`` headline (arm ``all``, k = 2)
+     - **0.712**
+     - **0.607**
+
+— **+0.059** pooled and **+0.030** macro. The summed-Kidera baseline nonetheless **stands where it
+was established**: on ``chowell`` it scores AUROC **0.703** against the ``ipred`` headline's 0.680
+(**+0.023**) on the same **9,806 peptides / 5,035 immunogenic**. That is recorded as a named
+baseline, not replaced.
+
+Calibration of the frozen model, Platt map :math:`p = \sigma(1.3389 s + 0.0909)` fitted on
+out-of-fold ``chowell`` scores, **n = 9,806 Chowell peptides**
+(``bench/results/ipred_calibration.md``):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 50 50
+
+   * - metric
+     - value
+   * - Brier score
+     - 0.2282
+   * - ECE, 10 quantile bins
+     - 0.0661
+   * - AUROC, out-of-fold, ``chowell``
+     - 0.6804
+   * - Murphy reliability
+     - 0.0065
+   * - Murphy resolution
+     - 0.0265
+   * - Murphy uncertainty
+     - 0.2498
+   * - Murphy within-bin
+     - −0.0016
+
+Parameter stability, percentile bootstrap over whole peptides (1,000 draws, seed 20260816), 13
+fitted parameters over **694,507 rows** (``bench/results/ipred_stability.md``). ``d`` is the
+standardized class-mean gap :math:`(\mu_{\text{imm}} - \mu_{\text{non}}) /
+\sqrt{(\sigma^2_{\text{non}} + \sigma^2_{\text{imm}})/2}`, higher meaning immunogenic peptides sit
+further along that axis:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 25 34 16
+
+   * - parameter
+     - estimate
+     - 95 % CI
+     - excludes 0
+   * - ``d[pc1]``
+     - **+0.2395**
+     - [+0.1844, +0.3020]
+     - yes
+   * - ``d[length]``
+     - **−0.2189**
+     - [−0.2692, −0.1632]
+     - yes
+   * - ``d[pc2]``
+     - −0.0481
+     - [−0.1026, +0.0047]
+     - no
+
+Every leave-one-dataset-out estimate of every ``d`` component stays within **0.78** bootstrap CI
+widths of the all-data value. Dropping CEDAR — the source overlapping 37 of 37 TESLA positives and
+85 of 171 NCI positives — is the *least* disruptive of the seven at **0.13** CI widths.
+
+Human ↔ mouse transfer, the headline model refit per cell on **649,466 human rows / 45,041 mouse
+rows** (14.42:1) (``bench/results/ipred_transfer.md``):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 44 28 28
+
+   * - fit
+     - AUROC on human
+     - AUROC on mouse
+   * - human-trained, 649,466 rows
+     - **0.733**
+     - **0.648**
+   * - mouse-trained, 45,041 rows
+     - 0.654
+     - 0.625
+   * - human, size-matched to 45,041 rows, mean of 20
+     - 0.726
+     - 0.625
+
+The size-matched human fit (20 seeded peptide-level subsamples of 45,041 rows, sd 0.017 on mouse)
+predicts mouse **exactly as well as the mouse-trained fit does**, at 1/14.4 of the data. The
+mouse-side deficit is training-set size, not species physics.
+
+Cross-dataset generalisation against the April 2026 Gamaleya deck, over 3 rebuilt datasets —
+``chowell`` 9,806 rows / 5,035 immunogenic, ``iedb`` 316,329 / 15,971, ``iedb_hlaatlas`` 94,573 /
+15,971 (``bench/results/ipred_gates.md``): **5 of 6 off-diagonal train → test cells improve**, by up
+to **+0.171** AUROC. The deck's three worst cells — 0.503, 0.519 and 0.560, at or barely above
+chance — gain most, reaching **0.661**, **0.690** and **0.673**.
+
+Where ``ipred`` still won
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+On the two cohorts where the fitted aggregate sits at chance, ``ipred`` was the best single unfitted
+feature — better than complementarity — with nothing fitted and every numeric corpus feature scanned
+per cohort (``bench/results/neoag_cohort_scan.md``):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 14 18 23 23
+
+   * - cohort
+     - rows
+     - immunogenic
+     - ``ipred`` AUROC
+     - ``complement`` AUROC
+   * - VACCIMEL
+     - 93
+     - 27
+     - **0.6324**
+     - 0.5774
+   * - GBM
+     - 109
+     - 26
+     - **0.6450**
+     - 0.6186
+
+That is the reason the ``physchem_ipred`` column existed at all, and it is recorded here rather than
+argued away. The same two cells are recorded a second time with bootstrap annotation in
+``bench/results/ipred_residual.md``, which gives ``ipred`` across every cohort it was scanned on:
+
+.. list-table:: ``ipred`` as a single unfitted feature, per cohort
+   :header-rows: 1
+   :widths: 28 18 22 32
+
+   * - cohort
+     - rows
+     - immunogenic
+     - AUROC
+   * - Gfeller
+     - 449
+     - 32
+     - **0.9555**
+   * - NCI
+     - 31,505
+     - 6
+     - 0.8466
+   * - GBM
+     - 109
+     - 26
+     - 0.6450
+   * - VACCIMEL
+     - 93
+     - 27
+     - 0.6324\*
+   * - Gfeller_GBM
+     - 2,727
+     - 116
+     - 0.6105
+   * - IEDB_neoag
+     - 481
+     - 245
+     - 0.5855
+   * - CEDAR
+     - 7,614
+     - 3,196
+     - 0.5710
+   * - Neopep
+     - 318,197
+     - 19
+     - 0.5678\*
+   * - TESLA
+     - 615
+     - 37
+     - 0.5145\*
+   * - ITSNdb
+     - 149
+     - 89
+     - 0.5060\*
+   * - HiTIDE
+     - 234
+     - 37
+     - 0.4490\*
+
+``*`` marks a 95 % bootstrap CI that includes AUROC 0.5. In the same table ``complement`` scores
+VACCIMEL 0.5774\* and GBM 0.6186\*. The stars are an observation recorded beside the numbers, not a
+retraction of them.
+
+In the legacy ``BDEVF`` GLM, ``ipred`` was the largest term with a biological reading: standardized
+coefficient **+0.2707**, 95 % percentile-bootstrap CI [+0.2349, +0.3075], excluding zero, ranked
+second of seven behind ``expr_missing`` (+0.524) and ahead of ``binder`` (+0.174), ``expr`` (+0.136)
+and ``foreign`` (+0.089). Fitted on **16,802 peptide × allele rows / 8,258 immunogenic**, row- and
+peptide-disjoint from every holdout, seed 20260816; adding the physchem term bought a likelihood
+improvement of :math:`\chi^2` p = **5.03 × 10⁻⁵⁹** on 1 df (``bench/results/neoag_glm.md``; this
+page renders the coefficient rounded to +0.271, CI [+0.235, +0.308], in :doc:`models`).
+
+No ``binder × ipred`` interaction was found *within* a cohort: ``binder × para`` and
+``binder × ipred`` entered as an explicit product block over main effects, nested likelihood-ratio
+test :math:`\chi^2` = **1.78 on 3 df, p = 0.619**. The interplay sits **between** cohorts, with the
+fitted weight on everything-beyond-presentation running from 0.07 on a raw exome screen to 0.91 on a
+binding-prefiltered set (:doc:`models`).
+
+The corpus it was fitted on
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**694,507 rows / 35,595 immunogenic** — a pooled fit of 658,912 non-immunogenic plus 35,595
+immunogenic — over seven pooled label sources at ``(peptide, source, species)`` granularity, 8–11-mers
+over AA20, with source-balanced weights :math:`1/(S \cdot 2 \cdot n_{[\text{source},\,\text{label}]})`
+so that a 599-row set and a 336,830-row set carry the same total weight
+(``bench/results/ipred_corpus.md``). Distinct peptides: **649,155 human, 43,494 mouse**.
+
+.. list-table:: ``ipred`` label corpus, at ``(peptide, source, species)`` granularity
+   :header-rows: 1
+   :widths: 22 16 22 22 18
+
+   * - source
+     - species
+     - non-immunogenic
+     - immunogenic
+     - in pooled fit
+   * - ``chowell``
+     - human
+     - 4,771
+     - 5,035
+     - yes
+   * - ``calis``
+     - human
+     - 1
+     - 1,015
+     - yes
+   * - ``calis``
+     - mouse
+     - 336
+     - 1,045
+     - yes
+   * - ``cedar``
+     - human
+     - 13,085
+     - 11,389
+     - yes
+   * - ``tesla``
+     - human
+     - 562
+     - 37
+     - yes
+   * - ``nci``
+     - human
+     - 336,659
+     - 171
+     - yes
+   * - ``iedb``
+     - human
+     - 263,929
+     - 12,812
+     - yes
+   * - ``iedb``
+     - mouse
+     - 36,429
+     - 3,159
+     - yes
+   * - ``h2kb``
+     - mouse
+     - 3,140
+     - 932
+     - yes
+   * - ``hlaatlas``
+     - human
+     - 78,602
+     - 0
+     - no — negatives only
+
+What survives the removal
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**The property basis.** PC1 of the column-standardized 20 × 142 residue-by-scale property matrix
+carries **32.79 %** of total variance and is a hydropathy axis with residue order
+``I F L W V M C Y A P G T H S Q N E K D R``; PC1 + PC2 carry **51.2 %** and 10 components carry
+**91.3 %** (``bench/results/ipred_pca.md``). It is **label-free** — identical under every
+leave-one-dataset-out refit — so it never depended on the fit that first vendored it. It now ships
+as :data:`mhcmatch.data.aa_tables.PROPERTY_PC1` and
+:data:`mhcmatch.data.aa_tables.PROPERTY_PC2`, is asserted by a unit test that recomputes the SVD,
+and is what the ``phys`` block above projects onto. :doc:`property_basis` states the measurement.
+
+**The letter** ``V``. ``BDEVF`` is a published model name with recorded coefficients, and
+:mod:`mhcmatch.mimicry` is documented as fitted residual to it, so ``V`` stays defined. It was
+always named after the *generation* — vanilla physicochemistry — rather than after the module, which
+is precisely what lets the name outlive the module (:doc:`models`).
+
+**The EM estimator.** ``ipred`` fitted two Gaussians by EM; those parameters are kept and vendored,
+in ``complement_mhc1_*.json`` under ``PARAMS["fits"]["em"]``, not in the removed artifact. The
+comparison against the linear head above stays re-checkable.
+
+**The provenance entry.** ``src/mhcmatch/data/PROVENANCE.md`` keeps its ``ipred_mhc1.json`` section,
+marked retired, so a result recorded against 0.21.0 or earlier can still be traced to the file that
+produced it.

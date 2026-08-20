@@ -526,7 +526,7 @@ def cmd_rank(a):
                      f"{r.physchem:.4g}", f"{r.expression:.4g}",
                      "1" if r.expression_imputed else "0",
                      str(r.n_alleles_presenting), r.alleles_presenting,
-                     f"{r.physchem_ipred:.4g}", r.imputed, r.wt_peptide,
+                     r.imputed, r.wt_peptide,
                      r.known_epitope]
             if a.score == "aggregate":
                 cells += [f"{r.components[c]:.6g}" for c in R.AGGREGATE_COLUMNS]
@@ -555,7 +555,7 @@ def cmd_rank(a):
 
 def cmd_explain(a):
     """Print every component of the aggregate for one (peptide, allele), so a rank is auditable."""
-    from . import complement as CM, ipred, posbayes, rank as R
+    from . import complement as CM, posbayes, rank as R
     store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
     from . import predict as P
     if a.peptides:
@@ -566,7 +566,7 @@ def cmd_explain(a):
         am = store.affinity_model(a.cls) if any(w for _, w in pairs) else None
         out = _Out(a, "peptide")
         out.header("peptide", "allele", "presentation_rank", "affinity_nm", "affinity_rank",
-                   "binder_rank", "presentation_term", "recognition", "posbayes_llr", "ipred_logp",
+                   "binder_rank", "presentation_term", "recognition", "posbayes_llr",
                    "wt_peptide", "dai", "aggregate_p")
         for (p, wt), rc, lr in zip(pairs, recog, llr):
             bs = P.binder_score(store, p, alleles=[a.allele], cls=a.cls)
@@ -575,7 +575,7 @@ def cmd_explain(a):
             out.row(p, a.allele,
                     f"{b.presentation_rank:.6g}" if b else "", f"{b.affinity_nm:.6g}" if b else "",
                     f"{b.affinity_rank:.6g}" if b else "", f"{b.binder_rank:.6g}" if b else "",
-                    f"{pres:.6g}", f"{rc:.6g}", f"{lr:.6g}", f"{ipred.log_p(p):.6g}",
+                    f"{pres:.6g}", f"{rc:.6g}", f"{lr:.6g}",
                     wt, f"{am.dai(wt, p, a.allele):.6g}" if (am and wt) else "",
                     f"{R.gate_probability(pres, rc):.6g}")
         out.close()
@@ -594,8 +594,6 @@ def cmd_explain(a):
     print(f"  recognition  log-odds {recog:+.4f}   (complement -- the term `rank` uses)")
     print(f"  posbayes     LLR      {posbayes.llr(a.peptide, a.species):+.4f}   "
           f"(role identity only; the `aa` block of the above, shown for comparison)")
-    print(f"  ipred        log P    {ipred.log_p(a.peptide):+.4f}   "
-          f"(P = {ipred.p_immunogenic(a.peptide):.4f}; pooled physchem, shown for comparison)")
     if a.prior:
         # The log-odds carries no prior, so the base rate is the caller's to supply -- a screen at
         # 4.2e-4 and the training corpus at 3.2e-2 differ by ~75x.

@@ -110,9 +110,10 @@ Reading the output
 ``score`` is the aggregate; higher is better. Every one of the model's seven features is a column,
 because a row should report what produced it: ``binder``, ``occupancy``, ``expression`` (with
 ``expr_imputed``), and the two Complementarity factors ``C_phys`` and ``C_corpus_thymus`` with
-``C_corpus_missing``. ``agretopicity``, ``physchem``, ``physchem_ipred`` and
+``C_corpus_missing``. ``agretopicity``, ``physchem`` and
 ``n_alleles_presenting`` / ``alleles_presenting`` are reported beside them and are **not** in the
-model. ``--extended`` appends the remaining mimicry channels and ``--annotate`` what each candidate
+model. (``physchem_ipred`` was a column here through 0.21.0; the module behind it was removed in
+0.22.0 --- :ref:`ipred-legacy`.) ``--extended`` appends the remaining mimicry channels and ``--annotate`` what each candidate
 resembles; both add **columns only** and never change the ordering.
 
 .. warning::

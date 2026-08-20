@@ -202,10 +202,10 @@ From `slurm.config` only:
 ## Build the image (only for `-profile docker`)
 
 ```zsh
-docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.21.0 \
-    --build-arg MHCMATCH_VERSION=0.21.0 \
+docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.22.0 \
+    --build-arg MHCMATCH_VERSION=0.22.0 \
     integrations/nextflow/mhcmatch/
-docker push <ISPRAS_REGISTRY>/mhcmatch:0.21.0
+docker push <ISPRAS_REGISTRY>/mhcmatch:0.22.0
 ```
 
 No data staging: the build runs `mhcmatch bootstrap --reference`, which fetches the ligand panel

@@ -8,9 +8,13 @@ Provenance
     peptides 0.5.0 (https://github.com/althonos/peptides.py), GPL-3.0-or-later,
     ``peptides/tables/__init__.py``. 17 descriptor families, 102 components total.
 ``PROPERTY_PC1``, ``PROPERTY_PC2``
-    the two principal components of the amino-acid property matrix, as fitted and vendored in
-    ``mhcmatch/data/ipred_mhc1.json`` (``residue_scores``). Copied verbatim so the basis is
-    readable without the fitted artifact that first carried it.
+    the first two principal components of the 20 x 142 amino-acid **property** matrix -- the
+    ``DESCRIPTORS`` / ``HYDROPHOBICITY`` tables in this module, column-standardized over the 20
+    residues, SVD. **Derived/computed and label-free**, so identical under every refit; the sign
+    convention is that each component's largest-magnitude residue score is positive. Regenerate
+    with ``python bench/ipred/pca.py`` in the 2026-mhcmatch-benchmark repo. These vectors were
+    first vendored inside ``ipred_mhc1.json`` (``residue_scores``); that artifact was removed in
+    0.22.0 and they are self-contained here, which is why the basis outlived it.
 ``MJ_PARTITION``
     tcren 2.8.0 ``src/tcren/data/MJ1985_partition_energies.csv`` = AAindex MIYS850101
     (Miyazawa & Jernigan 1985 effective contact/transfer energies). Larger = more
@@ -241,9 +245,10 @@ HYDROPHOBICITY: dict[str, dict[str, float]] = {
 MJ_PARTITION: dict[str, float] = {"A": 2.36, "C": 3.36, "D": 1.67, "E": 1.74, "F": 4.37, "G": 2.06, "H": 2.41, "I": 4.17, "K": 1.23, "L": 3.93, "M": 4.22, "N": 1.7, "P": 1.89, "Q": 1.75, "R": 1.92, "S": 1.81, "T": 2.04, "V": 3.49, "W": 3.82, "Y": 2.91}
 
 
-#: PC1 of the amino-acid property matrix, the axis :mod:`mhcmatch.ipred` sums over the peptide and
-#: the ``phys`` block of :mod:`mhcmatch.complement` projects onto. Vendored here rather than read
-#: back out of ``ipred_mhc1.json``, so the basis outlives the fitted artifact that first carried it.
+#: PC1 of the amino-acid property matrix -- the axis the ``phys`` block of
+#: :mod:`mhcmatch.complement` projects onto, and the one the retired ``ipred`` summed over the
+#: peptide. Vendored here rather than read back out of a fitted artifact, which is why the basis
+#: outlived the one that first carried it (``ipred_mhc1.json``, removed in 0.22.0).
 PROPERTY_PC1: dict[str, float] = {"A": 1.254672, "C": 4.346936, "D": -9.365844, "E": -8.183104, "F": 10.105378, "G": -2.007487, "H": -3.394648, "I": 10.300859, "K": -8.199014, "L": 8.838052, "M": 6.67471, "N": -6.953567, "P": 1.207809, "Q": -6.791976, "R": -9.794956, "S": -4.572944, "T": -2.095019, "V": 7.332347, "W": 7.60184, "Y": 3.695956}
 
 #: PC2 of the same matrix, the second component of the same two-component basis.

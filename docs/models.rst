@@ -49,8 +49,9 @@ One letter per parameter, in a fixed canonical order — presentation, then reco
      - ``log1p(TPM)``, observed or reference-imputed
    * - ``V``
      - vanilla physicochemistry
-     - :mod:`mhcmatch.ipred`
-     - the 13-parameter calibrated log-odds
+     - ``mhcmatch.ipred`` — **retired**
+     - the 13-parameter calibrated log-odds. Shipped v0.9.0–0.21.0, removed in 0.22.0; the letter
+       and its fitted coefficients stay (:ref:`ipred-legacy`)
    * - ``C``
      - complementarity
      - :mod:`mhcmatch.complement`
@@ -85,11 +86,18 @@ One letter per parameter, in a fixed canonical order — presentation, then reco
 ``V`` is "vanilla", not "ipred"
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-:mod:`mhcmatch.ipred` is the *old* recognition term and :mod:`mhcmatch.complement` is what replaced
+``mhcmatch.ipred`` was the *old* recognition term and :mod:`mhcmatch.complement` is what replaced
 it — the same axis at two generations, with ``ipred`` a strict special case of ``complement``.
 Naming the letter after the module would have hidden that. Naming it after the generation makes
 ``BDEVF`` legible as "the old model" at a glance, and ``V`` and ``C`` are not summed into one design
 without saying why.
+
+**That naming decision is what let the letter outlive the module.** ``ipred`` was removed in
+**0.22.0**, last shipped in **0.21.0** (:ref:`ipred-legacy`). ``BDEVF`` keeps its name and the
+fitted coefficients below, because a published model name and its recorded numbers do not change
+when an implementation is retired; :mod:`mhcmatch.mimicry` is still documented as fitted residual to
+it. Nothing in ``GRAND``, the shipped aggregate, was touched — ``V`` was never one of its seven
+terms.
 
 There is now a third generation, and the same rule applies to it: ``C_phys`` + ``K`` is what
 ``C`` reduces to once each half has to justify its parameters (:doc:`burial`, :doc:`corpus`). It
@@ -357,7 +365,8 @@ A recognition term is worth almost nothing on a peptide that is not presented an
 that is; an additive predictor has one coefficient per term and no way to say that. The product
 collapses to presentation-only when the recognition sigmoid saturates.
 
-**Interactions were fitted, not assumed.** ``binder × para`` and ``binder × ipred`` entered as an
+**Interactions were fitted, not assumed.** ``binder × para`` and ``binder × ipred`` (the retired
+physicochemical term, :ref:`ipred-legacy`) entered as an
 explicit product block over main effects: nested LRT **χ² = 1.78 on 3 df, p = 0.619** — no
 interaction *within* a cohort. The interplay is real but sits **between** cohorts, with the fitted
 weight on everything-beyond-presentation running from 0.07 on a raw exome screen to 0.91 on a
@@ -416,9 +425,9 @@ The mapping, for when a result cites one:
    * - artifact
      - parameters
      - this scheme
-   * - ``ipred_mhc1.json``
+   * - ``ipred_mhc1.json`` — **retired, last shipped in 0.21.0**
      - 13 physicochemical
-     - ``V``
+     - ``V`` (:ref:`ipred-legacy`)
    * - ``complement_mhc1_{human,mouse}.json``
      - six blocks
      - ``C``

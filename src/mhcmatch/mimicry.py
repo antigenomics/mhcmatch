@@ -25,8 +25,8 @@ indicators and nothing else -- the sign follows the **reference**, the way the d
 (-0.30, -0.46): priming and tolerance respectively. ``thymus`` is positive on the anchor channel
 (+0.37) and unresolved on the TCR channel (+0.08, ``|z| = 1.1``).
 
-*Residual to* ``BDEVF`` *-- a model that already contains* :mod:`mhcmatch.ipred` *and a foreignness
-term* -- ``bench/results/mimicry_residual.md`` -- a different pattern appears: across all four references
+*Residual to* ``BDEVF`` *-- a model that already contains* ``ipred`` *and a foreignness term* --
+``bench/results/mimicry_residual.md`` -- a different pattern appears: across all four references
 tried, anchor-restricted similarity is positive and TCR-face-restricted similarity is negative, with
 whole-peptide similarity between them and near zero. That is a statement about what mimicry adds to
 *those* terms, not about mimicry on its own, and quoting the second pattern as though it were the
@@ -36,8 +36,13 @@ Mechanistically the channels are different questions either way, which is why th
 Anchor similarity to a *presented* reference is largely presentation -- the peptide carries an anchor
 motif that reference's alleles present -- and it correlates with the binder score (r = +0.25 to
 +0.33). TCR-face similarity correlates with nothing in the binding stack (``|r| < 0.11`` against
-presentation and affinity) but strongly with the physicochemical :mod:`mhcmatch.ipred` log-odds
-(r = +0.73 to +0.82), which is precisely why its sign moves once ``ipred`` enters the model.
+presentation and affinity) but strongly with the physicochemical ``ipred`` log-odds
+(r = +0.73 to +0.82; the row count behind that range was not recorded alongside it), which is
+precisely why its sign moves once ``ipred`` enters the model.
+
+``ipred`` -- the legacy physicochemical predictor -- shipped v0.9.0-0.21.0 and was **removed in
+0.22.0** (:ref:`ipred-legacy`). ``BDEVF`` keeps its name and its fitted coefficients: the letter
+``V`` names the *generation*, not the module.
 
 **Scores are log-odds, calibration is separate and explicit.** :func:`score` returns signed
 contributions and their sum on the log-odds scale, which is corpus-free. :func:`probability` maps

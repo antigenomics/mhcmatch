@@ -151,23 +151,25 @@ peptide onto that one axis. This has a practical consequence: adding more hydrop
 ``scale_names`` adds columns but almost no directions. :doc:`property_basis` states the measurement,
 including why running PCA on the Kidera factors specifically is a no-op.
 
-The axis is shipped, so you do not have to recompute it. :mod:`mhcmatch.ipred` is the fitted model
-built on it — two components plus length, thirteen parameters, returning a calibrated probability:
+The axis itself is shipped, so you do not have to recompute it — the frozen per-residue loadings
+are :data:`mhcmatch.data.aa_tables.PROPERTY_PC1` and
+:data:`~mhcmatch.data.aa_tables.PROPERTY_PC2`:
 
 .. code-block:: python
 
-   from mhcmatch import ipred
+   from mhcmatch.data import aa_tables
 
-   ipred.feature_names()                   # ['pc1', 'pc2', 'length']
-   ipred.features("GILGFVFTL")             # [49.41, 23.156, 9.0]   (sums along the sequence)
-   ipred.p_immunogenic("GILGFVFTL")        # 0.6806
-   ipred.p_immunogenic("AAAKKKDDD")        # 0.3052
-
-   sorted(ipred.residue_scores(), key=lambda a: -ipred.residue_scores()[a][0])
+   sorted(aa_tables.PROPERTY_PC1, key=lambda a: -aa_tables.PROPERTY_PC1[a])
    # ['I', 'F', 'L', 'W', 'V', 'M', 'C', 'Y', 'A', 'P', 'G', 'T', 'H', 'S', 'Q', 'N', 'E', 'K', 'D', 'R']
 
-Use :func:`mhcmatch.ipred.p_immunogenic` when you want the shipped answer and
-:func:`mhcmatch.immuno.features` when you want to fit your own. The two are not alternatives to the
+The fitted model built on that axis is :func:`mhcmatch.complement.score`, which reads PC1/PC2 and
+length as its ``phys`` block and adds five more (:doc:`complementarity`). Its predecessor
+:mod:`!mhcmatch.ipred` — two components plus length, thirteen parameters, a calibrated
+``P(immunogenic)`` — **shipped through 0.21.0 and was removed in 0.22.0**; what it was, how it
+scored and why it went is recorded in full at :ref:`ipred-legacy`.
+
+Use :func:`mhcmatch.complement.score` when you want the shipped answer and
+:func:`mhcmatch.immuno.features` when you want to fit your own. Neither is an alternative to the
 presentation heads: presentation asks whether a peptide reaches the surface, this asks which of the
 peptides that do are recognised.
 

@@ -122,8 +122,7 @@ The commands, by axis
      - rank neoantigen candidates, from a FASTA of windows or an already-scored table. Emits
        ``occupancy`` (equilibrium fraction of MHC held, defined with or without a wild type) beside
        ``agretopicity`` (reported, not fitted — see :ref:`occupancy-vs-agretopicity`), plus
-       ``n_alleles_presenting`` / ``alleles_presenting`` and ``physchem_ipred`` (reported, **not in
-       the model**). ``--extended`` appends the remaining mimicry channels, ``--annotate`` what each
+       ``n_alleles_presenting`` / ``alleles_presenting``. ``--extended`` appends the remaining mimicry channels, ``--annotate`` what each
        candidate resembles — **columns only, the ordering is unchanged**.
        **The aggregate computes every one of its features before scoring** — a model emits the
        features it used and refuses to run without them (0.20.0). ``GRAND`` takes its corpus term

@@ -61,9 +61,9 @@ Every command line behind these calls is in :doc:`cli`; the recognition axis is
    aff.amplitude("NLVPMVATL", "NLVPMVATV", "HLA-A*02:01")     # (wild-type, mutant, allele)
 
    # physicochemical immunogenicity -- no store, no download (see "Immunogenicity features")
-   from mhcmatch import immuno, ipred
+   from mhcmatch import complement, immuno
    immuno.features("GILGFVFTL")                    # 141 features = 20 scales x 7 statistics + length
-   ipred.p_immunogenic("GILGFVFTL")                # shipped 13-parameter calibrated P(immunogenic)
+   complement.score(["GILGFVFTL"])                 # the shipped recognition log-odds (vectorised)
 
 Pipeline integration
 --------------------

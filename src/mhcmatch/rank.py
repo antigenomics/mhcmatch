@@ -53,7 +53,7 @@ __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
 #: a 57-column table until 2026-08-18.
 BASE_COLUMNS: tuple = ("rank", "peptide", "allele", "gene", "score", "presentation", "binder",
                        "occupancy", "agretopicity", "physchem", "expression", "expr_imputed",
-                       "n_alleles_presenting", "alleles_presenting", "physchem_ipred",
+                       "n_alleles_presenting", "alleles_presenting",
                        "imputed", "wt_peptide", "known_epitope")
 #: The aggregate's recognition features, emitted whenever the aggregate is what scored. A model
 #: emits the features it used and refuses to run without them.
@@ -284,11 +284,6 @@ class Ranked:
     #: model until a benchmark says it earns one.
     n_alleles_presenting: int = 0
     alleles_presenting: str = ""
-    #: :func:`mhcmatch.ipred.log_p` -- the legacy physicochemical predictor, reported and
-    #: **explicitly not in the model**. It is the best single feature on both cohorts where the
-    #: fitted aggregate sits at chance (VACCIMEL AUROC 0.6324 on 93 rows / 27 positives, GBM 0.6450
-    #: on 109 / 26; ``bench/results/neoag_cohort_scan.md``), which is worth being able to see.
-    physchem_ipred: float = float("nan")
     #: Which of the model's features had to take their training mean for **this** row, joined by
     #: ";". Empty when every feature was observed. A candidate with no IC50 has no occupancy and a
     #: frameshift has no wild type; those are candidates with incomplete data, not a different
@@ -354,11 +349,12 @@ def _recognition(peptide: str, species: str = "human", cls: str = "mhc1") -> flo
     residues as anchors and returns a confident, wrong number. Scoring class-II candidates on
     presentation alone is the honest option until a class-II table exists.
 
-    Chosen over ``posbayes.llr`` -- which it contains as its ``aa`` block -- and over
-    ``ipred.log_p``, on peptide-grouped 5-fold CV over all four deposited corpus arms x both hosts:
-    it wins every one (chowell/human 0.7188 vs 0.7111, chowell/mouse 0.7718 vs 0.7582,
-    kesmir/human 0.6580 vs 0.6369). ``ipred``'s figures on that corpus are *in-sample*, since it is
-    its training set.
+    Chosen over ``posbayes.llr`` -- which it contains as its ``aa`` block -- and over the retired
+    ``ipred.log_p`` (removed in 0.22.0; the legacy record is
+    :ref:`ipred-legacy`), on peptide-grouped 5-fold CV over all four deposited corpus arms
+    x both hosts: it wins every one (chowell/human 0.7188 vs 0.7111, chowell/mouse 0.7718 vs
+    0.7582, kesmir/human 0.6580 vs 0.6369; row and positive counts were not recorded per cell).
+    ``ipred``'s figures on that corpus are *in-sample*, since it is its training set.
 
     ``species`` selects the fitted table: ``"human"`` (464,161 rows) or ``"mouse"`` (47,140). The
     two hosts are never pooled -- different MHC, different thymic repertoires.
@@ -482,15 +478,6 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate") -> list:
     return rows
 
 
-def _ipred_logp(peptide: str) -> float:
-    """:func:`mhcmatch.ipred.log_p`, or NaN when the peptide is out of its fitted range."""
-    try:
-        from . import ipred
-        return float(ipred.log_p(peptide))
-    except Exception:
-        return float("nan")
-
-
 def _fill_channels(rows: list, channels) -> None:
     """Write the aggregate's four recognition channels into ``Ranked.components`` before scoring.
 
@@ -558,7 +545,6 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
                            physchem=_recognition(p.peptide, cls=cls), expression=expr,
                            expression_imputed=imputed, wt_peptide=p.wt_peptide,
                            known_epitope=_known(p.peptide, refs),
-                           physchem_ipred=_ipred_logp(p.peptide),
                            n_alleles_presenting=p.n_alleles_presenting,
                            alleles_presenting=p.alleles_presenting))
     _fill_channels(rows, channels)
@@ -602,7 +588,7 @@ def rank_table(path: str, *, channels=None,
                        source=os.path.basename(path), presentation=pres, binder=pres,
                        occupancy=occupancy(nm) if (nm := _ic50_of(rec)) is not None else float("nan"),
                        physchem=_recognition(pep, cls=cls), expression=expr, expression_imputed=imputed,
-                       known_epitope=_known(pep, refs), physchem_ipred=_ipred_logp(pep))
+                       known_epitope=_known(pep, refs))
             try:
                 r.components["score_builtin"] = float(rec["score"]) if rec.get("score") else None
             except ValueError:

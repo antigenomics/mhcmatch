@@ -57,7 +57,8 @@ Capabilities
 - **Pseudosequence diffusion** — allele similarity, clustering, and kernel-shrinkage pooling that
   rescues rare alleles (anchor-factored, with learned per-pocket groove weights).
 - **Physicochemical immunogenicity** — 141 features per peptide over selectable TCR-facing position
-  schemes (:doc:`immunogenicity`), plus a shipped 13-parameter calibrated ``P(immunogenic)``.
+  schemes (:doc:`immunogenicity`), on a shipped hydropathy basis
+  (:doc:`property_basis`).
 - **TCR precursor frequency** — estimators of how much of a repertoire can recognise an epitope:
   the original six plus the four vdjmatch added (optional ``[precursor]`` extra).
 - **Complementarity** — the recognition axis. In the shipped model it is exactly two factors,

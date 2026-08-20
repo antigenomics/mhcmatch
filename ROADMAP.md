@@ -53,7 +53,7 @@ diffusion model, and the downstream predictors.
 | Binding affinity (IC50 nM) + neoantigen amplitude/DAI; structure MJ ΔΔG | `mhcmatch.PottsAffinity`, `mhcmatch.structure` | **v0.4**, weights refit v0.7.1 (`bench/affinity/`; open issues in §6c) |
 | Physicochemical epitope featurization (Kidera/VHSE/MJ + run structure) | `mhcmatch.immuno` | **v0.9.0** (§5a) |
 | Vendored AA property tables (17 families, 102 components, 45 hydrophobicity scales) | `mhcmatch.data.aa_tables` | **v0.9.0** (§5a) |
-| Calibrated physicochemical `log P(immunogenic)`, 13 parameters | `mhcmatch.ipred` | **v0.9.0** (§5a) |
+| ~~Calibrated physicochemical `log P(immunogenic)`, 13 parameters~~ | ~~`mhcmatch.ipred`~~ | **v0.9.0**–**v0.21.0**, **retired in v0.22.0** — superseded by `complement` then `complement.burial`; legacy record with every measured number in `docs/complementarity.rst` |
 | Position-role naive Bayes over residue identity (prior-free LLR) | `mhcmatch.posbayes` | **v0.9.0** (§5a) |
 | **Complementarity** — six feature blocks, linear head, vectorised | `mhcmatch.complement` | **v0.16.0**, class I + class II (§5b) |
 | Recognition-head dispatcher (`complement` / `posbayes` / `physchem_glm` / `esm64_glm`) | `mhcmatch.recognition` | **v0.16.0** |
@@ -366,8 +366,8 @@ an unreleased floor broke the whole install rather than just an extra.
 Analysis in `2026-mhcmatch-benchmark` (`bench/results/complementarity.md`, `neoag_aggregate.md`,
 `neoag_gate.md`). This section records only what landed **in the library**.
 
-**`mhcmatch.complement` — the recognition axis, shipped.** Six blocks: `ipred`'s physicochemistry
-and length; the same components split MHC-facing vs TCR-facing; MJ1996 on the anchors and TCRen
+**`mhcmatch.complement` — the recognition axis, shipped.** Six blocks: the retired `ipred`'s
+physicochemistry and length; the same components split MHC-facing vs TCR-facing; MJ1996 on the anchors and TCRen
 marginalised over 28M real CDR3 loops on the TCR face; contiguous-hydrophobic-run motifs; per-role
 residue log-odds; adjacent TCR-facing dipeptides. Prior-free log-odds, `posterior()` for a
 probability at the caller's own base rate.
@@ -426,7 +426,8 @@ within-screen.
 - **Signs follow the reference, as the design predicts**: `viral` +0.605 anchor (z = +16.8) / +0.443
   tcr (+5.6), `self` −0.304 / −0.464, `thymus` +0.368 anchor and unresolved on tcr (+0.075).
 - **Two conditionings, two sign patterns, and they must not be conflated.** Residual to a model that
-  already contains `ipred` and a foreignness term, the pattern is anchor-positive / TCR-face-negative
+  already contains `ipred` (retired in 0.22.0; `BDEVF` keeps its name and coefficients) and a
+  foreignness term, the pattern is anchor-positive / TCR-face-negative
   across *every* reference. That is a statement about what mimicry adds to those terms. The module
   docstring separates them deliberately; so should anything quoting them.
 - **Not collinear with the presentation stack** (max |r| 0.19 affinity, 0.068 agretopicity, 0.034

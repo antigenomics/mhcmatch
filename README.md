@@ -218,8 +218,10 @@ marginalised over 28 M real CDR3 loops** on the TCR-facing side; contiguous-hydr
 per-role **residue log-odds**, with per-length and position-zone tables (class I bins 8/9/10/11+ by
 relative third of the TCR face; class II bins 14/16/19 by register zone, via `cls="mhc2"`); and
 adjacent TCR-facing dipeptides. Fitted per species and never pooled across hosts. Vectorised — a
-whole published corpus scores in seconds, so pass a list. `mhcmatch.posbayes` and `mhcmatch.ipred`
-are strict special cases of it and ship alongside for comparison.
+whole published corpus scores in seconds, so pass a list. `mhcmatch.posbayes` is a strict special
+case of it and ships alongside for comparison. So was `mhcmatch.ipred`, the legacy physicochemical
+predictor — **shipped v0.9.0-0.21.0, removed in 0.22.0**; the legacy record, with every measured
+number, is in `docs/complementarity.rst` ("`ipred`: the retired predecessor").
 
 **The recognition axis reduces to one published scale, and the reduction is measured.** Split into
 its chemistry half and its fitted-identity half — exact partial sums via `score(blocks=...)` — the
@@ -347,7 +349,7 @@ letter per parameter, in a fixed canonical order:
 | `D` | differential agretopicity | `PottsAffinity.dai` | `log10(Kd_WT / Kd_MT)` vs the recovered wild type. **Reported, not fitted** — it does not resolve in any parameterisation tested |
 | `O` | occupancy | `rank.occupancy` | `a/(1+a)`, `a = [P]/Kd` — the equilibrium fraction of MHC held. Absolute, so additive to the allele-relative `B`; needs no wild type |
 | `E` | expression | `mhcmatch.expression` | `log1p(TPM)`, observed or reference-imputed |
-| `V` | vanilla physicochemistry | `mhcmatch.ipred` | the 13-parameter calibrated log-odds |
+| `V` | vanilla physicochemistry | `mhcmatch.ipred` — **retired in 0.22.0** | the 13-parameter calibrated log-odds; the letter and its fitted coefficients stay |
 | `C` | complementarity | `mhcmatch.complement` | the six-block recognition log-odds |
 | `R` | Łuksza recognition | `mhcmatch.luksza` | `Z/(1+Z)`, a soft sum over near-matches rather than a distance cut |
 | `F` | foreignness | viral IEDB ligandome | distance to the nearest viral epitope |
@@ -360,10 +362,11 @@ adds mimicry. Suffixes are fitting choices rather than parameters: `-scr` (scree
 nuisance columns). The screen-balanced refits were measured and dropped; the benchmark's `MODELS.md`
 records what they were.
 
-**`V` is "vanilla", not "ipred".** `ipred` is the *old* recognition term and `complement` is what
+**`V` is "vanilla", not "ipred".** `ipred` was the *old* recognition term and `complement` is what
 replaced it — the same axis at two generations, with `ipred` a strict special case of `complement`.
 Naming the letter after the generation rather than the module makes `BDEVF` legible as "the old
-model" at a glance.
+model" at a glance — and is what let the letter survive the module's removal in 0.22.0. `BDEVF`
+keeps its name and its recorded coefficients; `GRAND`, the shipped aggregate, never carried `V`.
 
 **`P` is not a second affinity term.** Both end up as a `%rank` against the same kind of background,
 so the mechanism doesn't separate them — the training data and the target do. `A` is a Potts model
