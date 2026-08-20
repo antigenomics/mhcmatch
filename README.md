@@ -75,6 +75,10 @@ mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor 
 | Which peptides in this protein are presented? | `mhcmatch scan p.fasta --correction bh` | `store.scan_protein` |
 | What is the full MHC-II ligand around this core? | `mhcmatch span CORE --protein p.fasta` | `ligand.presented_span` |
 | Build a vaccine cassette from ranked candidates | `mhcmatch vector --candidates units.tsv --n0 8 --screen` | `vector.select` / `vector.order` |
+| …spread over allotype **and** mechanism, not just allotype | — | `vector.select(block=…)` |
+| What is this cassette worth — how many *independent* shots? | — | `portfolio.p_at_least` / `n_effective` |
+| Are my own response counts over-dispersed? | — | `portfolio.betabinom_rho` |
+| Which candidates can no weighted score ever pick? | — | `portfolio.linearly_supported` |
 | …and a map of it a viewer can draw | `mhcmatch vector ... --map c.tsv --map-json c.json` | `vector.epitope_map` |
 | Strip frameshift-prone motifs from the CDS | `mhcmatch deslip cassette.fa` | `vector.slippery_sites` |
 | Split a peptide into anchor / TCR-facing parts | `mhcmatch decompose PEP` | `store.decompose` |
@@ -86,6 +90,31 @@ Full command reference, grouped by task: [the CLI page](https://antigenomics.git
 `restriction` is the specificity axis (**which allele**). They answer different questions and a
 peptide can top one and not the other — `NLVPMVATV` is unambiguously A\*02:01-restricted yet bands
 mid-pack against A\*02:01's own ligands.
+
+## Composition is not ranking
+
+Top-*m* by a score maximises the expected **number** of responding units. A vaccine needs the
+probability that **at least one** works in *this* donor, and the two agree only if the units respond
+independently. They do not: on the adjuvant TNBC mRNA vaccine trial of Sahin et al.
+(*Nature* 2026;651:1088–1096) the intra-patient correlation is ρ = 0.124 (p = 1.0×10⁻³), 3.45× the
+binomial variance.
+
+`vector.select` already saturates a budget per allotype, so diversification falls out of the
+arithmetic rather than a quota. `block=` generalises that to any partition — the intended one pairs
+the allotype with the mechanism a unit was picked on. `mhcmatch.portfolio` is the read-out: what a
+proposed set is worth, and which candidates no weighted score can reach.
+
+```python
+from mhcmatch import portfolio, vector
+
+corner = portfolio.corner(Z)                       # Z: candidates x objectives, higher is better
+sel = vector.select(units, n0=20.0, block=lambda u: (u.allele, corner_of[u.peptide]))
+ge1 = portfolio.p_at_least(p, block, q=0.5, k=1)
+portfolio.n_effective(p, ge1)                      # this cassette in independent units
+```
+
+Full treatment, including why a gradient-boosted score fixes the geometry but not the objective:
+[the composition page](https://antigenomics.github.io/mhcmatch/portfolio.html).
 
 ## What `rank` costs, and why it did not before
 

@@ -190,22 +190,42 @@ class Selection:
     dropped: list = field(default_factory=list)
     n0: float = 0.0
     trace: list = field(default_factory=list)
+    keys: list = field(default_factory=list)
+
+    def _grouped(self) -> dict:
+        """``{block key: [p, ...]}`` for the blocks the rule actually charged against.
+
+        Falls back to allotype when ``keys`` is absent, so a :class:`Selection` unpickled from
+        before the ``block`` parameter existed still reports the same numbers it always did.
+        """
+        keys = self.keys if len(self.keys) == len(self.units) else [u.allele for u in self.units]
+        by: dict = {}
+        for key, u in zip(keys, self.units):
+            by.setdefault(key, []).append(u.p)
+        return by
 
     @property
     def expected_yield(self) -> float:
-        """``sum_a n0 * S_a / (n0 + n_a)`` — expected responses under the saturation model."""
-        by = {}
-        for u in self.units:
-            by.setdefault(u.allele, []).append(u.p)
-        return sum(self.n0 * sum(ps) / (self.n0 + len(ps)) for ps in by.values())
+        """``sum_b n0 * S_b / (n0 + n_b)`` — expected responses under the saturation model.
+
+        Grouped by whatever :func:`select` blocked on, not unconditionally by allotype: the yield
+        has to be computed against the same partition the stopping rule spent its budget on, or it
+        describes a cassette that was never built.
+        """
+        return sum(self.n0 * sum(ps) / (self.n0 + len(ps)) for ps in self._grouped().values())
 
     def per_allele(self) -> dict:
         """``{allele: (n_units, summed p, saturated yield)}`` — where the budget actually went."""
-        by = {}
+        by: dict = {}
         for u in self.units:
             by.setdefault(u.allele, []).append(u.p)
         return {a: (len(ps), sum(ps), self.n0 * sum(ps) / (self.n0 + len(ps)))
                 for a, ps in sorted(by.items())}
+
+    def per_block(self) -> dict:
+        """``{block key: (n_units, summed p, saturated yield)}`` for the rule's own partition."""
+        return {k: (len(ps), sum(ps), self.n0 * sum(ps) / (self.n0 + len(ps)))
+                for k, ps in sorted(self._grouped().items(), key=lambda kv: str(kv[0]))}
 
 
 @dataclass
@@ -556,7 +576,7 @@ def self_origin_risk(proteome, symbols, tissues=ESSENTIAL_TISSUES, min_tpm: floa
     return risk
 
 
-def select(candidates, n0: float, cls: str | None = None) -> Selection:
+def select(candidates, n0: float, cls: str | None = None, block=None) -> Selection:
     """Apply the per-allotype stopping rule (module docstring) to ranked ``candidates``.
 
     Candidates are grouped by :attr:`Unit.allele` and sorted by :attr:`Unit.p` descending within each
@@ -566,16 +586,27 @@ def select(candidates, n0: float, cls: str | None = None) -> Selection:
     ``n0`` is per-allotype capacity and must be positive. There is no default, deliberately — the
     literature does not fix it (see the module docstring), so a caller who has not decided what to
     assume has not finished designing the cassette.
+
+    ``block`` chooses what the budget saturates against. The default is the allotype, which is the
+    rule as shipped and as described in the module docstring. Passing a callable ``Unit -> hashable``
+    blocks on something else, and the intended use is a *pair*: allotype together with the mechanism
+    a unit was selected on, e.g.
+    ``block=lambda u: (u.allele, corner[u.peptide])``. The arithmetic does not care what the key
+    means; what it assumes is that two units sharing a key share a way of failing. Diversification
+    across whatever that is falls out of the saturation, exactly as it does across allotypes — see
+    :mod:`mhcmatch.portfolio` for the response model this is the greedy rule for, and for the
+    measured intra-patient correlation that motivates blocking on more than the allotype.
     """
     if n0 <= 0:
         raise ValueError(f"n0 must be positive per-allotype capacity, got {n0}")
+    key = block if block is not None else (lambda u: u.allele)
     pool = [c for c in candidates if cls is None or c.cls == cls]
     by = {}
     for c in pool:
-        by.setdefault(c.allele, []).append(c)
+        by.setdefault(key(c), []).append(c)
 
-    kept, dropped, trace = [], [], []
-    for allele in sorted(by):
+    kept, dropped, trace, keys = [], [], [], []
+    for allele in sorted(by, key=str):
         ranked = sorted(by[allele], key=lambda u: (-u.p, u.gene, u.peptide))
         s, n = 0.0, 0
         stopped = False
@@ -588,11 +619,12 @@ def select(candidates, n0: float, cls: str | None = None) -> Selection:
                               "threshold": threshold, "kept": False})
                 continue
             kept.append(c)
+            keys.append(allele)
             trace.append({"allele": allele, "gene": c.gene, "p": c.p,
                           "threshold": threshold, "kept": True})
             s += c.p
             n += 1
-    return Selection(units=kept, dropped=dropped, n0=float(n0), trace=trace)
+    return Selection(units=kept, dropped=dropped, n0=float(n0), trace=trace, keys=keys)
 
 
 def _path_cost(order_idx, cost) -> float:
