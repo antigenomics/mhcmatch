@@ -443,13 +443,14 @@ def _aggregate_channels(cls: str, no_self: bool):
 
     Returns ``list[peptide] -> {C_corpus_thymus, C_corpus_missing}``.
 
-    **Since 0.21.0 this is cheap.** ``BOECRT`` needed ``self_tcr`` -- its second-largest
-    coefficient -- so an aggregate score forced the host-proteome reference index: 6 min 15 s and
-    ~7.5 GB, the largest single cost in the package, and a cost ``--no-self`` could not be allowed
-    to skip. ``GRAND`` takes its corpus term from the **thymic** channel alone (26,513 peptides),
-    so the proteome index is off the ranking path and ``--no-self`` no longer conflicts with
-    ``--score aggregate``. It still matters for ``--extended``/``--annotate``, which report the
-    ``self`` mimicry channels, and for the safety scan.
+    **Since 0.24.0 there is no search here at all.** ``BOECRT`` needed ``self_tcr`` -- its
+    second-largest coefficient -- so an aggregate score forced the host-proteome reference index:
+    6 min 15 s and ~7.5 GB, the largest single cost in the package. 0.21.0 took the corpus term down
+    to the thymic channel alone, and 0.24.0 replaced the neighbour search with a
+    :func:`mhcmatch.mimicry.corpus_spectrum` table contraction -- so the ranking path builds no trie,
+    reads only the thymic deposit, and gets the **exact** Luksza sum rather than a radius-2
+    truncation of it. ``--no-self`` still matters for ``--extended``/``--annotate``, which report the
+    ``self`` mimicry channels and do need the index, and for the safety scan.
 
     ``C_phys`` is deliberately absent: :func:`mhcmatch.rank._finish` computes it, because it is a
     matrix product against a published residue vector and needs no index at all.
@@ -457,8 +458,12 @@ def _aggregate_channels(cls: str, no_self: bool):
     from . import mimicry as MM
 
     def channels(peptides):
-        refs = MM.load_references(cls=cls, with_self=False)
-        rows = MM.corpus_R(list(peptides), refs, cls=cls, components=("thymus",))
+        spec = MM.corpus_spectrum(cls=cls, components=("thymus",))
+        rows = MM.corpus_R(list(peptides), spec, cls=cls)
+        # `C_corpus_missing` is now always 0: the exact sum has a value for every canonical peptide
+        # of an admitted length, so there is no gap left to flag. It is still emitted because the
+        # vendored artifact declares seven features, and a model scores on the features it declares
+        # or not at all. It leaves the model in the refit that retires it.
         return {"C_corpus_thymus": [r.get("thymus", float("nan")) for r in rows],
                 "C_corpus_missing": [0.0 if "thymus" in r else 1.0 for r in rows]}
 
