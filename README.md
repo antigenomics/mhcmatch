@@ -216,6 +216,47 @@ adjacent TCR-facing dipeptides. Fitted per species and never pooled across hosts
 whole published corpus scores in seconds, so pass a list. `mhcmatch.posbayes` and `mhcmatch.ipred`
 are strict special cases of it and ship alongside for comparison.
 
+**The recognition axis reduces to one published scale, and the reduction is measured.** Split into
+its chemistry half and its fitted-identity half — exact partial sums via `score(blocks=...)` — the
+two behave oppositely: the identity half wins in-corpus and the chemistry half transfers. Scoring
+all **576** candidate columns (every vendored residue vector × {anchor, TCR} × {sum, mean}) by ΔBIC
+*inside* the general model keeps exactly one: **the Rose burial propensity summed over the TCR
+face**, at z **+4.57**, the second-largest coefficient of ten behind expression alone, against the
+sixteen-column chemistry block's +0.18 in the same slot. Rose's scale is not a hydrophobicity scale
+— it is the mean fraction of solvent-accessible area a residue loses on folding ([Rose et al.,
+*Science* 1985](https://doi.org/10.1126/science.4023714)) — so summed over the exposed face it
+scores the area a receptor *could* bury. Because its basis is imported rather than fitted it cannot
+memorise the corpus's cysteine artefact: correlation with per-peptide cysteine count is **+0.108**
+against the shipped score's **+0.688**. Full derivation in [docs/burial.rst](docs/burial.rst) and
+§11 of the theory appendix; all of it regenerable from `bench/immuno/` in the benchmark repo.
+
+Four opt-in parameters came out of that work, all defaulting to the shipped behaviour so no recorded
+number moves: `blocks=` (score a subset of blocks, exact partial sum), `mask_cys=` (zero cysteine in
+the fitted tables, as `posbayes` does by construction), `positions="profile"` (read the chemistry
+over the crystallographic per-position TCR-contact profile rather than a binary anchor mask), and
+`paratope="contact"` (marginalise TCRen over the receptor residues that actually contact, rather
+than over the whole CDR3 loop).
+
+The other half of that axis is not chemistry and is not fitted on labels either. `C_aa` — the
+residue log-odds — is estimated on Chowell, which separates **foreign** from **self and presented**:
+a statement about *passing thymic selection*, not about whether a T cell responds to a somatic
+mutation. `mimicry.corpus_R` replaces it with a label-free neighbour density against three
+references, split by *when a T cell meets them*:
+
+| channel | what it is | reads as | fitted sign |
+|---|---|---|--:|
+| `thymus` | thymic immunopeptidome — **the only one that enters selection** | danger | +0.1761 (z +3.35) |
+| `self` | host proteome, met in the periphery | tolerance | −0.1812 (z −1.44) |
+| `viral` | foreign ligandome — **never seen during selection** | reference | +0.0166 (z +0.23) |
+
+The thymic channel is positive because the thymus is not a random sample of self: mTECs
+promiscuously express tissue-restricted antigens under *Aire* and *Fezf2* precisely to purge the
+clones that would cause autoimmunity, so thymic display is enriched for the self **worth tolerising
+against**. Measured on the burial axis, thymic ligands sit above *non-thymic presented* self at
+Cohen's d = +0.1650 (p = 1.0×10⁻⁸⁰) — presentation held constant, so the effect is thymus-specific.
+`thymus` and `self` are both similarity to *self* sets, and their opposite signs are what no
+single-mechanism account gives. See [docs/corpus.rst](docs/corpus.rst).
+
 **Evidence that outranks a model.** `mhcmatch.known` carries five reference sets built from the
 public deposits — confirmed tumour neoantigens, peptides the screens tested and found
 non-immunogenic, IEDB-immunogenic epitopes, the thymic self-immunopeptidome, the viral ligandome. An

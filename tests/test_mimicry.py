@@ -163,3 +163,44 @@ def test_backing_reads_str_pairs_from_arrays():
     b = mimicry._Backing(np.array([b"GILGFVFTL"], dtype="S9"), np.array([b"FLU"], dtype="S3"))
     assert len(b) == 1
     assert b[0] == ("GILGFVFTL", "FLU")
+
+
+def test_corpus_R_is_the_fitted_luksza_form():
+    """`corpus_R` must compute Z = sum_d n_d exp(-k(a0 - (L - d))), not a rescaling of it.
+
+    Two mistakes are silent and both change the ranking rather than the calibration: flipping the
+    sign on `d` (which upweights *distant* neighbours) and dropping the `L` term (which is a real
+    per-row factor because peptide length varies). Either one saturates R -- measured against the
+    fitted column over 328,276 cached peptides, the flipped variant has mean R 0.771 with 77.2% of
+    peptides above 0.5, against a fitted mean of 3.29e-5 and none above 0.5, ranking differently at
+    Spearman +0.705. So the formula is pinned here against its closed form, not merely exercised.
+    """
+    import math
+
+    class _Hit:
+        def __init__(self, score): self.score = score
+
+    counts = {0: 1, 1: 28, 2: 585}                      # a real thymus row: AAAAAAAVL
+    hits = [_Hit(d) for d, c in counts.items() for _ in range(c)]
+
+    class _Index:
+        def search(self, q, params): return hits
+
+    pep = "AAAAAAAVL"                                    # L = 9
+    refs = {("thymus", "tcr", len(pep)): (_Index(), 0, None)}
+    got = mimicry.corpus_R([pep], refs, components=("thymus",))[0]
+
+    k, a0 = mimicry.SHAPES["thymus"]
+    z = sum(c * math.exp(-k * (a0 - (len(pep) - d))) for d, c in counts.items())
+    assert got["thymus"] == pytest.approx(z / (1.0 + z), rel=1e-12)
+    assert [got["thymus_n0"], got["thymus_n1"], got["thymus_n2"]] == [1, 28, 585]
+
+    # the linear regime the appendix documents: Z stays far below 1, so R ~ Z
+    assert z < 1.4e-3
+    assert got["thymus"] == pytest.approx(z, rel=1e-3)
+
+    # nearer neighbours must weigh more -- the sign check that the flipped variant fails
+    solo = {d: {("thymus", "tcr", len(pep)): (type("I", (), {"search": lambda s, q, p, d=d: [_Hit(d)]})(), 0, None)}
+            for d in (0, 1, 2)}
+    r = [mimicry.corpus_R([pep], solo[d], components=("thymus",))[0]["thymus"] for d in (0, 1, 2)]
+    assert r[0] > r[1] > r[2]
