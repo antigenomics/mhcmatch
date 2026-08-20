@@ -6,7 +6,7 @@
 # huggingface_hub cache, so runtime needs no network -- which matters on offline compute nodes.
 #
 # Build (no data staging needed -- the references are auto-fetched):
-#   docker build -t <registry>/mhcmatch:0.22.0 integrations/nextflow/mhcmatch/
+#   docker build -t <registry>/mhcmatch:0.23.0 integrations/nextflow/mhcmatch/
 #
 # mhcmatch and seqtree come from PyPI (pinned via MHCMATCH_VERSION). The build tools are a fallback
 # for platforms without a prebuilt seqtree wheel; on ARM/x86_64 linux the wheel is used directly.
@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
-ARG MHCMATCH_VERSION=0.22.0
+ARG MHCMATCH_VERSION=0.23.0
 RUN pip install --no-cache-dir "mhcmatch==${MHCMATCH_VERSION}"
 
 # Bootstrap the reference ligand panel from the public HF dataset (both tiers, ~12 MB + ~4 MB) into

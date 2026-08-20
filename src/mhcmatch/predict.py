@@ -54,6 +54,11 @@ NATIVE_COLUMNS = ("source", "type", "gene_name", "chrom", "pos", "ref", "alt", "
                   "wt_peptide", "wt_affinity_nm", "agretopicity", "amplitude", "dai",
                   "synth_peptide", "model_peptide", "anchors", "tcr_facing")
 
+#: Appended by ``--core`` to every output that carries it. Never in a default header: the 57-column
+#: :data:`SCORED_COLUMNS` is a pipeline contract, and ``write_scored_csv``'s ``extrasaction="ignore"``
+#: would silently drop these rather than fail, so the opt-in is the flag and not the schema.
+CORE_COLUMNS = ("core", "core_offset", "core_source")
+
 
 @dataclass
 class Prediction:
@@ -88,6 +93,15 @@ class Prediction:
     #: presented by one: it spans three blocks of the response model in `mhcmatch.portfolio`.
     n_alleles_presenting: int = 0
     alleles_presenting: str = ""
+    #: The 9-residue binding core, its 0-based offset, and which register produced it -- the
+    #: NetMHCpan `core`/`Of` pair. `core_source` is `footprint` for class I (both ends anchored, no
+    #: register to choose), `model` when the class-II register came from
+    #: :meth:`mhcmatch.diffusion.AnchorModel.best_register`, and `heuristic` when it came from the
+    #: allele-agnostic one-pass scan. The provenance is a column and not a docs sentence because the
+    #: two registers disagree often on real ligands, and a core nobody can attribute is not evidence.
+    core: str = ""
+    core_offset: int = -1
+    core_source: str = ""
     synth_peptide: str = ""              # peptide to SYNTHESISE (long-peptide vaccine; ~21mer for II)
     model_peptide: str = ""              # peptide to MODEL structurally (TCR:pMHC; ~13mer for II)
     var: dict = field(default_factory=dict)   # parsed variant header
@@ -389,6 +403,7 @@ def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
     k-mer spans the mutation), and the synthesise / model peptides. ``top`` optionally caps binders
     per window (strongest first). Returns ``list[Prediction]``.
     """
+    from .store import binding_core as _binding_core
     model, cal, aff = build_scorer(store, cls, background, footprint, seed)
     # the calibrated combined %rank (presentation x affinity) needs the affinity + Fisher calibrators;
     # both are cached on the store and only fill their per-allele background lazily.
@@ -431,6 +446,9 @@ def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
             presenting.sort()
             p.n_alleles_presenting = len(presenting)
             p.alleles_presenting = ";".join(x[1] for x in presenting)
+            # Same register again: `rstart` is the model's, so the core is the one that was scored.
+            p.core, p.core_offset = _binding_core(pep, cls, register_start=rstart)
+            p.core_source = ("footprint" if cls != "mhc2" else "model") if p.core else ""
             if aff is not None:
                 nm = aff.predict_ic50(pep, a)
                 p.affinity_nm = _round(nm)
@@ -484,14 +502,16 @@ def _blank_nan(x):
     return "" if (x is None or x != x) else x
 
 
-def write_native(preds, path: str) -> None:
-    """Write predictions as a native TSV (one row per predicted binder)."""
+def write_native(preds, path: str, core: bool = False) -> None:
+    """Write predictions as a native TSV (one row per predicted binder).
+
+    ``core=True`` appends :data:`CORE_COLUMNS`; the default header is unchanged."""
     with open(path, "w", newline="") as fh:
         # `lineterminator="\n"`: the csv module defaults to the excel dialect's CRLF, which is
         # wrong for a Unix TSV and is not what the pipelines that consume this emit. Shipped as
         # CRLF from 0.8.0 until 0.14.1, where it broke awk on the last column of every table.
         w = csv.writer(fh, delimiter="\t", lineterminator="\n")
-        w.writerow(NATIVE_COLUMNS)
+        w.writerow(NATIVE_COLUMNS + (CORE_COLUMNS if core else ()))
         for p in preds:
             v = p.var
             w.writerow([p.source, v.get("type", ""), v.get("gene_name", ""), v.get("chrom", ""),
@@ -500,23 +520,30 @@ def write_native(preds, path: str) -> None:
                         _blank_nan(p.affinity_rank), _blank_nan(p.binder_rank), p.binder_band,
                         p.wt_peptide, p.wt_affinity_nm, p.agretopicity, p.amplitude, p.dai,
                         p.synth_peptide, p.model_peptide,
-                        ";".join(str(i) for i in p.anchors), p.tcr_facing])
+                        ";".join(str(i) for i in p.anchors), p.tcr_facing]
+                       + ([p.core, p.core_offset, p.core_source] if core else []))
 
 
-def write_scored_csv(preds, path: str) -> None:
+def write_scored_csv(preds, path: str, core: bool = False) -> None:
     """Write predictions in the pipeline's 57-column ``.epitopes.scored.csv`` schema.
 
     mhcmatch fills the variant-annotation columns (from the header) and the binding columns:
     ``best_allele``, ``affinity`` (IC50 nM), ``affinity_percentile`` (%rank), and ``agretopicity``
     (Kd_MT/Kd_WT for mutation-spanning k-mers). The expression / immunogenicity / composite-score
-    columns are left empty for their own pipeline modules to populate."""
+    columns are left empty for their own pipeline modules to populate.
+
+    ``core=True`` appends :data:`CORE_COLUMNS`. The 57 are a contract with those modules, so the
+    default stays byte-identical; widening it is the caller's explicit choice."""
+    cols = list(SCORED_COLUMNS) + (list(CORE_COLUMNS) if core else [])
     with open(path, "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=SCORED_COLUMNS, extrasaction="ignore",
-                           lineterminator="\n")
+        w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore", lineterminator="\n")
         w.writeheader()
         for p in preds:
             v = p.var
-            row = {c: "" for c in SCORED_COLUMNS}
+            row = {c: "" for c in cols}
+            if core:
+                row.update({"core": p.core, "core_offset": p.core_offset,
+                            "core_source": p.core_source})
             row.update({
                 "type": v.get("type", ""), "subtype": v.get("subtype", ""),
                 "chrom": v.get("chrom", ""), "pos": v.get("pos", ""),

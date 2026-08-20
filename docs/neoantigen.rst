@@ -116,6 +116,36 @@ model. (``physchem_ipred`` was a column here through 0.21.0; the module behind i
 0.22.0 --- :ref:`ipred-legacy`.) ``--extended`` appends the remaining mimicry channels and ``--annotate`` what each candidate
 resembles; both add **columns only** and never change the ordering.
 
+.. _binding-core:
+
+The binding core
+----------------
+
+``--core`` appends ``core``, ``core_offset`` and ``core_source`` to ``rank``, ``predict`` and
+``neoag``; the cassette map (``vector --map``) carries ``core`` unconditionally, beside the
+``core_start`` / ``core_end`` it already had. The core is **always nine residues**, so a column of
+them lines up, and it follows NetMHCpan's definition --- "the minimal 9 amino acid binding core
+directly in contact with the MHC" --- with ``core_offset`` its ``Of``, 0-based.
+
+**Class I holds both anchors and lets the middle give way.** The footprint is
+:data:`mhcmatch.diffusion.MHC1_CORE` resolved by :func:`mhcmatch.store.mhc1_positions` --- the same
+mapping the scorer uses, so the reported core is the residues the model actually read. A 9-mer is
+its own core. A 10- or 11-mer drops one or two central residues, which is NetMHCpan's ``Gp``/``Gl``
+deletion. An 8-mer has one slot too few, the ``+5`` and ``-4`` positions collide, and the loser
+takes ``seqtree.layout.GAP`` (``B``) --- their ``Ip``/``Il`` insertion. ``core_offset`` is 0: the
+footprint is anchored at both ends, so there is no N-terminal protrusion to report.
+
+**Class II is the register-anchored 9-mer**, ``peptide[Of:Of+9]``, matching NetMHCIIpan's ``Core``
+and ``Of``. Which register produced it is a column and not a footnote, because the two available
+registers disagree often on real ligands: ``core_source`` reads ``model`` when it came from the
+per-allele :meth:`mhcmatch.diffusion.AnchorModel.best_register` (``predict`` and ``rank fasta``,
+where that register was already computed to score with), ``heuristic`` when it came from the
+allele-agnostic one-pass scan (``neoag`` and ``rank table``, which have no allele), and
+``footprint`` for class I, where there is no register to choose.
+
+Reported, never scored --- the aggregate reads the peptide, not the core, and ``--core`` cannot
+move a ranking.
+
 .. warning::
 
    **A model emits the features it used, and refuses to run without them.** ``GRAND``'s corpus

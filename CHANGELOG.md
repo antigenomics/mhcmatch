@@ -6,6 +6,46 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.23.0] - 2026-08-20
+
+### Added
+
+- **`--core`: the binding core, on every output that can carry one.** `rank`, `predict` and `neoag`
+  gain the flag; the cassette map (`vector --map`) carries `core` unconditionally, beside the
+  `core_start` / `core_end` it already had but never had residues for. Three columns — `core`,
+  `core_offset`, `core_source` — following NetMHCpan's definition, "the minimal 9 amino acid binding
+  core directly in contact with the MHC", with `core_offset` its `Of`, 0-based. **Always nine
+  residues**, so a column of them lines up.
+
+  **Class I holds both anchors and lets the middle give way.** `mhcmatch.store.binding_core` resolves
+  `diffusion.MHC1_CORE` through `store.mhc1_positions` — the same mapping the scorer uses, so the
+  reported core is the residues the model actually read. A 9-mer is its own core; a 10- or 11-mer
+  drops one or two central residues (NetMHCpan's `Gp`/`Gl` deletion); an 8-mer has one slot too few,
+  the `+5` and `-4` positions collide, and the loser takes `seqtree.layout.GAP` — their `Ip`/`Il`
+  insertion. That gap symbol has been defined and documented as the "neutral gap-pad for fixed-width
+  class-I frames" since seqtree shipped it, and used by nothing until now.
+
+  **Class II is the register-anchored 9-mer**, matching NetMHCIIpan's `Core`/`Of`. Which register
+  produced it is a column rather than a footnote, because the two disagree often on real ligands:
+  `core_source` reads `model` where the per-allele `AnchorModel.best_register` was used (`predict`
+  and `rank fasta`, which already computed it to score with and until now threw it away),
+  `heuristic` where there is no allele (`neoag`, `rank table`), and `footprint` for class I, where
+  there is no register to choose. A core nobody can attribute is not auditable.
+
+  Free — nothing new is computed — reported, and **never scored**: the aggregate reads the peptide,
+  and `--core` cannot move a ranking. `predict --core` is distinct from `--footprint core`, which
+  changes what the model scores; the help text says so.
+
+  Nextflow: `params.mhcmatch_{predict,rank,neoag}_core`. The `MHCMATCH_RANK` stub now passes `core=`
+  to `rank.columns()` rather than hardcoding a header, which is the module's own rule.
+
+### Changed
+
+- `write_scored_csv` takes `core=`. **The 57-column `.epitopes.scored.csv` schema is unchanged by
+  default** — it is a contract with the downstream pipeline modules, and `DictWriter`'s
+  `extrasaction="ignore"` would have dropped a stray key silently rather than failing, so widening
+  it is the caller's explicit choice and nothing else.
+
 ## [0.22.0] - 2026-08-20
 
 ### Removed

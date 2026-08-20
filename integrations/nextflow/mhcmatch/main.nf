@@ -28,7 +28,7 @@ process MHCMATCH_PREDICT {
     label 'process_medium'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.22.0"
+    container "mhcmatch:0.23.0"
 
     input:
     tuple val(meta), path(fasta), val(alleles), val(cls)
@@ -46,13 +46,14 @@ process MHCMATCH_PREDICT {
     def prefix = task.ext.prefix ?: "${meta.id}"
     def tier   = params.mhcmatch_tier ?: 'full'
     def rank   = params.mhcmatch_rank_threshold ?: 2.0
+    def core   = params.mhcmatch_predict_core ? '--core ' : ''
     """
     mhcmatch predict ${fasta} \\
         --alleles '${alleles}' \\
         --cls ${cls} \\
         --tier ${tier} \\
         --rank-threshold ${rank} \\
-        ${args} \\
+        ${core}${args} \\
         --scored-csv ${prefix}.${cls}.mhcmatch.scored.csv \\
         --native ${prefix}.${cls}.mhcmatch.native.tsv
 
@@ -83,7 +84,7 @@ process MHCMATCH_RANK {
     label 'process_medium'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.22.0"
+    container "mhcmatch:0.23.0"
 
     // `rank` reads the known-epitope sets, the mimicry references and the expression tables on top
     // of the ligand panel. The image bakes them (`bootstrap --reference`); a bare `bootstrap` image
@@ -106,7 +107,8 @@ process MHCMATCH_RANK {
     def tumor  = params.mhcmatch_tumor ? "--tumor ${params.mhcmatch_tumor}" : ''
     def score  = params.mhcmatch_rank_score ? "--score ${params.mhcmatch_rank_score} " : ''
     def extra  = (params.mhcmatch_rank_extended ? '--extended ' : '') +
-                 (params.mhcmatch_rank_annotate ? '--annotate ' : '')
+                 (params.mhcmatch_rank_annotate ? '--annotate ' : '') +
+                 (params.mhcmatch_rank_core     ? '--core '     : '')
     """
     mhcmatch rank ${mode} ${input} \\
         --alleles '${alleles}' \\
@@ -126,8 +128,9 @@ process MHCMATCH_RANK {
     def ext    = params.mhcmatch_rank_extended ? 'True' : 'False'
     def ann    = params.mhcmatch_rank_annotate ? 'True' : 'False'
     def sc     = params.mhcmatch_rank_score ?: 'aggregate'
+    def cor    = params.mhcmatch_rank_core ? 'True' : 'False'
     """
-    python -c "from mhcmatch import rank; print('\\t'.join(rank.columns(extended=${ext}, annotate=${ann}, score='${sc}')))" \\
+    python -c "from mhcmatch import rank; print('\\t'.join(rank.columns(extended=${ext}, annotate=${ann}, score='${sc}', core=${cor})))" \\
         > ${prefix}.${cls}.mhcmatch.ranked.tsv
 
     cat <<-END_VERSIONS > versions.yml
@@ -143,7 +146,7 @@ process MHCMATCH_NEOAG {
     label 'process_single'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.22.0"
+    container "mhcmatch:0.23.0"
 
     input:
     tuple val(meta), path(peptides), val(cls)
@@ -159,8 +162,9 @@ process MHCMATCH_NEOAG {
     def args   = task.ext.args ?: ''
     def prefix = task.ext.prefix ?: "${meta.id}"
     def subs   = params.mhcmatch_neoag_max_subs ?: 2
+    def core   = params.mhcmatch_neoag_core ? '--core ' : ''
     """
-    mhcmatch neoag --peptides ${peptides} --cls ${cls} --max-subs ${subs} ${args} \\
+    mhcmatch neoag --peptides ${peptides} --cls ${cls} --max-subs ${subs} ${core}${args} \\
         --out ${prefix}.${cls}.mhcmatch.neoag.tsv
 
     cat <<-END_VERSIONS > versions.yml
@@ -171,10 +175,12 @@ process MHCMATCH_NEOAG {
 
     stub:
     def prefix = task.ext.prefix ?: "${meta.id}"
+    def cor    = params.mhcmatch_neoag_core ? 'True' : 'False'
     """
     python -c "
 from mhcmatch.mimicry import NEOAG_COLUMNS
-print('\\t'.join(('peptide',) + NEOAG_COLUMNS))" > ${prefix}.${cls}.mhcmatch.neoag.tsv
+from mhcmatch.rank import CORE_COLUMNS
+print('\\t'.join(('peptide',) + NEOAG_COLUMNS + (CORE_COLUMNS if ${cor} else ())))" > ${prefix}.${cls}.mhcmatch.neoag.tsv
 
     cat <<-END_VERSIONS > versions.yml
     "${task.process}":
@@ -189,7 +195,7 @@ process MHCMATCH_MIMICRY {
     label 'process_medium'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.22.0"
+    container "mhcmatch:0.23.0"
 
     input:
     tuple val(meta), path(peptides), val(cls)
@@ -236,7 +242,7 @@ process MHCMATCH_VECTOR {
     label 'process_high'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.22.0"
+    container "mhcmatch:0.23.0"
 
     // `--screen` builds one whole-proteome index per register length: ~12 GB peak each and a few
     // minutes apiece, which is why this process carries `process_high` and why the flag is a param.

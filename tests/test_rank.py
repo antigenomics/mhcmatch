@@ -485,6 +485,19 @@ def test_the_header_carries_the_features_the_model_used():
     assert agg[:len(R.BASE_COLUMNS)] == list(R.BASE_COLUMNS)   # --extended still only appends
 
 
+def test_core_columns_are_opt_in_and_only_append():
+    """`--core` reports; it must not move an existing column or change what scored."""
+    base = R.columns(score="aggregate")
+    with_core = R.columns(score="aggregate", core=True)
+    assert with_core[:len(base)] == base                       # a strict prefix, like the others
+    assert with_core[len(base):] == list(R.CORE_COLUMNS)
+    for c in R.CORE_COLUMNS:
+        assert c not in base                                   # never in a default header
+        assert c not in R.AGGREGATE_FEATURES                   # reported, never scored
+    # and it composes with the other appenders rather than fighting them
+    assert R.columns(extended=True, annotate=True, core=True)[-3:] == list(R.CORE_COLUMNS)
+
+
 def test_known_epitopes_still_sort_first():
     """The ordering rule is unchanged by the scorer swap: a known epitope outranks a higher score."""
     from mhcmatch.rank import Ranked, _finish

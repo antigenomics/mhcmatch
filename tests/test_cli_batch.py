@@ -106,6 +106,15 @@ def test_threads_flag_is_only_offered_where_it_does_something(capsys):
         assert ("--threads" in capsys.readouterr().out) is has, cmd
 
 
+def test_core_flag_is_offered_on_every_output_that_can_carry_one(capsys):
+    """`--core` was asked for on all outputs; a command that quietly lacks it is the failure mode.
+    `vector` is absent on purpose -- its map already emits `core`, gated by `--map`."""
+    for cmd in ("rank", "predict", "neoag"):
+        with pytest.raises(SystemExit):
+            cli.main([cmd, "--help"])
+        assert "--core" in capsys.readouterr().out, cmd
+
+
 # ------------------------------------------------------------------ vector / deslip
 
 def _units(tmp_path, rows, header="peptide\tgene\tallele\tp\tmutation_index\n"):

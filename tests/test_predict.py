@@ -112,6 +112,34 @@ def test_write_native(tmp_path):
         rows = list(csv.DictReader(fh, delimiter="\t"))
     assert rows[0]["peptide"] == "KLINSQINL" and rows[0]["band"] == "strong"
     assert rows[0]["anchors"] == "1;8" and rows[0]["tcr_facing"] == "KXINSQINX"
+    assert "core" not in rows[0]                     # default header unchanged
+
+
+def test_write_native_core_is_opt_in(tmp_path):
+    out = tmp_path / "n.tsv"
+    pred = _fake_pred(core="KLINSQINL", core_offset=0, core_source="footprint")
+    P.write_native([pred], str(out), core=True)
+    with open(out) as fh:
+        rows = list(csv.DictReader(fh, delimiter="\t"))
+    assert [rows[0][c] for c in P.CORE_COLUMNS] == ["KLINSQINL", "0", "footprint"]
+    with open(out) as fh:
+        assert fh.readline().rstrip("\n").split("\t")[:len(P.NATIVE_COLUMNS)] == \
+            list(P.NATIVE_COLUMNS)                   # appended, never interleaved
+
+
+def test_write_scored_csv_keeps_its_57_column_contract(tmp_path):
+    """The pipeline reads this schema positionally, and DictWriter(extrasaction="ignore") would
+    drop a stray key rather than fail -- so widening it has to be the caller's explicit choice."""
+    plain, wide = tmp_path / "a.csv", tmp_path / "b.csv"
+    pred = _fake_pred(core="KLINSQINL", core_offset=0, core_source="footprint")
+    P.write_scored_csv([pred], str(plain))
+    P.write_scored_csv([pred], str(wide), core=True)
+    with open(plain) as fh:
+        head = fh.readline().rstrip("\n").split(",")
+    assert head == list(P.SCORED_COLUMNS) and len(head) == 57
+    with open(wide) as fh:
+        assert fh.readline().rstrip("\n").split(",") == list(P.SCORED_COLUMNS) + list(P.CORE_COLUMNS)
+    assert list(csv.DictReader(open(wide)))[0]["core"] == "KLINSQINL"
 
 
 @pytest.mark.hfdata
