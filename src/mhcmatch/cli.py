@@ -441,21 +441,26 @@ def _mimicry_scores(peptides, cls: str, no_self: bool):
 def _aggregate_channels(cls: str, no_self: bool):
     """Build the ``channels`` callable ``rank`` needs to score with the fitted aggregate.
 
-    Returns ``list[peptide] -> {viral_R, viral_tcr, self_tcr, thymus_tcr}``. The self-proteome
-    reference index dominates the cost (6 min 15 s, ~7.5 GB, paid once for the whole list), and
-    that is now the price of an aggregate score rather than something a flag can quietly skip:
-    ``--no-self`` removes ``self_tcr``, which is the model's second-largest coefficient, so the
-    combination is refused in :func:`cmd_rank` before any work starts.
+    Returns ``list[peptide] -> {C_corpus_thymus, C_corpus_missing}``.
+
+    **Since 0.21.0 this is cheap.** ``BOECRT`` needed ``self_tcr`` -- its second-largest
+    coefficient -- so an aggregate score forced the host-proteome reference index: 6 min 15 s and
+    ~7.5 GB, the largest single cost in the package, and a cost ``--no-self`` could not be allowed
+    to skip. ``GRAND`` takes its corpus term from the **thymic** channel alone (26,513 peptides),
+    so the proteome index is off the ranking path and ``--no-self`` no longer conflicts with
+    ``--score aggregate``. It still matters for ``--extended``/``--annotate``, which report the
+    ``self`` mimicry channels, and for the safety scan.
+
+    ``C_phys`` is deliberately absent: :func:`mhcmatch.rank._finish` computes it, because it is a
+    matrix product against a published residue vector and needs no index at all.
     """
-    from . import luksza as LK
+    from . import mimicry as MM
 
     def channels(peptides):
-        scores = _mimicry_scores(peptides, cls, no_self)
-        out = {"viral_R": list(LK.viral_r(peptides))}
-        for name, comp, ch in (("viral_tcr", "viral", "tcr"), ("self_tcr", "self", "tcr"),
-                               ("thymus_tcr", "thymus", "tcr")):
-            out[name] = [s.components[comp][ch] for s in scores]
-        return out
+        refs = MM.load_references(cls=cls, with_self=False)
+        rows = MM.corpus_R(list(peptides), refs, cls=cls, components=("thymus",))
+        return {"C_corpus_thymus": [r.get("thymus", float("nan")) for r in rows],
+                "C_corpus_missing": [0.0 if "thymus" in r else 1.0 for r in rows]}
 
     return channels
 
@@ -463,18 +468,16 @@ def _aggregate_channels(cls: str, no_self: bool):
 def cmd_rank(a):
     """Rank neoantigen candidates from a window FASTA or an already-scored table.
 
-    With ``--score aggregate`` (the default) every one of the model's nine features is computed
-    *before* scoring and emitted as a column. That costs the self-mimicry reference index -- see
-    :func:`_aggregate_channels`. Before 0.20.0 four of the nine were computed after scoring, or not
-    at all, and contributed a constant to every candidate while the output still said ``BOECRT``.
+    With ``--score aggregate`` (the default) every one of the model's seven features is computed
+    *before* scoring and emitted as a column -- see :func:`_aggregate_channels`. Before 0.20.0 four
+    of the then nine were computed after scoring, or not at all, and contributed a constant to
+    every candidate while the output still said ``BOECRT``.
+
+    ``--no-self`` and ``--score aggregate`` were mutually exclusive until 0.21.0, because
+    ``BOECRT`` scored on ``self_tcr``. ``GRAND`` does not, so the combination is now allowed and
+    the host-proteome index is off the ranking path entirely.
     """
     from . import rank as R
-    if a.score == "aggregate" and getattr(a, "no_self", False):
-        raise SystemExit(
-            "mhcmatch rank: --no-self cannot be combined with --score aggregate. The self mimicry "
-            "reference supplies `self_tcr`, which is BOECRT's second-largest coefficient (+0.3154 "
-            "of 1.3875 total absolute weight), and this model scores on the features it declares "
-            "or not at all. Use --score gate, which does not use it, or drop --no-self.")
     # None -> mhcmatch.known's built-in sets; --no-known-refs -> {} -> lookup off
     refs = _load_refs(getattr(a, "refs", None)) if getattr(a, "refs", None) else \
         ({} if getattr(a, "no_known_refs", False) else None)

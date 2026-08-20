@@ -17,7 +17,9 @@ from mhcmatch import rank as R
 #: (``viral_R`` sits near 4e-11; the three mimicry channels are log1p per-million window densities).
 #: Since 0.20.0 the model refuses to score without them, so any test exercising the aggregate has to
 #: supply them -- which is the point: a model scores on the features it declares or not at all.
-CHANNELS = {"viral_R": 4.0e-11, "viral_tcr": 8.0, "self_tcr": 16.0, "thymus_tcr": 8.0}
+#: What `channels()` supplies -- `C_corpus_thymus` on its fitted 1e-5 scale, plus its missing
+#: flag. `C_phys` is deliberately absent: the library computes it, so a caller never passes it.
+CHANNELS = {"C_corpus_thymus": 3.3e-5, "C_corpus_missing": 0.0}
 
 
 def with_channels(rows):
@@ -83,11 +85,12 @@ def test_known_flags_the_first_matching_reference():
 
 def test_known_epitopes_sort_into_the_top_tier():
     """A database hit outranks any model score -- it must not be dilutable by a weighted sum."""
-    strong = R.Ranked(peptide="AAAAAAAAA", allele="HLA-A*02:01", presentation=4.0, physchem=2.0)
-    known = R.Ranked(peptide="CCCCCCCCC", allele="HLA-A*02:01", presentation=-4.0, physchem=-2.0,
-                     known_epitope="nci")
+    strong = R.Ranked(peptide="AAAAAAAAA", allele="HLA-A*02:01", presentation=4.0, physchem=2.0,
+                      binder=3.0, occupancy=0.95, expression=6.0)
+    known = R.Ranked(peptide="AAAAAAAAA", allele="HLA-A*02:01", presentation=-4.0, physchem=-2.0,
+                     binder=0.0, occupancy=0.001, expression=0.0, known_epitope="nci")
     out = R._finish(with_channels([strong, known]), None)
-    assert out[0].peptide == "CCCCCCCCC"
+    assert out[0].known_epitope == "nci"
     assert out[0].score < out[1].score      # ranked first *despite* the lower model score
 
 
@@ -258,13 +261,15 @@ def test_aggregate_artifact_is_self_consistent():
     """
     a = R.aggregate()
     n = len(a["features"])
-    assert a["model"] == "BOECRT"
+    assert a["model"] == "GRAND"
     assert len(a["coef"]) == n and len(a["mu"]) == n and len(a["sigma"]) == n
     assert tuple(a["features"]) == R.AGGREGATE_FEATURES
     assert all(s > 0 for s in a["sigma"])
     # no intercept, on purpose: every screen was fitted its own, so none transfers
     assert a["intercept"] is None
     assert a["fit"]["per_screen_intercept"] is True
+    # the corpus term is on a 1e-5 scale, so a sigma clamped to 1.0 would silently kill it
+    assert 1e-6 < a["sigma"][a["features"].index("C_corpus_thymus")] < 1e-3
 
 
 def test_aggregate_score_is_monotone_in_binder_and_refuses_a_subset():
@@ -299,16 +304,18 @@ def test_aggregate_carries_the_fit_provenance_a_reader_needs():
     """A shipped scorer that cannot say what it was fitted on is not reproducible."""
     a = R.aggregate()
     # the CLEANED corpus: pathogen epitopes and unmutated self windows removed, host keyed on the
-    # MHC genus, CEDAR and Gfeller held out. Fewer positives than the 1,719 the previous artifact
-    # claimed, because a good part of those were not neoantigens.
-    assert a["fit"]["rows"] == 355052 and a["fit"]["positives"] == 1101
-    assert len(a["fit"]["screens"]) == 10
-    assert a["generator"].endswith("build_aggregate.py")
-    # the prospective set is checked, not assumed
-    assert a["fit"]["prospective"] == "Sahin_TNBC" and a["fit"]["leaked"] == 0
-    # the Luksza shape is REFITTED, not the hardcoded 1.0/24.0 the previous artifact carried
-    assert a["luksza"]["mask"] == "tcr5"
-    assert a["luksza"]["k"] == 2.25 and a["luksza"]["a0"] == 20.0
+    # MHC genus, CEDAR and Gfeller held out.
+    assert a["fit"]["rows"] == 354909 and a["fit"]["positives"] == 958
+    assert len(a["fit"]["screens"]) == 9
+    assert a["generator"].endswith("grand_ship.py")
+    # every screen is held out in turn and scored with the mean intercept -- what a new cohort gets
+    assert a["fit"]["holdout"] == "leave-one-screen-out"
+    assert len(a["fit"]["loo"]) == len(a["fit"]["screens"])
+    # the corpus term's construction travels with the coefficient: a different mask, radius or
+    # shape is a different axis, and the standardizer would not transfer to it
+    assert a["corpus_mask"] == "tcr5" and a["corpus_radius"] == 2
+    assert a["corpus_shapes"]["thymus"] == [2.25, 14.0]
+    assert a["phys_scale"] == "Rose"
 
 
 def test_written_tables_use_unix_line_endings(tmp_path):
@@ -355,11 +362,16 @@ def test_luksza_r_term_matches_the_benchmark_implementation():
                              - luksza.r_term(counts, L, k, a0))) < 1e-12
 
 
-def test_luksza_shape_comes_from_the_shipped_artifact():
-    """k and a0 are read, never hardcoded -- a refit must not need a code change."""
+def test_luksza_shape_is_vendored_and_an_artifact_still_overrides_it():
+    """`viral_R` left the model in 0.21.0, so its shape left the model's artifact with it.
+
+    A shape for a term the shipped model does not score with does not belong in that model's
+    artifact. It is vendored on the module instead -- and an artifact that *does* carry a `luksza`
+    block still wins, so a refit needs no code change."""
     from mhcmatch import luksza, rank
-    assert luksza.shape() == (float(rank.aggregate()["luksza"]["k"]),
-                              float(rank.aggregate()["luksza"]["a0"]))
+    assert luksza.shape() == luksza.SHAPE == (2.25, 20.0)
+    assert "luksza" not in rank.aggregate()
+    assert luksza.shape({"luksza": {"k": 1.0, "a0": 9.0}}) == (1.0, 9.0)
 
 
 def test_luksza_r_is_monotone_in_both_count_and_nearness():
@@ -411,8 +423,9 @@ def test_default_score_is_the_fitted_aggregate_not_the_gate():
     """Until 0.19.0 `rank` scored with the two-term noisy-AND while the fitted aggregate sat
     vendored with no internal caller -- the shipped ranking and the published coefficients were two
     different models. This pins the default and keeps `gate` reachable."""
-    from mhcmatch.rank import AGGREGATE_COLUMNS, Ranked, _finish, aggregate, aggregate_score
-    chan = {"viral_R": 4.0e-11, "viral_tcr": 8.0, "self_tcr": 16.0, "thymus_tcr": 8.0}
+    from mhcmatch import complement
+    from mhcmatch.rank import CHANNEL_COLUMNS, Ranked, _finish, aggregate, aggregate_score
+    chan = dict(CHANNELS)
     rows = [Ranked(peptide="SIINFEKL", allele="H2-Kb", binder=2.0, occupancy=0.9,
                    physchem=1.5, expression=3.0, components=dict(chan)),
             Ranked(peptide="SIINFEKV", allele="H2-Kb", binder=0.1, occupancy=0.01,
@@ -420,8 +433,8 @@ def test_default_score_is_the_fitted_aggregate_not_the_gate():
     out = _finish([Ranked(**vars(r)) for r in rows], None)
     want = aggregate_score({"binder": [2.0, 0.1], "occupancy": [0.9, 0.01],
                             "expr": [3.0, 0.5], "expr_missing": [0.0, 0.0],
-                            "complement": [1.5, -1.0],
-                            **{c: [chan[c], chan[c]] for c in AGGREGATE_COLUMNS}})
+                            "C_phys": complement.burial(["SIINFEKL", "SIINFEKV"]),
+                            **{c: [chan[c], chan[c]] for c in CHANNEL_COLUMNS}})
     assert [r.peptide for r in out] == ["SIINFEKL", "SIINFEKV"]
     assert abs(out[0].score - float(want[0])) < 1e-10
     assert out[0].components["model"] == aggregate()["model"]
@@ -430,7 +443,7 @@ def test_default_score_is_the_fitted_aggregate_not_the_gate():
     assert 0.0 <= gated[0].score <= 1.0        # the gate is a probability; the aggregate is log-odds
 
 def test_scoring_without_the_recognition_channels_is_an_error_naming_the_feature():
-    """`_finish` must not score BOECRT when the four recognition channels were never computed.
+    """`_finish` must not score when a channel the model declares was never computed.
 
     This is the 0.20.0 behaviour change. The old path substituted their training means, so
     `mhcmatch rank` reported BOECRT and scored BOEC on every run, with or without `--extended` --
@@ -440,8 +453,21 @@ def test_scoring_without_the_recognition_channels_is_an_error_naming_the_feature
     from mhcmatch.rank import Ranked, _finish
     rows = [Ranked(peptide="SIINFEKL", allele="H2-Kb", binder=2.0, occupancy=0.9,
                    physchem=1.5, expression=3.0)]
-    with pytest.raises(ValueError, match="viral_R"):
+    with pytest.raises(ValueError, match="C_corpus_thymus"):
         _finish(rows, None)
+
+
+def test_c_phys_is_computed_rather_than_demanded_from_the_caller():
+    """`C_phys` needs no reference index -- it is a matrix product against a published residue
+    vector -- so making the caller supply it would be ceremony. It must land in `components`
+    with the exact value `complement.burial` gives, since that is the axis its mu/sigma describe."""
+    from mhcmatch import complement
+    from mhcmatch.rank import Ranked, _finish
+    rows = with_channels([Ranked(peptide="SIINFEKL", allele="H2-Kb", binder=2.0, occupancy=0.9,
+                                 physchem=1.5, expression=3.0)])
+    _finish(rows, None)
+    assert rows[0].components["C_phys"] == pytest.approx(complement.burial(["SIINFEKL"])[0])
+    assert "C_phys" not in R.CHANNEL_COLUMNS and "C_phys" in R.AGGREGATE_COLUMNS
 
 
 def test_the_header_carries_the_features_the_model_used():
@@ -468,7 +494,7 @@ def test_artifact_and_library_agree_on_the_concentration():
     the other -- which would silently rescale the feature the coefficient was fitted for."""
     from mhcmatch.rank import aggregate, PEPTIDE_NM
     a = aggregate()
-    assert a["model"] == "BOECRT"
+    assert a["model"] == "GRAND"
     assert "occupancy" in a["features"]
     assert "dai" not in a["features"]
     assert abs(a["peptide_nm"] - PEPTIDE_NM) < 1e-12

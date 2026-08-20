@@ -55,13 +55,25 @@ __all__ = ["r_term", "counts_by_distance", "viral_r", "shape"]
 FIT_MAX_SUBS = 4
 
 
+#: The shape ``viral_R`` was fitted with, vendored here rather than read out of the aggregate
+#: artifact. It lived in the artifact while ``viral_R`` was a model term; ``GRAND`` retired it in
+#: 0.21.0 (it is a near-duplicate of ``C_corpus_thymus`` -- their raw neighbour counts correlate
+#: 0.96 at d=1, and carrying both, deleting *either* improves BIC), so a shape for a term the
+#: shipped model does not score with no longer belongs in that model's artifact.
+SHAPE: tuple = (2.25, 20.0)
+
+
 def shape(artifact: dict | None = None) -> tuple:
-    """``(k, a0)`` from the shipped aggregate artifact — the values the coefficient was fitted with."""
+    """``(k, a0)`` — the values the ``viral_R`` coefficient was fitted with.
+
+    Reads an artifact's ``luksza`` block when one carries it, so a vendored refit still overrides;
+    otherwise returns :data:`SHAPE`.
+    """
     if artifact is None:
         from .rank import aggregate
         artifact = aggregate()
     lz = artifact.get("luksza") or {}
-    return float(lz["k"]), float(lz["a0"])
+    return (float(lz["k"]), float(lz["a0"])) if lz else SHAPE
 
 
 def r_term(counts, lengths, k: float | None = None, a0: float | None = None) -> np.ndarray:

@@ -72,17 +72,21 @@ def test_rank_extended_appends_columns_without_moving_the_ranking(tmp_path, caps
     assert "neoag_distance" in ehead
 
 
-def test_no_self_cannot_be_combined_with_the_aggregate(tmp_path):
-    """--no-self drops the self mimicry reference, which supplies `self_tcr` -- BOECRT's
-    second-largest coefficient at +0.3154 of 1.3875 total absolute weight. Until 0.20.0 the
-    combination ran and silently scored a five-feature model while reporting the nine-feature one.
-    """
-    from mhcmatch.cli import main
-    p = tmp_path / "c.scored.csv"
-    p.write_text("epitope,best_allele,gene_name,tpm,score\n"
-                 "GILGFVFTL,HLA-A*02:01,PMEL,3.0,0.9\n")
-    with pytest.raises(SystemExit, match="self_tcr"):
-        main(["rank", "table", str(p), "--score", "aggregate", "--no-self"])
+def test_the_aggregate_no_longer_needs_the_host_proteome_index():
+    """`--no-self` and `--score aggregate` were mutually exclusive through 0.20.0, because BOECRT
+    scored on `self_tcr` -- its second-largest coefficient at +0.3154 of 1.3875 total absolute
+    weight -- and that forced the host-proteome index: 6 min 15 s and ~7.5 GB, the largest single
+    cost in the package.
+
+    GRAND takes its corpus term from the thymic channel alone (26,513 peptides), so the proteome
+    index is off the ranking path. This pins that: the model must declare no `self` feature, and
+    the channels the CLI builds must be buildable with `with_self=False`."""
+    from mhcmatch import rank
+
+    feats = rank.aggregate()["features"]
+    assert not any("self" in f for f in feats), feats
+    assert "C_corpus_thymus" in feats
+    assert set(rank.CHANNEL_COLUMNS) <= set(feats)
 
 
 def test_cli_coefficients_reports_both_aurocs(capsys):

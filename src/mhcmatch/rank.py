@@ -43,7 +43,8 @@ from importlib import resources
 
 __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
            "BASE_COLUMNS", "MIMICRY_PAIRS", "EXTENDED_COLUMNS", "ANNOTATE_COLUMNS", "columns",
-           "aggregate", "aggregate_score", "AGGREGATE_FEATURES"]
+           "aggregate", "aggregate_score", "AGGREGATE_FEATURES", "AGGREGATE_COLUMNS",
+           "CHANNEL_COLUMNS"]
 
 #: The `mhcmatch rank` output schema, one source of truth. It lives here rather than inline in the
 #: CLI because a *consumer* -- a pipeline module's stub, a downstream join -- has to be able to name
@@ -54,12 +55,16 @@ BASE_COLUMNS: tuple = ("rank", "peptide", "allele", "gene", "score", "presentati
                        "occupancy", "agretopicity", "physchem", "expression", "expr_imputed",
                        "n_alleles_presenting", "alleles_presenting", "physchem_ipred",
                        "imputed", "wt_peptide", "known_epitope")
-#: The aggregate's four recognition/mimicry features, emitted whenever the aggregate is what
-#: scored. Until 0.20.0 these were reachable only under ``--extended``, and even then they were
-#: computed *after* scoring and never reached the model -- so ``rank`` reported ``BOECRT`` and
-#: scored ``BOEC``, silently, on every run. A model now emits the features it used and refuses to
-#: run without them.
-AGGREGATE_COLUMNS: tuple = ("viral_R", "viral_tcr", "self_tcr", "thymus_tcr")
+#: The aggregate's recognition features, emitted whenever the aggregate is what scored. A model
+#: emits the features it used and refuses to run without them.
+#:
+#: ``C_phys`` is computed here (:func:`mhcmatch.complement.burial` -- a matrix product against a
+#: published residue vector, free). ``C_corpus_thymus`` and its missing flag are the only features
+#: a caller has to supply, because they need a reference index; see :func:`aggregate`.
+AGGREGATE_COLUMNS: tuple = ("C_phys", "C_corpus_thymus", "C_corpus_missing")
+#: The subset of :data:`AGGREGATE_COLUMNS` that ``channels()`` has to return. ``C_phys`` is not in
+#: it: the library can always compute it, so making the caller pass it would be ceremony.
+CHANNEL_COLUMNS: tuple = ("C_corpus_thymus", "C_corpus_missing")
 #: (reference, channel) in the order the mimicry columns are emitted.
 MIMICRY_PAIRS: tuple = tuple((c, ch) for c in ("viral", "self", "thymus")
                              for ch in ("anchor", "tcr"))
@@ -89,24 +94,50 @@ def columns(extended: bool = False, annotate: bool = False, score: str = "aggreg
         out += list(ANNOTATE_COLUMNS)
     return out
 
-# --------------------------------------------------------------- the fitted aggregate (BOECRT)
+# ----------------------------------------------------------------- the fitted aggregate (GRAND)
 
 #: Cached ``aggregate_mhc1.json``. Loaded once, on first use.
 _AGG: dict | None = None
 
 #: The features the shipped aggregate expects, in order. Read it rather than typing the list --
-#: ``O`` replaced ``D`` in 0.19.0 and a hardcoded copy of this tuple would have gone stale silently.
-AGGREGATE_FEATURES: tuple = ("binder", "occupancy", "expr", "expr_missing", "complement",
-                             "viral_R", "viral_tcr", "self_tcr", "thymus_tcr")
+#: ``O`` replaced ``D`` in 0.19.0, the four recognition columns collapsed to two in 0.21.0, and a
+#: hardcoded copy of this tuple would have gone stale silently either time.
+AGGREGATE_FEATURES: tuple = ("binder", "occupancy", "expr", "expr_missing",
+                             "C_phys", "C_corpus_thymus", "C_corpus_missing")
 
 
 def aggregate() -> dict:
     """The fitted ``BOECRT`` artifact: features, coefficients, and the standardizer.
 
-    Fitted by ``bench/neoag/hier.py`` over all seven neoantigen screens (337,972 rows / 1,719
-    positive) as a partially-pooled Bayesian logistic regression with a **per-screen intercept**.
-    ``MODELS.md`` names the terms: B binder, D differential agretopicity, E expression,
-    C complementarity, R the Luksza ``Z/(1+Z)`` recognition term, T the TCR-facing mimicry channels.
+    Fitted by ``bench/immuno/grand_corpus.py`` over nine neoantigen screens (354,909 rows / 958
+    positive) as a partially-pooled logistic regression with a **per-screen intercept**; the
+    standardizer is emitted alongside by ``bench/immuno/grand_ship.py``. BIC 4160.1. Leave-one-
+    screen-out median AUROC 0.6391 (0.5174 VACCIMEL to 0.8744 Neopep), scored with the mean
+    intercept, which is what a new cohort gets.
+
+    **Since 0.21.0 recognition is two terms and neither is fitted on neoantigen labels.** The four
+    columns ``BOECRT`` carried -- the 30-column ``complement`` score, ``viral_R``, and the
+    ``viral``/``self``/``thymus`` TCR-face densities -- collapse to:
+
+    ``C_phys``          :func:`mhcmatch.complement.burial`, the Rose burial propensity summed over
+                        the TCR face. An imported scale, so **zero fitted residue parameters**; it
+                        carries a cysteine loading of +0.108 against the retired ``complement``'s
+                        +0.693.
+    ``C_corpus_thymus`` :func:`mhcmatch.mimicry.corpus_R` on the thymic channel. The thymic
+                        immunopeptidome is a biased sample of self -- mTECs express
+                        tissue-restricted antigens under *Aire* and *Fezf2* precisely to purge the
+                        clones worth purging -- so similarity to it reads as **danger** and its
+                        coefficient is positive, while ``self`` (the periphery) is negative.
+    ``C_corpus_missing`` the flag for a peptide with no reference entry, so the gap is a term
+                        rather than a fabricated zero.
+
+    **This makes an aggregate score cheap.** ``BOECRT`` needed the host-proteome reference index --
+    6 min 15 s and ~7.5 GB, the largest single cost in the package -- because ``self_tcr`` was its
+    second-largest coefficient. ``GRAND`` needs only the thymic channel (26,513 peptides), so
+    ``--no-self`` and ``--score aggregate`` are no longer in conflict.
+
+    Every alternative was measured and each costs BIC to add back: Kidera KF4 +9.0, KF2 +12.8,
+    the ``self`` corpus channel +8.1, ``viral`` +11.6, ``viral_R`` +11.6, ``C_aa`` +6.7.
 
     **There is no intercept and that is deliberate.** Each screen was given its own, unpenalised,
     precisely so prevalence and candidate generation stayed out of the slopes; no single intercept
@@ -131,14 +162,17 @@ def aggregate_score(features, imputed_out: list | None = None) -> "np.ndarray":
     Two things the caller owns, because getting them wrong is silent:
 
     * **Compute each feature the way the fit did.** ``binder`` is ``-log10`` of the calibrated
-      combined %rank, ``dai`` is ``log10(Kd_WT / Kd_MT)``, ``expr`` is ``log1p(TPM)``,
-      ``complement`` is :func:`mhcmatch.complement.score`, and the three mimicry channels are
-      ``log1p`` of a per-million window density at radius 1.
-    * **``viral_R`` is on a 1e-8 scale** -- its fitted sigma is 3.8e-8, because the Boltzmann sum
-      saturates near zero for almost every peptide. The standardizer is therefore specific to the
-      reference set and radius it was fitted with, and an ``R`` computed against a different viral
-      ligandome is not on the same axis. There is no longer a way to omit it: an incomparable R is
-      a wrong R, and the fix is to compute it against the fitted reference, not to leave it out.
+      combined %rank, ``occupancy`` is ``a/(1+a)`` for ``a = 10 nM / Kd``, ``expr`` is
+      ``log1p(TPM)`` with ``expr_missing`` flagging an absent value, ``C_phys`` is
+      :func:`mhcmatch.complement.burial`, and ``C_corpus_thymus`` is
+      :func:`mhcmatch.mimicry.corpus_R`'s ``thymus`` channel with ``C_corpus_missing`` flagging an
+      absent reference entry.
+    * **``C_corpus_thymus`` is on a 1e-5 scale** -- its fitted sigma is 3.84e-5, because ``Z`` stays
+      under 1.32e-3 and ``R = Z/(1+Z)`` never leaves its linear regime. The standardizer is
+      therefore specific to the reference set, mask and radius it was fitted with (``tcr5``, radius
+      2, shapes :data:`mhcmatch.mimicry.SHAPES`), and an ``R`` computed against a different thymic
+      reference is not on the same axis. An incomparable R is a wrong R; the fix is to compute it
+      against the fitted reference, not to leave it out.
 
     >>> full = {f: [0.0, 0.0] for f in AGGREGATE_FEATURES}
     >>> full["binder"] = [2.0, 0.1]
@@ -408,17 +442,22 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate") -> list:
         cols = {"binder": [r.binder for r in rows],
                 "occupancy": [r.occupancy for r in rows],
                 "expr": [r.expression for r in rows],
-                "expr_missing": [1.0 if r.expression_imputed else 0.0 for r in rows],
-                "complement": [r.physchem for r in rows]}
+                "expr_missing": [1.0 if r.expression_imputed else 0.0 for r in rows]}
+        # C_phys is a matrix product against a published residue vector -- free, and needing no
+        # reference index, so the library computes it rather than making the caller pass it.
+        if rows and not all("C_phys" in r.components for r in rows):
+            from . import complement as CM
+            for r, v in zip(rows, CM.burial([r.peptide for r in rows])):
+                r.components["C_phys"] = float(v)
         for name in AGGREGATE_COLUMNS:
             if not all(name in r.components for r in rows):
                 raise ValueError(
                     f"rank: scoring with {a.get('model', 'the aggregate')} needs the "
                     f"recognition channel {name!r}, which was not computed. Pass "
                     "`channels=` to rank_fasta/rank_table (the CLI builds one from "
-                    "mhcmatch.mimicry and mhcmatch.luksza), or score with `gate`, which does "
-                    "not use it. It is not substituted: a model scores on the features it "
-                    "declares or not at all.")
+                    "mhcmatch.mimicry.corpus_R), or score with `gate`, which does not use it. "
+                    "It is not substituted: a model scores on the features it declares or not "
+                    "at all.")
             cols[name] = [r.components[name] for r in rows]
         imputed: list = [[] for _ in rows]
         vals = aggregate_score(cols, imputed_out=imputed)
@@ -453,18 +492,18 @@ def _fill_channels(rows: list, channels) -> None:
     """Write the aggregate's four recognition channels into ``Ranked.components`` before scoring.
 
     ``channels`` is a callable ``list[peptide] -> {name: sequence}`` covering
-    :data:`AGGREGATE_COLUMNS`. It is injected rather than imported so the library does not decide
-    for the caller whether to pay for the self-proteome reference index -- 6 min 15 s and ~7.5 GB,
-    the largest single cost in the package -- and so the same rank path serves a CLI run, a
-    notebook and a pipeline.
+    :data:`CHANNEL_COLUMNS` -- not all of :data:`AGGREGATE_COLUMNS`, because ``C_phys`` needs no
+    reference index and :func:`_finish` computes it. It is injected rather than imported so the
+    library does not decide for the caller whether to build a reference index, and so the same rank
+    path serves a CLI run, a notebook and a pipeline.
     """
     if channels is None:
         return
     got = channels([r.peptide for r in rows])
-    for name in AGGREGATE_COLUMNS:
+    for name in CHANNEL_COLUMNS:
         if name not in got:
             raise ValueError(f"channels() did not return {name!r}; it must cover all of "
-                             f"{', '.join(AGGREGATE_COLUMNS)}")
+                             f"{', '.join(CHANNEL_COLUMNS)}")
         for r, v in zip(rows, got[name]):
             r.components[name] = float(v)
 
