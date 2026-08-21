@@ -7,7 +7,7 @@ import os
 
 import pytest
 
-from mhcmatch import Store
+from mhcmatch import Store, mimicry
 from mhcmatch import store as store_mod
 
 _HEADER = "mhc_class\tmhc_species\tepitope\tmhc_a\tmhc_b\tweight\n"
@@ -96,3 +96,67 @@ def test_nextflow_pins_match_pyproject():
             if v != want:
                 stale.setdefault(str(p.relative_to(root)), set()).add(v)
     assert not stale, f"version pins behind pyproject {want}: {stale}"
+
+
+# --- what `bootstrap` stages must remain ingestible by ------------------------------------------
+# `mhcmatch bootstrap --reference` stages a fixed list of files from `isalgo/pmhc_data`, and each
+# one has exactly one module function that reads it. Staging and reading are tested together
+# because a schema drift on the HF side passes the download and fails somewhere downstream as an
+# empty channel or an imputed expression -- a wrong number, not an error.
+
+@pytest.mark.hfdata
+def test_every_bootstrapped_reference_is_ingestible_by_its_consumer():
+    """Each file in ``cli.REFERENCE_FILES`` stages, and the function that consumes it reads rows.
+
+    The pairing is the contract. A renamed column or a moved path on the HF side would otherwise
+    surface as ``C_corpus_viral`` quietly going to zero, or every candidate taking imputed
+    expression under the largest coefficient in the fitted model.
+    """
+    from mhcmatch import cli, expression, known, mimics
+    from mhcmatch.store import fetch_file
+
+    for rel in cli.REFERENCE_FILES:
+        assert os.path.exists(fetch_file(rel)), rel
+
+    # the two mimicry deposits -> the peptide loader the corpus and index paths both use
+    for rel in ("thymus/thymus_immunopeptidome.tsv.gz", "ligandome/viral_foreign_iedb.tsv.gz"):
+        peps = mimics.load_peptides(None, rel, "mhc1")
+        assert len(peps) > 1000 and all(p.isalpha() for p in peps[:50]), rel
+
+    # the thymic source-protein column, which `safety_profile` joins on and which is the one field
+    # `_sources` reads beyond the peptide itself
+    src = mimicry._sources(None, "thymus/thymus_immunopeptidome.tsv.gz")
+    assert len(src) > 10_000 and any(v for v in src.values())
+
+    # the expression reference -> the table `rank` reads `expr` off. `load()` returns
+    # {(key_type, key, context): {stat: value}}, so the schema check is on the value dict.
+    tbl = expression.load()
+    assert len(tbl) > 1000
+    stats = {"median_tpm", "q25_tpm", "q75_tpm"} & set(expression.COLUMNS)
+    (kt, key, ctx), vals = next(iter(tbl.items()))
+    assert kt and key and ctx and stats <= set(vals), (kt, key, ctx, sorted(vals))
+
+    # the known-epitope sets -> every declared (file, label column, hit values) triple resolves
+    sets = known.load()
+    assert set(sets) == set(known.SET_NAMES)
+    for name, peps in sets.items():
+        assert peps, name
+
+
+@pytest.mark.hfdata
+def test_the_bootstrapped_proteomes_reach_the_functions_that_window_them():
+    """``bootstrap --proteome human,mouse`` stages what ``self`` and ``self_mouse`` are built from.
+
+    Both species matter: the shipped corpus tables carry a ``self`` channel for each, and a mouse
+    run that silently fell back to the human proteome would be a differently-scaled feature under
+    the same fitted weight.
+    """
+    from mhcmatch import mimics
+    from mhcmatch.store import fetch_proteome
+
+    for name in ("human", "mouse"):
+        assert os.path.exists(fetch_proteome(name)), name
+    for cat in ("self", "self_mouse"):
+        w = mimics.proteome_window_array(cat, 9)
+        assert len(w) > 1_000_000, (cat, len(w))
+        assert w.dtype.itemsize == 9
