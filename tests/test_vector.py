@@ -474,7 +474,7 @@ def test_self_origin_risk_joins_an_unrelated_source_hit_to_its_tissue(monkeypatc
     p = _Proteome(lambda pep: [_Hit("sp|Q8WZ42|TITIN_HUMAN")] if pep == TITIN else [])
 
     risk = vector.self_origin_risk(p, {"Q8WZ42": "TTN"})
-    u = vector.Unit("K" * 9 + TITIN + "K" * 9, 4, "MAGEA3", "HLA-A*01:01", 0.9)
+    u = vector.Unit("K" * 9 + TITIN + "K" * 9, 13, "MAGEA3", "HLA-A*01:01", 0.9)
     hits = risk(u, [MAGEA3, TITIN])
     assert p.calls == 1, "one batch query for the whole register list, not one per register"
     assert {h["tissue"] for h in hits} == {"Muscle - Skeletal", "Heart - Left Ventricle"}
@@ -495,14 +495,14 @@ def test_a_units_own_parent_protein_is_native_context_not_a_hazard(monkeypatch):
     parent = _Proteome(lambda pep: [_Hit("sp|P00000|KRAS_HUMAN", n_subs=0 if pep != TITIN else 1)])
 
     risk = vector.self_origin_risk(parent, {"P00000": "KRAS", "Q8WZ42": "TTN"})
-    own = vector.Unit("K" * 9 + TITIN + "K" * 9, 4, "KRAS", "HLA-A*01:01", 0.9)
+    own = vector.Unit("K" * 9 + TITIN + "K" * 9, 13, "KRAS", "HLA-A*01:01", 0.9)
     assert risk(own, [MAGEA3, TITIN]) == [], "its own parent is native context, at 0 subs and at 1"
 
     # the same registers under a unit from a different gene: now the match is unrelated, and KRAS
     # being silent is what keeps this test about the parent exclusion rather than about tissue.
     titin = _Proteome(lambda pep: [_Hit("sp|Q8WZ42|TITIN_HUMAN")] if pep == TITIN else [])
     unrelated = vector.self_origin_risk(titin, {"Q8WZ42": "TTN"})
-    other = vector.Unit("K" * 9 + TITIN + "K" * 9, 4, "MAGEA3", "HLA-A*01:01", 0.9)
+    other = vector.Unit("K" * 9 + TITIN + "K" * 9, 13, "MAGEA3", "HLA-A*01:01", 0.9)
     assert unrelated(other, [MAGEA3, TITIN]), "a MAGE-A3 unit matching titin still fires"
     assert vector.screen([own], risk)[0] == [own]
 
@@ -519,23 +519,175 @@ def test_max_subs_is_pushed_into_the_search_not_filtered_after(monkeypatch):
 
     p = _P(lambda pep: [_Hit("sp|Q8WZ42|TITIN_HUMAN", n_subs=1)])
     risk = vector.self_origin_risk(p, {"Q8WZ42": "TTN"}, max_subs=0)
-    hits = risk(vector.Unit("W" * 27, 13, "G", "A", 0.5), [TITIN])
+    hits = risk(vector.Unit("W" * 9 + TITIN + "W" * 9, 13, "G", "A", 0.5), [TITIN])
     assert seen["max_subs"] == 0
     assert hits == [], "a 1-substitution hit must not survive max_subs=0"
 
 
-def test_the_target_gene_clause_fires_without_any_register_match(monkeypatch):
-    """MAGE-A12's shape: nothing in the cassette resembles anything, the gene itself is the hazard."""
+def _mage12_expression(monkeypatch):
+    """MAGE-A12's real GTEx reading -- 0.33 TPM in brain caudate -- and nothing else expressed."""
     from mhcmatch import expression as EX
     monkeypatch.setattr(EX, "safety_profile",
                         lambda g, **kw: [("Brain - Caudate (basal ganglia)", 0.33)]
                         if g == "MAGEA12" else [])
 
+
+def test_the_target_gene_clause_fires_without_any_register_match(monkeypatch):
+    """MAGE-A12's shape: nothing in the cassette resembles anything, the gene itself is the hazard.
+
+    The unit is an ``isoform`` because that is what MAGE-A12 *is* for this clause -- a shared,
+    unmutated self protein, whose brain transcription is the hazard precisely because the construct
+    encodes a sequence brain tissue also presents.
+    """
+    _mage12_expression(monkeypatch)
     risk = vector.self_origin_risk(_Proteome(lambda pep: []), {"x": "y"})
-    hits = risk(vector.Unit("W" * 27, 13, "MAGEA12", "A", 0.8), ["WWWWWWWWW"])
+    hits = risk(vector.Unit("W" * 27, 13, "MAGEA12", "A", 0.8, kind="isoform"), ["WWWWWWWWW"])
     assert [h["clause"] for h in hits] == ["target gene"]
     assert hits[0]["tpm"] == 0.33 and "register" not in hits[0]
-    assert risk(vector.Unit("W" * 27, 13, "MAGEA3", "A", 0.8), ["WWWWWWWWW"]) == []
+    assert hits[0]["kind"] == "isoform", "the reason has to say what kind kept the clause"
+    assert risk(vector.Unit("W" * 27, 13, "MAGEA3", "A", 0.8, kind="isoform"),
+                ["WWWWWWWWW"]) == []
+
+
+@pytest.mark.parametrize("kind", sorted(vector.NOVEL_PRODUCTS))
+def test_the_target_gene_clause_is_skipped_for_a_product_absent_from_normal_tissue(kind,
+                                                                                   monkeypatch):
+    """The category error, corrected. Clause 1 asks whether the unit's own gene is transcribed where
+    it must not be attacked -- the MAGE-A12 hazard, and MAGE-A12 is an *unmutated* self protein.
+
+    A somatic neoantigen encodes a sequence absent from normal tissue by construction, so its parent
+    gene's expression is not that hazard; clause 2 is, and clause 2 still runs for every kind.
+    Measured on a 37-donor cohort, the unconditional clause withdrew a candidate for the fact that
+    its parent gene exists: 10 of 37 donors lost every unit they had.
+    """
+    _mage12_expression(monkeypatch)
+    risk = vector.self_origin_risk(_Proteome(lambda pep: []), {"x": "y"})
+    u = vector.Unit("W" * 27, 13, "MAGEA12", "A", 0.8, kind=kind)
+    assert risk(u, ["WWWWWWWWW"]) == []
+    assert vector.screen([u], risk)[0] == [u]
+
+
+@pytest.mark.parametrize("kind", ["isoform", "cnv"])
+def test_the_target_gene_clause_is_kept_for_a_product_the_normal_proteome_carries(kind, monkeypatch):
+    """An isoform or a copy-number segment is the MAGE-A12 case: the sequence is self."""
+    _mage12_expression(monkeypatch)
+    risk = vector.self_origin_risk(_Proteome(lambda pep: []), {"x": "y"})
+    u = vector.Unit("W" * 27, 13, "MAGEA12", "A", 0.8, kind=kind)
+    assert [h["clause"] for h in risk(u, ["WWWWWWWWW"])] == ["target gene"]
+    assert vector.screen([u], risk)[0] == []
+
+
+@pytest.mark.parametrize("kind", ["", "   ", "something_nobody_mapped"])
+def test_an_unannotated_kind_keeps_the_target_gene_clause_and_says_so(kind, monkeypatch):
+    """Fail closed. A safety screen may not exempt a unit because nobody annotated it, and the
+    reason has to carry the kind so the rejection can be read rather than guessed at."""
+    _mage12_expression(monkeypatch)
+    risk = vector.self_origin_risk(_Proteome(lambda pep: []), {"x": "y"})
+    hits = risk(vector.Unit("W" * 27, 13, "MAGEA12", "A", 0.8, kind=kind), ["WWWWWWWWW"])
+    assert [h["clause"] for h in hits] == ["target gene"]
+    assert hits[0]["kind"] == kind.strip().lower()
+
+
+def test_clause_two_judges_only_the_registers_that_carry_novel_sequence(monkeypatch):
+    """A 27-mer is thirteen-fourteenths wild type by construction, and the unrestricted clause read
+    that design as the hazard.
+
+    Measured on 178 experimentally immunogenic somatic neoantigens rebuilt as cassette units:
+    **178 of 178 trip clause 2**, median **36** self registers each -- and 36 is exactly
+    ``12 + 10 + 8 + 6``, the count of 8/9/10/11-mer windows of a 27-mer that cannot contain a centred
+    mutation. At the minimal-epitope level the clause is clean (0 of 178 mutants in the proteome,
+    178 of 178 wild types). There were no genuine coincidences to find; the veto was arithmetic.
+
+    Built here on real protein sequence with no download: a 27-mer lifted out of the vendored
+    pseudosequence records, one residue substituted, screened against the proteome it came from.
+    """
+    from importlib.resources import files
+
+    from mhcmatch import expression as EX
+    from mhcmatch import Proteome
+    from mhcmatch.proteome import read_fasta
+
+    seqs = read_fasta(str(files("mhcmatch.data") / "mhci_pseudo.fa"))
+    names = sorted(seqs)[:400]
+    # 34-mers glued into 200-residue "proteins", so a 27-mer window has real flanking context
+    prots = {f"sp|P{i:05d}|SELF{i}_HUMAN": "".join(seqs[n] for n in names[i * 6:(i + 1) * 6])
+             for i in range(len(names) // 6)}
+    pm = Proteome(prots)
+    monkeypatch.setattr(EX, "safety_profile", lambda g, **kw: [("Heart - Left Ventricle", 64.4)])
+
+    host = sorted(prots)[0]
+    wt = prots[host][40:67]
+    mut = wt[:13] + ("C" if wt[13] != "C" else "W") + wt[14:]
+    lengths = (8, 9, 10, 11)
+    regs = sorted({mut[i:i + L] for L in lengths for i in range(27 - L + 1)})
+    spanning = sorted({mut[i:i + L] for L in lengths for i in range(27 - L + 1)
+                       if i <= 13 < i + L})
+    assert len(regs) == 74 and len(spanning) == 38, "12+10+8+6 = 36 windows miss the mutation"
+
+    found = pm.find_exact_sources(regs)
+    assert all(found[r] for r in regs if r not in spanning), \
+        "every non-spanning register is wild type and therefore in the proteome by construction"
+    assert not any(found[r] for r in spanning), "no spanning register coincides with anything"
+
+    # `SELF3` is not the unit's own gene, so the parent exclusion cannot be what saves it.
+    symbols = {f"P{i:05d}": f"SELF{i}" for i in range(len(prots))}
+    risk = vector.self_origin_risk(pm, symbols)
+    u = vector.Unit(mut, 13, "NEOGENE", "A", 0.9, kind="missense")
+    reasons = risk(u, regs)
+    assert reasons == [], "clause 2 fires on nothing once the wild-type flanks are exempt"
+
+    # the same unit called an isoform keeps every register, which is the whole point of the gate
+    shared = risk(vector.Unit(mut, 13, "NEOGENE", "A", 0.9, kind="isoform"), regs)
+    assert shared and {r["clause"] for r in shared} == {"target gene", "unrelated self origin"}
+    c2 = [r for r in shared if r["clause"] == "unrelated self origin"]
+    assert c2[0]["n_registers_spanning"] == 74 and c2[0]["n_hit_spanning"] == 36
+
+
+def test_a_tract_product_is_novel_from_the_variant_offset_to_the_end_of_the_unit():
+    """A frameshift reads out of frame to the stop and a fusion reads across a junction, so
+    "spans the variant" is not containment for those two -- it is everything downstream."""
+    pep = "".join("ACDEFGHIKLMNPQRSTVWY"[i % 20] for i in range(27))
+    seen = {}
+
+    class _P(_Proteome):
+        def find_sources(self, peptides, max_subs=1, **kw):
+            seen.setdefault(kw.get("tag"), []).append(sorted(peptides))
+            return super().find_sources(peptides, max_subs, **kw)
+
+    def judged(kind):
+        p = _P(lambda q: [])
+        vector.self_origin_risk(p, {"x": "y"})(
+            vector.Unit(pep, 13, "G", "A", 0.5, kind=kind),
+            sorted({pep[i:i + 9] for i in range(19)}))
+        return set(seen.pop(None)[0])
+
+    point, tract = judged("missense"), judged("frameshift")
+    assert point == {pep[i:i + 9] for i in range(5, 14)}, "9-mers containing residue 13"
+    assert tract == {pep[i:i + 9] for i in range(5, 19)}, "and everything after it as well"
+    assert point < tract
+
+
+def test_graded_keeps_a_sub_veto_finding_as_a_cost_and_still_withdraws_above_the_line(monkeypatch):
+    """``min_tpm`` is the reporting floor and ``veto_tpm`` the exclusion line; they are not one
+    number. At 0.25 TPM nearly every human gene is "detectable somewhere", which is what made the
+    veto withdraw almost everything."""
+    from mhcmatch import expression as EX
+    monkeypatch.setattr(EX, "safety_profile",
+                        lambda g, **kw: {"QUIET": [("Brain - Cortex", 0.40)],
+                                         "LOUD": [("Heart - Left Ventricle", 64.41)]}.get(g, []))
+    p = _Proteome(lambda pep: [_Hit("sp|Q1|QUIET_HUMAN")] if pep == MAGEA3
+                  else [_Hit("sp|Q2|LOUD_HUMAN")] if pep == TITIN else [])
+    risk = vector.self_origin_risk(p, {"Q1": "QUIET", "Q2": "LOUD"}, graded=True, veto_tpm=5.0)
+
+    quiet = vector.Unit("K" * 9 + MAGEA3 + "K" * 9, 13, "TARGET", "A", 0.9)
+    loud = vector.Unit("K" * 9 + TITIN + "K" * 9, 13, "TARGET", "A", 0.9)
+    notes = []
+    kept, rejected = vector.screen([quiet, loud], risk, lengths=(9,), notes=notes)
+
+    assert kept == [quiet] and [u for u, _, _ in rejected] == [loud]
+    assert [why["gene"] for _, _, why in notes] == ["QUIET"]
+    assert vector.offtarget_cost(notes) == {quiet: 1.0}, "one distinct off-target gene, priced at 1"
+    assert vector.offtarget_cost(rejected) == {loud: 1.0}
 
 
 def test_the_default_radius_is_exact_coincidence():
@@ -563,6 +715,16 @@ def test_the_default_floor_catches_the_lower_of_the_two_fatal_precedents():
     floor = inspect.signature(vector.self_origin_risk).parameters["min_tpm"].default
     assert floor <= 0.31, "must catch MAGE-A12 in brain putamen (PMID 23377668)"
     assert floor > 0.0, "0.00 is MAGE-A3's own median outside testis -- silent must stay silent"
+
+    # The floor is for REPORTING. The exclusion line is a second, higher number, because 0.25 TPM is
+    # "detectable somewhere" -- true of nearly every human gene, and what made the veto withdraw
+    # almost every unit of a 37-donor cohort. 5.0 is the conventional "is it expressed" cut, and the
+    # two must not collapse back into one or the graded mode grades nothing.
+    veto = inspect.signature(vector.self_origin_risk).parameters["veto_tpm"].default
+    assert veto == 5.0, "the conventional 'is it expressed' cut"
+    assert veto > floor, "a veto line at the reporting floor is the veto that withdrew everything"
+    assert inspect.signature(vector.self_origin_risk).parameters["graded"].default is False, \
+        "the shipped screen stays a veto until the safety benchmarks are re-run"
 
 
 def test_essential_tissues_are_real_gtex_names_and_cover_both_fatal_precedents():
@@ -675,12 +837,80 @@ def test_units_from_context_collapses_registers_of_one_variant_to_one_unit():
     assert units[0].allele == "HLA-A*02:04"
 
 
-def test_units_from_context_skips_windows_with_no_marked_mutation():
-    """Fusion and CNV headers use different delimiters and have no single mutated residue."""
+def test_units_from_context_skips_a_window_that_marks_nothing_at_all():
+    """A header with no marker, no pipe-separated junction and no novel span has no centre."""
     units = vector.units_from_context(
         [{"peptide": "SIINFEKL", "gene": "X", "allele": "H2-Kb", "p": "0.9"}],
-        [("Fusion:A--B:INFRAME:SIINFEKLSIINFEKL|X:E1--E2:G1--G2:--:0.3:1:0", "SIINFEKL")])
-    assert units == []
+        [("Fusion:A--B:INFRAME:SIINFEKLSIINFEKL:E1--E2:G1--G2:--:0.3:1:0", "SIINFEKL")])
+    assert units == [], "no pipe in the windows field means no junction to centre on"
+
+
+# The four header families, each carrying its centre a different way.
+#: A residue string that never repeats an 8-mer, for the windows written out here rather than
+#: reused. The three real headers below are the ones ``tests/test_predict.py`` already pins; the
+#: other structural variants of them are synthetic, because what is under test is the delimiter
+#: grammar and not any donor's variant.
+_SYN = "".join("ACDEFGHIKLMNPQRSTVWY"[i % 20] for i in range(120))
+
+_FAMILIES = [
+    # (label, header, emitted sequence, the product class the header must yield)
+    ("somatic 3-part marker",
+     "Somatic:chr1:1:G:A:missense_variant:"
+     "DVQPFLPVLRLVAREGDRVKKLINSQI(S)LLIGKGLHEFDSLCDPEVNDFRAKMCQ:"
+     "DVQPFLPVLRLVAREGDRVKKLINSQI(N)LLIGKGLHEFDSLCDPEVNDFRAKMCQ:"
+     "10.34:ENSG1:ENST1:GENEA:U1::5:226", "", "missense"),
+    ("fusion 3-part",
+     f"Fusion:GENEB--GENEC:FRAMESHIFT:{_SYN[:27]}|M|{_SYN[60:66]}:"
+     "ENST1--ENST2:ENSG1--ENSG2:--:0.5513:14", "", "fusion"),
+    ("fusion 2-part junction",
+     "Fusion:RGS6--XYLT1:INFRAME:AQGSGDQ|DPHPSPL:ENST00000404301.6--ENST00000261381.7:"
+     "ENSG00000182732.18--ENSG00000103489.12:--:0.3655:12:0", "AQGSGDQDPHPSPL", "fusion"),
+    ("cnv 3-part",
+     "CNV:chr6:32530190:59610:MVCLKLPGGSY|I|SLSETCLLLW:26:0.14:79:6:0:0", "GGSYISLSETC", "cnv"),
+    ("cnv 2-part junction",
+     f"CNV:chrN:1:100:{_SYN[:26]}|{_SYN[40:66]}:1.29:32:14:0:0", "", "cnv"),
+    ("isoform novel span",
+     "Isoform:STRG.35712.1|ENST00000324225|ENSG00000149577|SIDT2|Q8NBJ9-1|"
+     "22.121262|3.332689|5.124321|180:177-356:0-59", _SYN[:59], "isoform"),
+]
+
+
+@pytest.mark.parametrize("label,header,seq,kind", _FAMILIES, ids=[f[0] for f in _FAMILIES])
+def test_units_from_context_admits_every_header_family(label, header, seq, kind):
+    """Only ``Somatic:`` used to be admitted, which discarded 317 of the 489 non-missense records in
+    one real cohort and left the ``nonconventional`` quota arm nothing to fill itself from.
+
+    Each family marks its novel residue somewhere different -- a parenthesised marker, a
+    three-part ``LEFT|X|RIGHT``, a two-part junction, or a trailing novel span -- and the unit has
+    to come out centred on it whichever it is.
+    """
+    from mhcmatch import predict as P
+
+    var = P.parse_variant_header(header)
+    ctx, off = vector._centred_context(var, seq)
+    pep = ctx[max(0, off - 4):off + 5]          # the 9-mer a ranked row would carry
+    units = vector.units_from_context(
+        [{"peptide": pep, "gene": var["gene_name"], "allele": "HLA-A*02:01", "p": "0.7"}],
+        [(header, seq)])
+    assert len(units) == 1, label
+    u = units[0]
+    assert pep in u.peptide, "the ranked epitope has to survive into the unit"
+    assert u.peptide[u.mutation_index] == ctx[off]
+    assert u.kind == kind, "the product class comes from the header when the row carries none"
+    assert u.p == 0.7 and u.allele == "HLA-A*02:01"
+
+
+def test_units_from_context_truncates_a_fusion_at_its_read_through_stop():
+    """A fusion peptide can run into a stop codon; everything past ``*`` is never translated."""
+    hdr = (f"Fusion:GENED--GENEE:FRAMESHIFT:{_SYN[:11]}|M|{_SYN[40:42]}*{'Q' * 9}:"
+           "ENST1--ENST2:ENSG1--ENSG2:--:0.11:3")
+    from mhcmatch import predict as P
+
+    ctx, off = vector._centred_context(P.parse_variant_header(hdr), "")
+    assert ctx == _SYN[:11] + "M" + _SYN[40:42] and ctx[off] == "M"
+    units = vector.units_from_context(
+        [{"peptide": ctx[4:], "gene": "GENED--GENEE", "allele": "A", "p": "0.5"}], [(hdr, "")])
+    assert len(units) == 1 and "Q" * 9 not in units[0].peptide
 
 
 # --------------------------------------------------------------------------- the cassette map

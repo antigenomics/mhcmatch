@@ -223,6 +223,109 @@ class Proteome:
                 out[q] = res
         return out
 
+    def find_exact_sources(self, peptides):
+        """``{peptide: [SourceHit, ...]}`` at **exactly zero substitutions** -- :meth:`find_sources`
+        with ``max_subs=0``, without building the fuzzy index.
+
+        Same return shape and the same ``(protein, position, ref_peptide, n_subs, mutations)``
+        content; ``n_subs`` is 0 and ``mutations`` is ``()`` for every hit, because that is what an
+        exact match is. Peptides with no source come back with an empty list, so the dict is keyed by
+        every distinct stripped, upper-cased query.
+
+        **Why a second entry point rather than a flag.** :meth:`_index` is a Python loop over every
+        position of every protein -- 68,398,087 iterations for ``L = 9``, ~12.6 GB peak -- and what
+        it buys is the ability to answer ``<= max_subs``. At ``max_subs = 0`` none of that is
+        queried: the question is set membership, which :meth:`window_array` already answers
+        vectorised in 11.0 s (its own docstring measures it), and provenance is then needed only for
+        the handful of peptides that actually hit.
+
+        Membership *and* provenance come out of one sorted array per length
+        (:meth:`_sorted_windows`): every standard-AA window with the buffer offset it came from,
+        sorted by sequence. A pair of ``np.searchsorted`` calls over the whole query batch gives each
+        query the half-open slice of that array holding **all** of its occurrences, and one more
+        ``searchsorted`` on the protein start offsets names the owning protein. Nothing scans, and
+        nothing is done per residue in Python.
+
+        **A per-hit ``bytes.find`` over the proteome buffer is the obvious alternative and it does
+        not scale** -- measured, not assumed. A 27-mer unit is native context by design, so most of
+        its ~70 registers *are* self peptides: on 500 units at ``L = 9``, 9,497 of 9,500 distinct
+        registers hit, and a full-buffer scan apiece is O(hits x proteome) rather than
+        O(hits x log windows).
+
+        The safety screen is the caller this exists for: it runs at ``max_subs=0`` by design
+        (:func:`mhcmatch.vector.self_origin_risk` measures why), over tens of thousands of registers,
+        and it never asked a fuzzy question.
+        """
+        import numpy as np
+
+        qs = sorted({str(p).strip().upper() for p in peptides if str(p).strip()})
+        out: dict = {q: [] for q in qs}
+        by_len: dict = {}
+        for q in qs:
+            by_len.setdefault(len(q), []).append(q)
+        for L, group in by_len.items():
+            win, off = self._sorted_windows(L)
+            if win.size == 0:
+                continue
+            _buf, names, starts = self._buffer()
+            q = np.array(group, dtype=f"S{L}")
+            lo = np.searchsorted(win, q, side="left")
+            hi = np.searchsorted(win, q, side="right")
+            for k in np.flatnonzero(hi > lo):
+                at = off[lo[k]:hi[k]]
+                owner = np.searchsorted(starts, at, side="right") - 1
+                pep = group[int(k)]
+                out[pep] = [SourceHit(names[int(j)], int(a) - int(starts[j]), pep, 0, ())
+                            for a, j in zip(at, owner)]
+        return out
+
+    def _sorted_windows(self, L):
+        """``(windows, buffer offsets)`` for every standard-AA length-``L`` window, sorted by
+        sequence and cached.
+
+        :meth:`window_array` is the same construction with ``np.unique`` on the end, which is what a
+        membership question wants and what a *provenance* question cannot use -- ``unique`` is
+        exactly the information about where each window came from. The sort is stable, so the
+        occurrences of one window stay in buffer order and therefore in the order
+        :meth:`find_sources` reports them.
+
+        Offsets are ``int32``: the human proteome is ~7.4e7 residues, three orders of magnitude
+        below the type's range, and the array has one entry per window.
+        """
+        import numpy as np
+        key = ("sorted", L)
+        if key not in self._cache:
+            buf, _names, _starts = self._buffer()
+            a = np.frombuffer(buf, dtype=np.uint8)
+            if a.size < L:
+                self._cache[key] = (np.empty(0, dtype=f"S{L}"), np.empty(0, dtype=np.int32))
+                return self._cache[key]
+            ok = np.zeros(256, dtype=bool)
+            for c in _AA:
+                ok[ord(c)] = True
+            sw = np.lib.stride_tricks.sliding_window_view
+            keep = np.flatnonzero(sw(ok[a], L).all(axis=1)).astype(np.int32)
+            win = np.ascontiguousarray(sw(a, L)[keep]).view(f"S{L}").ravel()
+            order = np.argsort(win, kind="stable")
+            self._cache[key] = (win[order], keep[order])
+        return self._cache[key]
+
+    def _buffer(self):
+        """``(bytes, [protein name], np.int64 start offsets)`` -- the proteome as one NUL-joined
+        buffer, cached. NUL separates proteins and is not a residue, so a window that contains only
+        residues lies wholly inside one protein and ``searchsorted`` on ``starts`` names which."""
+        import numpy as np
+        if ("buf",) not in self._cache:
+            names = list(self.seqs)
+            lens = np.fromiter((len(self.seqs[n]) for n in names), dtype=np.int64,
+                               count=len(names))
+            starts = np.zeros(len(names), dtype=np.int64)
+            if len(names):
+                starts[1:] = np.cumsum(lens[:-1] + 1)
+            buf = "\x00".join(self.seqs[n].upper() for n in names).encode("latin1")
+            self._cache[("buf",)] = (buf, names, starts)
+        return self._cache[("buf",)]
+
     def windows(self, L):
         """Every distinct length-``L`` standard-AA window of the proteome, as a ``set``. Cached, and
         roughly 1 GB per length for the human proteome -- ask for the lengths you need."""

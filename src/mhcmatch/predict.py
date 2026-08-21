@@ -153,8 +153,13 @@ _CNV_FIELDS = ("type", "chrom", "pos", "sv_len", "windows", "cnv_score", "tpm")
 #: ``Isoform:`` is **pipe-delimited** after its type, and its numeric triple is (cov, fpkm, tpm) in
 #: that order. Pinned: ``Isoform:STRG.35712.1|ENST00000324225|ENSG00000149577|SIDT2|Q8NBJ9-1|
 #: 22.121262|3.332689|5.124321|...`` against the row ``cov=22.121262, fpkm=3.332689, tpm=5.124465``.
+#:
+#: The trailing ``span`` field is ``len_nt:start_nt-end_nt:d-e``, and the last pair ``d-e`` is the
+#: **novel span in the emitted protein sequence** -- what a cassette unit has to be centred on, since
+#: an isoform carries no single mutated residue to mark. It is read here rather than re-split out of
+#: the header by :func:`mhcmatch.vector.units_from_context`, which is the only consumer.
 _ISOFORM_FIELDS = ("isoform", "transcript_id", "gene_id", "gene_name", "uniprot_id",
-                   "cov", "fpkm", "tpm")
+                   "cov", "fpkm", "tpm", "span")
 
 #: Pipeline consequence term -> the product class :func:`mhcmatch.portfolio.default_arm` splits on.
 #: An unlisted consequence passes through lower-cased, so a term nobody has mapped yet is charged to
@@ -163,6 +168,35 @@ _PRODUCT = {"missense_variant": "missense", "frameshift_variant": "frameshift",
             "inframe_deletion": "inframe_deletion", "inframe_insertion": "inframe_insertion",
             "stop_lost": "stop_lost", "start_lost": "start_lost",
             "protein_altering_variant": "protein_altering"}
+
+#: Product classes whose encoded sequence is **absent from the normal proteome by construction** --
+#: every somatic consequence :data:`_PRODUCT` maps, plus ``fusion``, whose novelty is a junction
+#: rather than a coding change and so has no consequence term to be mapped from.
+#:
+#: Derived from ``_PRODUCT.values()`` rather than written out again, so a consequence added there
+#: cannot silently fail to be novel here. The union is
+#: ``{missense, frameshift, inframe_deletion, inframe_insertion, fusion, stop_lost, start_lost,
+#: protein_altering}``.
+#:
+#: **What it is for.** :func:`mhcmatch.vector.self_origin_risk`'s first clause -- *is the unit's own
+#: gene transcribed in an essential tissue* -- is the MAGE-A12 hazard, and MAGE-A12 is a
+#: cancer-testis antigen: a shared, **unmutated** self protein whose transcription in brain is
+#: exactly what the construct would teach a T cell to attack. A product in this set is not that
+#: object. Its sequence is not in normal tissue, so its parent gene's expression is not the hazard;
+#: what remains is the *unrelated* self-origin clause, which is tested separately and for every kind.
+#: An ``isoform``, a wild-type or an overexpressed target is the MAGE-A12 case and is deliberately
+#: absent here.
+NOVEL_PRODUCTS = frozenset(_PRODUCT.values()) | {"fusion"}
+
+#: The subset of :data:`NOVEL_PRODUCTS` whose novelty is a **tract, not a position**: a frameshift
+#: reads out of frame from its variant offset to the end of the product, and a fusion reads across a
+#: junction, so everything C-terminal of the offset is novel rather than one residue. Everything else
+#: in :data:`NOVEL_PRODUCTS` alters a single position, and a window that does not contain it is
+#: wild-type sequence.
+#:
+#: The distinction is what lets :func:`mhcmatch.vector.self_origin_risk` ask its second clause only
+#: of the registers that carry novel sequence. See that function for the measurement.
+TRACT_PRODUCTS = frozenset({"frameshift", "fusion"})
 
 
 def parse_variant_header(header: str) -> dict:

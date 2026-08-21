@@ -80,6 +80,26 @@ def test_variant_product_is_the_consequence_not_the_provenance():
     assert P.variant_product({"type": "", "subtype": ""}) == ""
 
 
+def test_novel_products_names_every_product_absent_from_the_normal_proteome():
+    """What :func:`mhcmatch.vector.self_origin_risk` gates its target-gene clause on.
+
+    A product in this set encodes a sequence normal tissue does not carry, so its parent gene's
+    expression is not the MAGE-A12 hazard -- MAGE-A12 being a cancer-testis antigen, a shared and
+    **unmutated** self protein. An ``isoform`` or a wild-type target is that hazard and must stay
+    out, or the screen stops asking the one question it exists to ask.
+    """
+    assert P.NOVEL_PRODUCTS == frozenset({
+        "missense", "frameshift", "inframe_deletion", "inframe_insertion", "fusion",
+        "stop_lost", "start_lost", "protein_altering"})
+    # derived from `_PRODUCT`, so a consequence added there cannot silently fail to be novel here
+    assert set(P._PRODUCT.values()) <= P.NOVEL_PRODUCTS
+    for shared in ("isoform", "cnv", "splice_acceptor", ""):
+        assert shared not in P.NOVEL_PRODUCTS
+    # every consequence the pipeline emits resolves to a product this set has an opinion about
+    for sub in P._PRODUCT:
+        assert P.variant_product({"type": "Somatic", "subtype": sub}) in P.NOVEL_PRODUCTS
+
+
 def test_tile_offsets():
     tiles = P.tile(_SEQ, (9,))
     assert (_SEQ[:9], 0) in tiles and (_SEQ[1:10], 1) in tiles

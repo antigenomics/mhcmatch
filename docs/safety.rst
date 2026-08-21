@@ -57,9 +57,55 @@ peptide to a *protein* to a *tissue*, and it asks two questions:
    register search is needed to see it — the floor is 0.25 TPM rather than the conventional 5,
    because MAGE-A12 in brain caudate is **0.33**.
 
+   **Asked only of a product the normal proteome carries.** MAGE-A12 is a cancer-testis antigen — a
+   shared, *unmutated* self protein — so its brain transcription is the hazard precisely because the
+   construct encodes a sequence brain tissue also presents. A somatic neoantigen is a different
+   object: a missense, a frameshift, an inframe indel or a fusion junction encodes a sequence absent
+   from normal tissue **by construction**, so its parent gene's expression is not that hazard, and
+   what is one is the second clause. The gate is :data:`mhcmatch.predict.NOVEL_PRODUCTS` read off
+   :attr:`~mhcmatch.vector.Unit.kind`; an ``isoform``, a wild-type or overexpressed target keeps the
+   clause, and **an unknown or missing kind keeps it too** — the screen does not exempt a unit
+   because nobody annotated it.
+
+   Ungated, the clause withdrew a candidate for the fact that its parent gene exists: on a 37-donor
+   cohort, 10 of 37 donors lost every unit they had, and one lost 1,098 of 1,618 to this clause
+   alone.
+
 ``unrelated self origin``
    Does any register of the unit coincide with a self peptide from a **different** gene, and is that
    gene transcribed in an essential tissue? The titin-shaped case.
+
+   **Asked only of the registers that carry novel sequence**, where there is novel sequence to carry.
+   A 27-mer unit is thirteen-fourteenths wild type by construction, and the unrestricted clause read
+   that design as the hazard: on **178 experimentally immunogenic somatic neoantigens** rebuilt as
+   cassette units, **178 of 178 trip it**, median **36** self registers each — and 36 is exactly
+   ``12 + 10 + 8 + 6``, the number of 8/9/10/11-mer windows of a 27-mer that cannot contain a centred
+   mutation. The measured self fraction matches that geometry at every length (60.02 / 52.6 / 44.4 /
+   35.2 % against 60.0 / 52.6 / 44.4 / 35.3 predicted), reaching **99.1 % of the geometric ceiling**,
+   while at the minimal-epitope level the clause is clean: 0 of 178 mutant epitopes are in the
+   proteome and 178 of 178 wild types are. There were no genuine coincidences to find.
+
+   A window with no novel residue in it is therefore **structurally exempt** — it is wild-type
+   sequence, it was always going to be in the proteome, and no cassette avoids it short of not using
+   long units. Which windows those are depends on the product:
+   :data:`~mhcmatch.predict.TRACT_PRODUCTS` (``frameshift``, ``fusion``) are novel from the variant
+   offset **to the end of the unit**; the rest of :data:`~mhcmatch.predict.NOVEL_PRODUCTS` at that
+   one index. Every clause-2 reason carries ``n_registers_spanning`` and ``n_hit_spanning`` so the
+   exemption is auditable. For an ``isoform``, a ``cnv`` or an unannotated unit **every** register is
+   judged, as before — the same gate as clause 1, so the two rules cannot disagree.
+
+Two floors, not one
+~~~~~~~~~~~~~~~~~~~
+
+``min_tpm = 0.25`` is a **reporting** floor: below it a finding is not recorded at all, and it sits
+under MAGE-A12's 0.33 so the fatal case is always visible. It is not an exclusion line — 0.25 TPM is
+"detectable somewhere", which nearly every human gene is. ``veto_tpm = 5.0``, the conventional
+"is it expressed" cut, is the exclusion line, and it applies under
+``self_origin_risk(..., graded=True)`` / ``mhcmatch vector --screen-mode graded``: a finding below it
+is kept as a per-unit **off-target fingerprint** rather than a refusal, reported in the cassette's
+``fingerprint`` rows and priced into composition by ``--weight-offtarget``
+(:func:`mhcmatch.vector.offtarget_cost` → :func:`mhcmatch.portfolio.compose`). The default stays
+``veto``.
 
 **The unit's own gene is excluded from the second clause, and it has to be.** A vaccine unit is a
 long window of native context: its flanking registers *are* self peptides from its own parent
@@ -301,11 +347,18 @@ clause that fired, the gene, the substitutions, the tissue and its TPM. **A with
 to say what withdrew it**: "the screen dropped 3 of 40" is not a safety argument, and the reason is
 what a clinician overrides or accepts.
 
+Under ``--screen-mode graded`` it also carries a ``fingerprint`` section in the same shape, for the
+units that were **kept**: every essential-tissue finding below ``--veto-tpm``, with the unit's total
+off-target count in the index column. Why a unit was kept but discounted was previously answerable
+only by re-running the screen.
+
 .. note::
 
-   ``--screen`` builds one whole-proteome index **per register length** — ~12 GB peak each and a few
-   minutes apiece — so screen the whole candidate list in one process, never one unit per
-   invocation. **Without the flag no safety check runs at all** and the cassette carries whatever it
+   ``--screen`` builds one whole-proteome window index **per register length**, and every unit's
+   registers then resolve in a single query — so screen the whole candidate list in one process,
+   never one unit per invocation. Measured on the human proteome (144,182 proteins, 69,486,637
+   residues) with 3,000 units: **172.5 s and 11.1 GB peak** for all four class-I register lengths
+   together. **Without the flag no safety check runs at all** and the cassette carries whatever it
    was handed. On a cluster this is the process that needs 48 GB; see
    ``integrations/nextflow/mhcmatch/README.md``.
 
