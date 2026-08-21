@@ -349,3 +349,39 @@ peptide, offered beside `complement.PARATOPE` as `score(..., paratope="contact")
   not a second route to the cysteine artifact.
 - **Opt-in.** The default stays `paratope="loop"`, so every recorded number for the shipped
   complementarity model reproduces unchanged.
+
+## `corpus_tables.npz`
+
+The **sliding-3-mer count tables** over each mimicry reference component's TCR face — the reference
+side of the Łuksza-form corpus term that `C_corpus_thymus` / `C_corpus_self` / `C_corpus_viral`
+read. One flat `20**3 = 8,000` float64 array per (class, component, species), plus a JSON `meta`
+array carrying the build version and `k`.
+
+**Derived, not experimental.** Every table is a deterministic function of deposits that ship in
+`isalgo/pmhc_data` (`thymus/thymus_immunopeptidome.tsv.gz`,
+`ligandome/viral_foreign_iedb.tsv.gz`) and the reference proteomes (`proteome/human.fasta.gz`,
+`proteome/mouse.fasta.gz`) — no fitting, no parameters, nothing measured here.
+
+| key | N (reference windows) | build |
+|---|--:|--:|
+| `mhc1\|thymus\|human\|3` | 140,482 | 0.7 s |
+| `mhc1\|self\|human\|3` | 121,968,158 | 51.4 s |
+| `mhc1\|self\|mouse\|3` | 112,565,681 | 35.3 s |
+| `mhc1\|viral\|human\|3` | 136,618 | 0.7 s |
+| `mhc2\|thymus\|human\|3` | 1,996,006 | 1.6 s |
+| `mhc2\|self\|human\|3` | 110,932,623 | 14.5 s |
+| `mhc2\|self\|mouse\|3` | 101,989,053 | 10.0 s |
+| `mhc2\|viral\|human\|3` | 1,205,107 | 1.4 s |
+
+**Why it is vendored: 145.4 kB of artifact against 115.6 s of per-process rebuild.** Regenerate on
+a version bump, a deposit change or a change to what a face is:
+
+```zsh
+python tools/build_corpus_tables.py
+```
+
+The script prints `** MOVED **` beside any table whose contents changed against the committed one,
+so a rebuild that moves a number is visible at build time rather than in a downstream AUROC.
+`tests/test_mimicry.py::test_the_vendored_corpus_tables_are_current_and_rebuild_bit_identically`
+checks the version stamp, that every combination the script declares is present, and bit-identity
+against a live rebuild of the four deposit channels.

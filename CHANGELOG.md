@@ -8,6 +8,41 @@ versioning is [SemVer](https://semver.org).
 
 ## [0.24.1] - 2026-08-21
 
+### Added
+
+- **The corpus k-mer tables ship in the wheel.** `mimicry.corpus_counts` slid over every window of
+  every reference set on every import that needed one, and for the `self` channel that is the whole
+  proteome: **51.4 s** (class I, four lengths) and **14.5 s** (class II), 115.6 s for the eight
+  channels the shipped model reads, **in every process**. The result is 8,000 float64s per channel
+  and a pure function of the deposit — **145.4 kB of output for 115.6 s of work**.
+
+  `src/mhcmatch/data/corpus_tables.npz` now carries all eight (class x component x species), built
+  by `tools/build_corpus_tables.py` and read by `corpus_counts` for the default path in **0.002 s**.
+  A custom `pmhc_dir`, `weights="locus"` or a non-default `k` each define a different table and
+  still build in full — a wrong answer delivered fast is the failure mode a cache layer usually
+  ships with, and there is a test for it.
+
+  **Shipped, not cached.** A cache directory adds a staleness mode and a concurrent-write race;
+  package data has neither. It is version-stamped and regenerated at release like the vendored
+  anchor models, and unlike those a bump-only rebuild is genuinely bit-identical — verified against
+  a live rebuild on the four deposit channels, and on totals for the four proteome ones.
+
+### Changed
+
+- **`load_references` builds the lengths it is asked for.** The index is per-length and so is the
+  cost — ~11 s per proteome pass for `window_array`, plus **~1.0 min** at class II to resolve a
+  register for each of 12,685,964 windows — and the class admits **fifteen** lengths. A run whose
+  peptides are 15-mers was paying for thirteen it would never query: **~19 min against 83.1 s** for
+  the one, and **65.4 s against 16.5 s** at class I. `rank --extended/--annotate` and `mimicry` now
+  pass the lengths their own candidate list has. `lengths=None` still means every admitted length,
+  so an existing caller is unchanged.
+
+- **A reference source is a str list, not a padded byte array.** `_Backing` held sources as
+  `dtype="S"`, which pads every row to the longest — and one thymic 9-mer (`RIHTGEKPY`, a
+  zinc-finger motif) carries a `;`-joined list of ~200 accessions at **2,141 characters** against a
+  mean of **7.5**. Class I alone paid **56.3 MB for 26,302 entries**, ~99 % of it NUL. Same values,
+  ~2 MB.
+
 ### Fixed
 
 - **`variant_type` was the header's provenance, not the product, so the non-conventional quota could

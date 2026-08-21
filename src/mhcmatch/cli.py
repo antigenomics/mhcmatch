@@ -428,13 +428,20 @@ def _mimicry_scores(peptides, cls: str, no_self: bool):
     """Score a candidate list on the mimicry aggregate, warning about what it is about to cost.
 
     Shared by ``rank --extended/--annotate`` and ``mimicry``: the reference index is built once for
-    the whole list, which is the only way this is affordable at all."""
+    the whole list, which is the only way this is affordable at all.
+
+    **Only the lengths this list actually has.** The index is per-length and so is the cost -- one
+    proteome pass is ~11 s, plus ~1.0 min per class-II length to resolve a register for each of
+    12,685,964 windows -- and the class-II ladder is fifteen lengths deep. Indexing all of them for
+    a list of 15-mers is ~19 min of work for one length's worth of answers."""
     from . import mimicry as MM
+    lens = sorted({len(p) for p in peptides})
     if not no_self:
-        print("# indexing the host proteome (~12 M windows per length): several minutes and ~7 GB, "
-              "paid once for the whole list. --no-self skips it at the cost of the largest "
-              "coefficients", file=sys.stderr, flush=True)
-    refs = MM.load_references(cls=cls, with_self=not no_self)
+        print(f"# indexing the host proteome (~12 M windows) at {len(lens)} length(s) "
+              f"{','.join(str(L) for L in lens)}: minutes and ~7 GB, paid once for the whole list. "
+              "--no-self skips it at the cost of the largest coefficients",
+              file=sys.stderr, flush=True)
+    refs = MM.load_references(cls=cls, with_self=not no_self, lengths=lens)
     return MM.score(peptides, refs, cls=cls, allow_missing=no_self)
 
 

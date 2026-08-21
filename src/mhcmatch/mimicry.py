@@ -182,33 +182,53 @@ class MimicryScore:
 
 
 class _Backing:
-    """Representative ``(window, source)`` per index key, over two fixed-width byte arrays.
+    """Representative ``(window, source)`` per index key: a fixed-width byte array and a str list.
 
     :func:`features` touches this only for the *best* hit of a query -- one lookup per
     (peptide, component, channel) -- so the access is sparse and there is no reason to materialise
     several million tuples to serve it.
+
+    **The windows are a byte array and the sources are not**, and that asymmetry is measured. A
+    window is fixed-width by construction, so ``|S{L}`` wastes nothing. A source protein is a
+    ``;``-joined accession list whose mean length is **7.5 characters** and whose maximum is
+    **2,141** -- one zinc-finger 9-mer (``RIHTGEKPY``) shared across ~200 proteins -- and ``dtype="S"``
+    pads every row to the longest, so the thymic sources at class I alone cost **56.3 MB for 26,302
+    entries** of which ~99 % is NUL. A list of str is ~2 MB and the access pattern is a handful of
+    lookups.
     """
 
     __slots__ = ("_win", "_src")
 
     def __init__(self, win, src):
-        self._win, self._src = win, src
+        self._win, self._src = win, list(src)
 
     def __len__(self):
         return len(self._win)
 
     def __getitem__(self, i):
-        return (self._win[i].decode("ascii"), self._src[i].decode("ascii"))
+        return (self._win[i].decode("ascii"), self._src[i])
 
 
 def load_references(pmhc_dir=None, cls: str = "mhc1", with_self: bool = True,
-                   self_species: str = "human") -> dict:
+                   self_species: str = "human", lengths=None) -> dict:
     """Reference window sets per (component, channel, length), ready for :func:`features`.
 
     ``with_self=False`` skips the host proteome, which dominates the cost. The aggregate is **not
     defined** without ``self`` -- it carries the largest coefficients in the fit -- so :func:`score`
     raises unless the caller passes ``allow_missing``, and ``mhcmatch rank --score aggregate``
     refuses the combination outright.
+
+    **``lengths`` is the difference between usable and not at class II.** The index is per-length
+    and the cost is per-length: one proteome pass is ~11 s for ``window_array`` plus ~1.0 min to
+    resolve a class-II register for each of its 12,685,964 windows. The class admits **fifteen**
+    lengths (11-25), so building all of them is **~19 min**; class I admits four, at ~65 s. A run
+    queries the lengths its own peptides have -- usually one or two -- and building the other
+    thirteen is work nobody asked for. Pass the queried lengths and pay for those:
+    **~75 s for one class-II length, ~17 s for one class-I length.**
+
+    ``None`` (the default) keeps every length the class admits, so an existing caller is unchanged.
+    A length outside ``mimics._LEN[cls]`` was never indexed and still is not; :func:`features`
+    skips a query it has no index for.
 
     The build itself is vectorized: :meth:`mhcmatch.proteome.Proteome.window_array` replaces a
     per-window Python loop (2.7x), and the per-channel projection is one ``np.unique`` over a
@@ -217,7 +237,8 @@ def load_references(pmhc_dir=None, cls: str = "mhc1", with_self: bool = True,
     import numpy as np
     from seqtree import Index
 
-    lengths = sorted(mimics._LEN[cls])
+    admitted = sorted(mimics._LEN[cls])
+    lengths = admitted if lengths is None else sorted(set(admitted) & {int(L) for L in lengths})
     out: dict = {}
     for comp in COMPONENTS:
         src = {}
@@ -238,11 +259,11 @@ def load_references(pmhc_dir=None, cls: str = "mhc1", with_self: bool = True,
             win = per_len[L]                                   # sorted, fixed width
             if win.size == 0:
                 for ch in CHANNELS:
-                    out[(comp, ch, L)] = (Index.build([], alphabet="aa"), 0, _Backing(win, win))
+                    out[(comp, ch, L)] = (Index.build([], alphabet="aa"), 0, _Backing(win, []))
                 continue
             V = win.view(np.uint8).reshape(len(win), L)
-            srcs = (np.array([src.get(w.decode("ascii"), "") for w in win], dtype="S")
-                    if src else np.zeros(len(win), dtype="S1"))
+            # a str list, not a padded byte array -- see :class:`_Backing` for the 56.3 MB reason
+            srcs = [src.get(w.decode("ascii"), "") for w in win] if src else [""] * len(win)
             # **The index is projected on the same face the query is read on.** A class-II window is
             # anchored by a 9-mer core that floats, so its channels are a function of its own
             # register and not of `L`: each window gets its own mask. The widths stay constant --
@@ -264,7 +285,7 @@ def load_references(pmhc_dir=None, cls: str = "mhc1", with_self: bool = True,
                 keys, first = np.unique(proj, return_index=True)
                 out[(comp, ch, L)] = (
                     Index.build([k.decode("ascii") for k in keys], alphabet="aa"),
-                    len(keys), _Backing(win[first], srcs[first]))
+                    len(keys), _Backing(win[first], [srcs[i] for i in first]))
     return out
 
 
@@ -453,9 +474,46 @@ def locus_weights(peptides, w: int = LOCUS_W) -> list:
 #: and published with a single dict assignment, which is atomic; two threads racing both build the
 #: same array, because the table is a pure function of the reference deposit and the key. Nothing
 #: partially-built is ever visible and nothing shared is ever mutated. There is **no disk cache** --
-#: the artifact is 64 KB and the largest build is under a minute, so a cache directory would only
-#: add a staleness mode. Clear it with ``_COUNTS.clear()``.
+#: see :func:`_vendored_counts` for why the tables are *shipped* rather than cached. Clear it with
+#: ``_COUNTS.clear()``.
 _COUNTS: dict = {}
+
+_VENDORED: dict | None = None
+#: Filename of the vendored count tables under ``mhcmatch.data``; built by
+#: ``tools/build_corpus_tables.py``.
+VENDORED_COUNTS = "corpus_tables.npz"
+
+
+def _vendored_counts(cls: str, comp: str, k: int, self_species: str):
+    """The shipped ``(T, N)`` for one channel, or ``None`` if this build does not carry it.
+
+    **64 kB of output for a minute of work**, so it ships rather than being rebuilt per process.
+    ``corpus_counts`` slides over every window of the reference set; for ``self`` that is the whole
+    proteome -- measured at **53.0 s** (class I, four lengths) and **14.0 s** (class II) -- and the
+    result is 8,000 float64s that are a pure function of the deposit. Every process paid it, and a
+    Nextflow fan-out pays it once per task.
+
+    **Shipped, not cached.** A cache directory would add a staleness mode and a concurrent-write
+    race; package data has neither. It is regenerated at release time like the vendored anchor
+    models, carries the version it was built under, and anything off the default path -- a custom
+    ``pmhc_dir``, ``weights="locus"``, a non-default ``k`` -- falls through to the full build.
+    """
+    global _VENDORED
+    if _VENDORED is None:
+        import numpy as np
+        try:
+            with resources.files("mhcmatch.data").joinpath(VENDORED_COUNTS).open("rb") as fh, \
+                    np.load(fh, allow_pickle=False) as z:
+                _VENDORED = {n: z[n] for n in z.files}
+            _VENDORED["_meta"] = json.loads(bytes(_VENDORED.pop("meta")).decode())
+        except (OSError, ValueError, KeyError):
+            _VENDORED = {}
+    T = _VENDORED.get(f"{cls}|{comp}|{self_species}|{int(k)}")
+    if T is None:
+        return None
+    T = T.view()
+    T.flags.writeable = False
+    return T, float(T.sum())
 
 
 def corpus_counts(pmhc_dir=None, cls: str = "mhc1", comp: str = "thymus", k: int = CORPUS_K,
@@ -491,6 +549,13 @@ def corpus_counts(pmhc_dir=None, cls: str = "mhc1", comp: str = "thymus", k: int
     hit = _COUNTS.get(key)
     if hit is not None:
         return hit
+    # The shipped table, for the default path only. A custom deposit directory, locus weighting or
+    # a non-default `k` all define a different table, so each falls through to the full build.
+    if not pmhc_dir and not weights:
+        hit = _vendored_counts(cls, comp, int(k), self_species if comp == "self" else "human")
+        if hit is not None:
+            _COUNTS[key] = hit
+            return hit
     lengths = sorted(mimics._LEN[cls])
     if comp == "self":
         cat = "self" if self_species == "human" else "self_mouse"

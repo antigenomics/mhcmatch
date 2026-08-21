@@ -1,8 +1,10 @@
 """The mimicry module's two guarantees: the channels partition the peptide, and the
 tested-neoantigen database is reachable as an annotation without a fitted model."""
+import os
+
 import pytest
 
-from mhcmatch import mimicry
+from mhcmatch import mimics, mimicry
 
 
 @pytest.mark.parametrize("length", [8, 9, 10, 11, 15])
@@ -150,9 +152,13 @@ def test_self_is_the_recipients_proteome_not_a_constant():
 @pytest.mark.hfdata
 def test_backing_reads_str_pairs_from_arrays():
     """`features` indexes the backing only for a best hit, so it stays memory-mapped; it still has
-    to hand back plain strings."""
+    to hand back plain strings.
+
+    The windows are a fixed-width byte array and the sources are a str list, because a source is a
+    ``;``-joined accession list of mean length 7.5 and maximum 2,141 -- padding every row to the
+    longest cost 56.3 MB for 26,302 thymic entries, ~99 % of it NUL."""
     import numpy as np
-    b = mimicry._Backing(np.array([b"GILGFVFTL"], dtype="S9"), np.array([b"FLU"], dtype="S3"))
+    b = mimicry._Backing(np.array([b"GILGFVFTL"], dtype="S9"), ["FLU"])
     assert len(b) == 1
     assert b[0] == ("GILGFVFTL", "FLU")
 
@@ -530,3 +536,102 @@ def test_the_class_two_self_table_is_the_proteomes_own_kmers_and_class_one_is_un
     got = mimicry.corpus_R(["AAAKFVAAWTLKAAA"], spec, cls="mhc2")[0]
     assert set(got) == {"thymus", "self", "viral"}
     assert all(0.0 < v < 1.0 for v in got.values()), got
+
+
+@pytest.mark.hfdata
+def test_the_vendored_corpus_tables_are_current_and_rebuild_bit_identically():
+    """The shipped ``corpus_tables.npz`` is what the current code and the current script produce.
+
+    Two independent guards, because the artifact can go stale in two different ways:
+
+    1. **Provenance** -- every combination ``tools/build_corpus_tables.py`` declares is present, and
+       the stamped version is this one. A release that bumps ``__version__`` without rerunning the
+       script fails here, exactly as the vendored anchor models do.
+    2. **Content** -- a live rebuild of the four *deposit* channels is bit-identical to the shipped
+       table. Those are 0.7-1.6 s each; the two ``self`` channels are 51.4 s and 14.5 s and are
+       checked on their totals instead, which is the number a wrong face or a changed proteome
+       moves first.
+
+    The point of the artifact is that it is **145.4 kB against 115.6 s** of per-process rebuild, so
+    this test is where the price of shipping it gets paid, once, instead of in every consumer.
+    """
+    import importlib.util
+    import numpy as np
+
+    import mhcmatch
+
+    spec = importlib.util.spec_from_file_location(
+        "_build_corpus", os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                      "tools", "build_corpus_tables.py"))
+    build = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(build)
+
+    mimicry._VENDORED = None                        # force a load off disk, not a warm process
+    assert mimicry._vendored_counts("mhc1", "thymus", mimicry.CORPUS_K, "human") is not None, \
+        "no vendored corpus tables in this build; run tools/build_corpus_tables.py"
+    meta = mimicry._VENDORED["_meta"]
+    assert meta["_"]["version"] == mhcmatch.__version__, \
+        "vendored corpus tables are stale for this version; rerun tools/build_corpus_tables.py"
+    assert meta["_"]["k"] == mimicry.CORPUS_K
+    for cls, comp, sp in build.COMBOS:               # every combination the script declares
+        assert mimicry._vendored_counts(cls, comp, mimicry.CORPUS_K, sp) is not None, (cls, comp, sp)
+
+    for cls, comp in (("mhc1", "thymus"), ("mhc1", "viral"),
+                      ("mhc2", "thymus"), ("mhc2", "viral")):
+        shipped, _ = mimicry.corpus_counts(None, cls, comp)
+        mimicry._COUNTS.clear()
+        mimicry._VENDORED = {}                       # empty, not None: skip the artifact entirely
+        fresh, _ = mimicry.corpus_counts(None, cls, comp)
+        mimicry._COUNTS.clear()
+        mimicry._VENDORED = None
+        assert np.array_equal(shipped, fresh), \
+            f"vendored {cls}/{comp} differs from a live rebuild; rerun tools/build_corpus_tables.py"
+
+    # the two expensive channels, on their totals -- see the docstring
+    for cls, comp, sp, want in (("mhc1", "self", "human", 121_968_158.0),
+                                ("mhc1", "self", "mouse", 112_565_681.0),
+                                ("mhc2", "self", "human", 110_932_623.0),
+                                ("mhc2", "self", "mouse", 101_989_053.0)):
+        T, n = mimicry.corpus_counts(None, cls, comp, self_species=sp)
+        assert n == want, (cls, comp, sp, n)
+        assert (T > 0).all()
+
+
+@pytest.mark.hfdata
+def test_the_vendored_table_is_bypassed_for_anything_off_the_default_path():
+    """A custom deposit, locus weighting or a different ``k`` each define a *different* table.
+
+    The shipped artifact is the default-path table only; silently returning it for a caller who
+    asked for something else would be a wrong answer delivered fast, which is the failure mode a
+    cache layer usually ships with.
+    """
+    import numpy as np
+
+    default, _ = mimicry.corpus_counts(None, "mhc1", "thymus")
+    weighted, _ = mimicry.corpus_counts(None, "mhc1", "thymus", weights="locus")
+    assert not np.array_equal(default, weighted), "locus weighting must not read the vendored table"
+    k4, _ = mimicry.corpus_counts(None, "mhc1", "thymus", k=4)
+    assert k4.size == 20 ** 4, "a non-default k must not be served the k=3 table"
+
+
+@pytest.mark.hfdata
+def test_load_references_builds_only_the_lengths_asked_for():
+    """The index is per-length and so is its cost, so a run pays for the lengths it queries.
+
+    One proteome pass is ~11 s for ``window_array``, and at class II a further ~1.0 min to resolve a
+    register for each of 12,685,964 windows. The class admits **fifteen** lengths, so the
+    unrestricted build is **~19 min** against **83.1 s** for one; class I is **65.4 s** against
+    **16.5 s**. That is the difference between the annotation path being usable and not.
+
+    ``None`` still means every admitted length, so an existing caller is unchanged, and a length
+    the class never admitted is still absent rather than newly an error.
+    """
+    r = mimicry.load_references(None, "mhc2", with_self=False, lengths=[15])
+    assert {L for _, _, L in r} == {15}
+    assert len(r) == len(mimicry.COMPONENTS[:2]) * len(mimicry.CHANNELS), r.keys()
+
+    r2 = mimicry.load_references(None, "mhc2", with_self=False, lengths=[15, 3, 99])
+    assert {L for _, _, L in r2} == {15}, "a length the class does not admit is dropped, not built"
+
+    full = mimicry.load_references(None, "mhc2", with_self=False)
+    assert {L for _, _, L in full} == set(mimics._LEN["mhc2"]), "None still means every length"
