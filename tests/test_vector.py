@@ -1213,3 +1213,36 @@ def test_presented_passes_through_the_clauses_it_is_not_about(monkeypatch):
         raise AssertionError("nothing to ask -- no finding carries a variant")
 
     assert vector.presented(findings, binder) == findings
+
+
+def test_a_shared_unmutated_target_has_every_register_judged_including_its_flanks(monkeypatch):
+    """The titin probe's premise, and the reason `Unit.kind` is not cosmetic.
+
+    A missense unit's flanks are the patient's own wild type -- self by construction, presented in
+    normal tissue daily -- so clause 2 judges only the registers carrying novel sequence. A
+    **shared, unmutated** target (MAGE-A3 and every other cancer-testis antigen) has no novel
+    sequence anywhere and no meaningful mutation index, so that exemption must not apply to it:
+    every register is native to *some* protein, and which protein is exactly the question.
+
+    Left at the default `kind="missense"`, a MAGE-A3 unit burying the titin epitope nine residues
+    from a declared mutation index has that epitope treated as flank and never looked at. That is
+    the whole difference between `caught_titin` reading yes and no in
+    `bench/results/vector_screen_radius.md`.
+    """
+    _stub_expression(monkeypatch)
+    p = _Proteome(lambda pep: [_Hit("sp|Q8WZ42|TITIN_HUMAN")] if pep == TITIN else [])
+    risk = vector.self_origin_risk(p, {"Q8WZ42": "TTN"})
+    # the epitope sits at offset 9; the declared mutation index is 4, so it is never spanning
+    peptide = "K" * 9 + TITIN + "K" * 9
+
+    shared = vector.Unit(peptide, 4, "MAGEA3", "HLA-A*01:01", 0.9, kind="shared")
+    assert [h["gene"] for h in risk(shared, [TITIN])] == ["TTN", "TTN"], \
+        "an unmutated target has no exempt flank"
+
+    missense = vector.Unit(peptide, 4, "MAGEA3", "HLA-A*01:01", 0.9)   # kind defaults to missense
+    assert risk(missense, [TITIN]) == [], \
+        "for a real missense unit that register is the patient's own wild type"
+
+    # and the same unit with the mutation actually inside the register is judged again
+    spanning = vector.Unit(peptide, 13, "MAGEA3", "HLA-A*01:01", 0.9)
+    assert [h["gene"] for h in risk(spanning, [TITIN])] == ["TTN", "TTN"]
