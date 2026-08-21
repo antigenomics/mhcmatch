@@ -132,7 +132,7 @@ AGGREGATE_BLOCKS: tuple = (
 def aggregate() -> dict:
     """The fitted ``EPIC`` artifact: features, coefficients, and the standardizer.
 
-    **EPIC** -- **E**xpression, **P**resentation, **I**mmunogenic **C**omplementarity --
+    **EPIC** -- Expression, Presentation, Immunogenic Complementarity --
     names the four blocks the nine columns are fitted in, not the order they enter in; the pipeline
     order is presentation, expression, physchem, corpus, and the two recognition blocks are the two
     halves of Complementarity. Shipped as ``GRAND`` through 0.24.x under the same artifact and the
