@@ -982,6 +982,20 @@ def self_origin_risk(proteome, symbols, tissues=ESSENTIAL_TISSUES, min_tpm: floa
                 out.append({"clause": "target gene", "gene": unit.gene, "kind": kind,
                             "tissue": tissue, "tpm": tpm})
         # clause 2: an unrelated self origin, asked only of the registers that carry novel sequence.
+        if kind in novel and registers and not any(r in unit.peptide for r in registers):
+            # The spanning rule is defined against `unit.peptide`, so it is meaningless when the
+            # registers are not that peptide's windows -- and it fails **silently**, by judging
+            # nothing and reporting no hazard. That is the one answer a safety screen must not give
+            # for a question it never asked. It happened: `bench/vector/safety_screen.py` handed a
+            # bare placeholder unit the probe peptide and read 0 of 1000 on *both* arms, which reads
+            # as a perfectly specific screen rather than a silent one.
+            raise ValueError(
+                f"none of the {len(registers)} registers passed is a window of unit.peptide, and "
+                f"this unit's kind {kind!r} restricts clause 2 to the windows spanning "
+                f"mutation_index {getattr(unit, 'mutation_index', '?')} -- so nothing would be "
+                f"judged and the unit would screen as safe without being looked at. Pass the "
+                f"unit's own registers, or set kind= outside NOVEL_PRODUCTS if the unit is a "
+                f"shared, unmutated target.")
         judged = (novel_registers(unit, {len(r) for r in registers}) if kind in novel
                   else set(registers))
         registers = [r for r in registers if r in judged]

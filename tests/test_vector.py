@@ -1246,3 +1246,28 @@ def test_a_shared_unmutated_target_has_every_register_judged_including_its_flank
     # and the same unit with the mutation actually inside the register is judged again
     spanning = vector.Unit(peptide, 13, "MAGEA3", "HLA-A*01:01", 0.9)
     assert [h["gene"] for h in risk(spanning, [TITIN])] == ["TTN", "TTN"]
+
+
+def test_registers_that_are_not_the_units_windows_raise_instead_of_screening_safe(monkeypatch):
+    """A novel-kind unit judged against foreign registers looked at nothing, and used to say "safe".
+
+    `bench/vector/safety_screen.py` measures the *register* test, so it wraps each probe peptide in
+    a bare placeholder unit. The spanning rule is defined against `unit.peptide`, so a probe that is
+    not one of that peptide's windows was never judged — and the route reported 0 of 1000 on both
+    arms, which reads as a perfectly specific screen rather than a silent one.
+    """
+    _stub_expression(monkeypatch)
+    p = _Proteome(lambda pep: [_Hit("sp|Q8WZ42|TITIN_HUMAN")] if pep == TITIN else [])
+    risk = vector.self_origin_risk(p, {"Q8WZ42": "TTN"})
+
+    bare = vector.Unit("A" * 9, 0, "\x00none", "", 0.0)          # kind defaults to missense
+    with pytest.raises(ValueError, match="window of unit.peptide"):
+        risk(bare, [TITIN])
+
+    # the same probe as a shared target is the intended usage and judges the register
+    shared = vector.Unit("A" * 9, 0, "\x00none", "", 0.0, kind="shared")
+    assert [h["gene"] for h in risk(shared, [TITIN])] == ["TTN", "TTN"]
+
+    # and a legitimate non-spanning window of the unit's own peptide is still exempt, not an error
+    own = vector.Unit("K" * 9 + TITIN + "K" * 9, 4, "MAGEA3", "HLA-A*01:01", 0.9)
+    assert risk(own, [TITIN]) == []
