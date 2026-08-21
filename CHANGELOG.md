@@ -8,6 +8,21 @@ versioning is [SemVer](https://semver.org).
 
 ## [0.25.0] - 2026-08-21
 
+### Removed
+
+- **The `pmhc = ["pandas"]` extra, which installed pandas for nothing.** It was declared as
+  "convenience IO for large tables" and no module ever imported pandas for that: the only pandas in
+  the package is `logo.render`, where it is **logomaker's API requirement** — logomaker takes a
+  `DataFrame` — and `logomaker` already depends on it, so the `logo` extra covers it. Nothing in the
+  README, docs, skill, CI or the nextflow module referenced `[pmhc]`.
+
+  The core stays `csv` + `numpy` with **no dataframe dependency at all**, which is deliberate: a
+  library should not make every `pip install mhcmatch` carry a dataframe engine to read a TSV.
+  Measured on the largest table this package's own pipeline produces (22,992 rows x 43 columns,
+  7.9 MB): `csv.DictReader` 0.08 s against `polars.read_csv` 0.04 s — 40 ms, inside a stage whose
+  other work is 143 s. If a dataframe is ever warranted here it should be polars, but nothing
+  measured so far warrants one.
+
 ### Changed
 
 - **The shipped scorer is named `EPIC`.** Same artifact, same nine coefficients, same

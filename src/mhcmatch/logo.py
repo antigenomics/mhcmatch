@@ -55,7 +55,7 @@ def motif(store, allele, cls, length=None):
 def render(m, ax=None):
     """Render a :func:`motif` result as an information-content sequence logo (needs ``[logo]``)."""
     import logomaker
-    import pandas as pd
+    import pandas as pd                     # logomaker's API takes a DataFrame; not a stack choice
 
     df = pd.DataFrame([{aa: m["pwm"][i][aa] * m["bits"][i] for aa in _AA}
                        for i in range(m["width"])])

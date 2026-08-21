@@ -23,7 +23,6 @@ dependencies = ["seqtree>=0.7.0", "numpy", "huggingface_hub>=0.24"]
 [project.optional-dependencies]
 test = ["pytest>=7.4"]
 logo = ["logomaker", "matplotlib"]   # only needed to render logos; PWM/bits compute is numpy-only
-pmhc = ["pandas"]                    # convenience IO for large tables
 docs = ["sphinx", "pydata-sphinx-theme"]
 viz = ["networkx"]                   # allele similarity / promiscuity graph (needs Graphviz `dot`)
 structure = ["tcren>=2.8"]           # optional: structure-based MJ ΔΔG head (mhcmatch.structure)
