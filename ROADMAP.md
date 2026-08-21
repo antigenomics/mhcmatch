@@ -451,7 +451,14 @@ better on 7 of 9 screens.
    `grand_versions.md`.
 3. **HiTIDE loses 0.0128 against v2** on 234 rows / 37 positives, and that one is not explained by
    coverage (77.8 %, every positive present). Recorded as measured.
-4. **Mouse `viral` is one parameter away.** `mimicry.corpus_counts` calls `mimics.load_peptides`
+4. **The class-II `self` table was ~192 M register searches; fixed in 0.24.1.** A proteome window
+   has no register, so `self` at class II is now the window's own k-mers rather than a projected
+   face: >25 min and ~10.7 GB to **14.0 s**, class-I tables bit-identical by hash. The remaining
+   question is whether the *class-I* `self` face should be reconsidered on the same argument --
+   there it is a fixed positional anchor mask, which is a presentation claim about something that is
+   not presented. That one is a **model** change: `C_corpus_self` is a fitted term, so it needs an
+   arm-vs-arm before it can move.
+5. **Mouse `viral` is one parameter away.** `mimicry.corpus_counts` calls `mimics.load_peptides`
    without a `species=`, so the viral channel is always human — but the deposit carries **3,639
    `MusMusculus` rows** of 82,368 (`~/hf/pmhc_data/ligandome/viral_foreign_iedb.tsv.gz`), so a mouse
    arm is a keyword argument, not new data. It is *not* a free change: it moves a fitted feature's
