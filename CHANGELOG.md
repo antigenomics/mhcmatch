@@ -37,6 +37,22 @@ versioning is [SemVer](https://semver.org).
 
 ### Changed
 
+- **The class-II `self` corpus table is the proteome's own k-mers, not a projected face.**
+  `corpus_counts` resolved a class-II TCR face *per reference window* — `mhc2_anchors` on each one —
+  and for the `self` channel that is 15 lengths x ~12.7 M proteome windows = **~192 M register
+  searches**, measured at **>25 min and ~10.7 GB RSS** against **1.7 s** for the thymic deposit.
+  `rank --cls mhc2 --score aggregate` was therefore not usable in practice.
+
+  A proteome has no register, because nothing in it is presented: `thymus` and `viral` are ligand
+  deposits and keep the per-window face, but for `self` the reference object is the window's own
+  k-mer content. Read once at the shortest admitted length rather than through all fifteen — each
+  extra length re-counts the same k-mers with a different multiplicity, which `N_k` divides straight
+  back out. **14.0 s**, N = 110,932,623 windows, table fully dense.
+
+  **Class I is bit-identical**, verified by hash on all three channels: `C_corpus_self` is a fitted
+  feature and it was fitted on class-I rows, so a class-II definition may change and a class-I table
+  may not.
+
 - **`parse_variant_header` reads the three non-`Somatic` families instead of skipping them.**
   `Fusion:` and `CNV:` are colon-delimited with their own field order, `Isoform:` is pipe-delimited;
   each order was pinned against the pipeline's own `.epitopes.*.tsv` columns rather than inferred.

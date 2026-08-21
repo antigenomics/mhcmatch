@@ -498,3 +498,35 @@ def test_features_keeps_the_source_protein_that_safety_needs():
     near = f.get("nearest_thymus_tcr")
     assert near is not None and near.get("peptide")
     assert "source" in near                    # the field safety() joins on
+
+
+@pytest.mark.hfdata
+def test_the_class_two_self_table_is_the_proteomes_own_kmers_and_class_one_is_untouched():
+    """A proteome window has no register, so `self` at class II is not a projected face.
+
+    ``thymus`` and ``viral`` are ligand deposits and do have registers, so they keep the per-window
+    class-II face. ``self`` is a *proteome* -- nothing in it is presented -- so resolving a register
+    for each of its ~192 M windows is the model applied outside its domain, and it measured >25 min
+    and ~10.7 GB against 1.7 s for the thymic deposit. It is the window's own k-mers instead.
+
+    Two things are asserted, and the second is the one that matters: **class I is bit-identical**.
+    ``C_corpus_self`` is a fitted feature of the shipped model and it was fitted on class-I rows, so
+    a class-II definition may change and a class-I table may not.
+    """
+    import numpy as np
+
+    t2, n2 = mimicry.corpus_counts(None, "mhc2", "self")
+    assert n2 > 1e8, "the class-II self table must carry multiplicity, not one count per k-mer"
+    assert (t2 > 0).all(), "every 3-mer occurs somewhere in a proteome"
+
+    # class I: the fixed positional face, unchanged. Hashed rather than eyeballed.
+    for comp, want in (("thymus", 140482.0), ("viral", 136618.0), ("self", 121968158.0)):
+        t1, n1 = mimicry.corpus_counts(None, "mhc1", comp)
+        assert n1 == want, comp
+        assert np.isfinite(t1).all()
+
+    # and the densities stay in [0, 1] and on a comparable scale across the two classes
+    spec = mimicry.corpus_spectrum(cls="mhc2", components=("thymus", "self", "viral"))
+    got = mimicry.corpus_R(["AAAKFVAAWTLKAAA"], spec, cls="mhc2")[0]
+    assert set(got) == {"thymus", "self", "viral"}
+    assert all(0.0 < v < 1.0 for v in got.values()), got

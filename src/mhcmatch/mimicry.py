@@ -494,7 +494,30 @@ def corpus_counts(pmhc_dir=None, cls: str = "mhc1", comp: str = "thymus", k: int
     lengths = sorted(mimics._LEN[cls])
     if comp == "self":
         cat = "self" if self_species == "human" else "self_mouse"
-        per_len = {L: mimics.proteome_window_array(cat, L) for L in lengths}
+        if cls == "mhc2":
+            # **A proteome has no register**, because nothing in it is presented -- so there is no
+            # class-II TCR face to project onto, and the reference object is the proteome's own
+            # k-mer content: every contiguous k-mer of every window, not a projection of it.
+            #
+            # **One length, not fifteen.** Each additional length re-counts the same proteome k-mers
+            # with a different multiplicity -- a k-mer at a given position sits in `L - k + 1`
+            # windows of length `L` -- so the ladder would multiply the whole table by a constant
+            # that `N_k` immediately divides out, at 1.7e9 bincount elements for the privilege. The
+            # shortest admitted length is the least redundant window that still carries
+            # multiplicity; the distinct-window array at width `k` itself would not, since there are
+            # only `20**k` distinct k-mers and each would be counted exactly once.
+            #
+            # This is also the only tractable form. Resolving a register per reference window --
+            # `mhc2_anchors` on a random 15-mer, which is the model applied outside its domain --
+            # is 15 x ~12.7 M = ~192 M searches, measured at >25 min and ~10.7 GB against 1.7 s for
+            # the thymic deposit, which *is* a set of ligands and does have registers.
+            #
+            # **Class I is untouched.** There the face is a fixed positional mask and
+            # `C_corpus_self` is a fitted feature of the shipped model, so redefining it would be a
+            # model change rather than a definition.
+            per_len = {lengths[0]: mimics.proteome_window_array(cat, lengths[0])}
+        else:
+            per_len = {L: mimics.proteome_window_array(cat, L) for L in lengths}
     else:
         rel = mimics.DEFAULT_REFS["thymus" if comp == "thymus" else "viral"][0]
         peps = mimics.load_peptides(pmhc_dir, rel, cls)
@@ -509,11 +532,26 @@ def corpus_counts(pmhc_dir=None, cls: str = "mhc1", comp: str = "thymus", k: int
         wmap = dict(zip(allp, locus_weights(allp)))
     T = np.zeros(20 ** k)
     for L, win in per_len.items():
-        if win.size == 0 or L - 5 < k:
+        # The face is `L - 5` wide for a projected reference and the window itself for a class-II
+        # proteome one, so the "too narrow to supply a k-mer" test differs. A reference narrower
+        # than `k` contributes nothing and is skipped rather than padded, either way.
+        width = L if (cls == "mhc2" and comp == "self") else L - 5
+        if win.size == 0 or width < k:
             continue
         V = _aa_code()[win.view(np.uint8).reshape(len(win), L)]
-        # per-window face: shared columns for class I, per-row for class II's floating core
-        if cls == "mhc2":
+        # Per-window face: shared columns for class I, per-row for class II's floating core --
+        # **except for a proteome**, which has no register because nothing in it is presented.
+        #
+        # Asking `mhc2_anchors` what register a random proteome 15-mer would bind in is the model
+        # applied outside its domain, and there are 15 lengths x ~12.7 M windows = ~192 M of them:
+        # measured at >25 min and ~10.7 GB against 1.9 s for the thymic deposit, which *is* a set of
+        # ligands and does have registers. The reference object for an unpresented window is its
+        # k-mer content, so `self` at class II counts every contiguous k-mer of the window. Class I
+        # is untouched: there the face is a fixed positional mask and `C_corpus_self` is a fitted
+        # feature, so changing it would be a model change rather than a definition.
+        if cls == "mhc2" and comp == "self":
+            F = V                                   # the k-mer itself; see the branch above
+        elif cls == "mhc2":
             take = np.array([masks(L, cls, w.decode("ascii"))["tcr"] for w in win], dtype=np.intp)
             F = np.take_along_axis(V, take, axis=1)
         else:
