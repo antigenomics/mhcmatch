@@ -59,7 +59,12 @@ someone invents.
   the benchmark harness). Reference their *conclusions* here, not their contents.
 - Public-by-construction data is fine: the `isalgo/pmhc_data` compendium, IEDB, IMGT, published
   benchmarks.
-- Sample identifiers count as data. A surname plus an HLA genotype is identifying.
+- Sample identifiers count as data. A surname plus an HLA genotype is identifying, and so is a
+  surname on its own in a table of clinical-cohort measurements. **The way this rule actually gets
+  broken is a per-donor results table pasted out of the private repo into a public `.md` to make a
+  point** -- that is how eight surnames reached `ROADMAP.md` and a public `master` on 2026-08-21.
+  De-identify at the moment you write the row, not at review: the counts carry the argument and the
+  names never do.
 - If you are unsure whether something is public, it is not. Ask.
 
 The mirror-image rule, for the same reason: **shipped package data is never ignorable.**
