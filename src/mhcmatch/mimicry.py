@@ -251,8 +251,9 @@ def load_references(pmhc_dir=None, cls: str = "mhc1", with_self: bool = True,
             cat = "self" if self_species == "human" else "self_mouse"
             per_len = {L: mimics.proteome_window_array(cat, L) for L in lengths}
         else:
-            rel = mimics.DEFAULT_REFS["thymus" if comp == "thymus" else "viral"][0]
-            peps = mimics.load_peptides(pmhc_dir, rel, cls)
+            cat = "thymus" if comp == "thymus" else "viral"
+            rel = mimics.ref_path(cat, self_species)
+            peps = mimics.load_peptides(pmhc_dir, rel, cls, species=self_species)
             src = _sources(pmhc_dir, rel)
             per_len = {L: np.array(_windows(peps, L), dtype=f"S{L}") for L in lengths}
         for L in lengths:
@@ -544,15 +545,18 @@ def corpus_counts(pmhc_dir=None, cls: str = "mhc1", comp: str = "thymus", k: int
     whose face is narrower than ``k`` contributes nothing and is skipped rather than padded.
     """
     import numpy as np
-    key = (cls, comp, int(k), self_species if comp == "self" else "", str(pmhc_dir or ""),
-           weights or "")
+    # Species is part of the key for EVERY component, not just `self`. It used to be blanked for
+    # `thymus` and `viral` because those deposits were human-only; now that they are not, blanking
+    # it would let a human and a mouse run collide on the same memo entry -- whichever ran first
+    # would silently answer for both.
+    key = (cls, comp, int(k), self_species, str(pmhc_dir or ""), weights or "")
     hit = _COUNTS.get(key)
     if hit is not None:
         return hit
     # The shipped table, for the default path only. A custom deposit directory, locus weighting or
     # a non-default `k` all define a different table, so each falls through to the full build.
     if not pmhc_dir and not weights:
-        hit = _vendored_counts(cls, comp, int(k), self_species if comp == "self" else "human")
+        hit = _vendored_counts(cls, comp, int(k), self_species)
         if hit is not None:
             _COUNTS[key] = hit
             return hit
@@ -584,8 +588,14 @@ def corpus_counts(pmhc_dir=None, cls: str = "mhc1", comp: str = "thymus", k: int
         else:
             per_len = {L: mimics.proteome_window_array(cat, L) for L in lengths}
     else:
-        rel = mimics.DEFAULT_REFS["thymus" if comp == "thymus" else "viral"][0]
-        peps = mimics.load_peptides(pmhc_dir, rel, cls)
+        # `self_species` selects the reference, not just the proteome. Before this it was dropped
+        # here, so `load_peptides` fell back to its "human" default and a mouse run silently scored
+        # against human thymic and human viral references. `ref_path` swaps the file where the
+        # deposit is split per species (thymus) and `species=` filters the column where one file
+        # holds both (viral).
+        cat = "thymus" if comp == "thymus" else "viral"
+        rel = mimics.ref_path(cat, self_species)
+        peps = mimics.load_peptides(pmhc_dir, rel, cls, species=self_species)
         per_len = {L: np.array(_windows(peps, L), dtype=f"S{L}") for L in lengths}
     if weights not in (None, "locus"):
         raise ValueError(f"weights must be None or 'locus', got {weights!r}")
