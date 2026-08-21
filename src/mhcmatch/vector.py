@@ -142,8 +142,27 @@ MHC2_JUNCTION_LENGTHS: tuple = (12, 13, 14, 15)
 #: The list is a clinical judgement, not a fitted parameter, and both fatal precedents behind it are
 #: in :func:`screen`'s docstring. Override it: a cassette for a patient who has already lost an organ
 #: is a different calculation, and so is one for a tissue the protocol accepts damaging.
+#: The nine organs whose damage is not survivable or not recoverable. **Both naming schemes.**
+#: The expression table carries 123 distinct context names from two sources -- GTEx-style
+#: (``"Brain - Caudate (basal ganglia)"``, ``"Muscle - Skeletal"``) and HPA-style lowercase
+#: (``"basal ganglia"``, ``"skeletal muscle"``) -- and a nine-entry Title-Case tuple matched by
+#: ``str.startswith`` sees only **22 of the 123**. Thirteen essential organs were invisible:
+#: heart muscle, kidney, liver, lung, adrenal gland, pituitary gland, cerebellum, cerebral cortex,
+#: midbrain, hippocampal formation, spinal cord, skeletal muscle, smooth muscle.
+#:
+#: Measured cost of that omission, on the shipped table: of the 7,527 genes reaching 50 TPM in an
+#: essential tissue, **1,517 (20.2 %) were invisible to the screen** -- among them CEACAM5 (4.65 seen
+#: vs 28.50 actual; Parkhurst 2011 colitis, 3 of 3 patients), CDH13 (7.09 vs 64.20) and albumin
+#: (26,217 vs 198,524). This is a false negative in the fatal direction, so the list is not a scope
+#: choice: it is the same nine organs, spelled the way the data spells them.
 ESSENTIAL_TISSUES: tuple = ("Heart", "Brain", "Nerve", "Lung", "Liver", "Kidney",
-                            "Adrenal Gland", "Pituitary", "Muscle - Skeletal")
+                            "Adrenal Gland", "Pituitary", "Muscle - Skeletal",
+                            # the same organs under the table's lowercase naming
+                            "heart muscle", "kidney", "liver", "lung", "adrenal gland",
+                            "pituitary gland", "skeletal muscle", "smooth muscle",
+                            "cerebellum", "cerebral cortex", "midbrain", "basal ganglia",
+                            "hippocampal formation", "hypothalamus", "amygdala",
+                            "spinal cord", "choroid plexus", "retina")
 
 
 @dataclass(frozen=True)
@@ -747,7 +766,10 @@ def self_origin_risk(proteome, symbols, tissues=ESSENTIAL_TISSUES, min_tpm: floa
     def essential(gene):
         v = ess.get(gene)
         if v is None:
-            v = ess[gene] = [(t, x) for t, x in EX.safety_profile(gene)
+            # `top` must exceed the table's 123 distinct context names: at the default of 10 a
+            # gene ranked by its highest tissues loses its essential-tissue rows before they are
+            # ever tested, which is the second half of the same false negative as the naming fix.
+            v = ess[gene] = [(t, x) for t, x in EX.safety_profile(gene, top=250)
                              if x >= min_tpm and t.startswith(prefixes)]
         return v
 
