@@ -586,10 +586,21 @@ was case-sensitive `startswith` over a `top=10` truncation. Thirteen essential o
 an essential tissue could not be seen**: CEACAM5 read 4.65 against an actual 28.50 (Parkhurst 2011
 colitis, 3 of 3 patients), albumin 26,217 against 198,524.
 
-**Gate still outstanding.** `bench/results/vector_safety_screen.md` and `vector_screen_radius.md`
-have not been re-run. `screen_radius` must reproduce **byte-for-byte** — its probes are genes absent
-from the expression table plus MAGEA3 at 0.00, so clause 1 cannot fire in it by construction, and an
-identical table is the proof clause 2 was not disturbed.
+**Gate: `screen_radius` re-run, every decision column identical.** `withdrawn`,
+`false positives` and `caught titin` reproduce the 0.25.0 table exactly at all six settings. Only
+`reasons` moved (5->21, 15->63, 75->763), which is the tissue fix: the screen used to see 22 of 123
+tissue names at `top=10`, so the same withdrawals now carry more of the evidence behind them. No rule
+reads a reason count.
+
+Getting there needed two corrections **to the probe**, not the screen. `Unit.kind` now decides
+whether clause 2 exempts a unit's flanks, and `screen_radius.py` builds its units positionally, so
+they took the default `"missense"` and their flanks went unjudged -- `caught titin` read **no** at
+five of six settings. Every probe unit contradicts that default: six are random 27-mers, variants of
+nothing, and the seventh is **MAGE-A3, a shared unmutated cancer-testis antigen** -- exactly the
+class `NOVEL_PRODUCTS` exists to exclude. Built `kind="shared"`, the table returns. `tests/
+test_vector.py::test_a_shared_unmutated_target_has_every_register_judged_including_its_flanks` pins
+all three cases so a silent default cannot decide again whether the screen looks at the one epitope
+it was built for.
 
 ## 5b-5. NESSIE — presented wild type as evidence a neoantigen is real (v0.26.0, OPEN)
 
