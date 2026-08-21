@@ -191,6 +191,77 @@ and costs most of the cassette.
    and commoner failure.
 
 
+The third clause: report near-identity, never withdraw on it
+-------------------------------------------------------------
+
+Both deaths were *near*-identity rather than identity, so an exact-only screen cannot be the whole
+answer — and the section above is why a ``d = 1`` **veto** cannot be it either. ``report_subs=1``
+(``mhcmatch vector --report-subs 1``) resolves that by separating the two decisions: a ``d = 1``
+coincidence is **reported and the unit is kept**, arriving in ``screen``'s ``notes`` with
+``"veto": False`` regardless of ``graded``, so it is a safety consideration attached to a candidate
+rather than a refusal of it.
+
+Left raw, that annotation is useless — two thirds of every cassette. Four filters, each answering a
+different way of not being a hazard, take it to one unit in twelve. Measured end to end through the
+shipped path on 178 experimentally immunogenic somatic neoantigens, rebuilt as 27-mer units
+(``bench/results/vector_report_tier.md``):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 52 12 12 24
+
+   * - layer
+     - units
+     - of 174
+     - action
+   * - **clause 2** — exact, different gene, mutation-spanning
+     - 2
+     - **1.1%**
+     - withdrawn
+   * - **clause 3** — d=1, different + expressed + non-homologous
+     - 116
+     - 66.7%
+     - reported
+   * - … and 9-11mers only
+     - 27
+     - 15.5%
+     - reported
+   * - … and the variant is itself presented
+     - 14
+     - **8.0%**
+     - reported
+
+**8-mers are the whole difference between 66.7% and 15.5%**, and for the same reason radius 1 is
+refused above: an 8-mer's 152-neighbour ball against 68,398,087 proteome windows in 20\ :sup:`8`
+expects **0.41** chance hits per register, where a 9-mer's 171 neighbours in 20\ :sup:`9` expect
+**0.023** — 18× fewer. On this arm 8-mers report 101 units and 9-11mers report 25, and 76 units are
+reported on the strength of an 8-mer *alone*. Exact matching keeps its 8-mers untouched: at ``d = 0``
+an 8-mer expects 0.0027 hits, which is why ``max_subs=0`` can scan a length ``report_subs=1`` must
+not.
+
+The homology filter (:func:`~mhcmatch.vector.flank_identity`, cut at 0.5) is the second: a gene that
+shares the unit's *flanks* as well as its register is related by descent, and a T cell that sees it
+is one tolerance already had to deal with. The unit's 27-mer bounds the comparison at ±9-10
+residues, so this separates loci rather than superfamilies — NRAS → KRAS survives it, correctly, and
+is reported.
+
+The last is presentation. :func:`~mhcmatch.vector.presented` asks whether the **off-target's own
+sequence** is predicted presented on the allotype the unit was selected for; a variant no allotype
+shows is a sequence coincidence, not a hazard. The cut is read off the positives rather than
+borrowed — on this scorer the 176 assayed immunogenic peptides have a median of 0.69% rank, and
+**30% rank keeps 97.2% of them** where the conventional 2% would discard three in ten. On a safety
+read-out that is the expensive error, so the default is permissive by construction and it still
+halves the tier, 27 units to 14.
+
+.. note::
+
+   **This tier annotates; it does not gate.** Nothing in it withdraws a unit, and with
+   ``--weight-offtarget 0`` (the default) nothing in it changes composition either. What it changes
+   is that a kept unit can now say *which* essential-tissue gene it sits one substitution from, at
+   what expression, in what tissue, and whether that gene's own version is presented — which is the
+   part of a safety argument that a clinician overrides or accepts.
+
+
 Prior evidence: near-exact matches to known antigens
 ----------------------------------------------------
 

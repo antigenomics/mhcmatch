@@ -511,13 +511,13 @@ the rename out of 0.24.1 was for.
 **Three layers, each doing only what it can justify. Measured on 178 experimentally immunogenic
 somatic neoantigens (`isalgo/pmhc_data`), rebuilt as the 27-mer units they would enter a cassette
 as. Full record in `bench/results/vector_{somatic_arm,near_identical,rule_1mm_gene,stringent_rule,
-safety_literature}.md`.**
+safety_literature,report_tier}.md`.**
 
 | layer | rule | rejects |
 |---|---|--:|
 | **veto** | clause 1, parent-gene expression — **only** for `isoform` / `cnv` / wild-type targets | — |
 | **veto** | clause 2, **exact** (`max_subs=0`) match to a **different** gene, **mutation-spanning registers only** | **1.1 %** |
-| **report** | `d=1` to a different, non-same-locus, expressed gene — gene, tissue, TPM, homology tier | ~15 % annotated |
+| **report** | `d=1`, 9-11mers, different + expressed + non-homologous gene, and the variant is itself presented | **8.0 % annotated** |
 
 **Why both clauses were wrong, and in different ways.** Clause 1 withdrew **157 of 178 (88.2 %)**
 validated neoantigens on their *parent gene's* expression; the firing genes are housekeeping loci at
@@ -533,8 +533,35 @@ epitopes actually in the proteome.
 filtering at ~1 in 100. Only `d=0` reaches it. `d=1` cannot be made stringent: of 1,685 true `d=1`
 hits at L=9 only 230 are to a different gene symbol, and although 57 % of *those* are same-locus
 artifacts (`CORO7-PAM16` -> `CORO7` is one locus under two symbols), the genuinely non-homologous
-remainder still touches **26 of 178 targets at L=9 alone** — ~15 %, an order of magnitude past
-target. Hence: `d=1` is **reported, not filtered**.
+remainder still touches **27 of 174 targets at L>=9** — 15.5 %, an order of magnitude past target.
+Hence: `d=1` is **reported, not filtered** (`vector.self_origin_risk(report_subs=1)` /
+`mhcmatch vector --report-subs 1`; findings carry `"veto": False` and never withdraw).
+
+**The report tier: four filters, 66.7 % -> 8.0 %.** Raw `d=1` annotates two thirds of every cassette
+and is useless. Measured end to end through the shipped path, `bench/results/vector_report_tier.md`:
+
+| layer | units | of 174 |
+|---|--:|--:|
+| `d=1`, different gene + expressed + non-homologous, L>=8 | 116 | 66.7 % |
+| … and 9-11mers only | 27 | 15.5 % |
+| … and the off-target variant is itself presented | **14** | **8.0 %** |
+
+- **8-mers are the whole difference between 66.7 % and 15.5 %**, and it is the same collapse
+  `vector_screen_radius.md` measured for the veto. An 8-mer's 152-neighbour ball against 68,398,087
+  proteome windows in 20^8 expects **0.41** chance hits per register; a 9-mer's 171 in 20^9 expect
+  **0.023**, 18x fewer. On this arm 8-mers report 101 units and 9-11mers 25, and **76 units are
+  reported on an 8-mer alone**. Exact matching keeps its 8-mers — a `d=0` 8-mer expects 0.0027.
+- **The homology cut separates loci, not superfamilies**, because a 27-mer bounds `flank_identity`
+  at ±9-10 residues. NRAS -> KRAS (0.23) survives it and is reported, which is wanted: a T cell
+  raised on an NRAS Q61 neoantigen that cross-reacts to wild-type KRAS is a real
+  on-target/off-tumour concern and KRAS is transcribed everywhere.
+- **The presentation cut is read off the positives, not borrowed.** On this scorer the 176 assayed
+  immunogenic peptides sit at median **0.69 % rank**; **30 % rank keeps 97.2 %** of them, where the
+  conventional 2 % discards **three in ten**. On a safety read-out that is the expensive error, so
+  the default is deliberately permissive and still halves the tier, 27 units to 14. The off-target
+  variants themselves sit at median 34 % rank — the gate separates two distributions.
+- The cleanest single finding: **UBA3 -> LRP1**, flanking identity 0.00, 197.00 TPM in tibial nerve,
+  the variant `DTIEVSKLN` a 2.7 % binder on the unit's own HLA-A\*68:01.
 
 **The two `d=0` rejections are real.** CYP2E1's `ARMEFFLLL` carries a register exactly matching
 **PLXND1** (116.98 TPM); SYNRG's `SLSKVTIFV` matches **FBLN7** (7.53 TPM). Neither is a paralog

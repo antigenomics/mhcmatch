@@ -1092,3 +1092,124 @@ def test_quota_emits_the_composed_cassette_and_the_score_only_one(tmp_path):
 def test_without_quota_the_output_is_the_single_cassette_it_always_was(tmp_path):
     heads, nt, _ = _run_vector(tmp_path, 1, [])
     assert heads == ["cassette"] and nt == ["cassette_cds"]
+
+
+class _ExactProteome:
+    """`find_exact_sources` plus `seqs` -- what the `report_subs=1` tier needs and `_Proteome` lacks.
+
+    The real method answers the whole substitution neighbourhood in one batch; here the batch is a
+    scan, because the point of the stub is the *semantics* of a d=1 hit, not the index behind it.
+    """
+
+    def __init__(self, seqs):
+        self.seqs = seqs
+
+    def find_exact_sources(self, peptides):
+        out = {}
+        for p in peptides:
+            hits, i = [], -1
+            for name, seq in self.seqs.items():
+                i = seq.find(p)
+                while i >= 0:
+                    hits.append(_Hit(name, 0, i))
+                    i = seq.find(p, i + 1)
+            out[p] = hits
+        return out
+
+    find_sources = lambda self, peptides, max_subs=1, **kw: self.find_exact_sources(peptides)
+
+
+def test_the_report_tier_separates_a_paralog_from_an_independent_coincidence(monkeypatch):
+    """A d=1 match to a gene that shares the unit's *flanks* is descent, not mimicry.
+
+    Two genes carry the same one-substitution variant of the unit's mutated register. PARA carries
+    it in the unit's own flanking context -- that is what a paralog looks like, and a T cell seeing
+    it is one tolerance already had to deal with. COIN carries it in unrelated context: the same
+    nine residues arrived twice by chance, which is the object the titin death is drawn from. Only
+    COIN is reported, and neither withdraws the unit.
+    """
+    from mhcmatch import expression as EX
+    monkeypatch.setattr(EX, "safety_profile",
+                        lambda g, **kw: [("Heart - Left Ventricle", 64.41)]
+                        if g in {"PARA", "COIN"} else [])
+    left, right, reg = "ACDEFGHIK", "LMNPQRSTV", "SIINFEKLA"
+    variant = "SIINAEKLA"                      # one substitution, at the mutated position
+    p = _ExactProteome({"sp|Q1|PARA_HUMAN": left + variant + right,
+                        "sp|Q2|COIN_HUMAN": "W" * 9 + variant + "Y" * 9})
+    risk = vector.self_origin_risk(p, {"Q1": "PARA", "Q2": "COIN"}, report_subs=1)
+
+    u = vector.unit(left + reg + right, 13, gene="TARGET", allele="A", p=0.9, kind="missense")
+    notes = []
+    kept, rejected = vector.screen([u], risk, notes=notes)
+
+    assert kept == [u] and rejected == [], "the report tier never withdraws"
+    assert {why["gene"] for _, _, why in notes} == {"COIN"}, "PARA is descent, not mimicry"
+    assert all(why["clause"] == "near-identical self origin" and why["veto"] is False
+               and why["subs"] == 1 for _, _, why in notes)
+    assert vector.offtarget_cost(notes) == {u: 1.0}
+
+    off = vector.self_origin_risk(p, {"Q1": "PARA", "Q2": "COIN"})
+    assert vector.screen([u], off, notes=(n2 := []))[0] == [u] and n2 == [], "0 is the default"
+
+
+def test_flank_identity_is_read_over_what_both_contexts_actually_have():
+    """Positions past either end are not compared, and a register flush against both ends scores 0."""
+    a, b = "AAAAKKKKKCCCC", "BBBBKKKKKDDDD"
+    assert vector.flank_identity(a, 4, a, 4, 5) == 1.0
+    assert vector.flank_identity(a, 4, b, 4, 5) == 0.0
+    assert vector.flank_identity("KKKKK", 0, "KKKKK", 0, 5) == 0.0, "nothing compared, nothing shown"
+    assert vector.flank_identity("AAKKKKK", 2, "AAKKKKK", 2, 5) == 1.0, "2 of 2, right side empty"
+
+
+def test_a_report_radius_of_two_is_refused_with_the_measurement_that_refuses_it():
+    with pytest.raises(ValueError, match="178/178"):
+        vector.self_origin_risk(object(), {"Q1": "X"}, report_subs=2)
+
+
+def test_presentation_drops_a_coincidence_no_allotype_can_show(monkeypatch):
+    """A d=1 match is only a hazard if a T cell can see the *off-target's own* sequence.
+
+    Both genes carry a one-substitution variant in unrelated context, so both clear the homology
+    cut. Only SHOWN's variant is presented on the unit's allotype; QUIET's is a sequence
+    coincidence, and the fingerprint says so rather than reporting it as a safety consideration.
+    """
+    from mhcmatch import expression as EX
+    monkeypatch.setattr(EX, "safety_profile",
+                        lambda g, **kw: [("Heart - Left Ventricle", 64.41)]
+                        if g in {"SHOWN", "QUIET"} else [])
+    left, right, reg = "ACDEFGHIK", "LMNPQRSTV", "SIINFEKLA"
+    p = _ExactProteome({"sp|Q1|SHOWN_HUMAN": "W" * 9 + "SIINAEKLA" + "Y" * 9,
+                        "sp|Q2|QUIET_HUMAN": "W" * 9 + "SIINWEKLA" + "Y" * 9})
+    risk = vector.self_origin_risk(p, {"Q1": "SHOWN", "Q2": "QUIET"}, report_subs=1)
+    u = vector.unit(left + reg + right, 13, gene="TARGET", allele="A", p=0.9, kind="missense")
+
+    notes = []
+    vector.screen([u], risk, notes=notes)
+    assert {why["gene"] for _, _, why in notes} == {"SHOWN", "QUIET"}, "both clear homology"
+
+    calls = []
+
+    def binder(peptides, alleles=None):
+        calls.append((tuple(peptides), alleles))
+        return [1.0 if "SIINAEKL" in q else -3.0 for q in peptides]
+
+    shown = vector.presented(notes, binder)
+    assert {why["gene"] for _, _, why in shown} == {"SHOWN"}
+    assert len(calls) == 1, "one batched call per allotype, not one per finding"
+    assert all(c[1] == ["A"] for c in calls), "asked of the allotype the unit was selected for"
+    assert all("variant_binder" in why for _, _, why in notes), \
+        "a failed variant keeps its score -- 'we looked' is part of the argument"
+
+
+def test_presented_passes_through_the_clauses_it_is_not_about(monkeypatch):
+    """Clause 1 and clause 2 carry no `variant`, so presentation has no opinion on them."""
+    _stub_expression(monkeypatch)
+    p = _Proteome(lambda pep: [_Hit("sp|Q8WZ42|TITIN_HUMAN")] if pep == TITIN else [])
+    risk = vector.self_origin_risk(p, {"Q8WZ42": "TTN"})
+    u = vector.Unit("K" * 9 + TITIN + "K" * 9, 13, "MAGEA3", "HLA-A*01:01", 0.9)
+    findings = [(u, r.get("register"), r) for r in risk(u, [MAGEA3, TITIN])]
+
+    def binder(peptides, alleles=None):
+        raise AssertionError("nothing to ask -- no finding carries a variant")
+
+    assert vector.presented(findings, binder) == findings

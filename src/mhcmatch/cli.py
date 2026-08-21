@@ -990,15 +990,37 @@ def cmd_vector(a):
         fa = fetch_proteome(a.species)
         risk = V.self_origin_risk(Proteome.from_fasta(fa), gene_symbols(fa, key="accession"),
                                   min_tpm=a.min_tpm, max_subs=a.max_subs,
-                                  veto_tpm=a.veto_tpm, graded=(a.screen_mode == "graded"))
+                                  veto_tpm=a.veto_tpm, graded=(a.screen_mode == "graded"),
+                                  report_subs=a.report_subs,
+                                  report_identity=a.report_identity)
         units, rejected = V.screen(units, risk, lengths=lengths, notes=notes)
+        if a.report_subs and notes:
+            # A d=1 coincidence is only a hazard if a T cell can see it, so the off-target's own
+            # sequence has to be presented on the allotype the unit was selected for. Its own panel
+            # rather than the layout binder built below: that one is scoped to the *selected* units
+            # and this question is asked of every screened one, before selection has happened.
+            before = len({id(u) for u, _, w in notes if "variant" in w})
+            rstore = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
+            ralleles = _read_alleles(a.alleles) or sorted({u.allele for u in units if u.allele})
+            notes = V.presented(notes, V.store_binder(rstore, ralleles, cls=a.cls),
+                                threshold=a.report_threshold)
+            after = len({id(u) for u, _, w in notes if "variant" in w})
+            print(f"# presentation: {before} -> {after} unit(s) carry a near-identical off-target "
+                  f"that is itself presented at {10 ** -a.report_threshold:g}% rank or better",
+                  file=sys.stderr)
         costs = V.offtarget_cost(notes)
         print(f"# withdrawn: {len({id(u) for u, _, _ in rejected})} unit(s), "
               f"{len(rejected)} reason(s); {len(units)} remain", file=sys.stderr)
         if notes:
-            print(f"# fingerprint: {len(costs)} kept unit(s) carry {len(notes)} sub-veto "
-                  f"finding(s) below {a.veto_tpm:g} TPM, priced at --weight-offtarget "
+            near = [n for n in notes if n[2]["clause"] == "near-identical self origin"]
+            print(f"# fingerprint: {len(costs)} kept unit(s) carry {len(notes) - len(near)} "
+                  f"sub-veto finding(s) below {a.veto_tpm:g} TPM, priced at --weight-offtarget "
                   f"{a.weight_offtarget:g}", file=sys.stderr)
+            if near:
+                print(f"# near-identity: {len({id(u) for u, _, _ in near})} kept unit(s) sit "
+                      f"{a.report_subs} substitution from {len({n[2]['gene'] for n in near})} "
+                      f"non-homologous expressed gene(s). Reported, not withdrawn -- read the "
+                      "fingerprint before dosing", file=sys.stderr)
 
     sel = V.select(units, n0=a.n0, cls=a.cls if a.cls_filter else None)
     print(f"# selected {len(sel.units)} of {len(units)}, expected yield "
@@ -1541,6 +1563,31 @@ def main(argv=None):
                          "the default because the decision is per unit while the search is per "
                          "register: at radius 1 over 8-11mers, 3 of 6 random 27-mers get withdrawn "
                          "by chance. Raise it only together with dropping 8-mers")
+    vc.add_argument("--report-subs", type=int, default=0, metavar="D", choices=(0, 1),
+                    help="also REPORT (never withdraw) registers within D substitutions of a "
+                         "different, non-homologous, expressed gene (default %(default)s = off; "
+                         "1 is the only other value). The two TCR deaths were near-identity, not "
+                         "identity, but a radius-1 veto costs two thirds of every cassette to buy "
+                         "a hazard --max-subs 0 has largely already taken: measured on 178 "
+                         "validated immunogenic neoantigens, exact withdraws 1.1%% and d=1 to any "
+                         "expressed gene reaches 70.2%%. So d=1 findings ride along in the "
+                         "fingerprint instead, priced only by --weight-offtarget")
+    vc.add_argument("--report-identity", type=float, default=0.5, metavar="F",
+                    help="flanking-identity ceiling for --report-subs (default %(default)s). A d=1 "
+                         "match to a gene that shares the unit's flanks is descent, not mimicry, "
+                         "and tolerance already covers it; this cut is what takes the reported "
+                         "tier's different-gene hits from 230 to 74 at L=9, 130 of the 156 it "
+                         "removes being one locus under two symbols. It separates loci, not "
+                         "superfamilies: a 27-mer bounds the comparison at +/-9-10 residues, so "
+                         "NRAS -> KRAS survives at 0.23 and is reported")
+    vc.add_argument("--report-threshold", type=float, default=-1.47712, metavar="F",
+                    help="-log10(%%rank) the off-target variant must itself reach to be reported "
+                         "under --report-subs (default %(default)s = 30%% rank). A d=1 coincidence "
+                         "no allotype presents is a sequence coincidence, not a safety "
+                         "consideration. The cut looks permissive because it is read off the "
+                         "positives: 97.2%% of 176 assayed immunogenic neoantigens clear 30%% on "
+                         "this scorer, where the conventional 2%% would discard three in ten of "
+                         "them -- the wrong error to make on a safety question")
     vc.add_argument("--objective", default="sum", choices=("sum", "rate"),
                     help="junction cost: `sum` of the strongest binder per junction (pVACvector's "
                          "logic, biased toward the shortest spacer), or `rate` = binders per "
