@@ -506,68 +506,63 @@ them would break every citation the manuscript and the slides make, to buy nothi
 The `all_epitopes_210826_ms` hand-off therefore carries one name throughout, which is what deferring
 the rename out of 0.24.1 was for.
 
-## 5b-4. The safety screen is mis-specified for somatic neoantigens (v0.26.0, OPEN)
+## 5b-4. The safety screen, re-derived (v0.26.0, LANDED — benchmark gate outstanding)
 
-**Measured 2026-08-21 on the 37-donor Gamaleya cohort. `self_origin_risk`'s clause 1 withdraws
-almost every unit, and it is the wrong clause for a mutated product.**
+**Three layers, each doing only what it can justify. Measured on 178 experimentally immunogenic
+somatic neoantigens (`isalgo/pmhc_data`), rebuilt as the 27-mer units they would enter a cassette
+as. Full record in `bench/results/vector_{somatic_arm,near_identical,rule_1mm_gene,stringent_rule,
+safety_literature}.md`.**
 
-The screen has two clauses and the reason each rejection carries says which fired:
+| layer | rule | rejects |
+|---|---|--:|
+| **veto** | clause 1, parent-gene expression — **only** for `isoform` / `cnv` / wild-type targets | — |
+| **veto** | clause 2, **exact** (`max_subs=0`) match to a **different** gene, **mutation-spanning registers only** | **1.1 %** |
+| **report** | `d=1` to a different, non-same-locus, expressed gene — gene, tissue, TPM, homology tier | ~15 % annotated |
 
-- **clause 2, "unrelated self origin"** — a 27-mer register coincides within `max_subs` of a self
-  peptide from an essential-tissue gene. This is what the screen was designed around, it is measured
-  at a 0.020 false-positive rate on 1,000 viral epitopes (`bench/results/vector_safety_screen.md`),
-  and it behaves as specified.
-- **clause 1, "target gene"** — the unit's *own* gene is transcribed above `min_tpm = 0.25` in an
-  essential tissue. **This is what actually fires.**
+**Why both clauses were wrong, and in different ways.** Clause 1 withdrew **157 of 178 (88.2 %)**
+validated neoantigens on their *parent gene's* expression; the firing genes are housekeeping loci at
+median 49.4 TPM (CYP2E1 9,697, GAPDH 8,419), so no floor repairs it — 39.9 % still lost at 50 TPM.
+The mechanism: a neoantigen is presented only if its gene is transcribed, and transcribed genes are
+transcribed in normal tissue too, so the clause withdrew candidates *for the property that made them
+candidates*. Clause 2 withdrew **178 of 178 (100 %)** at unit level, at a median of 36 self registers
+each — and 36 is exactly `12+10+8+6`, the windows of a 27-mer that cannot contain a centred mutation.
+That firing was arithmetic, not evidence: **99.1 % of the geometric ceiling**, with 0 of 178 mutant
+epitopes actually in the proteome.
 
-| donor | units | kept | withdrawn by clause 1 **alone** |
-|---|--:|--:|--:|
-| donor A | 53 | 0 | 35 |
-| donor B | 46 | 0 | 37 |
-| donor C | 38 | 0 | 30 |
-| donor D | 37 | 0 | 27 |
-| donor E | 548 | 25 | 389 |
-| donor F | 555 | 36 | 366 |
-| donor G | 1,618 | 102 | 1,098 |
-| donor H | 273 | 11 | 180 |
+**Why the veto is `d=0` and not `d=1`.** The author's requirement is minimal, most stringent
+filtering at ~1 in 100. Only `d=0` reaches it. `d=1` cannot be made stringent: of 1,685 true `d=1`
+hits at L=9 only 230 are to a different gene symbol, and although 57 % of *those* are same-locus
+artifacts (`CORO7-PAM16` -> `CORO7` is one locus under two symbols), the genuinely non-homologous
+remainder still touches **26 of 178 targets at L=9 alone** — ~15 %, an order of magnitude past
+target. Hence: `d=1` is **reported, not filtered**.
 
-**0.25 TPM is "detectable anywhere", which nearly every human gene is**, so clause 1 withdraws a
-candidate for the fact that its parent gene exists. **10 of 37 donors lost every unit they had** and
-no cassette shipped for them; the cassette layer is held out of `all_epitopes_210826_ms` entirely
-because of it.
+**The two `d=0` rejections are real.** CYP2E1's `ARMEFFLLL` carries a register exactly matching
+**PLXND1** (116.98 TPM); SYNRG's `SLSKVTIFV` matches **FBLN7** (7.53 TPM). Neither is a paralog
+(0.27 / 0.32 flanking identity) — a somatic mutation recreated a peptide already present in a normal
+expressed protein. *Caveat*: both are 8-mers, which is roughly what length alone predicts (~0.7
+expected over ~1,400 8-mer registers); at 9-11 the rule rejects nothing.
 
-**The category error.** `min_tpm = 0.25` was set just under **MAGE-A12 at 0.33 TPM in brain
-caudate** — the expression that killed two patients. MAGE-A12 is a **cancer-testis antigen**: a
-shared, *unmutated* self protein, and its transcription in brain is precisely the hazard, because
-the construct encodes a sequence brain tissue also presents. A **somatic missense neoantigen is a
-different object** — the encoded sequence is absent from normal tissue by construction, so the
-parent gene's brain expression is not that hazard. What is a hazard for the somatic case is
-clause 2, and clause 2 already tests it.
+**What this screen does NOT cover, stated so it is not implied away.** MAGE-A12 (`KVAELVHFL` ->
+`KMAELVHFL`) is at `d=1` and is not vetoed. The alternative culprit proposed by Martin *et al.* 2021
+(PMID 33284140) — **EPS8L2 `SAAELVHFL`, 66.3 TPM in cerebellum** — is at `d=2`, and the rule that
+reaches `d=2` rejects **178 of 178 at every expression floor to 20 TPM**. Titin is at `d=4` with
+mismatches on the TCR face and is outside sequence screening entirely. So the residual is managed
+clinically — monitoring, dose escalation, a safety switch — not computationally. This is the
+`ValidaTe` position and `bench/results/safety_literature.md` records why it is the only defensible
+one: Cameron *et al.* 2013 ran a full preclinical off-target workup and found nothing, and one TCR
+recognises >10^6 decamers (Wooldridge 2012).
 
-**The fix, and it is not simply "delete clause 1".** Clause 1 is right for the units it was written
-for. `Unit.kind` already distinguishes them (`predict.variant_product`, 0.24.1):
+**Fixed underneath all of it: the screen was blind.** `ESSENTIAL_TISSUES` matched **22 of 123**
+tissue names — the expression table carries GTEx-style and HPA-style lowercase names, and the match
+was case-sensitive `startswith` over a `top=10` truncation. Thirteen essential organs were invisible
+(heart muscle, kidney, liver, lung, cerebellum, spinal cord, ...). **20.2 % of genes above 50 TPM in
+an essential tissue could not be seen**: CEACAM5 read 4.65 against an actual 28.50 (Parkhurst 2011
+colitis, 3 of 3 patients), albumin 26,217 against 198,524.
 
-1. **Gate clause 1 on the product class.** A `missense` / `frameshift` / `inframe_*` / `fusion` unit
-   encodes a sequence not in the normal proteome and should not be withdrawn on its parent gene's
-   expression. An `isoform` or a wild-type/overexpressed target is the MAGE-A12 case and keeps it.
-2. **Make the screen graded, not a veto** — the design principle in `ValidaTe`
-   (Schuster S, Hartl FA, Stehle J, *et al.*; Birkenfeld J, corresponding. *Systematic De-Risking of
-   TCR-Mimic Therapeutics Through Proteome-Wide Off-Target Landscaping and a Generalizable Design
-   Rule Framework.* **bioRxiv** 2026-08-04, `10.64898/2026.07.30.741432`, not peer reviewed —
-   retrieved via the bioRxiv API): map the proteome-wide
-   **off-target fingerprint** per unit and feed it to composition as a cost, instead of letting any
-   one register veto a 27-mer. A unit carries ~70 class-I registers, so a per-register test that
-   reads as specific is not the rate a *cassette* experiences — `self_origin_risk`'s own docstring
-   already makes this argument for `max_subs=0` and it applies with equal force to the decision rule.
-3. **Report the fingerprint either way.** Whatever the veto becomes, the per-unit off-target list
-   (gene, tissue, TPM, register, clause) belongs in the cassette report, because "why was this
-   withdrawn" is currently only answerable by re-running the screen.
-
-**Gates.** (1) and (2) change what a safety screen excludes, so neither ships without re-running
-`bench/results/vector_safety_screen.md` and `vector_screen_radius.md` and reporting the
-false-positive/true-positive pair against the current rule. The 1,000 viral epitopes and 1,000
-essential-tissue thymic peptides are the existing arms; a **somatic-neoantigen arm does not exist
-yet** and is what clause 1 needs, because neither existing arm contains a mutated product.
+**Gate still outstanding.** `bench/results/vector_safety_screen.md` and `vector_screen_radius.md`
+have not been re-run. `screen_radius` must reproduce **byte-for-byte** — its probes are genes absent
+from the expression table plus MAGEA3 at 0.00, so clause 1 cannot fire in it by construction, and an
+identical table is the proof clause 2 was not disturbed.
 
 ## 5b-5. NESSIE — presented wild type as evidence a neoantigen is real (v0.26.0, OPEN)
 
