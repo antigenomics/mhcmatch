@@ -74,7 +74,7 @@ presented and binds. Rank class-I candidates by it, **not** by raw `affinity_nm`
 | **in** | `tuple val(meta), path(input), val(alleles), val(cls)` — `input` is a window FASTA (`params.mhcmatch_rank_mode = 'fasta'`) or a scored table (`'table'`) |
 | **out** | `ranked` → `${prefix}.${cls}.mhcmatch.ranked.tsv` · `versions` |
 
-The fitted **`GRAND`** aggregate, one ordered table. `params.mhcmatch_rank_score` selects
+The fitted **`EPIC`** aggregate, one ordered table. `params.mhcmatch_rank_score` selects
 `aggregate` (default) or `gate` (the pre-0.19.0 product-of-sigmoids). The column list is not
 reproduced here, deliberately — ask the installed library, which is what the stub does:
 

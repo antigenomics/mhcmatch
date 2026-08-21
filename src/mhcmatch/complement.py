@@ -425,7 +425,7 @@ def _zone_positions(L: int, anc: np.ndarray, anchor_idx: tuple, cls: str) -> lis
 #: never substituted silently. The shipped aggregate records the same name as ``phys_scale``; this
 #: constant is what :func:`burial` actually reads.
 PHYS_SCALE = "Rose"
-#: The second chemistry scale, carried **alongside** Rose rather than instead of it since GRAND v3.
+#: The second chemistry scale, carried **alongside** Rose rather than instead of it since EPIC v3.
 #: Kidera KF4 is the hydropathy factor -- the fourth of Kidera et al.'s ten orthogonal factors over
 #: 188 physical properties -- and it is the axis the Chowell-family immunogenicity literature is
 #: usually written against, so it is the comparison a reader expects to see made.

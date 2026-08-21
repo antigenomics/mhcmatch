@@ -465,7 +465,7 @@ better on 7 of 9 screens.
    scale, so it ships only behind an arm-vs-arm on the mouse screens, like any refit. The thymic
    deposit is 53,878 rows and **100 % human**, so item 1 above genuinely needs data.
 
-## 5b-3. EPIC — renaming the shipped scorer (v0.25.0, planned)
+## 5b-3. EPIC — renaming the shipped scorer (v0.25.0, 2026-08-21)
 
 The author's name for the model, decided 2026-08-21: **EPIC** — **E**xpression, **P**resentation,
 **I**mmunogenic **C**omplementarity. It names the fitted block structure rather than one letter per
@@ -494,8 +494,17 @@ result recorded against 0.21.0–0.24.x cites a model this package used to call 
 registry that deletes the old name cannot say what those numbers were produced by. Keep
 `"version": 3` in the artifact for the same reason — the v2-vs-v3 head-to-head has to stay readable.
 
-Deferred out of 0.24.1 on purpose: the `all_epitopes_210826_ms` hand-off ships first, so the
-deliverable carries one name rather than straddling two.
+**Landed, and narrower than scoped.** The artifact's `"model"` field is `EPIC` and it carries
+`"former_name": "GRAND"`; `rank`'s header line, the docstrings, seven `docs/*.rst`, `SKILL.md`,
+`README.md` and the nextflow module say `EPIC`. **No file and no LaTeX label was renamed.**
+`bench/immuno/grand_*.py`, `bench/results/grand_*.md`, `appendix/grand_*.tex`, `eq:grand`,
+`tab:grand-*` and the artifact's own `generator` field keep their names: a filename is the link
+between a number and the run that produced it, and a label is a cross-reference. Renaming ~150 of
+them would break every citation the manuscript and the slides make, to buy nothing a reader sees.
+`docs/models.rst` keeps `GRAND` against the v2 row, which is the name that version shipped under.
+
+The `all_epitopes_210826_ms` hand-off therefore carries one name throughout, which is what deferring
+the rename out of 0.24.1 was for.
 
 ## 5c. Mimicry as immune-response risk (v0.12.0, 2026-08-17)
 

@@ -15,7 +15,7 @@ The model
 ---------
 
 ``mhcmatch rank`` scores each candidate with the fitted aggregate vendored at
-``data/aggregate_mhc1.json``, which declares itself **GRAND**, version 3: nine terms in four
+``data/aggregate_mhc1.json``, which declares itself **EPIC**, version 3: nine terms in four
 **hierarchical blocks**, one unpenalised intercept per screen. Read the feature list from
 :data:`mhcmatch.rank.AGGREGATE_FEATURES` and the grouping from
 :data:`mhcmatch.rank.AGGREGATE_BLOCKS` rather than typing either out.
@@ -253,7 +253,7 @@ two reach the ranker: ``tpm`` and ``gene_name``. When ``tpm`` is in the header, 
    on the ``log1p`` scale and cannot reorder candidates. **Converting exactly needs the whole
    table**, not the FASTA: renormalise the sample's FPKM column to sum to :math:`10^6`. If you only
    hold per-candidate values, the offset is not recoverable, and it matters for cross-sample
-   comparison and for any absolute reading of the score --- ``expr`` is GRAND's largest coefficient
+   comparison and for any absolute reading of the score --- ``expr`` is EPIC's largest coefficient
    at +0.3250 --- but not for the order within a patient.
 
 Reading the output
@@ -324,7 +324,7 @@ move a ranking.
 
 .. warning::
 
-   **A model emits the features it used, and refuses to run without them.** ``GRAND``'s corpus
+   **A model emits the features it used, and refuses to run without them.** ``EPIC``'s corpus
    term reads three reference deposits as three 64 KB k-mer tables, so an aggregate score builds no
    trie at all and ``--no-self`` is allowed with ``--score aggregate``. That
    index — ~7.5 GB and 6 min 15 s, paid once for the whole candidate list — is still what
@@ -350,7 +350,7 @@ Limits
   Gfeller-GBM share 96.5 % of their peptides and TESLA/Neopep 71.8 %. Quote the twin-group column.
 * **The retired mimicry terms were not established in direction.** ``viral_tcr`` and ``thymus_tcr``
   flip sign in 22 % and 35 % of bootstrap resamples. They were in ``BOECRT``; they were not
-  evidence, and ``GRAND`` does not carry them. Its own sign stabilities are in
+  evidence, and ``EPIC`` does not carry them. Its own sign stabilities are in
   ``bench/results/grand_corpus.md``.
 * **The prior is a property of your candidate pool, not of biology.** The fitted prevalence is
   0.31 %, which is how these screens were assembled. Supply your own.

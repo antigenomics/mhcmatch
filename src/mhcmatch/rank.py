@@ -106,7 +106,7 @@ def columns(extended: bool = False, annotate: bool = False, score: str = "aggreg
         out += list(CORE_COLUMNS)
     return out
 
-# ----------------------------------------------------------------- the fitted aggregate (GRAND)
+# ----------------------------------------------------------------- the fitted aggregate (EPIC)
 
 #: Cached ``aggregate_mhc1.json``. Loaded once, on first use.
 _AGG: dict | None = None
@@ -130,7 +130,14 @@ AGGREGATE_BLOCKS: tuple = (
 
 
 def aggregate() -> dict:
-    """The fitted ``GRAND`` artifact: features, coefficients, and the standardizer.
+    """The fitted ``EPIC`` artifact: features, coefficients, and the standardizer.
+
+    **EPIC** -- **E**xpression, **P**resentation, **I**mmunogenic **C**omplementarity --
+    names the four blocks the nine columns are fitted in, not the order they enter in; the pipeline
+    order is presentation, expression, physchem, corpus, and the two recognition blocks are the two
+    halves of Complementarity. Shipped as ``GRAND`` through 0.24.x under the same artifact and the
+    same coefficients: ``"version": 3`` is unchanged, ``"former_name"`` records the old name, and
+    every recorded result under the old name is a result about this model. Renamed in 0.25.0.
 
     Fitted by ``bench/immuno/grand_corpus.py`` over nine neoantigen screens (354,909 rows / 958
     positive) as a partially-pooled logistic regression with a **per-screen intercept**; the
@@ -565,7 +572,7 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
                 "expr_missing": [1.0 if r.expression_imputed else 0.0 for r in rows]}
         # The C_phys pair is a matrix product against a published residue vector -- free, and
         # needing no reference deposit, so the library computes them rather than making the caller
-        # pass them. Two scales since GRAND v3: Rose is burial on folding, KF4 is water/oil
+        # pass them. Two scales since EPIC v3: Rose is burial on folding, KF4 is water/oil
         # partition, and neither recovers the other when it is dropped.
         if rows:
             from . import complement as CM

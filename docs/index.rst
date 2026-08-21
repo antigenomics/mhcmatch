@@ -67,7 +67,7 @@ Capabilities
   :doc:`complementarity`.
 - **Mimicry as risk** — viral / self / thymus resemblance split by anchor and TCR-facing channel,
   as signed log-odds rather than a single distance.
-- **Neoantigen ranking** — the fitted ``GRAND`` aggregate: binder, equilibrium occupancy,
+- **Neoantigen ranking** — the fitted ``EPIC`` aggregate: binder, equilibrium occupancy,
   expression and its missing flag, and Complementarity as ``C_phys`` + ``C_corpus_thymus`` with its
   missing flag, with agretopicity and near-exact matches to already-tested neoantigens reported
   beside the score (:doc:`neoantigen`).

@@ -370,7 +370,7 @@ Where it sits in the ranker
 In the ``BOECRT`` aggregate this whole page was the ``C`` term — coefficient **+0.1790**, z
 **+4.24** on the cleaned corpus. It was one of the four terms whose direction is established.
 
-``GRAND`` replaced it in 0.21.0 with the two factors it reduces to: ``C_phys`` at **+0.2579**, z
+``EPIC`` replaced it in 0.21.0 with the two factors it reduces to: ``C_phys`` at **+0.2579**, z
 **+4.30** (:doc:`burial`) and ``C_corpus_thymus`` at **+0.1871**, z **+5.48** with its missing flag
 at **−0.3510**, z **−3.96** (:doc:`corpus`), over 354,909 rows and 958 positives at BIC 4160.1
 (``bench/results/grand_corpus.md``, and :doc:`neoantigen` for the shipped model end to end). The

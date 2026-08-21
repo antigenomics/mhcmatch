@@ -6,6 +6,23 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.25.0] - 2026-08-21
+
+### Changed
+
+- **The shipped scorer is named `EPIC`.** Same artifact, same nine coefficients, same
+  `"version": 3` — `data/aggregate_mhc1.json` now declares `"model": "EPIC"` and carries
+  `"former_name": "GRAND"`, so **every recorded result under the old name is a result about this
+  model** and nothing needs re-running. **E**xpression, **P**resentation, **I**mmunogenic
+  **C**omplementarity names the four fitted blocks; it is not their pipeline order, which is
+  presentation → expression → physchem → corpus, the two recognition blocks being the two halves of
+  Complementarity.
+
+  `rank`'s header line, the docs and the skill say `EPIC`. The model registry
+  (`docs/models.rst`) keeps `GRAND` against the v2 row, which is the name that version actually
+  shipped under. A consumer that asserted `components["model"] == "GRAND"` will see `EPIC`; the
+  field was always display-only and no code branches on it.
+
 ## [0.24.1] - 2026-08-21
 
 ### Added

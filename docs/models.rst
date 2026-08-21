@@ -96,7 +96,7 @@ without saying why.
 **0.22.0**, last shipped in **0.21.0** (:ref:`ipred-legacy`). ``BDEVF`` keeps its name and the
 fitted coefficients below, because a published model name and its recorded numbers do not change
 when an implementation is retired; :mod:`mhcmatch.mimicry` is still documented as fitted residual to
-it. Nothing in ``GRAND``, the shipped aggregate, was touched — ``V`` was never one of its seven
+it. Nothing in ``EPIC``, the shipped aggregate, was touched — ``V`` was never one of its seven
 terms.
 
 There is now a third generation, and the same rule applies to it: ``C_phys`` + ``K`` is what
@@ -213,17 +213,23 @@ The models
      - **best within-screen median (0.6707).** ``T``'s own coefficients do not resolve
    * - ``BOECRT``
      - binder, occupancy, expression, complementarity, Łuksza ``R``, TCR mimicry
-     - the scorer shipped from 0.19.0 to 0.20.0, **superseded by** ``GRAND``. Fitted on the
+     - the scorer shipped from 0.19.0 to 0.20.0, **superseded by** ``EPIC``. Fitted on the
        cleaned corpus: 355,052 rows / 1,101 positive / 10 screens, within-screen median 0.6504.
        Not comparable to the ``BECRT`` row above — different corpus and screen count
-   * - ``GRAND`` v2
+   * - ``EPIC`` v2
      - binder, occupancy, expression + ``expr_missing``, ``C_phys``, ``K`` + ``C_corpus_missing``
-     - the scorer shipped 0.21.0 to 0.23.0, **superseded by** ``GRAND`` v3. Seven terms, 354,909
+     - the scorer shipped 0.21.0 to 0.23.0 **under the name** ``GRAND``, **superseded by**
+       ``EPIC`` v3. Seven terms, 354,909
        rows / 958 positive / 9 screens, BIC 4160.1, leave-one-screen-out median AUROC 0.6391
-   * - ``GRAND`` v3
+   * - ``EPIC`` v3
      - the same four blocks with Complementarity kept whole: ``C_phys_rose`` + ``C_phys_hydrop``,
        and ``K`` as ``C_corpus_thymus`` / ``_self`` / ``_viral``
-     - **the shipped scorer** (``data/aggregate_mhc1.json``, default since 0.24.0). Nine terms in
+     - **the shipped scorer** (``data/aggregate_mhc1.json``, default since 0.24.0; shipped as
+       ``GRAND`` through 0.24.x and **renamed in 0.25.0** -- same artifact, same coefficients,
+       ``"version": 3`` unchanged, and ``"former_name"`` in the artifact records the old one, so
+       every recorded result under ``GRAND`` is a result about this model). **E**\ xpression,
+       **P**\ resentation, **I**\ mmunogenic **C**\ omplementarity names the four blocks, not
+       the order they enter in. Nine terms in
        four **hierarchical blocks** (:data:`mhcmatch.rank.AGGREGATE_BLOCKS`), one unpenalised
        intercept per screen, no global intercept. Same corpus; leave-one-screen-out median AUROC
        **0.6500**, mean 0.6927, better than v2 on 7 of 9 held-out screens
@@ -441,8 +447,8 @@ The mapping, for when a result cites one:
      - viral/self/thymus × anchor/TCR
      - ``M``
    * - ``aggregate_mhc1.json``
-     - the seven shipped rank terms, with their standardizer
-     - ``GRAND``
+     - the nine shipped rank terms in four blocks, with their standardizer
+     - ``EPIC``
    * - :data:`mhcmatch.rank.GATE`
      - presentation × recognition
      - not a GLM — a product of sigmoids, so it has no acronym

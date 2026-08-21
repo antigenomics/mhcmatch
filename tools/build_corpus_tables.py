@@ -49,6 +49,12 @@ def key(cls: str, comp: str, species: str, k: int) -> str:
 
 
 def main():
+    # **Build, do not read.** `corpus_counts` serves the vendored artifact on the default path, so a
+    # builder that did not disable it would re-emit whatever is already committed with a fresh
+    # version stamp -- the `** MOVED **` check below could never fire, and a deposit change would
+    # ship silently. Empty dict, not None: None means "not loaded yet" and would fall back to disk.
+    mimicry._VENDORED = {}
+    mimicry._COUNTS.clear()
     k = mimicry.CORPUS_K
     old = {}
     if os.path.exists(OUT):

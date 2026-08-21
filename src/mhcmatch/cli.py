@@ -490,7 +490,7 @@ def cmd_rank(a):
     every candidate while the output still said ``BOECRT``.
 
     ``--no-self`` and ``--score aggregate`` were mutually exclusive until 0.21.0, because
-    ``BOECRT`` scored on ``self_tcr``. ``GRAND`` does not, so the combination is now allowed and
+    ``BOECRT`` scored on ``self_tcr``. ``EPIC`` does not, so the combination is now allowed and
     the host-proteome index is off the ranking path entirely.
     """
     from . import rank as R

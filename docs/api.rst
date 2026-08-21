@@ -217,7 +217,7 @@ The Łuksza recognition term :math:`R = Z/(1+Z)` -- a soft partition function ov
 replacing a hard distance cut, so **how many** near-matches a candidate has and **how near** they
 are both enter. ``viral_R`` was a term of the retired ``BOECRT`` aggregate — before 0.17.0 the sum
 lived only in the benchmark repo, which made :func:`mhcmatch.rank.aggregate_score` callable with a
-feature no installed user could supply. ``GRAND`` retired the term in 0.21.0, so the shipped
+feature no installed user could supply. ``EPIC`` retired the term in 0.21.0, so the shipped
 aggregate no longer scores with it; the quantity is still the published recognition term and is
 still computed here. ``k`` and ``a0`` are read from the shipped artifact when one carries them, so
 a refit needs no code change.

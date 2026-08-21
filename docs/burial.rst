@@ -220,7 +220,7 @@ the length variance was hiding it.
 Two scales, carried together
 ----------------------------
 
-Since GRAND v3 the model carries ``C_phys_rose`` **and** ``C_phys_hydrop``
+Since EPIC v3 the model carries ``C_phys_rose`` **and** ``C_phys_hydrop``
 (:data:`mhcmatch.complement.PHYS_SCALE_HYDROP`, Kidera KF4). Rose measures how much surface a
 residue buries on folding; KF4 measures how it partitions between water and oil. They agree at the
 extremes and disagree in the middle, and which one looks stronger depends on the corpus:

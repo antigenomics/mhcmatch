@@ -91,7 +91,7 @@ def test_the_aggregate_no_longer_needs_the_host_proteome_index():
     weight -- and that forced the host-proteome index: 6 min 15 s and ~7.5 GB, the largest single
     cost in the package.
 
-    GRAND v3 scores `C_corpus_self` again -- but from a 64 KB k-mer count table, not a trie. The
+    EPIC v3 scores `C_corpus_self` again -- but from a 64 KB k-mer count table, not a trie. The
     proteome index is still off the ranking path, and the property to pin is that rather than the
     absence of a `self` feature: the channels the CLI builds must be computable without ever
     calling `load_references`."""
@@ -309,7 +309,7 @@ def test_an_unmeasured_component_reports_nan_not_zero():
     index, and standardizing its absence to the training mean made it contribute exactly zero --
     which prints as `0` and reads as "no self-similarity found" when the truth is "never looked".
 
-    Only reachable through `allow_missing=True`, but reachable by default since 0.21.0: GRAND does
+    Only reachable through `allow_missing=True`, but reachable by default since 0.21.0: EPIC does
     not score on `self_tcr`, so `--no-self --score aggregate` is now allowed where 0.20.0 refused
     it, and `--extended` prints these columns beside a score that is perfectly well defined.
     """

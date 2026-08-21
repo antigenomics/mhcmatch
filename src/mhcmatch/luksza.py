@@ -3,7 +3,7 @@
 ``viral_R`` was a term of the ``BOECRT`` aggregate, and nothing in the library could *produce* that
 column: the Boltzmann sum lived only in the benchmark's ``bench/neoag/luksza_r.py``, so an installed
 user had no way to supply one of the features the fitted model then wanted. This module closed that.
-``GRAND`` retired the term in 0.21.0 (see :data:`SHAPE`), so the shipped aggregate does **not** score
+``EPIC`` retired the term in 0.21.0 (see :data:`SHAPE`), so the shipped aggregate does **not** score
 with it -- but the quantity is still the published recognition term, still computable here, and still
 what a refit or a head-to-head against the Łuksza model needs.
 
@@ -57,7 +57,7 @@ FIT_MAX_SUBS = 4
 
 
 #: The shape ``viral_R`` was fitted with, vendored here rather than read out of the aggregate
-#: artifact. It lived in the artifact while ``viral_R`` was a model term; ``GRAND`` retired it in
+#: artifact. It lived in the artifact while ``viral_R`` was a model term; ``EPIC`` retired it in
 #: 0.21.0 (it is a near-duplicate of ``C_corpus_thymus`` -- their raw neighbour counts correlate
 #: 0.96 at d=1, and carrying both, deleting *either* improves BIC), so a shape for a term the
 #: shipped model does not score with no longer belongs in that model's artifact.
@@ -129,7 +129,7 @@ def viral_r(peptides, ref_sets=None, *, max_subs: int = FIT_MAX_SUBS, k: float |
     :func:`mhcmatch.mimics.neighbours` and turns the per-distance counts into ``R``. With
     ``ref_sets=None`` it loads the same default reference the coefficient was fitted against. The
     shipped aggregate does not consume this column -- :func:`mhcmatch.rank.aggregate_score` scores
-    ``GRAND``, which has no ``viral_R`` feature.
+    ``EPIC``, which has no ``viral_R`` feature.
 
     >>> from mhcmatch import luksza                      # doctest: +SKIP
     >>> luksza.viral_r(["NLVPMVATV", "GILGFVFTL"])       # doctest: +SKIP

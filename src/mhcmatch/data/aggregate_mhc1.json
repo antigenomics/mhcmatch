@@ -1,5 +1,6 @@
 {
- "model": "GRAND",
+ "model": "EPIC",
+ "former_name": "GRAND",
  "version": 3,
  "generator": "bench/immuno/grand_ship.py",
  "features": [

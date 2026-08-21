@@ -267,7 +267,7 @@ def test_aggregate_artifact_is_self_consistent():
     """
     a = R.aggregate()
     n = len(a["features"])
-    assert a["model"] == "GRAND"
+    assert a["model"] == "EPIC"
     assert len(a["coef"]) == n and len(a["mu"]) == n and len(a["sigma"]) == n
     assert tuple(a["features"]) == R.AGGREGATE_FEATURES
     assert all(s > 0 for s in a["sigma"])
@@ -536,7 +536,7 @@ def test_artifact_and_library_agree_on_the_concentration():
     the other -- which would silently rescale the feature the coefficient was fitted for."""
     from mhcmatch.rank import aggregate, PEPTIDE_NM
     a = aggregate()
-    assert a["model"] == "GRAND"
+    assert a["model"] == "EPIC"
     assert "occupancy" in a["features"]
     assert "dai" not in a["features"]
     assert abs(a["peptide_nm"] - PEPTIDE_NM) < 1e-12

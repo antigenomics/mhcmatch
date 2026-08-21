@@ -119,7 +119,7 @@ Full treatment, including why a gradient-boosted score fixes the geometry but no
 ## What `rank` costs, and why it did not before
 
 Since 0.20.0 `rank --score aggregate` computes **every one** of the model's features before scoring:
-a model emits the features it used and refuses to run without them. Since 0.21.0 `GRAND` takes its
+a model emits the features it used and refuses to run without them. Since 0.21.0 `EPIC` takes its
 corpus term from the **thymic** channel alone (26,513 peptides), so the host-proteome reference index
 — ~7.5 GB and 6 min 15 s — is off the ranking path and `--no-self` is allowed with
 `--score aggregate`. That index is still what `--extended` and `--annotate` cost, because they
@@ -197,7 +197,7 @@ numpy product and a thread pool would buy nothing, so the flag is absent rather 
 ## The two axes
 
 Presentation is necessary and not sufficient: most presented peptides are ignored. mhcmatch keeps
-the two questions apart and scores them with the fitted **`GRAND`** aggregate (0.21.0), whose
+the two questions apart and scores them with the fitted **`EPIC`** aggregate (0.21.0), whose
 `C_phys_*` and `C_corpus_*` terms are the recognition axis and whose `binder`/`occupancy` terms are
 the presentation one. Version 3 (0.24.0) is **hierarchical**: nine columns in four blocks —
 presentation, expression, physchem, corpus — entered in pipeline order, so a recognition
@@ -367,7 +367,7 @@ records what they were.
 replaced it — the same axis at two generations, with `ipred` a strict special case of `complement`.
 Naming the letter after the generation rather than the module makes `BDEVF` legible as "the old
 model" at a glance — and is what let the letter survive the module's removal in 0.22.0. `BDEVF`
-keeps its name and its recorded coefficients; `GRAND`, the shipped aggregate, never carried `V`.
+keeps its name and its recorded coefficients; `EPIC`, the shipped aggregate, never carried `V`.
 
 **`P` is not a second affinity term.** Both end up as a `%rank` against the same kind of background,
 so the mechanism doesn't separate them — the training data and the target do. `A` is a Potts model
