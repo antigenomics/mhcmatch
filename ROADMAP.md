@@ -506,6 +506,110 @@ them would break every citation the manuscript and the slides make, to buy nothi
 The `all_epitopes_210826_ms` hand-off therefore carries one name throughout, which is what deferring
 the rename out of 0.24.1 was for.
 
+## 5b-4. The safety screen is mis-specified for somatic neoantigens (v0.26.0, OPEN)
+
+**Measured 2026-08-21 on the 37-donor Gamaleya cohort. `self_origin_risk`'s clause 1 withdraws
+almost every unit, and it is the wrong clause for a mutated product.**
+
+The screen has two clauses and the reason each rejection carries says which fired:
+
+- **clause 2, "unrelated self origin"** — a 27-mer register coincides within `max_subs` of a self
+  peptide from an essential-tissue gene. This is what the screen was designed around, it is measured
+  at a 0.020 false-positive rate on 1,000 viral epitopes (`bench/results/vector_safety_screen.md`),
+  and it behaves as specified.
+- **clause 1, "target gene"** — the unit's *own* gene is transcribed above `min_tpm = 0.25` in an
+  essential tissue. **This is what actually fires.**
+
+| donor | units | kept | withdrawn by clause 1 **alone** |
+|---|--:|--:|--:|
+| donor A | 53 | 0 | 35 |
+| donor B | 46 | 0 | 37 |
+| donor C | 38 | 0 | 30 |
+| donor D | 37 | 0 | 27 |
+| donor E | 548 | 25 | 389 |
+| donor F | 555 | 36 | 366 |
+| donor G | 1,618 | 102 | 1,098 |
+| donor H | 273 | 11 | 180 |
+
+**0.25 TPM is "detectable anywhere", which nearly every human gene is**, so clause 1 withdraws a
+candidate for the fact that its parent gene exists. **10 of 37 donors lost every unit they had** and
+no cassette shipped for them; the cassette layer is held out of `all_epitopes_210826_ms` entirely
+because of it.
+
+**The category error.** `min_tpm = 0.25` was set just under **MAGE-A12 at 0.33 TPM in brain
+caudate** — the expression that killed two patients. MAGE-A12 is a **cancer-testis antigen**: a
+shared, *unmutated* self protein, and its transcription in brain is precisely the hazard, because
+the construct encodes a sequence brain tissue also presents. A **somatic missense neoantigen is a
+different object** — the encoded sequence is absent from normal tissue by construction, so the
+parent gene's brain expression is not that hazard. What is a hazard for the somatic case is
+clause 2, and clause 2 already tests it.
+
+**The fix, and it is not simply "delete clause 1".** Clause 1 is right for the units it was written
+for. `Unit.kind` already distinguishes them (`predict.variant_product`, 0.24.1):
+
+1. **Gate clause 1 on the product class.** A `missense` / `frameshift` / `inframe_*` / `fusion` unit
+   encodes a sequence not in the normal proteome and should not be withdrawn on its parent gene's
+   expression. An `isoform` or a wild-type/overexpressed target is the MAGE-A12 case and keeps it.
+2. **Make the screen graded, not a veto** — the design principle in `ValidaTe`
+   (Schuster S, Hartl FA, Stehle J, *et al.*; Birkenfeld J, corresponding. *Systematic De-Risking of
+   TCR-Mimic Therapeutics Through Proteome-Wide Off-Target Landscaping and a Generalizable Design
+   Rule Framework.* **bioRxiv** 2026-08-04, `10.64898/2026.07.30.741432`, not peer reviewed —
+   retrieved via the bioRxiv API): map the proteome-wide
+   **off-target fingerprint** per unit and feed it to composition as a cost, instead of letting any
+   one register veto a 27-mer. A unit carries ~70 class-I registers, so a per-register test that
+   reads as specific is not the rate a *cassette* experiences — `self_origin_risk`'s own docstring
+   already makes this argument for `max_subs=0` and it applies with equal force to the decision rule.
+3. **Report the fingerprint either way.** Whatever the veto becomes, the per-unit off-target list
+   (gene, tissue, TPM, register, clause) belongs in the cassette report, because "why was this
+   withdrawn" is currently only answerable by re-running the screen.
+
+**Gates.** (1) and (2) change what a safety screen excludes, so neither ships without re-running
+`bench/results/vector_safety_screen.md` and `vector_screen_radius.md` and reporting the
+false-positive/true-positive pair against the current rule. The 1,000 viral epitopes and 1,000
+essential-tissue thymic peptides are the existing arms; a **somatic-neoantigen arm does not exist
+yet** and is what clause 1 needs, because neither existing arm contains a mutated product.
+
+## 5b-5. NESSIE — presented wild type as evidence a neoantigen is real (v0.26.0, OPEN)
+
+Tokita S, Fusagawa M, Matsumoto S, Mariya T, Umemoto M, Hirohashi Y, Hata F, Saito T, Kanaseki T,
+Torigoe T. *Identification of immunogenic HLA class I and II neoantigens using surrogate
+immunopeptidomes.* **Sci Adv** 2024 Sep 18; **10**(38):eado6491. `10.1126/sciadv.ado6491`
+(PMID 39292790, retrieved via PubMed — verified, not recalled).
+
+**NESSIE** — *Neoantigen Selection using a Surrogate Immunopeptidome* — selects candidates whose
+**wild-type counterpart appears in an autologous surrogate immunopeptidome**, mass-spec HLA-bound
+peptides from non-tumour tissue (PBMC-derived LCL, normal mucosa), rather than predicting binding.
+HLA-agnostic, reaches class II, and the paper also shows **tumour prevention by vaccination with
+the selected neoantigens in a preclinical mouse model** — which is the Gamaleya mouse arm's own
+read-out.
+
+**The number that matters to us.** On CRC135 (1,158 missense mutations): NESSIE returned **2
+candidates**, one immunogenic (KRV9). NetMHCpan-4.1 + RNA-seq on the same mutations returned **326**
+for HLA-A\*02:01 alone; of the **126** strong binders (%rank < 0.5) tested by tandem IVTT, **1** was
+immunogenic — **the same KRV9**. On UTE003 (592 missense): **2 candidates**, one immunogenic
+(KVI10). KRV9 and KVI10 drove the **2nd and 5th** most abundant TCR clonotypes in their tumours. A
+class-II neoantigen (KVY15) gave CD4 IFN-γ/TNFα.
+
+**Why this is ours to answer.** 326 → 2 for the same single true positive is the precision our
+screening arm loses on, and it is the arm `netmhcpan-benchmark-findings` already records us losing.
+It is also *not* a binding-prediction result: it says the discriminating evidence is **processing
+and presentation of the wild type**, which no term in EPIC reads directly.
+
+**The concrete feature to test.** A `wt_presented` term: is the candidate's wild-type counterpart in
+a presented deposit? We have the pieces — `thymus/thymus_immunopeptidome.tsv.gz` (53,878 rows) and
+the peptide-level ligandome — and `rank` already computes `mm_wt_peptide` for the agretopicity term,
+so the join is available and costs nothing new. Note the polarity: this is **the same evidence the
+safety screen treats as a hazard, read for a different question** — EPIC already splits it
+(thymic self **+0.2459**, peripheral self **−0.2409**), and `wt_presented` is a third reading:
+not danger, not tolerance, but *proof the processing machinery handles this peptide*.
+
+**Gates.** A new fitted term, so it ships only on an arm-vs-arm against shipped EPIC over the nine
+screens with leave-one-screen-out, per `model-version-head-to-head`. Two things to check first
+because they bound what the feature can be worth: NESSIE's own blind spots are **frameshifts (0 of
+56)** and **de-novo neoantigens whose wild type is not presented (17.9 %, 10 of 56)** — and the
+frameshift case is exactly the `nonconventional` arm the cassette quota holds a slot for, so a
+`wt_presented` term must not silently penalise it.
+
 ## 5c. Mimicry as immune-response risk (v0.12.0, 2026-08-17)
 
 Analysis in `2026-mhcmatch-benchmark` (`bench/results/mimicry_model.md`,
