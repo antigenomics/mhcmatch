@@ -54,7 +54,8 @@ __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
 #: a 57-column table until 2026-08-18.
 BASE_COLUMNS: tuple = ("rank", "peptide", "allele", "gene", "score", "p_response",
                        "presentation", "binder",
-                       "occupancy", "agretopicity", "physchem", "expression", "expr_imputed",
+                       "occupancy", "d_occupancy", "wt_absent",
+                       "agretopicity", "physchem", "expression", "expr_imputed",
                        "n_alleles_presenting", "alleles_presenting",
                        "imputed", "wt_peptide", "known_epitope", "variant_type")
 #: The aggregate's recognition features, emitted whenever the aggregate is what scored. A model
@@ -63,14 +64,18 @@ BASE_COLUMNS: tuple = ("rank", "peptide", "allele", "gene", "score", "p_response
 #: The two ``C_phys`` columns are computed here (:func:`mhcmatch.complement.burial` -- a matrix
 #: product against a published residue vector, free). The three ``C_corpus`` channels are the only
 #: features a caller has to supply, because they need a reference deposit; see :func:`aggregate`.
-AGGREGATE_COLUMNS: tuple = ("C_phys_rose", "C_phys_hydrop",
+AGGREGATE_COLUMNS: tuple = ("C_phys_buried", "C_phys_rose", "C_phys_hydrop",
                             "C_corpus_thymus", "C_corpus_self", "C_corpus_viral")
 #: The subset of :data:`AGGREGATE_COLUMNS` that ``channels()`` has to return. The ``C_phys`` pair is
 #: not in it: the library can always compute them, so making the caller pass them would be ceremony.
 CHANNEL_COLUMNS: tuple = ("C_corpus_thymus", "C_corpus_self", "C_corpus_viral")
 #: ``C_phys`` column -> the residue scale :func:`mhcmatch.complement.burial` reads for it. One place,
 #: because the column name and the scale it means are two halves of the same fact.
-PHYS_COLUMNS: dict = {"C_phys_rose": "Rose", "C_phys_hydrop": "KIDERA:KF4"}
+#: ``C_phys_buried`` is EPIC v4's name for what v3 called ``C_phys_rose``: **the same scale**,
+#: renamed because "Rose" names the paper and "buried" names the quantity -- the mean fraction of a
+#: residue's surface area occluded on folding. Both keys are computed so either artifact scores.
+PHYS_COLUMNS: dict = {"C_phys_buried": "Rose", "C_phys_rose": "Rose",
+                      "C_phys_hydrop": "KIDERA:KF4"}
 #: (reference, channel) in the order the mimicry columns are emitted.
 MIMICRY_PAIRS: tuple = tuple((c, ch) for c in ("viral", "self", "thymus")
                              for ch in ("anchor", "tcr"))
@@ -376,6 +381,14 @@ class Ranked:
     #: (:data:`PEPTIDE_NM`). Unlike a %rank this is an absolute quantity, and unlike agretopicity it
     #: needs no wild type -- so it is defined for a frameshift or fusion product that has none.
     occupancy: float = float("nan")
+    #: ``occupancy(Kd_MT) - occupancy(Kd_WT)`` -- agretopicity in Michaelis-Menten form, bounded in
+    #: ``[-1, +1]`` and defined with or without a wild type (:func:`d_occupancy`). The EPIC v4
+    #: presentation block scores this where v3 scored :attr:`occupancy`; both are emitted.
+    d_occupancy: float = float("nan")
+    #: 1.0 when no wild type was recoverable, so :attr:`d_occupancy` fell back to the mutant's own
+    #: occupancy and :attr:`agretopicity` is undefined. The same object as the corpus's
+    #: ``noncanonical`` flag: a frameshift, fusion or other product with no germline counterpart.
+    wt_absent: float = 0.0
     #: calibrated physicochemical log-probability of immunogenicity.
     physchem: float = float("nan")
     #: log1p(TPM), observed if the input carried one, else the tissue/tumour reference median.
@@ -444,6 +457,40 @@ def occupancy(affinity_nm: float, conc: float = PEPTIDE_NM) -> float:
         return float("nan")
     a = conc / affinity_nm
     return a / (1.0 + a)
+
+
+def d_occupancy(affinity_nm: float, wt_affinity_nm: float | None = None,
+                conc: float = PEPTIDE_NM) -> float:
+    """Differential occupancy -- **agretopicity in Michaelis-Menten form**, in ``[-1, +1]``.
+
+    ``occ(Kd_MT) - occ(Kd_WT)``: how much more of the groove the mutant holds than the wild type it
+    replaced, at the same peptide concentration. Where no wild type is recoverable this degrades to
+    ``occ(Kd_MT)`` and the caller records ``wt_absent``; the value is still defined, which is the
+    whole point of writing agretopicity this way.
+
+    **Why not** ``log10(Kd_WT / Kd_MT)``. The log ratio is unbounded, so a pair of weak binders at
+    1 uM and 30 uM scores the same +1.48 as a therapeutically interesting pair at 3 nM and 90 nM,
+    although only one of them changes what a T cell can see. Occupancy saturates instead: both
+    peptides in the first pair occupy essentially none of the groove, so the difference is ~0.000,
+    and in the second it is 0.66. And the log ratio is **undefined** without a wild type, which is
+    why 6,516 of the fit corpus's rows (149 of its positives) had it fabricated from a per-cohort
+    q90 quantile rather than measured. Fitted as a pooled term the log ratio did not earn its
+    parameter (-0.025, 95 % CI [-0.078, +0.035]).
+
+    >>> round(d_occupancy(3.0, 90.0), 4)          # a real gain in occupancy
+    0.6692
+    >>> round(d_occupancy(1000.0, 30000.0), 4)    # the same log-ratio, no occupancy to gain
+    0.0096
+    >>> d_occupancy(3.0, None)                    # no wild type: the mutant's own occupancy
+    0.7692307692307692
+    """
+    mt = occupancy(affinity_nm, conc)
+    if mt != mt:
+        return float("nan")
+    if wt_affinity_nm is None:
+        return mt
+    wt = occupancy(wt_affinity_nm, conc)
+    return mt if wt != wt else mt - wt
 
 
 def _ic50_of(rec: dict):
@@ -566,8 +613,16 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
     """
     if score == "aggregate":
         a = aggregate()
+        # Every column both model versions can read. `aggregate_score` takes only the names the
+        # artifact's `features` list asks for, so supplying the union costs nothing and is what
+        # lets one library score a v3 and a v4 artifact without a branch:
+        #   v3  binder        occupancy      C_phys_rose
+        #   v4  pres          d_occupancy    C_phys_buried   (+ wt_absent)
         cols = {"binder": [r.binder for r in rows],
+                "pres": [r.presentation for r in rows],
                 "occupancy": [r.occupancy for r in rows],
+                "d_occupancy": [r.d_occupancy for r in rows],
+                "wt_absent": [float(r.wt_absent) for r in rows],
                 "expr": [r.expression for r in rows],
                 "expr_missing": [1.0 if r.expression_imputed else 0.0 for r in rows]}
         # The C_phys pair is a matrix product against a published residue vector -- free, and
@@ -675,16 +730,24 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
         except (TypeError, ValueError):
             tpm = None
         expr, imputed = _expression_for(gene, tpm, tissue, tumor, p.peptide)
+        # One recoverability test, two consumers. `wt_nm is None` IS the `wt_absent` indicator:
+        # a frameshift or fusion has no germline counterpart, so there is nothing to be a ratio
+        # against and nothing to subtract an occupancy from.
+        wt_nm = (float(p.wt_affinity_nm)
+                 if (p.wt_peptide and p.wt_affinity_nm == p.wt_affinity_nm
+                     and p.wt_affinity_nm > 0) else None)
         dai = float("nan")
-        if p.wt_peptide and p.wt_affinity_nm == p.wt_affinity_nm and p.affinity_nm == p.affinity_nm \
-                and p.affinity_nm > 0:
-            dai = math.log10(p.wt_affinity_nm / p.affinity_nm)
+        if wt_nm is not None and p.affinity_nm == p.affinity_nm and p.affinity_nm > 0:
+            dai = math.log10(wt_nm / p.affinity_nm)
         rows.append(Ranked(peptide=p.peptide, allele=p.allele, gene=gene, source=p.source,
                            variant_type=P.variant_product(var),
                            presentation=_neglog10(p.percent_rank),
                            binder=_neglog10(p.binder_rank) if p.binder_rank == p.binder_rank
                            else float("nan"),
-                           occupancy=occupancy(p.affinity_nm), agretopicity=dai,
+                           occupancy=occupancy(p.affinity_nm),
+                           d_occupancy=d_occupancy(p.affinity_nm, wt_nm),
+                           wt_absent=0.0 if wt_nm is not None else 1.0,
+                           agretopicity=dai,
                            physchem=_recognition(p.peptide, cls=cls), expression=expr,
                            expression_imputed=imputed, wt_peptide=p.wt_peptide,
                            known_epitope=_known(p.peptide, refs),
@@ -723,17 +786,26 @@ def rank_table(path: str, *, channels=None,
             except ValueError:
                 tpm = None
             expr, imputed = _expression_for(gene, tpm, tissue, tumor, pep)
-            pres = float("nan")
+            # The two heads, kept apart. Until 0.27 this path wrote the *binder* rank into both
+            # `presentation` and `binder`, because `binder_score` was called for the binder rank
+            # and the presentation rank it also returns was thrown away -- so a v4 artifact, whose
+            # presentation block reads `pres`, would silently have been handed the combined score
+            # with the affinity half folded in twice (`d_occupancy` is the other half).
+            pres = binder = float("nan")
             if store is not None and allele:
                 bs = P.binder_score(store, pep, alleles=[allele], cls=cls)
                 if bs:
-                    pres = _neglog10(bs[0].binder_rank)
-            # `pres` here is -log10 of the BINDER rank, not the presentation head -- the two entry
-            # points differed silently on what `presentation` meant, which the aggregate would have
-            # read as the wrong feature. Both are now written explicitly.
+                    pres = _neglog10(bs[0].presentation_rank)
+                    binder = _neglog10(bs[0].binder_rank)
+            # A scored table carries the mutant's IC50 and no wild type, so agretopicity is not
+            # recoverable here at all -- `d_occupancy` degrades to the mutant's own occupancy and
+            # says so, rather than going missing and being imputed to a training mean.
+            nm = _ic50_of(rec)
             r = Ranked(peptide=pep, allele=allele, gene=gene,
-                       source=os.path.basename(path), presentation=pres, binder=pres,
-                       occupancy=occupancy(nm) if (nm := _ic50_of(rec)) is not None else float("nan"),
+                       source=os.path.basename(path), presentation=pres, binder=binder,
+                       occupancy=occupancy(nm) if nm is not None else float("nan"),
+                       d_occupancy=d_occupancy(nm) if nm is not None else float("nan"),
+                       wt_absent=1.0,
                        physchem=_recognition(pep, cls=cls), expression=expr, expression_imputed=imputed,
                        known_epitope=_known(pep, refs),
                        # `type` on a pipeline table is provenance (`Somatic`); the product is in

@@ -598,6 +598,7 @@ def cmd_rank(a):
             cells = [str(r.rank), r.peptide, _allele(a, r.allele), r.gene, f"{r.score:.6g}",
                      f"{r.p_response:.4g}",
                      f"{r.presentation:.4g}", f"{r.binder:.4g}", f"{r.occupancy:.4g}",
+                     f"{r.d_occupancy:.4g}", "1" if r.wt_absent else "0",
                      f"{r.agretopicity:.4g}",
                      f"{r.physchem:.4g}", f"{r.expression:.4g}",
                      "1" if r.expression_imputed else "0",

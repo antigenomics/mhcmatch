@@ -556,3 +556,67 @@ def test_aggregate_reproduces_the_benchmark_score():
     for f, c, mu, sg in zip(a["features"], a["coef"], a["mu"], a["sigma"]):
         want += c * (cols[f] - mu) / (sg or 1.0)
     assert np.max(np.abs(got - want)) < 1e-10
+
+
+# --------------------------------------------------------------- EPIC v4's respecified terms
+
+def test_d_occupancy_saturates_where_the_log_ratio_does_not():
+    """Agretopicity in Michaelis-Menten form. The point is what it does to a weak pair.
+
+    `log10(Kd_WT/Kd_MT)` gives 1 uM vs 30 uM and 3 nM vs 90 nM the same +1.477, although only the
+    second pair changes how much groove a T cell can see. Occupancy saturates, so the weak pair
+    collapses to ~0 and the strong one does not.
+    """
+    import math
+
+    from mhcmatch import rank as R
+    strong, weak = R.d_occupancy(3.0, 90.0), R.d_occupancy(1000.0, 30000.0)
+    assert math.log10(90.0 / 3.0) == pytest.approx(math.log10(30000.0 / 1000.0))   # same DAI
+    assert strong == pytest.approx(0.6692, abs=1e-4)
+    assert weak == pytest.approx(0.0096, abs=1e-4)
+    assert strong > 60 * weak
+
+    assert -1.0 <= R.d_occupancy(90.0, 3.0) <= 0.0        # the wild type binds better: negative
+    assert R.d_occupancy(3.0) == R.occupancy(3.0)         # no wild type: the mutant's own value
+    assert R.d_occupancy(3.0, None) == R.d_occupancy(3.0)
+    assert R.d_occupancy(float("nan"), 90.0) != R.d_occupancy(float("nan"), 90.0)   # nan in, nan out
+    assert R.d_occupancy(3.0, float("nan")) == R.occupancy(3.0)   # unusable wild type == none
+
+
+def test_finish_supplies_every_feature_name_v3_or_v4_can_ask_for():
+    """One library, two artifacts, no branch.
+
+    `aggregate_score` reads only the names in the artifact's `features` list, so `_finish` supplies
+    the union of both vocabularies. A v4 artifact naming `pres`/`d_occupancy`/`C_phys_buried` must
+    score without a code change, and a v3 artifact naming `binder`/`occupancy`/`C_phys_rose` must
+    keep scoring exactly as before.
+    """
+    from mhcmatch import rank as R
+
+    rows = [R.Ranked(peptide="GILGFVFTL", allele="HLA-A*02:01", presentation=2.3, binder=2.1,
+                     occupancy=0.77, d_occupancy=0.66, wt_absent=0.0, expression=3.0)]
+    for r in rows:
+        r.components.update({c: 1e-3 for c in R.CHANNEL_COLUMNS})
+    R._finish(list(rows), None, score="aggregate")           # v3 artifact: must not raise
+
+    v3, v4 = set(R.AGGREGATE_FEATURES), {"pres", "d_occupancy", "wt_absent", "expr",
+                                         "expr_missing", "C_phys_buried", "C_phys_hydrop",
+                                         "C_corpus_thymus", "C_corpus_self", "C_corpus_viral"}
+    done = R._finish(list(rows), None, score="aggregate")
+    have = set(done[0].components) | {"binder", "pres", "occupancy", "d_occupancy", "wt_absent",
+                                      "expr", "expr_missing"}
+    assert v3 <= have and v4 <= have, sorted((v3 | v4) - have)
+
+
+def test_c_phys_buried_is_the_same_column_as_c_phys_rose():
+    """A rename, asserted rather than intended: "Rose" names the paper, "buried" names the number."""
+    from mhcmatch import rank as R
+    assert R.PHYS_COLUMNS["C_phys_buried"] == R.PHYS_COLUMNS["C_phys_rose"] == "Rose"
+
+    rows = [R.Ranked(peptide=p, allele="HLA-A*02:01", presentation=2.0, binder=2.0, occupancy=0.5,
+                     d_occupancy=0.1, expression=1.0)
+            for p in ("GILGFVFTL", "NLVPMVATV", "SIINFEKLA")]
+    for r in rows:
+        r.components.update({c: 1e-3 for c in R.CHANNEL_COLUMNS})
+    for r in R._finish(rows, None, score="aggregate"):
+        assert r.components["C_phys_buried"] == r.components["C_phys_rose"]
