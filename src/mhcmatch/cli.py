@@ -24,11 +24,63 @@ and ignored.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import gzip
 import os
 import sys
+import time
 
 from . import Proteome, Store, pseudoseq
+
+#: Verbosity, set once by :func:`main` from ``-v`` / ``-q``. 0 quiet, 1 normal, 2 verbose.
+#: Module-level because every ``cmd_*`` reads it and threading it through 19 signatures would be
+#: ceremony -- the CLI is a single process with one user.
+_V = 1
+
+
+def say(msg: str, level: int = 1, flush: bool = False) -> None:
+    """One progress line to **stderr**, ``#``-prefixed.
+
+    Stderr, always: stdout is a TSV or FASTA stream that callers pipe, and a progress line in it is
+    a corrupt row. The ``#`` prefix is the house convention and predates this helper -- what the
+    helper adds is that the stream and the prefix can no longer disagree, which they did in 25 of
+    51 places.
+
+    ``level=2`` is ``-v`` only. Use it for wall clock and for anything a normal run should not
+    narrate; ``level=1`` is what a user watching a multi-minute command deserves to see.
+    """
+    if _V >= level:
+        print(f"# {msg}", file=sys.stderr, flush=flush)
+
+
+@contextlib.contextmanager
+def step(label: str, level: int = 1):
+    """Announce an expensive step before it runs, and time it after.
+
+    The announcement is normal-verbosity and the elapsed line is ``-v``: a user staring at a silent
+    terminal needs to know *what* is taking the time without being asked to opt in, but the
+    duration is diagnostics. Nine of nineteen subcommands used to print nothing at all through
+    multi-minute work -- ``binder`` sat through a ~45 s calibrator build in silence with the cost
+    recorded only in a source comment.
+
+    ``level=2`` makes the whole thing ``-v`` only, which is what the outer wrapper in :func:`main`
+    uses -- announcing every invocation of an instant command like ``decompose`` is noise.
+    """
+    say(f"{label} ...", level, flush=True)
+    t = time.perf_counter()
+    yield
+    say(f"{label}: {time.perf_counter() - t:.1f} s", max(level, 2))
+
+
+def _add_verbosity(p) -> None:
+    """``-v`` / ``-q`` on a subparser, so both ``mhcmatch -v vector`` and ``mhcmatch vector -v``
+    work. Argparse binds a top-level flag only *before* the subcommand, and the second form is the
+    one people type."""
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("-v", "--verbose", action="store_true",
+                   help="per-step wall clock and extra detail, on stderr")
+    g.add_argument("-q", "--quiet", action="store_true",
+                   help="suppress progress; errors and real output are unaffected")
 
 
 def _add_store_opts(p):
@@ -70,7 +122,8 @@ def _allele(a, name):
 
 
 def _store(a):
-    return Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species)
+    with step(f"loading the {a.species} pmhc panel ({a.tier})"):
+        return Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species)
 
 
 def _read_seq(arg):
@@ -320,7 +373,9 @@ def cmd_scan(a):
 
 
 def cmd_source(a):
-    pm = Proteome.from_fasta(a.proteome) if os.path.exists(a.proteome) else Proteome.from_hf(a.proteome)
+    with step(f"loading the {a.proteome} proteome"):
+        pm = (Proteome.from_fasta(a.proteome) if os.path.exists(a.proteome)
+              else Proteome.from_hf(a.proteome))
     peps = _batch(a)
     if peps is not None:
         # One index build per length (~70 s each for the human proteome) and one threaded C++ batch
@@ -372,10 +427,10 @@ def cmd_predict(a):
                             top=a.top, background=a.background, footprint=a.footprint, seed=a.seed)
     if a.native:
         P.write_native(preds, a.native, core=a.core)
-        print(f"# wrote {a.native}")
+        say(f"wrote {a.native}")
     if a.scored_csv:
         P.write_scored_csv(preds, a.scored_csv, core=a.core)
-        print(f"# wrote {a.scored_csv}")
+        say(f"wrote {a.scored_csv}")
     if not a.native and not a.scored_csv:
         print(f"# {len(preds)} predicted binder(s) (%rank <= {a.rank_threshold}) over "
               f"{len(alleles)} allele(s)")
@@ -569,7 +624,7 @@ def cmd_rank(a):
     finally:
         if a.out:
             out.close()
-            print(f"# wrote {a.out}: {len(rows)} candidate(s)")
+            say(f"wrote {a.out}: {len(rows):,} candidate(s)")
     n_known = sum(1 for r in rows if r.known_epitope)
     if n_known:
         print(f"# {n_known} candidate(s) matched a known-epitope reference exactly "
@@ -1063,10 +1118,14 @@ def cmd_vector(a):
                 alleles = _read_alleles(a.alleles) or sorted(
                     {u.allele for _, p_ in plans for u in p_ if u.allele})
                 binder = V.store_binder(store, alleles, cls=a.cls)   # ~10 s, paid once for both
-            built.append((name, V.order(us, binder=binder, lengths=lengths, alleles=alleles,
-                                        objective=a.objective,
-                                        binder_threshold=a.binder_threshold,
-                                        threshold=a.threshold)))
+                say(f"layout panel: {len(alleles)} allotype(s), paid once for "
+                    f"{len(plans)} plan(s)", 2)
+            with step(f"laying out {name}: {len(us)} unit(s), "
+                      f"{len(us) * (len(us) - 1)} ordered pair(s) x {len(V.SPACERS)} spacer(s)"):
+                built.append((name, V.order(us, binder=binder, lengths=lengths, alleles=alleles,
+                                            objective=a.objective,
+                                            binder_threshold=a.binder_threshold,
+                                            threshold=a.threshold)))
         elif us:
             # One unit has no junctions, so `order` returns before it ever calls `binder` -- building
             # the panel and its calibrators here would be ~10 s spent to lay out a cassette of one.
@@ -1647,8 +1706,17 @@ def main(argv=None):
                     help="list every GTEx tissue and TCGA tumour type available")
     xp.set_defaults(fn=cmd_expression)
 
+    # Every subparser gets -v/-q, in one loop rather than 19 edits. Also on the top-level parser,
+    # so the flag works on either side of the subcommand name.
+    _add_verbosity(ap)
+    for _p in sub.choices.values():
+        _add_verbosity(_p)
+
     a = ap.parse_args(argv)
-    a.fn(a)
+    global _V
+    _V = 0 if a.quiet else (2 if a.verbose else 1)
+    with step(f"mhcmatch {a.cmd}", level=2):
+        a.fn(a)
 
 
 if __name__ == "__main__":
