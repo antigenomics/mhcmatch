@@ -84,6 +84,23 @@ def test_fallback_version_matches_pyproject():
     assert got == want, f"__init__.py fallback {got} != pyproject {want}"
 
 
+def test_installed_metadata_matches_pyproject():
+    # mhcmatch.__version__ reads the *install* metadata, not pyproject -- so a stale editable install
+    # makes every version-keyed test compare a stale value against itself and pass. That is how a
+    # 0.25.0 -> 0.26.0 bump shipped vendored models stamped 0.25.0 with a green local suite and two
+    # red CI runs: CI installs fresh, so only CI saw the mismatch. Fail here instead, where the
+    # message says what to do.
+    from importlib.metadata import PackageNotFoundError, version
+    want, _ = _declared_version()
+    try:
+        got = version("mhcmatch")
+    except PackageNotFoundError:              # source tree with no install -- the fallback governs
+        return
+    assert got == want, (
+        f"installed mhcmatch metadata is {got} but pyproject declares {want}; this environment is "
+        f"stale and every version-keyed test is comparing it against itself. Run: pip install -e .")
+
+
 def test_nextflow_pins_match_pyproject():
     import re
     want, root = _declared_version()
