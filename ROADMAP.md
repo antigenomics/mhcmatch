@@ -643,6 +643,43 @@ because they bound what the feature can be worth: NESSIE's own blind spots are *
 frameshift case is exactly the `nonconventional` arm the cassette quota holds a slot for, so a
 `wt_presented` term must not silently penalise it.
 
+## 5b-6. EPIC is class-I only, and class II cannot inherit it (v0.27.0, OPEN)
+
+`data/aggregate_mhc1.json` is the **only** aggregate artifact, and `rank.py:189` loads it
+unconditionally. There is no class-II scorer: a class-II query gets presentation and expression
+columns and then the class-I recognition coefficients applied to a face that was never defined for
+it.
+
+**Why it cannot be inherited rather than merely refitted.** A class-I peptide is bulged, anchored at
+`{P1, P2, P3, POmega-1, POmega}`, so its TCR face is the contiguous strip `peptide[3:L-2]` -- which
+is what `face_kmers` slices and what every corpus table is keyed on. A class-II peptide lies
+**extended** in an open-ended groove, its register floats, and the TCR-facing residues are gathered
+from around the core rather than from a fixed offset. The face is a different object, so the corpus
+tables, the physchem burial mean and the `tcr5` mask all have to be rebuilt, not re-fitted.
+
+**What the class-II scorer needs, in order.**
+
+1. A class-II TCR face from the fitted register (`masks(L, "mhc2", peptide, register)["tcr"]`),
+   which already exists and is already register-dependent -- it is the vectorised *batch* form that
+   does not, and a per-peptide loop over a million-row corpus is out of the runtime budget.
+2. Its own `corpus_tables.npz` entries. The vendored artifact is keyed
+   `f"{cls}|{comp}|{self_species}|{k}"` and already carries `mhc2` rows, but they were built on the
+   class-I assumption about what a face is.
+3. Its own physchem selection. **This is the interesting one.** The class-I selection ranks the
+   shipped `KIDERA:KF4` 261st of 282 against the 8-term residual and lands on `Sweet`; there is no
+   reason the same scale wins for a peptide that is not bulged, and hydropathy has a live mechanism
+   in class II that it does not have in class I -- an extended peptide presents a different
+   proportion of its surface to solvent. Run `bench/immuno/physchem_residual.py` unchanged against a
+   class-II base fit.
+4. Its own leave-one-screen-out gate and its own artifact version.
+
+**The corpus exists.** `bench/neoag/corpus_iedb_mhc2.parquet` is **1,096,034 rows / 77,943
+positives** -- 81x the class-I positive count -- so the fit is not information-limited; the work is
+in the face definition and the batch path, not in the data.
+
+**Not 0.26.0.** This is a release of its own and it would displace the cassette and safety work.
+Recorded here so that the class-I refit is not mistaken for a whole-model refit.
+
 ## 5c. Mimicry as immune-response risk (v0.12.0, 2026-08-17)
 
 Analysis in `2026-mhcmatch-benchmark` (`bench/results/mimicry_model.md`,
