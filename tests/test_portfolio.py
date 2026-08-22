@@ -247,9 +247,69 @@ def test_evenness_weight_buys_coverage_and_the_cost_is_visible():
     assert spread.arms["mhc1"]["p_at_least"] < plain.arms["mhc1"]["p_at_least"]
 
 
+def _off_target_spec():
+    """Six class-I candidates on three allotypes, with a cost that disagrees with the score."""
+    return [("G0", "A*02:01", 0.30, "mhc1", "missense"), ("G1", "A*02:01", 0.29, "mhc1", "missense"),
+            ("G2", "A*01:01", 0.28, "mhc1", "missense"), ("G3", "A*01:01", 0.27, "mhc1", "missense"),
+            ("G4", "B*07:02", 0.26, "mhc1", "missense"), ("G5", "B*07:02", 0.25, "mhc1", "missense")]
+
+
+def test_the_default_cost_weight_reproduces_the_composition_exactly():
+    """A new term that changes the shipped answer at weight 0 is a regression wearing a feature's
+    clothes. Nothing about ``compose`` may move until the caller prices the cost."""
+    units = _cands(_off_target_spec())
+    costs = {u: float(i) for i, u in enumerate(units)}
+    base = pf.compose(units, {"mhc1": (3, 2)}, 0.6)
+    same = pf.compose(units, {"mhc1": (3, 2)}, 0.6, cost=lambda u: costs[u], weight_cost=0.0)
+    none = pf.compose(units, {"mhc1": (3, 2)}, 0.6, cost=None, weight_cost=0.7)
+
+    for other in (same, none):
+        assert [u.gene for u in other.units] == [u.gene for u in base.units]
+        assert other.arms["mhc1"]["p_at_least"] == base.arms["mhc1"]["p_at_least"]
+        assert [t["gain"] for t in other.trace] == [t["gain"] for t in base.trace]
+    assert base.arms["mhc1"]["mean_cost"] == 0.0 and base.arms["mhc1"]["max_cost"] == 0.0
+
+
+def test_a_priced_off_target_cost_moves_the_composition_and_is_reported():
+    """The cost is charged to the OBJECTIVE, never to ``Unit.p``: ``p`` is a calibrated marginal
+    that :func:`survival` reads literally, so discounting it would restate the response model too."""
+    units = _cands(_off_target_spec())
+    dirty = {units[0], units[2], units[4]}        # the best unit on each allotype, all off-target
+    cost = lambda u: 4.0 if u in dirty else 0.0   # noqa: E731
+
+    base = pf.compose(units, {"mhc1": (3, 2)}, 0.6)
+    priced = pf.compose(units, {"mhc1": (3, 2)}, 0.6, cost=cost, weight_cost=0.05)
+
+    assert [u.gene for u in base.units] == ["G0", "G1", "G2"], "unpriced, the top of the ranking"
+    assert [u.gene for u in priced.units] == ["G1", "G3", "G5"], "every off-target unit avoided"
+    assert priced.arms["mhc1"]["p_at_least"] < base.arms["mhc1"]["p_at_least"], "it has to cost"
+    assert priced.arms["mhc1"]["mean_cost"] == 0.0 and priced.arms["mhc1"]["max_cost"] == 0.0
+    assert [u.p for u in priced.units] == [0.29, 0.27, 0.25], "p is untouched, not discounted"
+    assert [t["cost"] for t in priced.trace] == [0.0, 0.0, 0.0]
+    assert [t["cost_penalty"] for t in priced.trace] == [0.0, 0.0, 0.0]
+
+
 def test_p_at_least_refuses_unrepresentable_marginal():
-    with pytest.raises(ValueError, match="exceeds its block-live probability"):
+    with pytest.raises(pf.MarginalExceedsBlock, match="above the block-live probability") as ei:
         pf.p_at_least([0.8], [0], [0.5])
+    assert isinstance(ei.value, ValueError), "`except ValueError` must keep catching it"
+    assert (ei.value.n_over, ei.value.n_total) == (1, 1)
+    assert ei.value.worst_p == 0.8 and ei.value.worst_q == 0.5
+
+
+def test_the_unrepresentable_marginal_names_the_arm_it_came_from():
+    """A donor gets a diagnosable message: which arm, how many of its units, how far q has to move.
+
+    The bare raise this replaces named neither the arm nor the count, so the only way to act on it
+    was to re-run the composition by hand.
+    """
+    units = [Unit("A" * 27, 13, "G1", "HLA-A*02:01", 0.9),
+             Unit("C" * 27, 13, "G2", "HLA-A*02:01", 0.8)]
+    with pytest.raises(pf.MarginalExceedsBlock) as ei:
+        pf.compose(units, {"mhc1": (2, 1)}, 0.5)
+    assert ei.value.arm == "mhc1"
+    assert "arm 'mhc1'" in str(ei.value) and "2 of 2 unit(s)" in str(ei.value)
+    assert "0.9" in str(ei.value), "the message has to say how far --block-live must move"
 
 
 def test_n_effective_bounded_by_m_and_exact_under_independence():

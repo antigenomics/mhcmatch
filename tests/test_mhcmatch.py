@@ -365,6 +365,48 @@ def test_proteome_find_sources_batch_matches_the_single_query():
     assert pm.find_sources([wild], max_subs=1, exclude_exact=True)[wild] == []
 
 
+def test_find_exact_sources_agrees_with_find_sources_at_radius_zero():
+    """The vectorised exact path must be the fuzzy search's answer at ``max_subs=0``, not a near one.
+
+    ``_index`` is a Python loop over every position of every protein -- 68,398,087 iterations and
+    ~12.6 GB peak for the human proteome at L=9 -- and what it buys is the ability to answer
+    ``<= max_subs``. The safety screen runs at radius 0 by design and never asks that question, so
+    ``find_exact_sources`` answers membership with ``window_array`` and resolves provenance only for
+    the peptides that hit. Same protein, same position, same peptide, or it is a different search.
+
+    Run on the vendored MHC-I pseudosequences -- real residue sequence, 5,407 records, no download.
+    """
+    import random
+    from importlib.resources import files
+
+    from mhcmatch import Proteome
+    from mhcmatch.proteome import read_fasta
+
+    seqs = read_fasta(str(files("mhcmatch.data") / "mhci_pseudo.fa"))
+    names = sorted(seqs)[:300]
+    pm = Proteome({n: seqs[n] for n in names})
+
+    rng = random.Random(0)
+    queries = []
+    for _ in range(400):
+        s = seqs[rng.choice(names)]
+        L = rng.randint(8, 11)
+        i = rng.randrange(len(s) - L + 1)
+        queries.append(s[i:i + L])
+    # decoys that cannot be in the proteome, so the "no hit" branch is exercised too
+    queries += ["W" * L for L in (8, 9, 10, 11)]
+
+    exact = pm.find_exact_sources(queries)
+    fuzzy = pm.find_sources(queries, max_subs=0)
+    assert set(exact) == set(fuzzy)
+    for q in exact:
+        a = sorted((h.protein, h.position, h.ref_peptide, h.n_subs, h.mutations) for h in exact[q])
+        b = sorted((h.protein, h.position, h.ref_peptide, h.n_subs, h.mutations) for h in fuzzy[q])
+        assert a == b, q
+    assert sum(len(v) for v in exact.values()) >= 400, "the sampled peptides must actually hit"
+    assert all(exact["W" * L] == [] for L in (8, 9, 10, 11))
+
+
 # -- CLI ----------------------------------------------------------------------
 # -- allele-name resolution (item 7) -----------------------------------------
 def test_resolve_allele():

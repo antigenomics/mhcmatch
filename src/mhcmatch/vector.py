@@ -119,6 +119,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
+from .predict import NOVEL_PRODUCTS, TRACT_PRODUCTS
+
 #: Spacers tried in order, ``None`` first. A clean junction needs no spacer, and pVACvector's
 #: default list is tried only when one is needed. See the module docstring for why ``AAY`` is a
 #: trade-off rather than a default.
@@ -132,6 +134,53 @@ JUNCTION_LENGTHS: tuple = (8, 9, 10, 11)
 #: the scan needs the window a core could be read from.
 MHC2_JUNCTION_LENGTHS: tuple = (12, 13, 14, 15)
 
+#: The 20 standard amino acids, in the order the substitution neighbourhood is enumerated.
+_AA: str = "ACDEFGHIKLMNPQRSTVWY"
+
+
+def _neighbours(peptide: str) -> list:
+    """Every sequence exactly one substitution from ``peptide`` (``19 * len(peptide)`` of them).
+
+    The peptide itself is excluded, so a hit on a neighbour is a genuine ``d = 1`` coincidence and
+    never the exact match :meth:`~mhcmatch.Proteome.find_exact_sources` would already have found.
+    """
+    return [peptide[:i] + a + peptide[i + 1:]
+            for i in range(len(peptide)) for a in _AA if a != peptide[i]]
+
+
+def flank_identity(a: str, ai: int, b: str, bi: int, length: int, k: int = 10) -> float:
+    """Fraction of matching residues in the ``k`` positions either side of a shared register.
+
+    ``a``/``b`` are the two contexts the register was found in (a unit's 27-mer and a reference
+    protein), ``ai``/``bi`` the register's 0-based start in each, ``length`` its length. Positions
+    truncated by either sequence's end are not compared, and a register flush against both ends
+    scores 0.0 — nothing was compared, so nothing supports homology.
+
+    **This is what separates a paralog from a coincidence, and the separation is the whole reason
+    the report tier is usable.** Two proteins from one locus share their flanks as well as the
+    register, so a ``d = 1`` match between them is descent, not mimicry, and the T cell that sees one
+    is a T cell tolerance already had to deal with. A match whose flanks are unrelated is an
+    independent occurrence: the same nine residues arrived twice by chance, and *that* is the object
+    the titin and MAGE-A12 deaths are drawn from. Measured on 178 validated immunogenic neoantigens,
+    the cut at 0.5 removes **156 of 230** different-gene ``d = 1`` hits at L=9 — 130 of them at 90%
+    or better, which is one locus under two symbols rather than a coincidence at all.
+
+    The comparison is bounded by whatever context the caller gives, and a 27-mer unit gives ±9-10
+    residues. That is enough to separate **loci**, not superfamilies: NRAS → KRAS scores 0.23 and is
+    reported, which is the wanted behaviour — a T cell raised on an NRAS Q61 neoantigen that
+    cross-reacts to wild-type KRAS is a real on-target/off-tumour concern, and KRAS is transcribed
+    everywhere.
+    """
+    lo = min(ai, bi, k)
+    hi = min(len(a) - ai - length, len(b) - bi - length, k)
+    n = lo + hi
+    if not n:
+        return 0.0
+    same = sum(x == y for x, y in zip(a[ai - lo:ai], b[bi - lo:bi]))
+    same += sum(x == y for x, y in zip(a[ai + length:ai + length + hi],
+                                       b[bi + length:bi + length + hi]))
+    return same / n
+
 #: GTEx ``SMTSD`` tissue **prefixes** whose destruction is not survivable or not repairable, so a
 #: candidate whose self-mimic is transcribed there is excluded rather than ranked down. Matched by
 #: prefix because GTEx splits organs into regions -- ``Brain`` alone covers twelve of the 53 tissue
@@ -140,8 +189,27 @@ MHC2_JUNCTION_LENGTHS: tuple = (12, 13, 14, 15)
 #: The list is a clinical judgement, not a fitted parameter, and both fatal precedents behind it are
 #: in :func:`screen`'s docstring. Override it: a cassette for a patient who has already lost an organ
 #: is a different calculation, and so is one for a tissue the protocol accepts damaging.
+#: The nine organs whose damage is not survivable or not recoverable. **Both naming schemes.**
+#: The expression table carries 123 distinct context names from two sources -- GTEx-style
+#: (``"Brain - Caudate (basal ganglia)"``, ``"Muscle - Skeletal"``) and HPA-style lowercase
+#: (``"basal ganglia"``, ``"skeletal muscle"``) -- and a nine-entry Title-Case tuple matched by
+#: ``str.startswith`` sees only **22 of the 123**. Thirteen essential organs were invisible:
+#: heart muscle, kidney, liver, lung, adrenal gland, pituitary gland, cerebellum, cerebral cortex,
+#: midbrain, hippocampal formation, spinal cord, skeletal muscle, smooth muscle.
+#:
+#: Measured cost of that omission, on the shipped table: of the 7,527 genes reaching 50 TPM in an
+#: essential tissue, **1,517 (20.2 %) were invisible to the screen** -- among them CEACAM5 (4.65 seen
+#: vs 28.50 actual; Parkhurst 2011 colitis, 3 of 3 patients), CDH13 (7.09 vs 64.20) and albumin
+#: (26,217 vs 198,524). This is a false negative in the fatal direction, so the list is not a scope
+#: choice: it is the same nine organs, spelled the way the data spells them.
 ESSENTIAL_TISSUES: tuple = ("Heart", "Brain", "Nerve", "Lung", "Liver", "Kidney",
-                            "Adrenal Gland", "Pituitary", "Muscle - Skeletal")
+                            "Adrenal Gland", "Pituitary", "Muscle - Skeletal",
+                            # the same organs under the table's lowercase naming
+                            "heart muscle", "kidney", "liver", "lung", "adrenal gland",
+                            "pituitary gland", "skeletal muscle", "smooth muscle",
+                            "cerebellum", "cerebral cortex", "midbrain", "basal ganglia",
+                            "hippocampal formation", "hypothalamus", "amygdala",
+                            "spinal cord", "choroid plexus", "retina")
 
 
 @dataclass(frozen=True)
@@ -305,18 +373,33 @@ def units_from_context(rows, records, length: int = 27, cls: str = "mhc1") -> li
     and the score. Anything whose epitope matches no window is returned to the caller's attention by
     being absent; counts are the caller's to report.
 
-    Only ``Somatic:`` windows carry a marked mutation, so fusion and CNV records are skipped: their
-    headers use different internal delimiters and there is no single mutated residue to centre on.
+    **All four header families are admitted, not only** ``Somatic:``. Each carries its novel residue
+    or span somewhere different, and :func:`_centred_context` reads all four; skipping the other
+    three discarded 317 of the 489 non-missense records in one real cohort and left the
+    ``nonconventional`` quota arm with nothing to fill itself from -- which is the one arm whose
+    whole point is that it fails differently from the missense arm.
     """
-    from .predict import _strip_marker, parse_variant_header
+    from .predict import parse_variant_header, variant_product
 
     contexts = []
-    for header, _seq in records:
+    for header, seq in records:
         var = parse_variant_header(header)
-        marked = var.get("mut_window") or ""
-        if var.get("type") != "Somatic" or "(" not in marked:
-            continue
-        contexts.append((header, var, _strip_marker(marked), marked.index("(")))
+        got = _centred_context(var, seq)
+        if got is not None:
+            contexts.append((header, var, got[0], got[1]))
+
+    # Indexed, not scanned. `pep in context` over every context per row is O(rows x windows)
+    # substring tests -- 4,606 windows against tens of thousands of ranked rows. A context that
+    # contains `pep` contains its first K residues, so the K-mer bucket is a superset of the
+    # matches and is the only thing that has to be tested; the gene index serves the short peptides
+    # a K-mer key cannot be built for.
+    K = 8
+    by_kmer: dict = {}
+    by_gene: dict = {}
+    for i, (_h, var, ctx, _o) in enumerate(contexts):
+        by_gene.setdefault(var.get("gene_name") or "", []).append(i)
+        for j in range(len(ctx) - K + 1):
+            by_kmer.setdefault(ctx[j:j + K], []).append(i)
 
     best: dict = {}
     for r in rows:
@@ -324,8 +407,20 @@ def units_from_context(rows, records, length: int = 27, cls: str = "mhc1") -> li
         if not pep:
             continue
         gene = str(r.get("gene", "")).strip()
-        hit = next((c for c in contexts if pep in c[2] and (not gene or c[1]["gene_name"] == gene)),
-                   None) or next((c for c in contexts if pep in c[2]), None)
+        if len(pep) >= K:
+            cand = by_kmer.get(pep[:K], ())
+        else:
+            cand = by_gene.get(gene) or range(len(contexts))
+        hit = None
+        for i in cand:
+            c = contexts[i]
+            if pep not in c[2]:
+                continue
+            if not gene or c[1].get("gene_name") == gene:
+                hit = c
+                break
+            if hit is None:                      # a match on the wrong gene, kept only as fallback
+                hit = c
         if hit is None:
             continue
         p = float(r.get("p", 0.0) or 0.0)
@@ -339,10 +434,56 @@ def units_from_context(rows, records, length: int = 27, cls: str = "mhc1") -> li
                         allele=str(r.get("allele", "")).strip(), p=p,
                         cls=str(r.get("cls", "") or cls),
                         # NOT `var["type"]`: that is provenance (`Somatic`), and reading it here
-                        # charged every candidate to the non-conventional arm. `rank` now emits the
-                        # product class in `variant_type` (predict.variant_product).
-                        kind=str(r.get("kind", "") or r.get("variant_type", "") or "missense")))
+                        # charged every candidate to the non-conventional arm. `rank` emits the
+                        # product class in `variant_type`; where the caller's rows carry neither,
+                        # the header's own product is read rather than defaulting to `missense` --
+                        # a fusion silently charged to the missense arm is the same bug in reverse.
+                        kind=str(r.get("kind", "") or r.get("variant_type", "")
+                                 or variant_product(var) or "missense")))
     return out
+
+
+def _centred_context(var: dict, seq: str):
+    """``(context, offset)`` for one parsed window header, or ``None`` if it carries no centre.
+
+    ``context`` is the sequence a unit is cut from and ``offset`` the position in it that the unit
+    must be built around. The four families mark that position four different ways, all verified
+    against real pipeline records:
+
+    - ``Somatic:`` -- the mutated residue is parenthesised in ``mut_window``, so the marker's index
+      is the offset and the context is the window with the parens stripped.
+    - ``Fusion:`` / ``CNV:`` -- the ``windows`` field is pipe-separated. **Three parts**
+      (``LEFT|X|RIGHT``) marks an altered residue at ``len(LEFT)``; **two parts** (``LEFT|RIGHT``)
+      marks the junction itself, also at ``len(LEFT)``. A fusion read through a stop codon carries a
+      ``*``, and everything past it is not translated, so the context is truncated there.
+    - ``Isoform:`` -- no residue is altered; the whole novel span is. The header's trailing ``span``
+      field ends in a ``d-e`` pair giving that span **in the emitted sequence**, and the unit is
+      centred on it.
+
+    The emitted FASTA sequence is a *sub*-window of the ``windows`` field for every ``Fusion:`` and
+    ``CNV:`` record measured (79 of 79), so the pipe-separated field is the context and the emitted
+    sequence is not -- taking the latter would put the offset in the wrong coordinate frame.
+    """
+    from .predict import _strip_marker
+
+    kind = str(var.get("type") or "")
+    if kind == "Somatic":
+        marked = var.get("mut_window") or ""
+        return (_strip_marker(marked), marked.index("(")) if "(" in marked else None
+    if kind in ("Fusion", "CNV"):
+        parts = (var.get("windows") or "").split("|")
+        if len(parts) not in (2, 3):
+            return None
+        ctx, off = "".join(parts).split("*")[0], len(parts[0])
+        return (ctx, off) if 0 <= off < len(ctx) else None
+    if kind == "Isoform":
+        import re
+        nums = [n for n in re.split(r"[:-]", var.get("span") or "") if n.isdigit()]
+        if len(nums) < 2 or not seq:
+            return None
+        mid = (int(nums[-2]) + int(nums[-1])) // 2
+        return seq, max(0, min(mid, len(seq) - 1))
+    return None
 
 
 def junction_windows(left: str, right: str, spacer: str | None = None,
@@ -404,7 +545,7 @@ def scan_junctions(units, binder, spacer: str | None = None,
     return out
 
 
-def screen(units, risk, lengths=JUNCTION_LENGTHS) -> tuple:
+def screen(units, risk, lengths=JUNCTION_LENGTHS, notes=None) -> tuple:
     """``(kept, rejected)`` — drop units carrying a register that mimics an essential-tissue self
     peptide. **Run this before :func:`select`**: capacity spent on a unit that has to be withdrawn is
     capacity not spent on a safe one.
@@ -447,23 +588,121 @@ def screen(units, risk, lengths=JUNCTION_LENGTHS) -> tuple:
     reason. A withdrawn candidate has to say what withdrew it: "the screen dropped 3 of 40" is not a
     safety argument, and the reason is what a clinician overrides or accepts.
 
+    **A reason may decline to withdraw.** ``r["veto"] = False`` marks a finding that is recorded but
+    does not exclude -- the graded mode of :func:`self_origin_risk`, where a hit below ``veto_tpm``
+    is a *cost* to composition rather than a refusal. The key's absence means ``True``, so a risk
+    callable that never sets it behaves exactly as it always did. Pass ``notes=[]`` to collect those
+    non-vetoing findings; they arrive in the same ``(unit, register, reason)`` shape as ``rejected``
+    and are what :func:`offtarget_cost` reads.
+
+    **One batch query for the whole candidate list, not one per unit.** Where ``risk`` exposes a
+    ``prepare(registers)`` (:func:`self_origin_risk` does), it is handed the deduplicated registers
+    of *every* unit before any unit is judged. A 27-mer carries ~70 registers and a real cohort
+    carries thousands of units, so the per-unit call pattern made ~19,000 proteome queries where 1
+    suffices, and units share registers heavily.
+
     A junction can manufacture a self-mimic just as it can manufacture a binder, but that check needs
     the layout, so it belongs after :func:`order` rather than here.
     """
+    per_unit = [sorted({u.peptide[i:i + L] for L in lengths
+                        for i in range(len(u.peptide) - L + 1)}) for u in units]
+    prepare = getattr(risk, "prepare", None)
+    if prepare is not None:
+        prepare(sorted({r for regs in per_unit for r in regs}))
+
     kept, rejected = [], []
-    for u in units:
-        regs = sorted({u.peptide[i:i + L] for L in lengths
-                       for i in range(len(u.peptide) - L + 1)})
+    for u, regs in zip(units, per_unit):
         reasons = list(risk(u, regs)) if regs else []
-        if reasons:
-            rejected.extend((u, r.get("register"), r) for r in reasons)
+        vetoes = [r for r in reasons if r.get("veto", True)]
+        if vetoes:
+            rejected.extend((u, r.get("register"), r) for r in vetoes)
         else:
             kept.append(u)
+        if notes is not None:
+            notes.extend((u, r.get("register"), r) for r in reasons if not r.get("veto", True))
     return kept, rejected
 
 
+def offtarget_cost(findings) -> dict:
+    """``{unit: cost}`` from :func:`screen`'s ``notes`` (or its ``rejected``) -- the size of a unit's
+    **off-target fingerprint**, being the number of distinct ``(clause, gene)`` pairs it reaches.
+
+    Distinct genes, not reasons: a gene is transcribed in many tissues and :func:`self_origin_risk`
+    reports one finding per tissue, so counting reasons would charge a unit for the breadth of GTEx
+    rather than the breadth of its off-targets. Units absent from ``findings`` are absent from the
+    dict; read it with ``.get(u, 0.0)``.
+
+    This is the number :func:`mhcmatch.portfolio.compose` subtracts under ``weight_cost``. It is a
+    count and not a probability on purpose -- there is no calibration behind "how much worse is two
+    off-target genes than one", so the weight is the caller's to set and to record.
+    """
+    by: dict = {}
+    for u, _reg, why in findings:
+        by.setdefault(u, set()).add((why.get("clause", ""), why.get("gene", "")))
+    return {u: float(len(s)) for u, s in by.items()}
+
+
+def presented(findings, binder, threshold: float = -1.47712, alleles=None) -> list:
+    """Keep the near-identity ``findings`` whose off-target variant is **actually presented**.
+
+    A ``d = 1`` coincidence is only a hazard if a T cell can see it, and seeing it means the
+    *off-target's own* sequence — not the unit's register — is presented on the allotype the unit was
+    selected for. A variant that no allotype presents is a sequence coincidence and nothing more, so
+    it is dropped from the fingerprint rather than reported as a safety consideration. Findings with
+    no ``"variant"`` key (clauses 1 and 2, and any sub-veto finding under ``graded``) pass through
+    untouched: presentation is not what they are about.
+
+    ``binder(peptides, alleles) -> [score]`` is :func:`store_binder`'s contract, ``score`` being
+    ``-log10(%rank)`` so higher is stronger. Every finding on one allotype goes in **one** call — the
+    alternative is a :meth:`~mhcmatch.store.Store.restriction` per finding, and a cassette's report
+    tier carries thousands. ``alleles`` overrides the per-unit allotype for callers whose units carry
+    none.
+
+    **``threshold`` defaults to ``-log10(30)``, and the conventional 2% rank would be wrong here.**
+    This gate is a safety read-out, so the expensive error is missing a hazard, and the cut belongs
+    where the *positives* are rather than at a number borrowed from a different scorer. Measured on
+    the 176 assayed immunogenic neoantigen/allotype pairs in ``isalgo/pmhc_data``, scored by this
+    scorer on their own allotype, the median sits at **0.69% rank** and the 5th percentile at
+    **14.3%**:
+
+    ==========  ====================================  ==========================
+    %rank cut   assayed immunogenic peptides kept     units carrying a report
+    ==========  ====================================  ==========================
+    none        100.0%                                27 of 174 (15.5%)
+    30          **97.2%**                             **14 of 174 (8.0%)**
+    20          96.0%                                 12 of 174 (6.9%)
+    15          94.9%                                  9 of 174 (5.2%)
+    5           88.6%                                  4 of 174 (2.3%)
+    2           70.5%                                  0 of 174 (0.0%)
+    ==========  ====================================  ==========================
+
+    At 2% the gate discards **three in ten** genuinely immunogenic peptides, which on a safety
+    question is the error that costs something. 30% still halves the tier, 27 units to 14.
+
+    Each finding gains a ``"variant_binder"`` key with its score, kept even when it fails, because
+    "we looked and it is not presented" is the part of a safety argument that a bare absence cannot
+    make.
+    """
+    by: dict = {}
+    for i, (u, _reg, why) in enumerate(findings):
+        if "variant" in why:
+            by.setdefault(tuple(alleles) if alleles else (getattr(u, "allele", None),), []).append(i)
+    ok = set()
+    for allele, idx in by.items():
+        scores = binder([findings[i][2]["variant"] for i in idx],
+                        [a for a in allele if a] or None)
+        for i, score in zip(idx, scores):
+            findings[i][2]["variant_binder"] = score
+            if score >= threshold:
+                ok.add(i)
+    return [f for i, f in enumerate(findings) if "variant" not in f[2] or i in ok]
+
+
 def self_origin_risk(proteome, symbols, tissues=ESSENTIAL_TISSUES, min_tpm: float = 0.25,
-                     max_subs: int = 0):
+                     max_subs: int = 0, *, novel_kinds=NOVEL_PRODUCTS,
+                     veto_tpm: float = 5.0, graded: bool = False,
+                     report_subs: int = 0, report_identity: float = 0.5,
+                     report_flank: int = 10, report_min_length: int = 9):
     """A ``risk`` callable for :func:`screen`: **near-exact self origin, joined to tissue.**
 
     A register is risky when :meth:`mhcmatch.Proteome.find_source` places it within ``max_subs`` of a
@@ -502,6 +741,94 @@ def self_origin_risk(proteome, symbols, tissues=ESSENTIAL_TISSUES, min_tpm: floa
     protein that is *not* the unit's own parent. Hits to the parent are dropped, because a long
     peptide is native context by design and tolerance already covers it; without that exclusion the
     screen rejects every unit of every cassette.
+
+    **Clause 1 is skipped for a product whose sequence is not in the normal proteome, and that is a
+    category error being corrected rather than a threshold being relaxed.** MAGE-A12 is a
+    cancer-testis antigen: a shared, **unmutated** self protein, so its 0.33 TPM in brain caudate is
+    the hazard exactly because the construct encodes a sequence brain tissue also presents. A somatic
+    neoantigen is a different object — a missense, a frameshift, an inframe indel, a fusion junction
+    all encode a sequence that **is absent from normal tissue by construction** — so the parent
+    gene's expression is not that hazard. What is a hazard for it is clause 2, and clause 2 tests it
+    for every kind, unchanged. Measured on a 37-donor cohort, clause 1 as an unconditional rule
+    withdrew a candidate for the fact that its parent gene exists: **10 of 37 donors lost every unit
+    they had**, and one lost 1,098 of 1,618 to clause 1 alone.
+
+    ``novel_kinds`` is :data:`mhcmatch.predict.NOVEL_PRODUCTS` and is matched against
+    :attr:`Unit.kind`. An ``isoform``, a ``cnv`` locus, a wild-type or overexpressed target is the
+    MAGE-A12 case and **keeps** clause 1.
+
+    **Clause 2 is asked only of the registers that carry novel sequence, and for the same reason.**
+    A 27-mer unit is thirteen-fourteenths wild type by construction, and the unrestricted clause read
+    that design as the hazard. Measured on **178 experimentally immunogenic somatic neoantigens**
+    from ``isalgo/pmhc_data``, rebuilt as the 27-mer units they would enter a cassette as:
+    **178 of 178 (100 %) trip clause 2**, at a median of **36** self registers each. 36 is
+    ``12 + 10 + 8 + 6`` — exactly the count of 8/9/10/11-mer windows of a 27-mer that *cannot*
+    contain a centred mutation — and the measured self fraction tracks that geometry at every length
+    (L=8 60.02 % against 60.0 predicted, L=9 52.6 / 52.6, L=10 44.4 / 44.4, L=11 35.2 / 35.3;
+    6,350 hits, **99.1 % of the geometric ceiling**). At the *minimal-epitope* level the clause is
+    clean: **0 of 178** mutant epitopes are in the proteome and **178 of 178** wild types are. There
+    were essentially no genuine coincidences to find — the veto was arithmetic, not evidence.
+
+    So a window that does not contain novel sequence is **structurally exempt**: it is wild type, it
+    was always going to be in the proteome, and no cassette avoids it short of not using long units.
+    Which windows those are depends on the product, and
+    :data:`mhcmatch.predict.TRACT_PRODUCTS` is the split: a ``frameshift`` or ``fusion`` is novel
+    from :attr:`Unit.mutation_index` **to the end of the unit**, everything else in ``novel_kinds``
+    at that one index. ``n_registers_spanning`` and ``n_hit_spanning`` ride on every clause-2 reason
+    so the exemption is auditable rather than silent.
+
+    The exemption is gated on the same ``novel_kinds`` as clause 1 — one list, two rules that cannot
+    disagree. For an ``isoform``, a ``cnv`` or an unannotated unit **every** register is judged, as
+    before, because for those the self-ness of the sequence *is* the finding. One case it reads
+    generously: an in-frame fusion's downstream tract is genuine second-parent sequence, and it is
+    exempted with the rest of the tract rather than charged to the second gene.
+
+    **An unknown or empty kind keeps clause 1 — fail closed.** The screen may not exempt a unit
+    because nobody annotated it. Every clause-1 reason therefore carries ``"kind"``, so a rejection
+    can be read as *this is a shared self antigen* or as *nothing said what this was*. Note the one
+    thing this cannot see: :attr:`Unit.kind` defaults to ``"missense"`` in the dataclass, so a
+    :class:`Unit` constructed in Python with no ``kind`` is indistinguishable from one annotated as a
+    somatic missense and is exempted. Annotating the unit is the caller's contract —
+    :func:`units_from_context` and the CLI's unit table both fill it from the pipeline header.
+
+    **``veto_tpm = 5.0`` separates a veto from a cost, and it is not the same line as ``min_tpm``.**
+    ``min_tpm = 0.25`` stays what it always was: the *reporting* floor, set under MAGE-A12's 0.33 TPM
+    so the fatal case is always visible. What 0.25 cannot also be is the *exclusion* line — at that
+    level nearly every human gene is "detectable somewhere", which is what made the screen withdraw
+    almost everything. ``veto_tpm`` is the conventional 5 TPM "is it expressed" cut, and with
+    ``graded=True`` a finding below it is reported with ``"veto": False``: :func:`screen` keeps the
+    unit, :func:`offtarget_cost` turns the finding into a per-unit cost, and
+    :func:`mhcmatch.portfolio.compose` prices it against the response model instead of any one
+    register vetoing a 27-mer. ``graded=False`` is the default and is the shipped veto behaviour.
+
+    **``report_subs=1`` adds a third clause that reports and never withdraws.** The two deaths this
+    screen is shaped around were both *near*-identity, not identity: titin's ``ESDPIVAQY`` differs
+    from MAGE-A3's ``EVDPIGHLY`` at four positions, and MAGE-A12 is a different gene altogether. So
+    the exact clause 2 cannot be the whole answer — but neither can a ``d=1`` veto, and the reason is
+    measured rather than argued. On 178 validated immunogenic somatic neoantigens the exact clause
+    withdraws **2 units (1.1%)**, while ``d=1`` to any different expressed gene reaches **125 units
+    (70.2%)**: a veto there costs two thirds of every cassette to buy a hazard the exact clause has
+    largely already taken. Clause 3 therefore emits ``"veto": False`` unconditionally — independently
+    of ``graded`` — so :func:`screen` keeps the unit and ``notes`` carries the finding.
+
+    Three filters keep that annotation readable, and the first carries most of it.
+    ``report_min_length = 9`` excludes 8-mers, because at ``d = 1`` an 8-mer's ball is mostly chance:
+    152 neighbours against 68,398,087 proteome windows in a space of 20**8 expects **0.41**
+    coincidences per register, where a 9-mer's 171 neighbours in 20**9 expect **0.023** -- 18x fewer.
+    Exact matching is unaffected and keeps its 8-mers, a d=0 8-mer expecting 0.0027 hits, which is
+    why ``max_subs=0`` can scan a length ``report_subs=1`` must not. Then ``report_identity = 0.5``
+    drops hits whose flanks are homologous to the unit's own context (:func:`flank_identity`),
+    because a match to a paralog is descent rather than mimicry; and the off-target gene must clear
+    ``min_tpm`` in an essential tissue, since a hazard needs something to be expressed.
+    ``report_flank`` is how far either side the identity is read. Feed the survivors to
+    :func:`presented` for the fourth and last filter. ``report_subs`` is 0 by default, which is
+    exactly the two-clause screen as previously shipped.
+
+    **``d=2`` is refused, not merely discouraged.** At radius 2 every expression floor from 0 TPM to
+    100 TPM flags 178 of 178 units, with a median of 20 off-target genes each. The hazard genuinely
+    does live out there — EPS8L2 at ``d=2``, titin at ``d=4`` — and no parameter reaches it without
+    taking the entire cassette with it. That boundary is the finding, and it is why the screen stops
+    at 1 and hands the rest to composition.
 
     **``max_subs=0`` — exact coincidence — because the decision is per unit while the search is per
     register, and that multiplies.** A 27-mer carries ~70 class-I registers and is withdrawn if any
@@ -545,10 +872,12 @@ def self_origin_risk(proteome, symbols, tissues=ESSENTIAL_TISSUES, min_tpm: floa
     It is required rather than defaulted because a missing map resolves nothing and so returns "no
     risk" for every peptide — the one wrong answer this must never give quietly.
 
-    ``proteome`` needs :meth:`~mhcmatch.Proteome.find_sources`, the **batch** form: a unit's ~70
-    registers go through one threaded C++ query per length rather than 70 Python-level ones. Cost is
-    a whole-proteome index per register length (~12 GB peak, minutes), built once and cached on the
-    object — so screen the whole candidate list in one process, never one unit per invocation.
+    ``proteome`` needs :meth:`~mhcmatch.Proteome.find_sources`, the **batch** form, and at
+    ``max_subs=0`` :meth:`~mhcmatch.Proteome.find_exact_sources` is used where the object has it: an
+    exact question does not need the fuzzy index, which is a per-position Python loop costing ~12.6
+    GB peak. The returned callable carries a ``prepare(registers)`` that :func:`screen` hands *every*
+    register of *every* unit, so the whole candidate list resolves in one query rather than one per
+    unit — screen everything in one process, never one unit per invocation.
     """
     from . import expression as EX
 
@@ -557,34 +886,164 @@ def self_origin_risk(proteome, symbols, tissues=ESSENTIAL_TISSUES, min_tpm: floa
                          "proteome.gene_symbols(path, key='accession'); without it every peptide "
                          "screens as safe")
 
-    def _essential(gene):
-        return [(t, v) for t, v in EX.safety_profile(gene)
-                if v >= min_tpm and t.startswith(tuple(tissues))]
+    if report_subs > 1:
+        raise ValueError(
+            f"report_subs must be 0 (off) or 1, got {report_subs}. A radius of 2 is not a "
+            "usable report tier: measured on 178 validated immunogenic neoantigens it flags "
+            "178/178 at every expression floor, which annotates nothing.")
 
-    def risk(unit, registers):
-        out = []
-        for tissue, tpm in _essential(unit.gene):           # clause 1: the target gene itself
-            out.append({"clause": "target gene", "gene": unit.gene, "tissue": tissue, "tpm": tpm})
-        # clause 2: an unrelated self origin. `find_sources`, not `find_source` per register --
-        # one threaded C++ batch query per length instead of ~70 Python-level ones per unit, which
-        # is the entry point that module's own docstring says to use for anything but one lookup.
-        hits = proteome.find_sources(registers, max_subs=max_subs)
-        for pep in registers:
-            seen = set()
+    novel = frozenset(str(k).strip().lower() for k in novel_kinds)
+    tract = frozenset(str(k).strip().lower() for k in TRACT_PRODUCTS)
+    prefixes = tuple(tissues)
+    # {gene: [(tissue, tpm)]} above the reporting floor, computed once per gene. The filtered list
+    # used to be rebuilt inside the loop -- once per unit for clause 1 and once per (register,
+    # hit gene) for clause 2 -- so a cassette's worth of registers re-filtered the same handful of
+    # genes thousands of times.
+    ess: dict = {}
+    # register -> [(gene, protein, n_subs, position)], one entry per DISTINCT source gene.
+    cache: dict = {}
+
+    def essential(gene):
+        v = ess.get(gene)
+        if v is None:
+            # `top` must exceed the table's 123 distinct context names: at the default of 10 a
+            # gene ranked by its highest tissues loses its essential-tissue rows before they are
+            # ever tested, which is the second half of the same false negative as the naming fix.
+            v = ess[gene] = [(t, x) for t, x in EX.safety_profile(gene, top=250)
+                             if x >= min_tpm and t.startswith(prefixes)]
+        return v
+
+    # register -> [(gene, protein, position)] at exactly one substitution, own gene included and
+    # nothing deduplicated: which of a gene's windows is the least homologous depends on the unit
+    # asking, so the choice cannot be made here. ~1.06 hits per register, so the list stays short.
+    near_cache: dict = {}
+
+    def near(pep):
+        """Every reference window exactly one substitution from ``pep``.
+
+        The whole ``19 * len(pep)`` neighbourhood goes to :meth:`~mhcmatch.Proteome.find_exact_sources`
+        as one batch, which answers it with a pair of ``searchsorted`` calls over the cached sorted
+        window array. :meth:`~mhcmatch.Proteome.find_sources` with ``max_subs=1`` answers the same
+        question by building the fuzzy index -- a Python loop over 68,389,335 positions -- and the
+        two differ by more than three orders of magnitude on a cassette-sized batch.
+        """
+        v = near_cache.get(pep)
+        if v is None:
+            v = []
+            for hs in proteome.find_exact_sources(_neighbours(pep)).values():
+                for h in hs:
+                    parts = h.protein.split("|")
+                    gene = symbols.get(parts[1] if len(parts) >= 3 else h.protein)
+                    if gene:
+                        v.append((gene, h.protein, h.position))
+            near_cache[pep] = v
+        return v
+
+    def novel_registers(unit, lengths):
+        """The registers of ``unit`` that actually carry novel sequence, as a set.
+
+        A point product (missense, an inframe indel, a stop/start loss) is novel at
+        :attr:`Unit.mutation_index` and nowhere else, so a window is novel when it contains that
+        index. A **tract** product (:data:`mhcmatch.predict.TRACT_PRODUCTS` -- frameshift, fusion)
+        reads out of frame or across a junction from that index onward, so a window is novel when it
+        reaches it at all.
+        """
+        mi, pep = int(getattr(unit, "mutation_index", 0)), unit.peptide
+        wide = str(getattr(unit, "kind", "") or "").strip().lower() in tract
+        # `i + L > mi` is "the window reaches the variant" -- the tract rule. A point product adds
+        # "and does not start after it", which is containment.
+        return {pep[i:i + L] for L in lengths for i in range(len(pep) - L + 1)
+                if i + L > mi and (wide or i <= mi)}
+
+    def prepare(registers):
+        """Resolve every register's self origin in one query. Idempotent and additive."""
+        todo = sorted({r for r in registers if r not in cache})
+        if not todo:
+            return
+        exact = getattr(proteome, "find_exact_sources", None)
+        hits = exact(todo) if (exact is not None and max_subs == 0) else \
+            proteome.find_sources(todo, max_subs=max_subs)
+        for pep in todo:
+            seen, res = set(), []
             for h in hits.get(pep) or []:
                 parts = h.protein.split("|")
                 gene = symbols.get(parts[1] if len(parts) >= 3 else h.protein)
-                # The unit's own parent is native context, not a hazard: its flanks are self by
-                # construction and its mutated register is one substitution from its own wild type.
-                if not gene or gene in seen or gene == unit.gene:
+                if not gene or gene in seen:
                     continue
                 seen.add(gene)
-                for tissue, tpm in _essential(gene):
+                res.append((gene, h.protein, h.n_subs, h.position))
+            cache[pep] = res
+
+    def risk(unit, registers):
+        out = []
+        kind = str(getattr(unit, "kind", "") or "").strip().lower()
+        if kind not in novel:                               # clause 1: the target gene itself
+            for tissue, tpm in essential(unit.gene):
+                out.append({"clause": "target gene", "gene": unit.gene, "kind": kind,
+                            "tissue": tissue, "tpm": tpm})
+        # clause 2: an unrelated self origin, asked only of the registers that carry novel sequence.
+        if kind in novel and registers and not any(r in unit.peptide for r in registers):
+            # The spanning rule is defined against `unit.peptide`, so it is meaningless when the
+            # registers are not that peptide's windows -- and it fails **silently**, by judging
+            # nothing and reporting no hazard. That is the one answer a safety screen must not give
+            # for a question it never asked. It happened: `bench/vector/safety_screen.py` handed a
+            # bare placeholder unit the probe peptide and read 0 of 1000 on *both* arms, which reads
+            # as a perfectly specific screen rather than a silent one.
+            raise ValueError(
+                f"none of the {len(registers)} registers passed is a window of unit.peptide, and "
+                f"this unit's kind {kind!r} restricts clause 2 to the windows spanning "
+                f"mutation_index {getattr(unit, 'mutation_index', '?')} -- so nothing would be "
+                f"judged and the unit would screen as safe without being looked at. Pass the "
+                f"unit's own registers, or set kind= outside NOVEL_PRODUCTS if the unit is a "
+                f"shared, unmutated target.")
+        judged = (novel_registers(unit, {len(r) for r in registers}) if kind in novel
+                  else set(registers))
+        registers = [r for r in registers if r in judged]
+        prepare(registers)
+        # The unit's own parent is native context, not a hazard: its flanks are self by construction
+        # and its mutated register is one substitution from its own wild type.
+        found = {pep: [h for h in cache.get(pep, ()) if h[0] != unit.gene] for pep in registers}
+        counts = {"n_registers_spanning": len(registers),
+                  "n_hit_spanning": sum(1 for v in found.values() if v)}
+        for pep in registers:
+            for gene, protein, subs, position in found[pep]:
+                for tissue, tpm in essential(gene):
                     out.append({"clause": "unrelated self origin", "register": pep,
-                                "protein": h.protein, "gene": gene, "subs": h.n_subs,
-                                "position": h.position, "tissue": tissue, "tpm": tpm})
+                                "protein": protein, "gene": gene, "subs": subs,
+                                "position": position, "tissue": tissue, "tpm": tpm, **counts})
+        if report_subs:
+            # clause 3: a near-identical self origin in an unrelated gene. Never vetoes -- it is a
+            # safety consideration attached to a kept unit, because a d=1 rule that withdrew would
+            # cost two thirds of the candidates to buy a hazard the d=0 veto mostly already has.
+            for pep in registers:
+                if len(pep) < report_min_length:
+                    continue
+                at = unit.peptide.find(pep)
+                best: dict = {}
+                for gene, protein, position in near(pep):
+                    if gene == unit.gene or not essential(gene):
+                        continue
+                    ident = flank_identity(unit.peptide, at, proteome.seqs[protein],
+                                           position, len(pep), report_flank)
+                    if ident < best.get(gene, (2.0,))[0]:
+                        best[gene] = (ident, protein, position)
+                for gene, (ident, protein, position) in sorted(best.items()):
+                    if ident >= report_identity:
+                        continue
+                    tissue, tpm = max(essential(gene), key=lambda tv: tv[1])
+                    out.append({"clause": "near-identical self origin", "register": pep,
+                                "protein": protein, "gene": gene, "subs": report_subs,
+                                "position": position, "identity": ident, "tissue": tissue,
+                                "tpm": tpm, "veto": False,
+                                "variant": proteome.seqs[protein][position:position + len(pep)],
+                                **counts})
+        if graded:
+            for r in out:
+                if r["tpm"] < veto_tpm:
+                    r["veto"] = False
         return out
 
+    risk.prepare = prepare
     return risk
 
 

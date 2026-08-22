@@ -6,6 +6,77 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [Unreleased]
+
+### Fixed
+
+- **The cassette safety screen was mis-specified for somatic neoantigens, in both of its clauses.**
+  `vector.self_origin_risk` asked two questions of every unit regardless of what kind of product the
+  unit encoded, and both questions were the wrong ones for a mutated product.
+
+  *Clause 1, "target gene"* — is the unit's own gene transcribed above 0.25 TPM in an essential
+  tissue — was set under **MAGE-A12 at 0.33 TPM in brain caudate**, the expression that killed two
+  patients (PMID 23377668). MAGE-A12 is a **cancer-testis antigen**: a shared, *unmutated* self
+  protein, so brain transcription is exactly the hazard. A somatic neoantigen encodes a sequence
+  absent from normal tissue by construction and is not that object. On a 37-donor cohort the
+  unconditional clause withdrew a candidate for the fact that its parent gene exists: **10 of 37
+  donors lost every unit they had**, and one lost 1,098 of 1,618 to this clause alone. It is now
+  gated on `Unit.kind` against the new `predict.NOVEL_PRODUCTS`; an `isoform`, a wild-type or
+  overexpressed target keeps it, and **an unknown or missing kind keeps it too** — fail closed, with
+  the kind carried in the reason.
+
+  *Clause 2, "unrelated self origin"* — does a register coincide with a self peptide from an
+  essential-tissue gene — read the unit's own design as the hazard. On **178 experimentally
+  immunogenic somatic neoantigens** rebuilt as the 27-mer units they would enter a cassette as,
+  **178 of 178 (100 %) trip it**, at a median of **36** self registers each; 36 is exactly
+  `12 + 10 + 8 + 6`, the count of 8/9/10/11-mer windows of a 27-mer that cannot contain a centred
+  mutation. Measured self fraction against pure geometry, per length: 60.02 / 52.6 / 44.4 / 35.2 %
+  against 60.0 / 52.6 / 44.4 / 35.3 % predicted — 6,350 hits, **99.1 % of the geometric ceiling**.
+  At the minimal-epitope level the clause is clean: 0 of 178 mutants in the proteome, 178 of 178
+  wild types. The clause now judges only the registers that carry novel sequence, gated on the same
+  `NOVEL_PRODUCTS`, with `predict.TRACT_PRODUCTS` (`frameshift`, `fusion`) novel from the variant
+  offset to the end of the unit rather than at one index. `n_registers_spanning` and
+  `n_hit_spanning` ride on every clause-2 reason so the exemption is auditable.
+
+- **`vector.units_from_context` admitted only `Somatic:` windows**, discarding **317 of the 489**
+  non-missense records in one real cohort and leaving the `nonconventional` quota arm nothing to
+  fill itself from. All four header families are now centred: a parenthesised marker (`Somatic:`), a
+  three-part `LEFT|X|RIGHT` or two-part `LEFT|RIGHT` junction (`Fusion:` / `CNV:`, truncated at a
+  read-through `*`), and the trailing novel span (`Isoform:`, now parsed into a `span` field). Where
+  the caller's rows carry no `kind`, the header's own product class is read rather than defaulting to
+  `missense`.
+
+- **`portfolio._ratio` raised a bare `ValueError`** naming one index. It now raises
+  `portfolio.MarginalExceedsBlock` (a `ValueError` subclass) carrying the **arm**, how many of its
+  units exceed `q`, and how far `--block-live` has to move.
+
+### Added
+
+- **`Proteome.find_exact_sources(peptides)`** — `find_sources` at `max_subs=0` without the fuzzy
+  index. `_index` is a Python loop over every position of every protein (68,398,087 iterations at
+  L=9, ~12.6 GB peak) and answers `<= max_subs`, which the safety screen never asks. Membership and
+  provenance both come out of one sorted `(window, buffer offset)` array per length and a pair of
+  `np.searchsorted` calls over the whole batch. A per-hit `bytes.find` was tried and does not scale:
+  a 27-mer is native context, so 9,497 of 9,500 distinct registers hit and each would cost a full
+  buffer scan.
+
+- **`vector.screen(..., notes=[])` and a `prepare(registers)` hook on the risk callable.** The screen
+  resolves the deduplicated registers of *every* unit in one query instead of one per unit
+  (~19,000 calls where 1 suffices), and `self_origin_risk` caches the essential-tissue filter per
+  gene instead of rebuilding it per unit and per hit gene.
+
+- **A graded screen.** `self_origin_risk(..., graded=True, veto_tpm=5.0)` /
+  `mhcmatch vector --screen-mode graded`: `min_tpm = 0.25` stays the **reporting** floor and
+  `veto_tpm` becomes the **exclusion** line, so a sub-veto finding is kept as a per-unit off-target
+  fingerprint rather than a refusal. `vector.offtarget_cost` turns those findings into a cost and
+  `portfolio.compose(cost=..., weight_cost=...)` / `--weight-offtarget` prices it into the
+  objective. **The cost is never charged to `Unit.p`**, which is a calibrated marginal `survival`
+  reads literally, and `weight_cost = 0.0` is bit-identical to the previous composition. The default
+  screen mode stays `veto`.
+
+- `Composition.arms[...]` gains `mean_cost` and `max_cost`; `Composition.trace` gains `cost` and
+  `cost_penalty`; the cassette report gains a `fingerprint` section for kept units.
+
 ## [0.25.0] - 2026-08-21
 
 ### Removed

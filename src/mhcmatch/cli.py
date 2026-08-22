@@ -980,19 +980,47 @@ def cmd_vector(a):
     print(f"# {len(units)} candidate unit(s) over "
           f"{len({u.allele for u in units})} allotype(s)", file=sys.stderr)
 
-    rejected = []
+    rejected, notes, costs = [], [], {}
     if a.screen:
         from .proteome import gene_symbols
         from .store import fetch_proteome
-        print(f"# screening: one whole-proteome index per register length ({len(lengths)} for "
-              f"{a.cls}), ~12 GB peak each and a few minutes apiece. Paid once for the whole "
-              "candidate list, so screen everything in one call", file=sys.stderr, flush=True)
+        print(f"# screening ({a.screen_mode}): one whole-proteome window index per register length "
+              f"({len(lengths)} for {a.cls}). Paid once for the whole candidate list, so screen "
+              "everything in one call", file=sys.stderr, flush=True)
         fa = fetch_proteome(a.species)
         risk = V.self_origin_risk(Proteome.from_fasta(fa), gene_symbols(fa, key="accession"),
-                                  min_tpm=a.min_tpm, max_subs=a.max_subs)
-        units, rejected = V.screen(units, risk, lengths=lengths)
+                                  min_tpm=a.min_tpm, max_subs=a.max_subs,
+                                  veto_tpm=a.veto_tpm, graded=(a.screen_mode == "graded"),
+                                  report_subs=a.report_subs,
+                                  report_identity=a.report_identity)
+        units, rejected = V.screen(units, risk, lengths=lengths, notes=notes)
+        if a.report_subs and notes:
+            # A d=1 coincidence is only a hazard if a T cell can see it, so the off-target's own
+            # sequence has to be presented on the allotype the unit was selected for. Its own panel
+            # rather than the layout binder built below: that one is scoped to the *selected* units
+            # and this question is asked of every screened one, before selection has happened.
+            before = len({id(u) for u, _, w in notes if "variant" in w})
+            rstore = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
+            ralleles = _read_alleles(a.alleles) or sorted({u.allele for u in units if u.allele})
+            notes = V.presented(notes, V.store_binder(rstore, ralleles, cls=a.cls),
+                                threshold=a.report_threshold)
+            after = len({id(u) for u, _, w in notes if "variant" in w})
+            print(f"# presentation: {before} -> {after} unit(s) carry a near-identical off-target "
+                  f"that is itself presented at {10 ** -a.report_threshold:g}% rank or better",
+                  file=sys.stderr)
+        costs = V.offtarget_cost(notes)
         print(f"# withdrawn: {len({id(u) for u, _, _ in rejected})} unit(s), "
               f"{len(rejected)} reason(s); {len(units)} remain", file=sys.stderr)
+        if notes:
+            near = [n for n in notes if n[2]["clause"] == "near-identical self origin"]
+            print(f"# fingerprint: {len(costs)} kept unit(s) carry {len(notes) - len(near)} "
+                  f"sub-veto finding(s) below {a.veto_tpm:g} TPM, priced at --weight-offtarget "
+                  f"{a.weight_offtarget:g}", file=sys.stderr)
+            if near:
+                print(f"# near-identity: {len({id(u) for u, _, _ in near})} kept unit(s) sit "
+                      f"{a.report_subs} substitution from {len({n[2]['gene'] for n in near})} "
+                      f"non-homologous expressed gene(s). Reported, not withdrawn -- read the "
+                      "fingerprint before dosing", file=sys.stderr)
 
     sel = V.select(units, n0=a.n0, cls=a.cls if a.cls_filter else None)
     print(f"# selected {len(sel.units)} of {len(units)}, expected yield "
@@ -1004,7 +1032,9 @@ def cmd_vector(a):
         quotas = _parse_quota(a.quota)
         universe = _read_alleles(a.alleles) or sorted({u.allele for u in units if u.allele})
         comp = PF.compose(units, quotas, a.block_live, weight_evenness=a.evenness,
-                          universe=universe)
+                          universe=universe,
+                          cost=(lambda u: costs.get(u, 0.0)) if costs else None,
+                          weight_cost=a.weight_offtarget)
         # The same slot budgets filled by score alone -- the cassette a ranked list gives you.
         # Reported beside the composed one because "different from ranking" is a claim that has to
         # be shown on the caller's own candidates, not asserted from a docstring.
@@ -1050,16 +1080,27 @@ def cmd_vector(a):
         # returns a reason per tissue, and a gene is transcribed in many -- on one 7-unit test that
         # was 2,121 rows for 4 withdrawals, which is a table nobody reads. The full set is still
         # what the library returns; this is the presentation.
-        worst = {}
-        for u, reg, why in rejected:
-            k = (id(u), reg, why.get("gene", ""))
-            if k not in worst or why.get("tpm", 0) > worst[k][2].get("tpm", 0):
-                worst[k] = (u, reg, why)
-        for u, reg, why in worst.values():
+        def _worst(findings):
+            w = {}
+            for u, reg, why in findings:
+                k = (id(u), reg, why.get("gene", ""))
+                if k not in w or why.get("tpm", 0) > w[k][2].get("tpm", 0):
+                    w[k] = (u, reg, why)
+            return w.values()
+
+        for u, reg, why in _worst(rejected):
             sub = f" {why['subs']}sub" if "subs" in why else ""
             o.row("withdrawn", "", u.gene, why.get("clause", ""),
                   f"{why.get('gene', '')}{sub} {why.get('tissue', '')} "
                   f"{why.get('tpm', 0):.1f}".strip() + (f" via {reg}" if reg else ""))
+        # The off-target fingerprint of the units that were KEPT: every essential-tissue finding
+        # that fell below --veto-tpm, which is the evidence a graded screen prices instead of
+        # refusing. "Why was this unit kept but discounted" was previously answerable only by
+        # re-running the screen.
+        for u, reg, why in _worst(notes):
+            o.row("fingerprint", f"{costs.get(u, 0.0):.0f}", u.gene, why.get("clause", ""),
+                  f"{why.get('gene', '')} {why.get('tissue', '')} "
+                  f"{why.get('tpm', 0):.2f} TPM".strip() + (f" via {reg}" if reg else ""))
         if comp is not None:
             from . import portfolio as PF
             for arm, d in comp.arms.items():
@@ -1074,7 +1115,9 @@ def cmd_vector(a):
                       f"top-{d['slots']}-by-score gives {p_top:.4f}; "
                       f"H/Hmax {d['coverage']['entropy_ratio']:.3f} vs "
                       f"{cov_top['entropy_ratio']:.3f}, gini {d['coverage']['gini']:.3f} vs "
-                      f"{cov_top['gini']:.3f}")
+                      f"{cov_top['gini']:.3f}"
+                      + (f"; off-target cost mean {d['mean_cost']:.2f} max {d['max_cost']:.0f}"
+                         if d["max_cost"] else ""))
                 for u in d["units"]:
                     o.row("composed", arm, u.gene, f"{u.p:.4f}",
                           f"{u.allele} {u.kind} {u.cls}")
@@ -1491,15 +1534,60 @@ def main(argv=None):
                     help="withdraw units on essential-tissue risk BEFORE selecting. Costs a "
                          "whole-proteome index (minutes, several GB); without it no safety check "
                          "runs at all and the cassette carries whatever it was handed")
+    vc.add_argument("--screen-mode", default="veto", choices=("veto", "graded"),
+                    help="what --screen does with a finding (default %(default)s). `veto` withdraws "
+                         "the unit, as shipped. `graded` withdraws only findings at or above "
+                         "--veto-tpm and keeps the rest as a per-unit OFF-TARGET FINGERPRINT, "
+                         "reported in the reason rows and priced into --quota by "
+                         "--weight-offtarget. A 27-mer carries ~70 registers, so letting any one of "
+                         "them veto the unit is not the specificity the per-register measurement "
+                         "reads as")
     vc.add_argument("--min-tpm", type=float, default=0.25, metavar="F",
-                    help="essential-tissue expression floor for --screen. 0.25 because MAGE-A12 sits "
+                    help="essential-tissue expression floor for --screen: the REPORTING floor, "
+                         "below which a finding is not recorded at all. 0.25 because MAGE-A12 sits "
                          "at 0.33 TPM in brain and killed two patients; a conventional 5 would pass "
                          "it")
+    vc.add_argument("--veto-tpm", type=float, default=5.0, metavar="F",
+                    help="essential-tissue expression at or above which a finding WITHDRAWS the "
+                         "unit under --screen-mode graded (default %(default)s, the conventional "
+                         "'is it expressed' cut). Distinct from --min-tpm on purpose: 0.25 TPM is "
+                         "'detectable somewhere', which nearly every human gene is, so it is a "
+                         "floor for reporting and not a line for exclusion")
+    vc.add_argument("--weight-offtarget", type=float, default=0.0, metavar="W",
+                    help="price of one off-target fingerprint entry in --quota's objective "
+                         "(default %(default)s = off). The composed value becomes "
+                         "P(X >= target) - W * sum(distinct essential-tissue genes a unit reaches). "
+                         "Charged to the objective, never to the unit's calibrated p")
     vc.add_argument("--max-subs", type=int, default=0, metavar="N",
                     help="self-origin search radius for --screen. 0 = exact coincidence, which is "
                          "the default because the decision is per unit while the search is per "
                          "register: at radius 1 over 8-11mers, 3 of 6 random 27-mers get withdrawn "
                          "by chance. Raise it only together with dropping 8-mers")
+    vc.add_argument("--report-subs", type=int, default=0, metavar="D", choices=(0, 1),
+                    help="also REPORT (never withdraw) registers within D substitutions of a "
+                         "different, non-homologous, expressed gene (default %(default)s = off; "
+                         "1 is the only other value). The two TCR deaths were near-identity, not "
+                         "identity, but a radius-1 veto costs two thirds of every cassette to buy "
+                         "a hazard --max-subs 0 has largely already taken: measured on 178 "
+                         "validated immunogenic neoantigens, exact withdraws 1.1%% and d=1 to any "
+                         "expressed gene reaches 70.2%%. So d=1 findings ride along in the "
+                         "fingerprint instead, priced only by --weight-offtarget")
+    vc.add_argument("--report-identity", type=float, default=0.5, metavar="F",
+                    help="flanking-identity ceiling for --report-subs (default %(default)s). A d=1 "
+                         "match to a gene that shares the unit's flanks is descent, not mimicry, "
+                         "and tolerance already covers it; this cut is what takes the reported "
+                         "tier's different-gene hits from 230 to 74 at L=9, 130 of the 156 it "
+                         "removes being one locus under two symbols. It separates loci, not "
+                         "superfamilies: a 27-mer bounds the comparison at +/-9-10 residues, so "
+                         "NRAS -> KRAS survives at 0.23 and is reported")
+    vc.add_argument("--report-threshold", type=float, default=-1.47712, metavar="F",
+                    help="-log10(%%rank) the off-target variant must itself reach to be reported "
+                         "under --report-subs (default %(default)s = 30%% rank). A d=1 coincidence "
+                         "no allotype presents is a sequence coincidence, not a safety "
+                         "consideration. The cut looks permissive because it is read off the "
+                         "positives: 97.2%% of 176 assayed immunogenic neoantigens clear 30%% on "
+                         "this scorer, where the conventional 2%% would discard three in ten of "
+                         "them -- the wrong error to make on a safety question")
     vc.add_argument("--objective", default="sum", choices=("sum", "rate"),
                     help="junction cost: `sum` of the strongest binder per junction (pVACvector's "
                          "logic, biased toward the shortest spacer), or `rate` = binders per "

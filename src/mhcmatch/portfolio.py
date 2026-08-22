@@ -43,8 +43,35 @@ import numpy as np
 __all__ = [
     "pareto_front", "nondominated_rank", "crowding_distance", "linearly_supported",
     "chebyshev_score", "corner", "survival", "p_at_least", "n_effective", "coverage",
-    "dispersion", "betabinom_rho", "Composition", "compose",
+    "dispersion", "betabinom_rho", "Composition", "compose", "MarginalExceedsBlock",
 ]
+
+
+class MarginalExceedsBlock(ValueError):
+    """A unit's marginal ``p`` exceeds its block's live probability ``q``, so ``p / q > 1`` is not a
+    probability and :func:`survival` cannot represent it.
+
+    A :class:`ValueError` subclass, so ``except ValueError`` still catches it, but a named one
+    carrying ``arm``, ``n_over``, ``n_total`` and the worst offending pair — because the bare raise
+    it replaces told a donor's operator only that *something* was 4-digit-too-large, and the
+    actionable facts are which arm, how many of its units, and how far ``--block-live`` has to move.
+
+    ``arm`` is filled in by :func:`compose`, which is the only caller that knows it; the message is
+    built from the attributes on each ``str()`` so setting it after the fact is enough.
+    """
+
+    def __init__(self, n_over, n_total, worst_p, worst_q, arm=None):
+        self.n_over, self.n_total = int(n_over), int(n_total)
+        self.worst_p, self.worst_q, self.arm = float(worst_p), float(worst_q), arm
+        super().__init__("")
+
+    def __str__(self) -> str:
+        where = f"arm {self.arm!r}: " if self.arm else ""
+        return (f"{where}{self.n_over} of {self.n_total} unit(s) carry a marginal p above the "
+                f"block-live probability q of their own block; the worst is p={self.worst_p:.4g} "
+                f"against q={self.worst_q:.4g}. A unit cannot respond more often than its block is "
+                f"live, so the marginal is not representable. Raise q (the --block-live / "
+                f"--quota response model) to at least {self.worst_p:.4g}, or cap p.")
 
 
 # ---------------------------------------------------------------- objective-space geometry
@@ -181,10 +208,10 @@ def _ratio(p, block, q):
     if block.size and q.size <= block.max():
         raise ValueError(f"q has {q.size} entries but block indexes up to {block.max()}")
     ratio = p / q[block] if p.size else p
-    if np.any(ratio > 1.0):
+    over = ratio > 1.0
+    if np.any(over):
         b = int(np.argmax(ratio))
-        raise ValueError(f"p[{b}]={p[b]:.4g} exceeds its block-live probability "
-                         f"q={q[block[b]]:.4g}; the marginal is not representable. Raise q or cap p.")
+        raise MarginalExceedsBlock(int(over.sum()), int(ratio.size), p[b], q[block[b]])
     return ratio, block, q
 
 
@@ -378,7 +405,7 @@ def default_arm(u) -> str:
 
 
 def compose(candidates, quotas, q, block=None, arm=None, weight_evenness: float = 0.0,
-            universe=None) -> Composition:
+            universe=None, cost=None, weight_cost: float = 0.0) -> Composition:
     """Fill each arm's slots to maximise ``P(at least target responses)``, not the mean score.
 
     ``quotas`` is ``{arm: (slots, target)}`` -- e.g.
@@ -402,6 +429,15 @@ def compose(candidates, quotas, q, block=None, arm=None, weight_evenness: float 
     the block model already prefers spread, and stacking a second diversity term on top of it
     double-counts unless you mean it.
 
+    ``cost`` is a callable ``Unit -> float`` and ``weight_cost`` the price the objective pays for it:
+    the greedy value becomes ``P(X >= target) - weight_cost * sum(cost(u))``. The intended supply is
+    :func:`mhcmatch.vector.offtarget_cost`, the size of a unit's off-target fingerprint under the
+    graded safety screen, so a unit with a sub-veto essential-tissue hit is *priced* rather than
+    withdrawn. **The cost is charged to the objective, never to** ``Unit.p``: ``p`` is a calibrated
+    marginal that :func:`survival` reads literally, and discounting it would silently restate the
+    response model as well as the preference. ``weight_cost = 0.0``, the default, leaves the
+    composition bit-identical to one computed without a ``cost`` at all.
+
     Every arm is filled independently, which is exact here because :func:`default_arm` makes them
     disjoint, so the objective separates.
     """
@@ -411,32 +447,53 @@ def compose(candidates, quotas, q, block=None, arm=None, weight_evenness: float 
     for c in candidates:
         pool.setdefault(key_a(c), []).append(c)
 
+    def _cost(u):
+        return float(cost(u)) if cost is not None else 0.0
+
     comp = Composition()
     for name, (slots, target) in quotas.items():
         avail = sorted(pool.get(name, []), key=lambda u: (-u.p, u.gene, u.peptide))
         chosen: list = []
-        while len(chosen) < slots and len(chosen) < len(avail):
-            best, best_gain = None, -np.inf
-            base = _arm_value(chosen, target, q, key_b, weight_evenness, universe)
-            for c in avail:
-                if any(c is x for x in chosen):
-                    continue
-                gain = _arm_value(chosen + [c], target, q, key_b,
-                                  weight_evenness, universe) - base
-                if gain > best_gain:
-                    best, best_gain = c, gain
-            if best is None:
-                break
-            chosen.append(best)
-            comp.trace.append({"arm": name, "step": len(chosen), "gene": best.gene,
-                               "peptide": best.peptide, "allele": best.allele, "p": best.p,
-                               "gain": float(best_gain),
-                               "p_at_least": _p_arm(chosen, target, q, key_b)})
+        try:
+            while len(chosen) < slots and len(chosen) < len(avail):
+                best, best_gain = None, -np.inf
+                base = _arm_value(chosen, target, q, key_b, weight_evenness, universe,
+                                  cost, weight_cost)
+                for c in avail:
+                    if any(c is x for x in chosen):
+                        continue
+                    gain = _arm_value(chosen + [c], target, q, key_b, weight_evenness, universe,
+                                      cost, weight_cost) - base
+                    if gain > best_gain:
+                        best, best_gain = c, gain
+                if best is None:
+                    break
+                chosen.append(best)
+                comp.trace.append({"arm": name, "step": len(chosen), "gene": best.gene,
+                                   "peptide": best.peptide, "allele": best.allele, "p": best.p,
+                                   "gain": float(best_gain), "cost": _cost(best),
+                                   "cost_penalty": weight_cost * sum(_cost(u) for u in chosen),
+                                   "p_at_least": _p_arm(chosen, target, q, key_b)})
+        except MarginalExceedsBlock as e:
+            # The greedy scores one candidate set at a time, so the raise counts only the set it
+            # was in. What the operator needs is how much of the ARM is unrepresentable; with a
+            # scalar q that is a one-line recount, and with a per-block q the block indexing of a
+            # subset does not carry to the pool, so the narrower count stands rather than a wrong
+            # wider one.
+            e.arm = name                          # the only scope that knows which arm it was
+            qs = np.atleast_1d(np.asarray(q, dtype=float))
+            if qs.size == 1:
+                e.n_over = int(sum(1 for u in avail if u.p > qs[0]))
+                e.n_total = len(avail)
+            raise
+        costs = [_cost(u) for u in chosen]
         comp.units.extend(chosen)
         comp.arms[name] = {
             "units": chosen, "slots": int(slots), "target": int(target),
             "p_at_least": _p_arm(chosen, target, q, key_b),
             "n_chosen": len(chosen), "n_available": len(avail),
+            "mean_cost": float(np.mean(costs)) if costs else 0.0,
+            "max_cost": float(max(costs)) if costs else 0.0,
             "coverage": coverage([key_b(u) for u in chosen],
                                  universe if name == "mhc1" else None),
         }
@@ -450,9 +507,15 @@ def _p_arm(units, target, q, key_b) -> float:
     return p_at_least([u.p for u in units], [key_b(u) for u in units], q, k=target)
 
 
-def _arm_value(units, target, q, key_b, w, universe) -> float:
-    """The greedy objective: attained tail probability, plus optional evenness."""
+def _arm_value(units, target, q, key_b, w, universe, cost=None, weight_cost: float = 0.0) -> float:
+    """The greedy objective: attained tail probability, plus optional evenness, minus optional cost.
+
+    Both extra terms are skipped when their weight is 0, so the default path is the arithmetic it
+    always was rather than the same arithmetic plus ``0.0``.
+    """
     v = _p_arm(units, target, q, key_b)
     if w:
         v += w * coverage([key_b(u) for u in units], universe)["entropy_ratio"]
+    if weight_cost and cost is not None:
+        v -= weight_cost * sum(float(cost(u)) for u in units)
     return v
