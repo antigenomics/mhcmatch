@@ -1288,6 +1288,36 @@ def cmd_bootstrap(a):
     print(f"# cached from HF dataset {PMHC_REPO}")
 
 
+def cmd_build(a):
+    """Regenerate the shipped artifacts under ``mhcmatch.data``, or just report what is stale.
+
+    Everything mhcmatch ships is rebuilt from here and the whole rebuild costs minutes, so the
+    standing rule is to regenerate rather than reason about whether a bump mattered. ``--check``
+    is the cheap half: it reads version stamps and builds nothing, which is what CI runs.
+    """
+    from . import __version__, _build
+
+    want = list(_build.TARGETS) if a.target == "all" else [a.target]
+
+    if a.check:
+        bad = _build.check(want)
+        for tgt, f, got, exp in bad:
+            print(f"{tgt}\t{f}\t{got}\t{exp}")
+        say(f"{len(bad)} stale of {sum(len(_build.TARGETS[t][2]) for t in want)} artifact(s) "
+            f"checked against {__version__}")
+        raise SystemExit(1 if bad else 0)
+
+    for tgt in want:
+        label, fn, _files = _build.TARGETS[tgt]
+        if fn is None:
+            say(f"{tgt}: {label} -- not buildable in this process; run: "
+                f"{_build.EXTERNAL[tgt]}")
+            continue
+        with step(f"build {tgt}: {label}"):
+            fn(say=lambda m: say(m, level=1, flush=True))
+    say(f"shipped artifacts now stamped {__version__}; commit what changed")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="mhcmatch", description="peptide-MHC presentation tools")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1705,6 +1735,16 @@ def main(argv=None):
     xp.add_argument("--list-contexts", action="store_true",
                     help="list every GTEx tissue and TCGA tumour type available")
     xp.set_defaults(fn=cmd_expression)
+
+    bl = sub.add_parser("build",
+                        help="regenerate the shipped data artifacts (release task), or --check them")
+    bl.add_argument("target", nargs="?", default="all",
+                    choices=("all", "anchor", "corpus", "recognition"),
+                    help="what to rebuild (default: all)")
+    bl.add_argument("--check", action="store_true",
+                    help="do not build: report artifacts whose version stamp is behind "
+                         "__version__, one per line, and exit 1 if any are. What CI runs")
+    bl.set_defaults(fn=cmd_build)
 
     # Every subparser gets -v/-q, in one loop rather than 19 edits. Also on the top-level parser,
     # so the flag works on either side of the subcommand name.

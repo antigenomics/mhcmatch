@@ -107,6 +107,47 @@ and +0.001 on binding-assay ones, i.e. it helps where boundaries carry informati
 where they do not. Re-test if provenance ever reaches the pmhc schema; do not build the plumbing on
 spec. See `bench/results/compare_mhc2_human_hard_ligandbg_elonly.md`.
 
+## Reproducibility — everything ships from `mhcmatch build`
+
+**Every artifact mhcmatch ships is rebuilt from the CLI, and the whole rebuild costs minutes. So
+there is never a reason to run a stale one — always regenerate to the latest version.**
+
+```zsh
+mhcmatch build --check      # what is stale? builds nothing, exits 1 if any. This is what CI runs
+mhcmatch build              # rebuild everything buildable in-process
+mhcmatch build corpus -v    # one target, with per-step wall clock
+```
+
+- Builders live in `src/mhcmatch/_build.py`, **not** in `tools/`. A builder that only exists in a
+  source checkout is one a wheel user cannot run, and one that gets forgotten. `tools/build_*.py`
+  are shims kept only because `PROVENANCE.md` names those paths.
+- **A new shipped artifact is not done until it has a `build` target and a `PROVENANCE.md` entry.**
+- Inputs bootstrap from HuggingFace (`isalgo/pmhc_data`), never a local `~/hf/...` or
+  `~/vcs/projects/...` path.
+- **`aggregate_mhc1.json` (the EPIC scorer) has no `build` target yet, and this is the open loop.**
+  Not for want of data: all four labelled deposits it is fitted on are already published at
+  `isalgo/pmhc_data/neoantigens/` (`neoag_tested.tsv.gz` 321,825 rows, `neoantigens_tested_peptides.tsv.gz`
+  31,804, `neoag_tested_mmu.tsv.gz` 866, `neoag_tested_hsa.tsv.gz` 414), and of the fit frame's 47
+  columns only **28 are irreducible** — 4.7 MB of parquet — while the other 19 are computed by
+  mhcmatch itself. What is missing is that the assembly, the feature build and the fit live in the
+  benchmark repo (`corpus_grand.py` -> `grand_corpus.py` -> `grand_ship.py`) and the artifact is
+  hand-copied across. That hand-copy is how the GRAND -> EPIC rename reached the artifact but not its
+  generator. Closing it needs the chain moved into `_build.py` **and** the binder pass batched: it
+  was recorded at 338,319 of 363,324 pairs in 1,314 s, which busts the budget until it gets the same
+  one-batched-call treatment that took `store_binder` 15.8x.
+- On a version bump, regenerate rather than reasoning about whether it matters, then *verify* the
+  scores did not move. Both existing builders are instrumented for this: `corpus_tables` prints
+  `** MOVED **` for any cell that changed, and the anchor rebuild is checked against the previous
+  file. Bump-only rebuilds have measured max |new − old| = 0.
+- Only the pickles and the `.npz` stamp `__version__`. A `.json` artifact's `version` is a **model**
+  version — EPIC is `3`, the recognition heads are `2` — so `--check` validates those for presence
+  only. Comparing the two is a category error that reports every head stale at every release.
+
+**Why this is a rule.** 0.25.0 → 0.26.0 shipped three vendored `AnchorModel`s still stamped 0.25.0
+*and* a `corpus_tables.npz` stamped 0.25.0. Only the models had a guard test, and it passed locally
+because the editable install's metadata was also stale, so it compared the wrong value against
+itself. CI caught one of the two; nothing would have caught the other.
+
 ## Git flow & commits
 
 - Branch flow: **feature → `dev` → `master`** (`ROADMAP.md` §7).

@@ -555,25 +555,21 @@ def test_the_vendored_corpus_tables_are_current_and_rebuild_bit_identically():
     The point of the artifact is that it is **145.4 kB against 115.6 s** of per-process rebuild, so
     this test is where the price of shipping it gets paid, once, instead of in every consumer.
     """
-    import importlib.util
     import numpy as np
 
     import mhcmatch
-
-    spec = importlib.util.spec_from_file_location(
-        "_build_corpus", os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                                      "tools", "build_corpus_tables.py"))
-    build = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(build)
+    from mhcmatch import _build as build          # the builder moved into the package; `mhcmatch
+    #                                               build corpus` is now the entry point and
+    #                                               tools/build_corpus_tables.py is a shim onto it
 
     mimicry._VENDORED = None                        # force a load off disk, not a warm process
     assert mimicry._vendored_counts("mhc1", "thymus", mimicry.CORPUS_K, "human") is not None, \
-        "no vendored corpus tables in this build; run tools/build_corpus_tables.py"
+        "no vendored corpus tables in this build; run: mhcmatch build corpus"
     meta = mimicry._VENDORED["_meta"]
     assert meta["_"]["version"] == mhcmatch.__version__, \
-        "vendored corpus tables are stale for this version; rerun tools/build_corpus_tables.py"
+        "vendored corpus tables are stale for this version; rerun: mhcmatch build corpus"
     assert meta["_"]["k"] == mimicry.CORPUS_K
-    for cls, comp, sp in build.COMBOS:               # every combination the script declares
+    for cls, comp, sp in build.CORPUS_COMBOS:               # every combination the script declares
         assert mimicry._vendored_counts(cls, comp, mimicry.CORPUS_K, sp) is not None, (cls, comp, sp)
 
     for cls, comp in (("mhc1", "thymus"), ("mhc1", "viral"),
@@ -585,7 +581,7 @@ def test_the_vendored_corpus_tables_are_current_and_rebuild_bit_identically():
         mimicry._COUNTS.clear()
         mimicry._VENDORED = None
         assert np.array_equal(shipped, fresh), \
-            f"vendored {cls}/{comp} differs from a live rebuild; rerun tools/build_corpus_tables.py"
+            f"vendored {cls}/{comp} differs from a live rebuild; rerun: mhcmatch build corpus"
 
     # the two expensive channels, on their totals -- see the docstring
     for cls, comp, sp, want in (("mhc1", "self", "human", 121_968_158.0),

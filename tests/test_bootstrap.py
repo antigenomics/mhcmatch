@@ -101,6 +101,34 @@ def test_installed_metadata_matches_pyproject():
         f"stale and every version-keyed test is comparing it against itself. Run: pip install -e .")
 
 
+def test_no_shipped_artifact_is_stale():
+    # `mhcmatch build --check` as a unit test, and the reason it is *here* rather than beside the
+    # artifacts it checks: the two existing guards both need the HF deposit, carry @pytest.mark.hfdata,
+    # and conftest skips them whenever it is not already staged -- which is always, in CI. This one
+    # reads only shipped files, so it is the guard CI actually runs.
+    #
+    # Both older guards were correct and both were defeated at 0.26.0 by the same thing: a stale
+    # editable install made mhcmatch.__version__ report 0.25.0, so each compared a stale artifact
+    # against a stale expectation and passed. test_installed_metadata_matches_pyproject closes that;
+    # this closes the coverage half.
+    from mhcmatch import _build
+    stale = _build.check()
+    assert not stale, (
+        "shipped artifacts are behind __version__: "
+        + "; ".join(f"{t}/{f} is {got}, want {want}" for t, f, got, want in stale)
+        + ". Run: mhcmatch build")
+
+
+def test_every_build_target_owns_files_that_exist():
+    # A target whose file list drifts from what is actually shipped makes --check silently vacuous.
+    import os
+    from mhcmatch import _build
+    for name, (_label, _fn, files) in _build.TARGETS.items():
+        assert files, name
+        for f in files:
+            assert os.path.exists(os.path.join(_build.DATA, f)), f"{name}: {f} is not shipped"
+
+
 def test_nextflow_pins_match_pyproject():
     import re
     want, root = _declared_version()
