@@ -35,13 +35,16 @@ from mhcmatch import mimicry
 DATA = os.path.join(os.path.dirname(mhcmatch.__file__), "data")
 OUT = os.path.join(DATA, "corpus_tables.npz")
 
-#: Every (class, component, species) the shipped model reads. ``thymus`` and ``viral`` are keyed to
-#: the deposit's own species column, which is human-only today; ``self`` is a proteome, so it takes
-#: the species explicitly.
+#: Every (class, component, species) the shipped model reads. All three components are now keyed on
+#: species: ``self`` is a proteome and takes it explicitly, ``viral`` is one file whose own
+#: ``mhc_species`` column holds both, and ``thymus`` is one file per species. Mouse ``thymus`` and
+#: ``viral`` were added 2026-08-21, once the mouse thymic deposit existed -- before that a mouse run
+#: scored against human references without saying so.
 COMBOS = [(cls, comp, sp)
           for cls in ("mhc1", "mhc2")
-          for comp, sp in (("thymus", "human"), ("self", "human"), ("self", "mouse"),
-                           ("viral", "human"))]
+          for comp, sp in (("thymus", "human"), ("thymus", "mouse"),
+                           ("self", "human"), ("self", "mouse"),
+                           ("viral", "human"), ("viral", "mouse"))]
 
 
 def key(cls: str, comp: str, species: str, k: int) -> str:

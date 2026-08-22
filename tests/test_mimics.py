@@ -116,3 +116,37 @@ def test_default_reference_paths_exist_in_the_deposit():
     from mhcmatch.store import fetch_file
     for name, (rel, _) in M.DEFAULT_REFS.items():
         assert os.path.exists(fetch_file(rel)), f"{name}: {rel}"
+
+
+# --- species-keyed references (mouse corpus arm, 2026-08-21) -------------------------------------
+
+def test_ref_path_swaps_the_thymus_deposit_per_species():
+    """`thymus` is one file per species; `viral` is one file for both."""
+    assert M.ref_path("thymus", "human") == M.DEFAULT_REFS["thymus"][0]
+    assert M.ref_path("thymus", "mouse").endswith("_mmu.tsv.gz")
+    assert M.ref_path("thymus", "human") != M.ref_path("thymus", "mouse")
+    # viral carries both species in one file, so the path must NOT change
+    assert M.ref_path("viral", "mouse") == M.ref_path("viral", "human") == M.DEFAULT_REFS["viral"][0]
+    # a category with no override still resolves
+    assert M.ref_path("neoag", "mouse") == M.DEFAULT_REFS["neoag"][0]
+
+
+def test_ref_path_rejects_an_unknown_species():
+    import pytest
+    with pytest.raises(ValueError):
+        M.ref_path("thymus", "rat")
+
+
+def test_corpus_memo_key_separates_species():
+    """A human and a mouse run must not collide in the `corpus_counts` memo.
+
+    The key blanked species for every component except `self`, which was harmless only while
+    `thymus` and `viral` were human-only deposits. With a mouse thymic deposit it would mean the
+    first run to touch a channel answers for the other species too.
+    """
+    from mhcmatch import mimicry
+    keys = set()
+    for comp in ("thymus", "viral", "self"):
+        for sp in ("human", "mouse"):
+            keys.add((("mhc1", comp, mimicry.CORPUS_K, sp, "", "")))
+    assert len(keys) == 6, "every (component, species) pair must be a distinct memo key"

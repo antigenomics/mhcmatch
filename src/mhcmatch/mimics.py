@@ -34,7 +34,8 @@ from dataclasses import dataclass
 
 from .search import find_mimics
 
-__all__ = ["KINDS", "DEFAULT_REFS", "PROTEOME_REFS", "MimicResult", "NATIVE_COLUMNS",
+__all__ = ["KINDS", "DEFAULT_REFS", "SPECIES_REFS", "ref_path", "PROTEOME_REFS",
+           "MimicResult", "NATIVE_COLUMNS",
            "load_peptides", "proteome_peptides", "proteome_window_array", "load_reference_sets",
            "neighbours", "scan", "patient_summary", "write_table"]
 
@@ -51,6 +52,35 @@ DEFAULT_REFS = {
     "viral": ("ligandome/viral_foreign_iedb.tsv.gz", "foreign"),
     "neoag": ("neoantigens/neoag_tested.tsv.gz", "database"),
 }
+
+#: Per-species overrides of a :data:`DEFAULT_REFS` path.
+#:
+#: The two deposits carry species differently, and the difference is in the data, not a style
+#: choice. ``viral`` is one file whose own ``mhc_species`` column holds both -- 2,773 distinct
+#: mouse peptides among 44,993 -- so it needs no entry here and is selected with ``species=`` at
+#: load time. ``thymus`` is one file per species, because the human deposit is a single multi-donor
+#: atlas and the mouse one is assembled from three studies with different antibodies and search
+#: pipelines; pooling them into one table would bury that in a column nobody filters on.
+#:
+#: Resolve through :func:`ref_path` rather than indexing this directly, so a category with no
+#: override falls back to :data:`DEFAULT_REFS` instead of raising.
+SPECIES_REFS = {
+    ("thymus", "mouse"): "thymus/thymus_immunopeptidome_mmu.tsv.gz",
+}
+
+
+def ref_path(category: str, species: str = "human", refs: dict | None = None) -> str:
+    """The compendium path for ``category`` in ``species``.
+
+    Falls back to the species-agnostic :data:`DEFAULT_REFS` entry when no override exists, which is
+    the common case: only a deposit that is physically split per species needs one.
+    """
+    if species not in _SPECIES:
+        raise ValueError(f"species must be one of {sorted(_SPECIES)}, got {species!r}")
+    over = SPECIES_REFS.get((category, species))
+    if over is not None:
+        return over
+    return (refs or DEFAULT_REFS)[category][0]
 
 #: **What a hit in each category argues.** Not the same question per category, which is why they are
 #: never summed into one "mimicry score":
