@@ -148,6 +148,30 @@ mhcmatch build corpus -v    # one target, with per-step wall clock
 because the editable install's metadata was also stale, so it compared the wrong value against
 itself. CI caught one of the two; nothing would have caught the other.
 
+## The scored columns are versioned, and the library carries both vocabularies
+
+`aggregate_score` reads **only** the names in the artifact's `features` list, so `rank._finish`
+supplies the union of every name a shipped or candidate artifact could ask for. That is what lets
+one library score a v3 and a v4 artifact with no branch, and it is why adding a term is additive
+rather than a migration:
+
+| v3 name | v4 name | note |
+|---|---|---|
+| `binder` | `pres` | presentation head alone; `binder` folds the affinity rank in a second time |
+| `occupancy` | `occupancy` **and** `d_occupancy` | both; Spearman between them is only +0.2538 |
+| -- | `wt_absent` | emitted, measured, and **not** fitted -- it did not earn its parameter |
+| `C_phys_rose` | `C_phys_buried` | same Rose scale, both keys computed |
+
+**Do not delete an old name when a new one lands.** A recorded result cites the model version it was
+produced under, and a registry that drops the old name cannot say what those numbers were.
+
+**The corpus face and kernel are parameters, not constants.** `mimicry.face_kmers(mask=)` and
+`contract(kernel=)` take `"slice"`/`"wildcard"` and any 20x20 or 21x21 array; `_build.SHIPPED_CORPUS`
+names the `(k, mask)` a release commits to. A table is a pure function of
+`(cls, comp, species, k, mask)` and the vendored key encodes all five -- so a wildcard-masked query
+cannot silently index a sliced table. Hamming is kept only so pre-0.27 results reproduce; **the
+corpus channels are BLOSUM62 from v4 on.**
+
 ## Git flow & commits
 
 - Branch flow: **feature → `dev` → `master`** (`ROADMAP.md` §7).
