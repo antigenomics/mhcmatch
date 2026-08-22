@@ -1317,8 +1317,9 @@ def cmd_build(a):
     for tgt in want:
         label, fn, _files = _build.TARGETS[tgt]
         if fn is None:
-            say(f"{tgt}: {label} -- not buildable in this process; run: "
-                f"{_build.EXTERNAL[tgt]}")
+            how = _build.EXTERNAL.get(tgt)
+            say(f"{tgt}: {label} -- not buildable in this process; run: {how}" if how else
+                f"{tgt}: {label} -- static, no generator on record; see data/PROVENANCE.md")
             continue
         with step(f"build {tgt}: {label}"):
             fn(say=lambda m: say(m, level=1, flush=True))

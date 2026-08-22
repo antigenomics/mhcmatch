@@ -165,11 +165,49 @@ TARGETS = {
                      "recognition_physchem_glm_mhc1_mouse.json",
                      "recognition_posbayes_mhc1_human.json",
                      "recognition_posbayes_mhc1_mouse.json",
-                     "recognition_esm_pca.npz"]),
+                     "recognition_esm_pca.npz",
+                     "recognition_default.json"]),
+    # -- fitted artifacts whose generator lives in the benchmark repo -----------------
+    # Until 2026-08-23 these were shipped but *unchecked*: `--check` covered 11 of the 27 files
+    # in this directory, so the sixteen below could go missing or be shipped from a half-finished
+    # copy and nothing would say so. They are listed here with `None` builders so `--check`
+    # validates presence and `build` prints the command that regenerates them. Every command in
+    # EXTERNAL below is one the artifact or PROVENANCE.md records -- none is reconstructed.
+    "aggregate": ("the EPIC neoantigen scorer", None, ["aggregate_mhc1.json"]),
+    "affinity": ("affinity head coefficients", None, ["affinity_mhc1.json"]),
+    "potts": ("Potts affinity weights (the source of `occupancy`)", None,
+              ["affinity_potts_mhc1.npz", "affinity_potts_mhc2.npz"]),
+    "complement1": ("class-I complementarity heads", None,
+                    ["complement_mhc1_human.json", "complement_mhc1_mouse.json"]),
+    "complement2": ("class-II complementarity heads", None,
+                    ["complement_mhc2_human.json", "complement_mhc2_mouse.json"]),
+    "mimicry": ("the six-feature mimicry aggregate", None, ["mimicry_mhc1.json"]),
+    "ligand": ("ligand flank/context span model", None, ["ligand_context.tsv"]),
+    "pseudoseq": ("IMGT groove pseudosequences", None,
+                  ["mhci_pseudo.fa", "mhcii_pseudo.fa"]),
+    # -- static reference data: no fit, no generator recorded, presence-checked only ---
+    "reference": ("static reference tables (no generator recorded)", None,
+                  ["proteome_markov1.tsv", "mhc2_alpha_prior.tsv", "structure_templates.json"]),
 }
 
-#: How to build what this process cannot.
-EXTERNAL = {"recognition": "uv run tools/build_recognition.py"}
+#: How to build what this process cannot. Every command here is recorded by the artifact itself
+#: (its ``generator`` field) or by ``PROVENANCE.md``; a target absent from this map has no
+#: generator on record, and ``build`` says so rather than inventing one.
+EXTERNAL = {
+    "recognition": "uv run tools/build_recognition.py",
+    # `aggregate_mhc1.json`'s own `generator` field. This is the standing open loop: the chain
+    # (corpus_grand.py -> grand_corpus.py -> grand_ship.py) lives in the benchmark repo and the
+    # artifact is hand-copied across, which is how the GRAND -> EPIC rename reached the artifact
+    # but not its generator. See CLAUDE.md.
+    "aggregate": "python bench/immuno/grand_ship.py            # benchmark repo",
+    "affinity": "python bench/affinity/train.py --cls mhc1 --species human   # benchmark repo",
+    "potts": "python bench/affinity/fit_potts.py --cls mhc1    # and --cls mhc2; benchmark repo",
+    "complement1": "python bench/neoag/complement.py --fit chowell_rebuilt --tables all",
+    "complement2": "python bench/neoag/complement_mhc2.py      # benchmark repo",
+    "mimicry": "python bench/neoag/mimicry_fit.py              # benchmark repo",
+    "ligand": "python bench/train_spans.py                     # benchmark repo",
+    "pseudoseq": "python ../tcren-ms/scripts/build_pseudo_fasta.py",
+}
 
 
 # ---------------------------------------------------------------- staleness
@@ -177,11 +215,17 @@ EXTERNAL = {"recognition": "uv run tools/build_recognition.py"}
 def _stamp(path: str):
     """The **package** version a shipped artifact carries, or None if it does not carry one.
 
-    Only the pickles and the npz stamp ``mhcmatch.__version__``; those are the ones whose load guards
-    key on it. A ``.json`` artifact's ``version`` is a *model* version — EPIC is ``3``, the
-    recognition heads are ``2`` — and comparing that to a package version is a category error that
-    reports every head stale at every release. So JSON returns None here and is checked for presence
-    only.
+    Two version vocabularies live in this directory and they are told apart **by the shape of the
+    value, not by the file extension**. A *model* version is an int — EPIC is ``3``, the recognition
+    heads are ``2`` — and comparing one to a package version is a category error that reports every
+    head stale at every release. A *package* version is dotted (``"0.26.0"``), and an artifact that
+    carries one is asserting which release built it, so it is checked.
+
+    Blanket-exempting ``.json`` was the earlier rule, and it hid exactly one thing:
+    ``mimicry_mhc1.json`` carries ``"0.12.0"`` and has gone unchecked across fifteen minor releases.
+
+    An artifact with no version record at all is not stale — several are static reference data, and
+    demanding a stamp would make the check cry wolf on files no release touches.
     """
     import numpy as np
     try:
@@ -192,8 +236,26 @@ def _stamp(path: str):
             with np.load(path, allow_pickle=False) as z:
                 if "meta" not in z.files:
                     return None
-                return json.loads(bytes(z["meta"]).decode()).get("_", {}).get("version")
-    except Exception as exc:                       # a corrupt artifact is stale by definition
+                try:
+                    meta = json.loads(bytes(z["meta"]).decode())
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    # `meta` is not always a version record. `affinity_potts_*.npz` stores five
+                    # int32 shape parameters under that name, and reading them as JSON raised --
+                    # which the bare `except` below then reported as "unreadable", i.e. as a
+                    # corrupt artifact. An npz that carries no version record is presence-checked
+                    # only, exactly like a .json, rather than being stale at every release.
+                    return None
+                return meta.get("_", {}).get("version") if isinstance(meta, dict) else None
+        if path.endswith(".json"):
+            v = json.load(open(path)).get("version")
+            # The two vocabularies, told apart by shape rather than by filename. A *model* version
+            # is an int -- EPIC is 3, the recognition heads are 2 -- and comparing it to a package
+            # version reports every head stale at every release. A *package* version is dotted, and
+            # an artifact carrying one is making a claim about which release built it, so it is
+            # checked. `mimicry_mhc1.json` is the file this distinction exists for: it carries
+            # "0.12.0" and was never checked, because JSON was blanket-exempted.
+            return v if isinstance(v, str) and "." in v else None
+    except Exception as exc:                       # a file that will not open IS corrupt
         return f"unreadable: {type(exc).__name__}"
     return None
 

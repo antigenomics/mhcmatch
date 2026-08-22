@@ -22,13 +22,28 @@ git worktree remove .claude/worktrees/<name>            # when the branch is con
 - Consolidate finished results back and remove the worktree; merging `<name>` into `master` is a
   separate, deliberate step — `master` is never modified while parallel work is in flight.
 
-## Three repos, three roles — never mix them
+## Four repos, four roles — never mix them
 
-| repo | holds | never holds |
-|---|---|---|
-| `~/vcs/code/mhcmatch` — **this one** | library source, unit tests, sphinx docs, marimo notebooks, a handful of example images | benchmark harnesses, result tables, head-to-head comparisons, manuscript prose, publication figures |
-| `~/vcs/projects/2026-mhcmatch-benchmark` | every analysis script (`bench/`), every result table (`bench/results/*.md`), figure **generators**, `SOURCES.md` | library code, manuscript prose |
-| `~/vcs/manuscripts/2026-mhcmatch` | manuscript, the **theory appendix** (`appendix/mhcmatch.tex`), every publication figure and generated LaTeX table | code that computes anything |
+| local path | remote | holds | never holds |
+|---|---|---|---|
+| `~/vcs/code/mhcmatch` — **this one** | `antigenomics/mhcmatch`, **public** | library source, unit tests, sphinx docs, marimo notebooks, a handful of example images | benchmark harnesses, result tables, head-to-head comparisons, manuscript prose, publication figures |
+| `~/vcs/projects/2026-mhcmatch-benchmark` | `repseq/2026-mhcmatch-code`, private → **released to reviewers** | every analysis script (`bench/`), every result table (`bench/results/*.md`), figure **generators**, `SOURCES.md` | library code, manuscript prose, any dataset |
+| `~/vcs/manuscripts/2026-mhcmatch` | `repseq/2026-mhcmatch-ms`, private | manuscript, the **theory appendix** (`appendix/mhcmatch.tex`), every publication figure and generated LaTeX table | code that computes anything |
+| `~/vcs/projects/2026-gamaleya-cancer` | `repseq/2026-gamaleya-cancer`, **private, stays private** | every run on real donors, and the donor key | anything that is ever copied outward under a name |
+
+**The code repo is a reviewer artifact.** A reviewer clones `2026-mhcmatch-code`, runs
+`mhcmatch bootstrap`, and every number regenerates. So what may be tracked there is exactly two
+things: a **small metadata table** a script cannot derive, and a **result table**. Every dataset is
+gitignored and bootstrapped from `~/hf/pmhc_data`; every feature frame is computed on the fly through
+the `mhcmatch` CLI. A 28 MB cached parquet is neither of the two things, and it was tracked until
+2026-08-23.
+
+**The donor carve-out.** Runs on Gamaleya donors are how we know the release still works end to end
+— de novo epitope counts, score distributions, rank movement between versions, human and mouse,
+through Nextflow. Those runs happen in `2026-gamaleya-cancer` and stay there. What may cross into a
+public or reviewer-facing repo is a **count or a distribution keyed by a donor code** (`D1`..`D8`,
+`analysis/paired_tumor_norm/out/d24_donor_key.tsv` is the only place the codes meet the names) —
+never a surname, never a peptide, never a genotype. De-identify at the moment you write the row.
 
 Numbers flow one way: **benchmark → manuscript.** The manuscript never recomputes a number; it cites
 one the benchmark repo produced and recorded. `bench/results/...` paths anywhere in this repo resolve
@@ -139,9 +154,20 @@ mhcmatch build corpus -v    # one target, with per-step wall clock
   scores did not move. Both existing builders are instrumented for this: `corpus_tables` prints
   `** MOVED **` for any cell that changed, and the anchor rebuild is checked against the previous
   file. Bump-only rebuilds have measured max |new − old| = 0.
-- Only the pickles and the `.npz` stamp `__version__`. A `.json` artifact's `version` is a **model**
-  version — EPIC is `3`, the recognition heads are `2` — so `--check` validates those for presence
-  only. Comparing the two is a category error that reports every head stale at every release.
+- **Two version vocabularies, told apart by the shape of the value, not by the file extension.**
+  A **model** version is an `int` — EPIC is `3`, the recognition heads are `2`, mimicry is `1`; a
+  **package** version is dotted (`0.26.0`). `--check` compares the dotted ones to `__version__` and
+  presence-checks the rest. Comparing a model version to a package version is a category error that
+  reports every head stale at every release, which is why `.json` was once blanket-exempted — and
+  the exemption cost the check *all* of them. `mimicry_fit.py` wrote `"0.12.0"` as a model version,
+  the one file that made the shapes ambiguous; it now writes `1`, and the rule holds by construction.
+- **`--check` covers all 27 shipped artifacts, not 11.** Until 2026-08-23 the `TARGETS` table listed
+  only the anchors, the corpus tables and the recognition heads, so sixteen files — including
+  `aggregate_mhc1.json` (EPIC itself) and `affinity_potts_mhc{1,2}.npz` (the source of `occupancy`)
+  — could go missing or ship half-copied and nothing would say so. Entries whose generator lives in
+  the benchmark repo carry a `None` builder and an `EXTERNAL` command taken from the artifact's own
+  `generator` field or from `PROVENANCE.md`; `build` prints it. A target with **no** generator on
+  record says so rather than printing an invented command.
 
 **Why this is a rule.** 0.25.0 → 0.26.0 shipped three vendored `AnchorModel`s still stamped 0.25.0
 *and* a `corpus_tables.npz` stamped 0.25.0. Only the models had a guard test, and it passed locally
