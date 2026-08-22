@@ -588,13 +588,82 @@ in a third of the time. The posterior confirms the point estimates and, on the t
 
 1. **Ship or hold.** The author decides. If it ships: copy the artifact, add a `build aggregate`
    target, bump `AGGREGATE_BLOCKS`, and re-baseline every recorded EPIC number.
-2. **A `build` target for the aggregate.** Still the standing gap (§5b-3). The chain is now
-   `epic_optimize.load_frame` -> `epic_v4_fit` and both are recorded, so what remains is moving it
-   into `_build.py` and batching the binder pass, which was 1,314 s at 338,319 of 363,324 pairs.
+2. **A `build` target for the aggregate.** Half-closed as of 2026-08-23. `aggregate` is now a
+   `TARGETS` entry, so `--check` validates the artifact's presence and `build` prints the command
+   that makes it -- but the builder is still `None`, i.e. the chain
+   (`epic_optimize.load_frame` -> `epic_v4_fit`) lives in the benchmark repo and the artifact is
+   hand-copied across. What remains is moving it into `_build.py` and batching the binder pass,
+   which was 1,314 s at 338,319 of 363,324 pairs.
 3. **ITSNdb.** One screen preferring the shipped kappa to any refit is worth a look at 149 rows,
    not an argument.
 4. **`SHIPPED_CORPUS`.** `_build.py` names the `(k, mask)` a release commits to. It is `[(3,
    "slice")]`; if v4 ships it stays `(3, "slice")` -- the kernel is not part of the table.
+
+## 5b-8. Release topology: four repos, and the code repo is a reviewer artifact (2026-08-23)
+
+| local path | remote | role |
+|---|---|---|
+| `~/vcs/code/mhcmatch` | `antigenomics/mhcmatch`, **public** | the library |
+| `~/vcs/projects/2026-mhcmatch-benchmark` | `repseq/2026-mhcmatch-code`, private → **released to reviewers** | every analysis and result table |
+| `~/vcs/manuscripts/2026-mhcmatch` | `repseq/2026-mhcmatch-ms`, private | manuscript, appendix, publication figures |
+| `~/vcs/projects/2026-gamaleya-cancer` | `repseq/2026-gamaleya-cancer`, **private, stays private** | every run on real donors, and the donor key |
+
+**The test the code repo has to pass:** a fresh clone on a machine with no `~/hf` and no `~/vcs`
+installs `mhcmatch`, runs `mhcmatch bootstrap`, and every table in `bench/results/` regenerates.
+What may be tracked there is exactly two kinds of file — a small **metadata table** a script cannot
+derive, and a **result table**. Done in `2026-mhcmatch-code@63ee2d4`/`@8cf846a`:
+
+- **173 absolute paths → 0.** New `bench/paths.py`; `data()` is `store.fetch_file`, so the mirror is
+  used when `$MHCMATCH_PMHC_DIR` has the file and the public HF deposit otherwise. Two pointers were
+  already dead: `score_mhcmatch.py` `sys.path`-inserted `~/vcs/code/mhcmatch/bench/` (gone since the
+  `bench/` split) and two `bicluster` scripts named `.claude/worktrees/` caches deleted with their
+  worktrees.
+- **38.7 MB of tracked cache untracked** — `epic_optimize_frame.parquet` and
+  `bench/affinity/measured.tsv`, the latter documented as "Git-ignored, regenerable" in
+  `SOURCES.md:37` while being tracked the whole time.
+- **A donor surname removed from `bench/results/`**, where it sat in a title six lines above that
+  donor's six-allele class-I genotype. The name reaches the script through `$GAMALEYA_SAMPLE`; the
+  code → name key stays in `2026-gamaleya-cancer`.
+- **2.21 GiB → 33 MB of `.git`** — a 2.4 GB unreachable ESM embedding `.npy`, committed once and
+  removed, still in the pack.
+
+**mhcmatch is a pMHC method and this repo has no TCRs in it.** Where a TCR-facing quantity is
+needed it is a property of the *peptide*; where real TCR statistics are needed they belong in
+`antigenomics/tcren`, get deposited as an aggregate on HuggingFace, and are consumed from there.
+Sibling checkouts that are genuine dependencies: **`tcren`** and **`arda`**, plus VDJdb
+(<https://github.com/antigenomics/vdjdb-db/releases/latest>) when a precursor analysis needs it.
+`mirpy` is not one — it was read for a single 56-row TRBV → CDR1/CDR2 lookup, now tracked as
+`bench/bicluster/trbv_cdr12_human.tsv`.
+
+**Open: five directories belong to other repos and are not byte-duplicates of what those repos
+hold, so nothing may be deleted before someone looks.** `bench/precursor/` and
+`bench/immuno/precursor_*.py` → `2026-precursor-freq` (five files here have no counterpart there);
+`bench/bicluster/` and `bench/neoag/paratope*.py` → `2026-tcren2-code` (`bicluster` is **absent
+there entirely** — this is the only copy); `bench/vdjtools/vdjdb_pgen.py`. `bench/contacts/` is
+ambiguous: it is TCR-pMHC geometry *and* it produced the shipped `contact_profile.py`.
+
+## 5b-9. The staleness check covered 11 of 27 shipped artifacts (v0.27.0-dev, LANDED)
+
+`mhcmatch build --check` is the guard against shipping a stale asset and CI runs it. It read eleven
+files; the other sixteen in `src/mhcmatch/data/` — including `aggregate_mhc1.json` and
+`affinity_potts_mhc{1,2}.npz`, the source of `occupancy` — were shipped and unchecked. `TARGETS`
+names all 27 now (`0 stale of 27`). Entries whose generator lives in the benchmark repo carry a
+`None` builder and an `EXTERNAL` command taken from the artifact's own `generator` field or from
+`PROVENANCE.md`; three static tables have no generator on record and `build` says so rather than
+printing an invented one.
+
+Two stamp bugs fell out. `affinity_potts_*.npz` stores five int32 shape parameters under the key
+`meta`; `_stamp` parsed that as JSON and the bare `except` reported a **corrupt artifact**. And the
+rule "a `.json` version is a model version, so exempt every `.json`" cost the check all of them —
+the two vocabularies differ by the *shape of the value*, ints for model versions (EPIC 3,
+recognition 2) and dotted for package versions. Checking the dotted ones found one file:
+`mimicry_mhc1.json` at `"0.12.0"` across fifteen releases, which turned out to be a model version in
+package-version clothing. Re-stamped to `1`; **the version field is the only thing that moved.**
+
+Checked and **not** changed: `affinity_potts_mhc1.npz` was fit against a 4,143-name pseudosequence
+table that became 20,082 names the next day. `bench/results/affinity_potts_stale_table_mhc1.md`
+already answered it — refitting on the larger table is **worse** (Δρ −0.005 orphan, −0.002 rare,
+−0.001 common, over 100 / 132 / 118 seed × allele units). The shipped weights are the better arm.
 
 ## 5b-4. The safety screen, re-derived (v0.26.0, LANDED — benchmark gate outstanding)
 
