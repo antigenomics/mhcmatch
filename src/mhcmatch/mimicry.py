@@ -362,6 +362,34 @@ def corpus_shapes(artifact: dict | None = None) -> dict:
     return {c: float(v[0] if isinstance(v, (list, tuple)) else v) for c, v in cs.items()}
 
 
+def corpus_geometry(artifact: dict | None = None) -> dict:
+    """``{k, mask, kernel}`` -- how the aggregate's ``C_corpus`` columns were built.
+
+    Same convention as :func:`corpus_shapes`, and for the same reason: the artifact defines the
+    scored column, so a refit that changes the face or the substitution kernel moves the column
+    rather than leaving a caller on a stale module default. Without this a v4 artifact -- whose
+    ``kappa`` was fitted against a graded kernel -- would be scored under the Hamming one, which is
+    not a smaller effect but a different feature.
+
+    ``kernel`` is ``None`` for the Hamming default or a callable ``kappa -> (A, A)`` array.
+    """
+    if artifact is None:
+        from .rank import aggregate
+        artifact = aggregate()
+    mask = str(artifact.get("corpus_mask") or "slice")
+    mask = mask if mask in CORPUS_MASKS else "slice"        # "tcr5" is v3's name for the slice
+    k = int(artifact.get("corpus_k") or CORPUS_K)
+    fam = str(artifact.get("corpus_kernel") or "hamming")
+    if fam == "hamming":
+        kern = None
+    elif fam in ("blosum62_normalised", "blosum62_raw"):
+        from functools import partial
+        kern = partial(blosum62_kernel, normalise=(fam == "blosum62_normalised"), mask=mask)
+    else:
+        raise ValueError(f"artifact names an unknown corpus kernel {fam!r}")
+    return {"k": k, "mask": mask, "kernel": kern, "family": fam}
+
+
 # ------------------------------------------------------------------ the corpus spectrum
 
 #: Width of the sliding k-mer over the TCR face. **3 is not a tuning choice, it is the only width

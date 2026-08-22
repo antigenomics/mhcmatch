@@ -526,8 +526,14 @@ def _aggregate_channels(cls: str, no_self: bool, species: str = "human"):
     from . import rank as R
 
     def channels(peptides):
+        # `k`, the face mask and the substitution kernel all come from the artifact
+        # (`MM.corpus_geometry`), exactly as `kappa` already did. They are three halves of one
+        # definition: a `kappa` fitted against a graded kernel scored under the Hamming one is a
+        # different feature, not a smaller effect.
+        g = MM.corpus_geometry()
         spec = MM.corpus_spectrum(cls=cls, components=("thymus", "self", "viral"),
-                                  self_species=species)
+                                  k=g["k"], self_species=species, mask=g["mask"],
+                                  kernel=g["kernel"])
         rows = MM.corpus_R(list(peptides), spec, cls=cls)
         return {f"C_corpus_{c}": [r.get(c, float("nan")) for r in rows]
                 for c in ("thymus", "self", "viral")

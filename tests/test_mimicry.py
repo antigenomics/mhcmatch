@@ -746,3 +746,70 @@ def test_the_slice_path_is_score_identical_to_pre_0_27():
     three = {"thymus": (mimicry.contract(T, 3.0, k), T.sum(), k)}      # a pre-0.27 3-tuple
     four = {"thymus": (mimicry.contract(T, 3.0, k), T.sum(), k, "slice")}
     assert mimicry.corpus_R(peps, three) == mimicry.corpus_R(peps, four)
+
+
+def test_the_artifact_defines_the_corpus_geometry_not_a_module_default():
+    """`kappa` already came from the artifact; `k`, the mask and the kernel now do too.
+
+    Three halves of one definition. A `kappa` fitted against a graded kernel and then scored under
+    the Hamming one is a *different feature*, not a smaller effect, so a refit that changes the
+    kernel has to move the scored column the same way a refit that changes `kappa` does.
+    """
+    import numpy as np
+
+    g = mimicry.corpus_geometry()                    # the shipped artifact
+    assert g["k"] == mimicry.CORPUS_K
+    assert g["mask"] == "slice"                      # v3 spells it "tcr5"; same face
+    assert g["family"] == "hamming" and g["kernel"] is None
+
+    v4 = {"corpus_k": 3, "corpus_mask": "slice", "corpus_kernel": "blosum62_normalised",
+          "corpus_shapes": {"thymus": 1.65, "self": 0.65, "viral": 1.35}}
+    g4 = mimicry.corpus_geometry(v4)
+    assert g4["family"] == "blosum62_normalised"
+    K = g4["kernel"](1.65)
+    assert K.shape == (20, 20) and (K.diagonal() == 1.0).all()
+    assert mimicry.corpus_shapes(v4) == {"thymus": 1.65, "self": 0.65, "viral": 1.35}
+
+    wild = mimicry.corpus_geometry({"corpus_k": 4, "corpus_mask": "wildcard",
+                                    "corpus_kernel": "blosum62_raw"})
+    assert wild["k"] == 4 and wild["mask"] == "wildcard"
+    assert wild["kernel"](0.1).shape == (21, 21)
+
+    with pytest.raises(ValueError, match="unknown corpus kernel"):
+        mimicry.corpus_geometry({"corpus_kernel": "levenshtein"})
+
+
+def test_a_v4_shaped_artifact_scores_through_the_library_unchanged():
+    """The candidate artifact must be loadable, not merely well-formed.
+
+    `rank._finish` supplies both vocabularies and `aggregate_score` reads only the names the
+    artifact asks for, so this is the check that the two actually meet: a ten-term v4 feature list
+    scores every row without a code change and without touching the shipped file.
+    """
+    import numpy as np
+
+    from mhcmatch import rank as R
+
+    v4 = {"model": "EPIC", "version": 4,
+          "features": ["pres", "occupancy", "d_occupancy", "expr", "expr_missing",
+                       "C_phys_buried", "C_phys_hydrop",
+                       "C_corpus_thymus", "C_corpus_self", "C_corpus_viral"],
+          "coef": [0.2382, 0.1270, -0.0184, 0.3303, 0.1064, 0.1593, 0.0559,
+                   0.1867, -0.2625, 0.1293],
+          "mu": [1.4, 0.02, 0.0, 2.2, 0.017, 0.72, 0.095, 1.2e-3, 2.9e-4, 2.0e-4],
+          "sigma": [0.53, 0.063, 0.05, 1.54, 0.13, 0.055, 0.49, 4.7e-4, 1.7e-4, 1.4e-4]}
+    rows = [R.Ranked(peptide=p, allele="HLA-A*02:01", presentation=2.3, binder=2.1,
+                     occupancy=0.77, d_occupancy=0.12, wt_absent=0.0, expression=3.0)
+            for p in ("GILGFVFTL", "NLVPMVATV", "SIINFEKLA")]
+    for r in rows:
+        r.components.update({c: 1e-3 for c in R.CHANNEL_COLUMNS})
+
+    saved = R._AGG
+    try:
+        R._AGG = v4
+        done = R._finish(rows, None, score="aggregate")
+        assert all(np.isfinite(r.score) for r in done)
+        assert all(r.imputed == "" for r in done), "a v4 term fell back to its training mean"
+        assert {r.components["model"] for r in done} == {"EPIC"}
+    finally:
+        R._AGG = saved
