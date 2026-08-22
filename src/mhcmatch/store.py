@@ -423,16 +423,72 @@ class Store:
         return self._am[cls]
 
     def _rank_calibrator(self, cls, n=10000, seed=0):
-        """Lazy per-allele %rank / P(present) calibrator over a random-peptide background."""
+        """Lazy per-allele %rank / P(present) calibrator over a random-peptide background.
+
+        **The ``fingerprint`` is what makes it cheap the second time, and it was missing.**
+        :meth:`mhcmatch.calibrate.RankCalibrator._key` returns ``None`` without one, which disables
+        ``_cache_path`` and with it the whole on-disk JSON cache -- so every *process* re-paid
+        ``n`` background :meth:`~mhcmatch.diffusion.AnchorModel.score` calls plus a **2.9 s**
+        isotonic fit per allotype (``calibrate.py`` measures the fit). Across a cohort's distinct
+        class-I allotypes that is minutes, re-paid on every invocation of ``vector``,
+        ``restriction``, ``binder`` and ``explain``. :func:`mhcmatch.predict.build_scorer` has
+        always passed one; this did not.
+
+        ``n`` and ``seed`` are in the key because they define the background. They are *not* in the
+        in-memory memo, which is keyed on ``cls`` alone -- a caller passing a non-default ``n``
+        after a default-``n`` call gets the first calibrator back. No caller does, and fixing the
+        memo is a separate question from fixing the cache.
+        """
         if cls not in self._rc:
             from .calibrate import RankCalibrator
+            from .predict import _fingerprint
             panel = self._panel[cls]
             pos = defaultdict(list)
             for ep, a in zip(panel.epitopes, panel.alleles):
                 pos[a].append(ep)
+            # `_anchor_model` takes `anchor_model`'s defaults, so the null this is measured against
+            # is the ligand background over the anchor footprint. Both belong in the key.
+            fp = "|".join([_fingerprint(self, cls, "ligand", "anchor", "restriction"),
+                           str(n), str(seed)])
             self._rc[cls] = RankCalibrator(self._anchor_model(cls), list(pos), panel.epitopes,
-                                           n=n, seed=seed, positives=pos)
+                                           n=n, seed=seed, positives=pos, fingerprint=fp)
         return self._rc[cls]
+
+    def percent_ranks(self, peptides, cls=None, alleles="all") -> list:
+        """``[{allele: %rank}, ...]``, one dict per peptide -- :meth:`restriction`'s ranking half
+        with the neighbour tally skipped.
+
+        **Why a second entry point rather than a flag.** :meth:`restriction` opens with
+        ``panel.tally(peptide)`` unconditionally, and ``tally`` is a scope-widening loop over
+        ``_SCOPES`` around ``KmerIndex.seed_and_gather`` -- the call
+        ``bench/results/neighbour_search_speed.md`` measures at **55 queries/s**. Its result feeds
+        ``vote``, ``enrichment``, ``n_votes`` and the vote half of the ``binder`` gate, and a caller
+        that wants only ``%rank`` reads **none** of them. Measured on 400 distinct 9-mers over 6
+        allotypes: ``restriction(calibrated=True)`` costs **0.307 ms/peptide of which the tally is
+        0.244 ms** -- 79.5% spent on fields the caller discards. :func:`mhcmatch.vector.store_binder`
+        is exactly that caller, and a cassette layout asks it millions of times.
+
+        Returning the uncomputed fields as zeros would be worse than not offering the path: ``vote``
+        0.0 and ``binder`` False are readable as answers. So they are **absent** -- this returns
+        ranks and nothing else, and a caller who needs the vote gate calls :meth:`restriction`.
+
+        A NaN rank (MHC-II, an allele with no length-matched background) is left as NaN rather than
+        dropped, so the allele still appears and the caller decides.
+        """
+        out, per_cls = [], {}
+        for pep in peptides:
+            pep = pep.strip().upper()
+            c = cls or infer_class(pep)
+            if c not in per_cls:
+                panel = self._panel[c]
+                aset = list(self._allele_set(panel, alleles))
+                per_cls[c] = (self._anchor_model(c),
+                              self._rank_calibrator(c) if (aset and panel.epitopes) else None,
+                              aset)
+            am, cal, aset = per_cls[c]
+            out.append({} if cal is None
+                       else {a: round(cal.percent_rank(a, am.score(pep, a)), 3) for a in aset})
+        return out
 
     def restriction(self, peptide, cls=None, alleles="all", top=10, alpha=0.05, diffuse=False,
                     calibrated=False):
