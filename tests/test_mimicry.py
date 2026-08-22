@@ -631,3 +631,118 @@ def test_load_references_builds_only_the_lengths_asked_for():
 
     full = mimicry.load_references(None, "mhc2", with_self=False)
     assert {L for _, _, L in full} == set(mimics._LEN["mhc2"]), "None still means every length"
+
+
+# --------------------------------------------------------------- the wildcard mask and BLOSUM62
+
+def test_the_wildcard_mask_keeps_every_window_where_the_slice_deletes_the_anchors():
+    """`slice` is why `k = 3` was forced; `wildcard` is what lifts the constraint.
+
+    The class-I face is `L - 5` wide under `slice`, so an 8-mer supplies three residues and has no
+    4-mer window at all -- a structural zero that reads as a low score. Wildcarding the anchors in
+    place leaves `L - k + 1` windows at every length, so `k = 4` and `k = 5` become available.
+    """
+    assert mimicry.face_kmers("SIINFEKL").size == 1                       # W = 3, one 3-mer
+    assert mimicry.face_kmers("SIINFEKL", k=4).size == 0                  # W = 3 cannot carry it
+    assert mimicry.face_kmers("SIINFEKL", k=4, mask="wildcard").size == 5     # 8 - 4 + 1
+    assert mimicry.face_kmers("SIINFEKL", k=5, mask="wildcard").size == 4     # 8 - 5 + 1
+    for pep in ("SIINFEKL", "GILGFVFTL", "GILGFVFTLA", "GILGFVFTLAV"):
+        for k in (3, 4, 5):
+            assert mimicry.face_kmers(pep, k=k, mask="wildcard").size == len(pep) - k + 1
+
+
+def test_the_wildcard_is_the_neutral_element_of_the_normalised_blosum_kernel():
+    """`S(X, a) = S(a, a)` is well posed only against a self-score-normalised kernel.
+
+    Normalised, `K[u, u] = 1` for every residue, so "matches perfectly" *is* a factor of one and the
+    wildcard row and column are all ones -- a masked position drops out of the product exactly.
+    Raw, BLOSUM62's diagonal runs 4..11 half-bits, so the same rule makes a masked position weight
+    every reference k-mer by what sits at the position the mask was supposed to remove.
+    """
+    import numpy as np
+
+    K = mimicry.blosum62_kernel(0.4, normalise=True)
+    assert K.shape == (21, 21)
+    assert (K.diagonal() == 1.0).all()
+    assert (K[mimicry.WILDCARD] == 1.0).all() and (K[:, mimicry.WILDCARD] == 1.0).all()
+    assert K[:20, :20].max() == 1.0                      # nothing beats an identical residue
+
+    raw = mimicry.blosum62_kernel(0.4, normalise=False)
+    d = raw.diagonal()[:20]
+    assert d.max() / d.min() == pytest.approx(np.exp(0.4 * (11 - 4)))     # the Trp/Ala spread
+
+
+def test_the_wildcard_contraction_is_the_exact_all_vs_all_sum():
+    """Same guarantee as the slice path, on the wider alphabet and a graded kernel.
+
+    The factorisation `prod_p K[u_p, x_p]` holds for any position-additive ungapped score, so the
+    contraction is not an approximation of the Luksza sum -- it is the sum.
+    """
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    k, code = 3, {a: i for i, a in enumerate(mimicry.AA)}
+    refs = ["".join(rng.choice(list(mimicry.AA), 9)) for _ in range(120)]
+    T = np.zeros(21 ** k)
+    for r in refs:
+        np.add.at(T, mimicry.face_kmers(r, "mhc1", k, mask="wildcard"), 1.0)
+
+    def wc(p):
+        c = [code[a] for a in p]
+        for i in mimicry.masks(len(p), "mhc1")["anchor"]:
+            c[i] = mimicry.WILDCARD
+        return c
+
+    for kappa, norm in ((0.4, True), (0.15, False)):
+        K = mimicry.blosum62_kernel(kappa, normalise=norm)
+        got = float(mimicry.contract(T, kappa, k, K)[
+            mimicry.face_kmers("GILGFVFTL", "mhc1", k, mask="wildcard")].sum())
+        qc = wc("GILGFVFTL")
+        brute = sum(
+            np.prod([K[qc[i + p], rc[j + p]] for p in range(k)])
+            for r in refs for rc in (wc(r),)
+            for i in range(len(qc) - k + 1) for j in range(len(rc) - k + 1))
+        assert got == pytest.approx(brute, rel=1e-12)
+
+
+def test_a_table_cannot_be_indexed_with_the_wrong_mask():
+    """The two conventions pack into different alphabets, so a cross-index is a wrong answer.
+
+    `corpus_R` reads the mask back off the spectrum tuple rather than taking it as an argument,
+    which is what makes the mismatch unrepresentable instead of merely discouraged.
+    """
+    import numpy as np
+
+    k = 3
+    peps = ["GILGFVFTL", "NLVPMVATV", "SIINFEKLA"]
+    for mask in ("slice", "wildcard"):
+        A = mimicry.alphabet(mask)
+        T = np.zeros(A ** k)
+        for p in peps:
+            np.add.at(T, mimicry.face_kmers(p, "mhc1", k, mask=mask), 1.0)
+        spec = {"thymus": (mimicry.contract(T, 3.0, k), T.sum(), k, mask)}
+        rho = mimicry.corpus_R(["GILGFVFTL"], spec)[0]["thymus"]
+        assert 0.0 <= rho <= 1.0
+    with pytest.raises(ValueError, match="kernel is"):
+        mimicry.contract(np.zeros(21 ** k), 1.0, k, np.ones((20, 20)))
+    with pytest.raises(ValueError, match="not A"):
+        mimicry.contract(np.zeros(1234), 1.0, k)
+    with pytest.raises(ValueError, match="mask must be"):
+        mimicry.face_kmers("GILGFVFTL", mask="anchors")
+
+
+def test_the_slice_path_is_score_identical_to_pre_0_27():
+    """The mask argument is additive: the default reproduces the shipped column bit for bit."""
+    import numpy as np
+
+    k = 3
+    peps = ["GILGFVFTL", "NLVPMVATV", "SIINFEKL", "GILGFVFTLAV"]
+    T = np.zeros(20 ** k)
+    for p in peps:
+        np.add.at(T, mimicry.face_kmers(p, "mhc1", k), 1.0)
+    beta = float(np.exp(-3.0))
+    hand = (1.0 - beta) * np.eye(20) + beta * np.ones((20, 20))
+    assert np.array_equal(mimicry.contract(T, 3.0, k), mimicry.contract(T, 3.0, k, hand))
+    three = {"thymus": (mimicry.contract(T, 3.0, k), T.sum(), k)}      # a pre-0.27 3-tuple
+    four = {"thymus": (mimicry.contract(T, 3.0, k), T.sum(), k, "slice")}
+    assert mimicry.corpus_R(peps, three) == mimicry.corpus_R(peps, four)

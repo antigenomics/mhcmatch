@@ -8,6 +8,8 @@ versioning is [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-08-22
+
 ### Fixed
 
 - **The cassette safety screen was mis-specified for somatic neoantigens, in both of its clauses.**

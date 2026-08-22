@@ -30,6 +30,17 @@ import time
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
+#: ``(k, mask)`` the shipped tables are built at -- the face convention the scored model reads.
+#: A table is a pure function of ``(cls, comp, species, k, mask)`` and nothing else, so this is the
+#: whole of what a release commits to. It is a list because a version that carries two conventions
+#: (a shipped one and a deprecated one still cited by a recorded result) is a real state.
+#:
+#: **A wildcard table is 21**k cells, not 20**k**, and the ratio bites: at ``k = 5`` that is
+#: 4,084,101 float64 per table against 3,200,000, and twelve of them. Widening the shipped set is
+#: therefore a size decision as well as a modelling one -- build a sweep's tables in the analysis
+#: repo, and ship only the convention that won.
+SHIPPED_CORPUS = [(3, "slice")]
+
 #: Every ``(class, component, species)`` the shipped model reads. All three components are keyed on
 #: species: ``self`` is a proteome and takes it explicitly, ``viral`` is one file whose own
 #: ``mhc_species`` column holds both, and ``thymus`` is one file per species.
@@ -40,8 +51,11 @@ CORPUS_COMBOS = [(cls, comp, sp)
                                   ("viral", "human"), ("viral", "mouse"))]
 
 
-def _key(cls: str, comp: str, species: str, k: int) -> str:
-    return f"{cls}|{comp}|{species}|{k}"
+def _key(cls: str, comp: str, species: str, k: int, mask: str = "slice") -> str:
+    """Archive key for one table. ``slice`` keeps its 0.24-0.26 form so an old artifact still loads;
+    anything else appends the mask. Must stay in step with ``mimicry._vendored_counts``."""
+    stem = f"{cls}|{comp}|{species}|{k}"
+    return stem if mask == "slice" else f"{stem}|{mask}"
 
 
 # ---------------------------------------------------------------- targets
@@ -97,27 +111,31 @@ def corpus_tables(say=print) -> list:
     # Empty dict, not None: None means "not loaded yet" and would fall back to disk.
     mimicry._VENDORED = {}
     mimicry._COUNTS.clear()
-    k = mimicry.CORPUS_K
     old = {}
     if os.path.exists(out):
         with np.load(out, allow_pickle=False) as z:
             old = {n: z[n] for n in z.files if n != "meta"}
     tables, meta, moved_any = {}, {}, []
-    for cls, comp, sp in CORPUS_COMBOS:
-        t0 = time.time()
-        T, N = mimicry.corpus_counts(None, cls, comp, k=k, self_species=sp)
-        dt = time.time() - t0
-        name = _key(cls, comp, sp, k)
-        tables[name] = np.asarray(T, dtype=np.float64)
-        meta[name] = {"n": float(N), "dense": int((T > 0).sum()), "seconds": round(dt, 2)}
-        moved = ""
-        if name in old and not np.array_equal(old[name], tables[name]):
-            d = np.abs(old[name] - tables[name])
-            moved = f"  ** MOVED: max |old - new| = {d.max():.6g} on {int((d > 0).sum())} cells **"
-            moved_any.append(name)
-        say(f"  {cls:5s} {comp:7s} {sp:6s} {dt:6.1f}s  N={N:>15,.0f}  "
-            f"dense={meta[name]['dense']:>5,}/{20 ** k:,}{moved}")
-    meta["_"] = {"version": mhcmatch.__version__, "k": k, "script": "mhcmatch build corpus"}
+    for k, mask in SHIPPED_CORPUS:
+        cells = mimicry.alphabet(mask) ** k
+        for cls, comp, sp in CORPUS_COMBOS:
+            t0 = time.time()
+            T, N = mimicry.corpus_counts(None, cls, comp, k=k, self_species=sp, mask=mask)
+            dt = time.time() - t0
+            name = _key(cls, comp, sp, k, mask)
+            tables[name] = np.asarray(T, dtype=np.float64)
+            meta[name] = {"n": float(N), "dense": int((T > 0).sum()), "seconds": round(dt, 2),
+                          "k": k, "mask": mask}
+            moved = ""
+            if name in old and not np.array_equal(old[name], tables[name]):
+                d = np.abs(old[name] - tables[name])
+                moved = (f"  ** MOVED: max |old - new| = {d.max():.6g} on "
+                         f"{int((d > 0).sum())} cells **")
+                moved_any.append(name)
+            say(f"  {cls:5s} {comp:7s} {sp:6s} k={k} {mask:8s} {dt:6.1f}s  N={N:>15,.0f}  "
+                f"dense={meta[name]['dense']:>7,}/{cells:,}{moved}")
+    meta["_"] = {"version": mhcmatch.__version__, "shipped": [list(x) for x in SHIPPED_CORPUS],
+                 "k": SHIPPED_CORPUS[0][0], "script": "mhcmatch build corpus"}
     buf = io.BytesIO()
     np.savez_compressed(buf, meta=np.frombuffer(json.dumps(meta).encode(), dtype=np.uint8),
                         **tables)

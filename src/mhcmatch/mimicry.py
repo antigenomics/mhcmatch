@@ -374,6 +374,34 @@ def corpus_shapes(artifact: dict | None = None) -> dict:
 #: (k=5) -- and against -0.502 for the fixed-face column this replaced.
 CORPUS_K: int = 3
 
+#: Residue code reserved for a **masked** position under ``mask="wildcard"``, which widens the
+#: alphabet from 20 to 21. The kernel's row and column ``20`` are the neutral element -- a wildcard
+#: matches anything at no cost, in either direction -- so a masked position multiplies every
+#: reference k-mer by exactly 1 and drops out of the score.
+WILDCARD: int = 20
+
+#: How the MHC-facing positions are removed from a peptide before its k-mers are taken.
+#:
+#: ``"slice"`` (through 0.26.0) keeps only the TCR-facing residues, so the class-I face is the
+#: contiguous strip ``peptide[3:L-2]`` and is ``L - 5`` wide. That width is what **forced** ``k=3``:
+#: the shortest ligand is an 8-mer and supplies exactly three face residues, so at ``k=4`` it has no
+#: window at all and the missing window reads as a low score rather than as a structural zero.
+#:
+#: ``"wildcard"`` keeps all ``L`` positions and replaces the anchors with :data:`WILDCARD` in place.
+#: The window count becomes ``L - k + 1`` at every length, so ``k = 4`` and ``k = 5`` are available
+#: for the first time, and a k-mer may **span** an anchor -- carrying the residues on either side of
+#: a pocket as one object, which the slice cannot express because it has already deleted what sits
+#: between them.
+CORPUS_MASKS = ("slice", "wildcard")
+
+
+def alphabet(mask: str = "slice") -> int:
+    """Alphabet width for a mask: 20 residues, or 21 with :data:`WILDCARD`."""
+    if mask not in CORPUS_MASKS:
+        raise ValueError(f"mask must be one of {CORPUS_MASKS}, got {mask!r}")
+    return 21 if mask == "wildcard" else 20
+
+
 @lru_cache(maxsize=1)
 def _aa_code():
     """ASCII byte -> base-20 residue code, ``-1`` for anything not in :data:`AA`."""
@@ -391,25 +419,43 @@ def _codes(seq: str):
     return None if (c < 0).any() else c
 
 
-def face_kmers(peptide: str, cls: str = "mhc1", k: int = CORPUS_K, register: int | None = None):
-    """Base-20 packed sliding ``k``-mers of the peptide's TCR face; empty when it cannot carry one.
+def face_kmers(peptide: str, cls: str = "mhc1", k: int = CORPUS_K, register: int | None = None,
+               mask: str = "slice"):
+    """Packed sliding ``k``-mers of the peptide's TCR face; empty when it cannot carry one.
 
-    The class-I anchor set is ``{P1, P2, P3, POmega-1, POmega}``, so the TCR face is **contiguous** --
-    ``peptide[3:L-2]``, width ``L - 5`` -- at every length; class II gathers its face from around the
-    floating core instead, and the k-mers slide over that projection. Sliding rather than taking the
-    whole face is what lets a query of one length be compared against references of another: the
-    table is keyed on the k-mer, not on the length.
+    The class-I anchor set is ``{P1, P2, P3, POmega-1, POmega}``, so under ``mask="slice"`` the TCR
+    face is **contiguous** -- ``peptide[3:L-2]``, width ``L - 5`` -- at every length; class II
+    gathers its face from around the floating core instead, and the k-mers slide over that
+    projection. Sliding rather than taking the whole face is what lets a query of one length be
+    compared against references of another: the table is keyed on the k-mer, not on the length.
+
+    Under ``mask="wildcard"`` the anchors are replaced by :data:`WILDCARD` **in place** rather than
+    deleted, so the window count is ``L - k + 1`` and a k-mer may span a pocket. See
+    :data:`CORPUS_MASKS` for why that changes which ``k`` are admissible.
+
+    The packing base follows the mask (:func:`alphabet`), so a table built under one mask cannot be
+    indexed with the other -- the sizes differ and :func:`corpus_R` checks it.
+
+    >>> face_kmers("SIINFEKL").size                          # W = 3, exactly one 3-mer
+    1
+    >>> face_kmers("SIINFEKL", mask="wildcard").size         # 8 - 3 + 1
+    6
     """
     import numpy as np
+    A = alphabet(mask)
     c = _codes(peptide)
     if c is None:
         return np.empty(0, np.int64)
-    sel = masks(len(peptide), cls, peptide, register)["tcr"]
-    f = c[np.asarray(sel, dtype=np.intp)]
+    m = masks(len(peptide), cls, peptide, register)
+    if mask == "wildcard":
+        f = c.copy()
+        f[np.asarray(m["anchor"], dtype=np.intp)] = WILDCARD
+    else:
+        f = c[np.asarray(m["tcr"], dtype=np.intp)]
     if f.size < k:
         return np.empty(0, np.int64)
     w = np.lib.stride_tricks.sliding_window_view(f, k)
-    return w @ (20 ** np.arange(k, dtype=np.int64)[::-1])
+    return w @ (A ** np.arange(k, dtype=np.int64)[::-1])
 
 
 #: Substring width at which two peptides are called the same locus by :func:`locus_weights`. Seven
@@ -485,7 +531,7 @@ _VENDORED: dict | None = None
 VENDORED_COUNTS = "corpus_tables.npz"
 
 
-def _vendored_counts(cls: str, comp: str, k: int, self_species: str):
+def _vendored_counts(cls: str, comp: str, k: int, self_species: str, mask: str = "slice"):
     """The shipped ``(T, N)`` for one channel, or ``None`` if this build does not carry it.
 
     **64 kB of output for a minute of work**, so it ships rather than being rebuilt per process.
@@ -509,7 +555,13 @@ def _vendored_counts(cls: str, comp: str, k: int, self_species: str):
             _VENDORED["_meta"] = json.loads(bytes(_VENDORED.pop("meta")).decode())
         except (OSError, ValueError, KeyError):
             _VENDORED = {}
-    T = _VENDORED.get(f"{cls}|{comp}|{self_species}|{int(k)}")
+    # The mask and k are part of the key: a table built by slicing the anchors out cannot be indexed
+    # by a wildcard-masked query (the alphabet and the cell count differ), and silently serving one
+    # for the other would be a wrong answer rather than a miss. `slice` keeps its 0.24-0.26 key so
+    # an old artifact still loads.
+    name = (f"{cls}|{comp}|{self_species}|{int(k)}" if mask == "slice"
+            else f"{cls}|{comp}|{self_species}|{int(k)}|{mask}")
+    T = _VENDORED.get(name)
     if T is None:
         return None
     T = T.view()
@@ -518,10 +570,13 @@ def _vendored_counts(cls: str, comp: str, k: int, self_species: str):
 
 
 def corpus_counts(pmhc_dir=None, cls: str = "mhc1", comp: str = "thymus", k: int = CORPUS_K,
-                  self_species: str = "human", weights: str | None = None):
+                  self_species: str = "human", weights: str | None = None, mask: str = "slice"):
     """``(T, N)``: the sliding-``k``-mer count table over one reference component's TCR faces.
 
-    ``T`` is a flat ``20**k`` array of **window counts with multiplicity** -- one increment per
+    ``mask`` must match the one the queries will use (:data:`CORPUS_MASKS`); it selects the same
+    face construction on the reference side, so the two are comparable by construction.
+
+    ``T`` is a flat ``A**k`` array of **window counts with multiplicity** -- one increment per
     reference peptide per window, the published Luksza form, not per distinct face -- and
     ``N = T.sum()`` the total reference window mass. Memoised per
     ``(cls, comp, k, species, weights)`` for the process; see :data:`_COUNTS`.
@@ -549,14 +604,15 @@ def corpus_counts(pmhc_dir=None, cls: str = "mhc1", comp: str = "thymus", k: int
     # `thymus` and `viral` because those deposits were human-only; now that they are not, blanking
     # it would let a human and a mouse run collide on the same memo entry -- whichever ran first
     # would silently answer for both.
-    key = (cls, comp, int(k), self_species, str(pmhc_dir or ""), weights or "")
+    A = alphabet(mask)
+    key = (cls, comp, int(k), self_species, str(pmhc_dir or ""), weights or "", mask)
     hit = _COUNTS.get(key)
     if hit is not None:
         return hit
     # The shipped table, for the default path only. A custom deposit directory, locus weighting or
     # a non-default `k` all define a different table, so each falls through to the full build.
     if not pmhc_dir and not weights:
-        hit = _vendored_counts(cls, comp, int(k), self_species)
+        hit = _vendored_counts(cls, comp, int(k), self_species, mask)
         if hit is not None:
             _COUNTS[key] = hit
             return hit
@@ -605,12 +661,16 @@ def corpus_counts(pmhc_dir=None, cls: str = "mhc1", comp: str = "thymus", k: int
     if weights == "locus" and comp != "self":
         allp = sorted({w.decode("ascii") for win in per_len.values() for w in win})
         wmap = dict(zip(allp, locus_weights(allp)))
-    T = np.zeros(20 ** k)
+    T = np.zeros(A ** k)
     for L, win in per_len.items():
         # The face is `L - 5` wide for a projected reference and the window itself for a class-II
         # proteome one, so the "too narrow to supply a k-mer" test differs. A reference narrower
         # than `k` contributes nothing and is skipped rather than padded, either way.
-        width = L if (cls == "mhc2" and comp == "self") else L - 5
+        # Under `wildcard` nothing is deleted, so every window is `L` wide whatever it is.
+        if mask == "wildcard":
+            width = L
+        else:
+            width = L if (cls == "mhc2" and comp == "self") else L - 5
         if win.size == 0 or width < k:
             continue
         V = _aa_code()[win.view(np.uint8).reshape(len(win), L)]
@@ -626,6 +686,15 @@ def corpus_counts(pmhc_dir=None, cls: str = "mhc1", comp: str = "thymus", k: int
         # feature, so changing it would be a model change rather than a definition.
         if cls == "mhc2" and comp == "self":
             F = V                                   # the k-mer itself; see the branch above
+        elif mask == "wildcard":
+            F = V.copy()
+            ok0 = (V >= 0).all(1)                   # mark BEFORE overwriting, or a masked column
+            if cls == "mhc2":                       # would hide a non-standard residue under it
+                for i, w in enumerate(win):
+                    F[i, np.asarray(masks(L, cls, w.decode("ascii"))["anchor"], np.intp)] = WILDCARD
+            else:
+                F[:, np.asarray(masks(L, cls)["anchor"], dtype=np.intp)] = WILDCARD
+            F = np.where(ok0[:, None], F, -1)
         elif cls == "mhc2":
             take = np.array([masks(L, cls, w.decode("ascii"))["tcr"] for w in win], dtype=np.intp)
             F = np.take_along_axis(V, take, axis=1)
@@ -635,30 +704,87 @@ def corpus_counts(pmhc_dir=None, cls: str = "mhc1", comp: str = "thymus", k: int
         if not ok.any():
             continue
         sw = np.lib.stride_tricks.sliding_window_view(F[ok], k, axis=1)
-        packed = (sw @ (20 ** np.arange(k, dtype=np.int64)[::-1])).ravel()
+        packed = (sw @ (A ** np.arange(k, dtype=np.int64)[::-1])).ravel()
         wt = None
         if wmap:
             per = np.array([wmap[w.decode("ascii")] for w in win[ok]], dtype=float)
             wt = np.repeat(per, sw.shape[1])
-        T += np.bincount(packed, weights=wt, minlength=20 ** k)
+        T += np.bincount(packed, weights=wt, minlength=A ** k)
     T.flags.writeable = False
     _COUNTS[key] = (T, float(T.sum()))              # atomic publish of a complete, frozen table
     return _COUNTS[key]
 
 
-def contract(T, kappa: float, k: int = CORPUS_K, kernel=None):
-    """Apply the mismatch kernel along every axis of a ``20**k`` count table. One-time, ~1 ms.
+def blosum62_kernel(kappa: float, normalise: bool = True, mask: str = "wildcard"):
+    """The BLOSUM62 substitution kernel ``K`` for :func:`contract`, as an ``(A, A)`` array.
 
-    ``kernel`` defaults to the Hamming form ``K = (1-beta)I + beta*J`` with ``beta = exp(-kappa)``;
-    pass a 20x20 array to use a graded one (``exp(kappa * BLOSUM62)`` reproduces the graded Luksza
-    score exactly, verified to 4.4e-16). Any **position-additive, ungapped** score factorises this
-    way; a gapped alignment does not, which is the one real limit.
+    ``K[u, x] = exp(kappa * E[u, x])`` where ``u`` indexes the **query** residue and ``x`` the
+    **reference** one, and ``E`` is BLOSUM62 in one of two parametrisations:
+
+    ``normalise=True`` (default) -- ``E[u, x] = S[u, x] - S[u, u]``, the score **relative to a
+    perfect match**. This is the form that makes the kernel well posed:
+
+    * ``K[u, u] = 1`` for every residue, so an identical k-mer contributes exactly 1 whatever it is
+      made of;
+    * a :data:`WILDCARD` row and column of ones is then the exact neutral element, which is what
+      ``S(X, a) = S(a, a)`` is trying to say -- a masked position matches perfectly, at no cost;
+    * ``kappa`` is a single bandwidth on *mismatch cost*, comparable across k and across channels.
+
+    ``normalise=False`` -- ``E = S``, the raw half-bits, with the wildcard row and column set
+    literally to ``S(X, a) = S(a, a)``. **This is measurably not the same thing.** BLOSUM62's
+    diagonal runs from 4 (A, I, L, S, V) to 11 (W), so ``K[u, u]`` spans a factor of
+    ``exp(7 * kappa)`` -- 1.3e9 at ``kappa = 3``, 2.1e24 at ``kappa = 8`` -- and a masked position
+    stops being neutral and becomes a tryptophan detector, weighting every reference k-mer by what
+    happens to sit at the position the mask was supposed to remove. Kept as an arm so the
+    normalisation can be measured rather than asserted.
+
+    Any **position-additive, ungapped** score factorises this way, so the contraction is exact:
+    verified against a literal all-vs-all with BLOSUM62 to 4.4e-16. A gapped alignment does not
+    factorise, which is the one real limit.
     """
     import numpy as np
+
+    import seqtree
+    m = seqtree.SubstitutionMatrix.blosum62()
+    S = np.array([[m.similarity(a, b) for b in AA] for a in AA], dtype=float)
+    E = S - np.diag(S)[:, None] if normalise else S
+    K = np.exp(float(kappa) * E)
+    if alphabet(mask) == 20:
+        return K
+    out = np.ones((21, 21), dtype=float)
+    out[:20, :20] = K
+    if not normalise:                       # the literal S(X, a) = S(a, a) reading
+        d = np.exp(float(kappa) * np.diag(S))
+        out[WILDCARD, :20] = d
+        out[:20, WILDCARD] = d
+        out[WILDCARD, WILDCARD] = float(d.max())
+    return out
+
+
+def contract(T, kappa: float, k: int = CORPUS_K, kernel=None):
+    """Apply the mismatch kernel along every axis of an ``A**k`` count table. One-time, ~1 ms.
+
+    ``A`` is inferred from ``len(T)`` (:func:`alphabet`), so a wildcard-masked ``21**k`` table works
+    unchanged. ``kernel`` defaults to the Hamming form ``K = (1-beta)I + beta*J`` with
+    ``beta = exp(-kappa)``, kept only so pre-0.27 results stay reproducible; pass
+    :func:`blosum62_kernel` for the graded score. Any **position-additive, ungapped** score
+    factorises this way; a gapped alignment does not, which is the one real limit.
+    """
+    import numpy as np
+    T = np.asarray(T, dtype=float)
+    A = int(round(len(T) ** (1.0 / k)))
+    if A ** k != len(T):
+        raise ValueError(f"table of {len(T)} cells is not A**{k} for any integer A")
     if kernel is None:
         beta = float(np.exp(-kappa))
-        kernel = (1.0 - beta) * np.eye(20) + beta * np.ones((20, 20))
-    C = np.asarray(T, dtype=float).reshape((20,) * k)
+        kernel = (1.0 - beta) * np.eye(A) + beta * np.ones((A, A))
+        if A == 21:                         # the wildcard is neutral under any kernel
+            kernel[WILDCARD, :] = 1.0
+            kernel[:, WILDCARD] = 1.0
+    kernel = np.asarray(kernel, dtype=float)
+    if kernel.shape != (A, A):
+        raise ValueError(f"kernel is {kernel.shape}, expected ({A}, {A}) for a {len(T)}-cell table")
+    C = T.reshape((A,) * k)
     for ax in range(k):
         C = np.moveaxis(np.tensordot(kernel, C, axes=([1], [ax])), 0, ax)
     return C.ravel()
@@ -666,11 +792,17 @@ def contract(T, kappa: float, k: int = CORPUS_K, kernel=None):
 
 def corpus_spectrum(pmhc_dir=None, cls: str = "mhc1", components=None, k: int = CORPUS_K,
                     shapes: dict | None = None, self_species: str = "human",
-                    weights: str | None = None) -> dict:
+                    weights: str | None = None, mask: str = "slice", kernel=None) -> dict:
     """Contracted sliding-k-mer tables over the TCR face, one per component. **No search.**
 
-    Returns ``{component: (table, n_kmers, k)}`` where ``table`` is a flat ``20**k`` array and
-    ``n_kmers`` the total reference window count. Feed it to :func:`corpus_R`.
+    Returns ``{component: (table, n_kmers, k, mask)}`` where ``table`` is a flat ``A**k`` array and
+    ``n_kmers`` the total reference window count. Feed it to :func:`corpus_R`, which reads the mask
+    back off the tuple so a query cannot be posed against a table built the other way.
+
+    ``kernel`` is passed to :func:`contract`. ``None`` keeps the pre-0.27 Hamming form; pass a
+    callable ``kappa -> (A, A)`` array -- :func:`blosum62_kernel` partially applied, or
+    ``functools.partial(blosum62_kernel, mask=mask)`` -- to grade the substitutions, since each
+    component carries its own ``kappa``.
 
     **Why there is no index here.** The Luksza sum
     ``Z = sum_r exp(-kappa*(a0 - s(q,r)))`` weights every reference by its similarity, and with an
@@ -701,8 +833,10 @@ def corpus_spectrum(pmhc_dir=None, cls: str = "mhc1", components=None, k: int = 
     shp = shapes or corpus_shapes()
     out: dict = {}
     for comp in tuple(components or COMPONENTS):
-        T, n = corpus_counts(pmhc_dir, cls, comp, k, self_species, weights)
-        out[comp] = (contract(T, float(shp[comp]), k), n, k)
+        T, n = corpus_counts(pmhc_dir, cls, comp, k, self_species, weights, mask)
+        kap = float(shp[comp])
+        K = kernel(kap) if callable(kernel) else kernel
+        out[comp] = (contract(T, kap, k, K), n, k, mask)
     return out
 
 
@@ -748,10 +882,12 @@ def corpus_R(peptides, spectrum: dict, cls: str = "mhc1", registers=None) -> lis
     for i, pep in enumerate(peptides):
         row: dict = {}
         reg = registers[i] if registers is not None else None
-        for comp, (table, n, k) in spectrum.items():
+        for comp, entry in spectrum.items():
+            table, n, k = entry[0], entry[1], entry[2]
+            mask = entry[3] if len(entry) > 3 else "slice"   # pre-0.27 3-tuples are `slice`
             if n <= 0:
                 continue
-            idx = face_kmers(pep, cls, k, reg)
+            idx = face_kmers(pep, cls, k, reg, mask)
             if idx.size:
                 row[comp] = float(table[idx].sum()) / (idx.size * n)
         out.append(row)
