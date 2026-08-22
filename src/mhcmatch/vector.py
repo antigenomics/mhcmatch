@@ -1404,14 +1404,16 @@ def store_binder(store, alleles, cls: str = "mhc1"):
     import math
 
     def binder(peptides, _alleles=None):
-        out = []
-        for p in peptides:
-            r = store.restriction(p, cls=cls, alleles=list(_alleles or alleles), calibrated=True)
-            # Restriction.rank is the per-allele %rank and is None unless calibrated=True; a peptide
-            # with no restriction at all is a non-binder, i.e. %rank 100.
-            pct = min((x.rank for x in r if x.rank is not None), default=100.0)
-            out.append(-math.log10(max(pct, 1e-4)))
-        return out
+        # `percent_ranks`, not `restriction`: this reads only the %rank, and `restriction` spends
+        # 79.5% of its time (measured, 400 distinct 9-mers x 6 allotypes) on the neighbour tally
+        # that feeds `vote`/`enrichment`/`n_votes` and nothing else. A cassette layout calls this
+        # millions of times -- `order()` is O(n^2) pairs x 8 spacers -- so the discarded work is
+        # the dominant cost of laying out a cassette, not a rounding error.
+        rows = store.percent_ranks(peptides, cls=cls, alleles=list(_alleles or alleles))
+        # A peptide no allele presents is a non-binder, i.e. %rank 100. NaN ranks (MHC-II with no
+        # length-matched background) are not minima -- `v == v` drops them without dropping zeros.
+        return [-math.log10(max(min((v for v in r.values() if v == v), default=100.0), 1e-4))
+                for r in rows]
 
     return binder
 

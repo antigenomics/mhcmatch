@@ -302,23 +302,42 @@ def test_a_gly_ser_linker_can_manufacture_a_slippery_site():
     assert n == 1 and _translate(fixed) == _translate(cds)
 
 
-def test_store_binder_reads_a_field_restriction_actually_has():
-    """`store_binder` reaches into `Restriction`, so a rename there must fail here and not in a
-    four-minute analysis run. (It did: the first version read `percent_rank`, which does not exist.)"""
-    import dataclasses
+def test_store_binder_calls_a_store_method_that_actually_exists():
+    """`store_binder` reaches into `Store`, so a rename there must fail here and not in a
+    four-minute analysis run. (It did once: the first version read `percent_rank`, which does not
+    exist.) The coupling moved in 0.26.0 from `Restriction.rank` to `Store.percent_ranks` -- the
+    ranking half without the neighbour tally -- so this pins the new surface.
+    """
+    from mhcmatch.store import Store
+    assert callable(getattr(Store, "percent_ranks", None)), \
+        "store_binder calls Store.percent_ranks"
 
-    from mhcmatch.store import Restriction
-    fields = {f.name for f in dataclasses.fields(Restriction)}
-    assert "rank" in fields, f"store_binder reads .rank; Restriction has {sorted(fields)}"
+
+def test_percent_ranks_and_restriction_agree_on_the_rank_they_both_report():
+    """The fast path may skip the tally; it may not disagree about the number it does report.
+
+    `percent_ranks` exists only because `restriction` spends 79.5% of its time (measured, 400
+    distinct 9-mers x 6 allotypes) computing `vote`/`enrichment`/`n_votes` that `store_binder`
+    discards. The moment the two paths disagree on `%rank`, the saving has been bought with a
+    different answer.
+    """
+    from mhcmatch.store import Store
+    store = Store.from_pmhc(None, tier="shortlist", species="human", classes=("mhc1",))
+    alleles = ["HLA-A*02:01", "HLA-B*07:02"]
+    for pep in ("GILGFVFTL", "NLVPMVATV"):
+        slow = {r.allele: r.rank for r in
+                store.restriction(pep, cls="mhc1", alleles=alleles, calibrated=True)}
+        assert store.percent_ranks([pep], cls="mhc1", alleles=alleles)[0] == slow
 
 
 def test_store_binder_scales_rank_so_stronger_binders_score_higher():
-    class _R:
-        def __init__(self, rank): self.rank = rank
-
     class _Store:
-        def restriction(self, p, cls=None, alleles=None, calibrated=None):
-            return {"S": [_R(0.1)], "W": [_R(5.0)], "N": [], "U": [_R(None)]}[p[0]]
+        """`percent_ranks`' contract: one dict per peptide, absent allele = not presented, NaN =
+        no usable rank (MHC-II with no length-matched background)."""
+
+        def percent_ranks(self, peptides, cls=None, alleles=None):
+            return [{"S": {"A": 0.1}, "W": {"A": 5.0}, "N": {},
+                     "U": {"A": float("nan")}}[p[0]] for p in peptides]
 
     b = vector.store_binder(_Store(), ["HLA-A*02:01"])
     strong, weak, none_, uncal = b(["Sxx", "Wxx", "Nxx", "Uxx"])
