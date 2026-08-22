@@ -31,3 +31,10 @@ src/mhcmatch/data/__pycache__/
 
 # per-feature git worktrees (see CLAUDE.md) — live inside the repo dir but are never committed
 .claude/worktrees/
+
+# `uv.lock` — a resolved graph for one machine, and this is a library, not an application. A
+# consumer gets their dependencies from `pyproject.toml`'s ranges; a lockfile here binds nothing
+# downstream and churns on every `uv sync`. It rode into the mouse-corpus branch unexamined
+# (860 KB, 4,199 lines) and is excluded deliberately rather than by omission. Track it only if
+# CI is ever made to install from it.
+uv.lock
