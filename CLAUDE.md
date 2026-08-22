@@ -158,8 +158,8 @@ rather than a migration:
 | v3 name | v4 name | note |
 |---|---|---|
 | `binder` | `pres` | presentation head alone; `binder` folds the affinity rank in a second time |
-| `occupancy` | `occupancy` **and** `d_occupancy` | both; Spearman between them is only +0.2538 |
-| -- | `wt_absent` | emitted, measured, and **not** fitted -- it did not earn its parameter |
+| `occupancy` | `occupancy` | unchanged; `d_occupancy` is emitted and **not** fitted |
+| -- | `d_occupancy`, `wt_absent` | emitted, measured, not fitted -- neither earned its parameter |
 | `C_phys_rose` | `C_phys_buried` | same Rose scale, both keys computed |
 
 **Do not delete an old name when a new one lands.** A recorded result cites the model version it was

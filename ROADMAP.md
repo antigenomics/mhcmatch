@@ -542,23 +542,47 @@ which `S(X,a) = S(a,a)` is taken literally, pins kappa at the grid floor in all 
 because BLOSUM62's diagonal spans 4..11 half-bits and that is the only way to neutralise a wildcard
 row of `exp(kappa*S(a,a))`.
 
-**`d_occupancy` adds to `occupancy`; it does not replace it.** Spearman between them is +0.2538 over
-330,625 rows -- absolute groove occupancy and the differential against the wild type are different
-quantities. Substituting costs LOO mean 0.6432 -> 0.6354; adding gains 0.6432 -> 0.6599. A separate
-`wt_absent` indicator then does not earn its own parameter (0.6599 -> 0.6580, twin-grouped CV
-0.6260 -> 0.6230): its information is already in `d_occupancy` falling back.
+**`d_occupancy` is measured out, and a gate does not rescue it.** Its coefficient flips sign on
+whether `occupancy` is also present -- +0.0284 (z +1.95) without, -0.0184 (z -1.17) with -- which is
+a column with no axis of its own. Gating on whether the substitution sits at an anchor makes it
+**weaker** (-0.0098, z -0.61), and entering both halves separately gives the TCR-face half the same
+sign and nearly the same size as the anchor half (-0.0069 against -0.0107) on 163,839 and 186,553
+rows. **The gate is the wrong shape for the quantity**: occupancy is a whole-peptide statistic, the
+Potts affinity reads every position to predict one Kd, so there is no per-position decomposition for
+an anchor mask to isolate. The anchor reading of agretopicity is real for the log-ratio form on
+individually measured epitopes and does not transfer to the Michaelis-Menten form here. `wt_absent`
+likewise does not earn its parameter. Both stay emitted columns; neither is fitted.
 
-**Against the shipped v3 on identical rows**, the ten-term model improves every summary: BIC
-4215.9 -> 4184.8, LOO mean 0.6432 -> 0.6599, LOO median 0.6182 -> 0.6260, 5-fold CV over the whole
-database grouped on peptide 0.6288 -> 0.6404 and grouped on twin group 0.6182 -> 0.6260. Per-term
-**p-values** are recorded for the first time; v3 carries a z and no p anywhere.
+**So v4 is nine terms, the same count as v3, with four of them respecified.** Against the shipped
+model on identical rows at identical parameter count: BIC 4215.9 -> **4173.3**, LOO mean
+0.6432 -> **0.6583**, LOO median 0.6182 -> **0.6309**, 5-fold CV over the whole database grouped on
+peptide 0.6288 -> 0.6307 and on twin group 0.6182 -> 0.6309. Per-term **p-values** are recorded for
+the first time; v3 carries a z and no p anywhere.
 
-**It does not clear a no-regressions bar: 3 improvements, 3 ties, 1 regression.** ITSNdb falls
-0.6500 -> 0.6258 on 149 rows / 89 positives, and it is the **corpus** change rather than the
+**Every remaining term is a function of the mutant alone, so v4 is wild-type-free.** v3 and the
+ten-term variant both carried a term undefined on the 6,516 rows with no germline counterpart. On
+that stratum (4,517 rows in the fit population, 144 immunogenic, 3.19 % prevalence against 0.23 %
+elsewhere) `pres` reaches marginal AUROC 0.7797 and `occupancy` 0.8298, and fitting on the
+wild-type-recoverable rows alone and scoring it **held out** gives 0.7262. Expression does not
+transfer there (0.4757 on 11.3 % coverage -- a frameshift or fusion often has no mapped source gene)
+and neither do the corpus channels, all below chance on novel sequence. `bench/results/epic_v4_nowt.md`.
+
+**It does not clear a no-regressions bar: 2 improvements, 4 ties, 1 regression.** ITSNdb falls
+0.6500 -> 0.6309 on 149 rows / 89 positives, and it is the **corpus** change rather than the
 presentation block -- 0.6500 under the shipped kappa, 0.6380 once kappa is re-profiled under the
 *same* Hamming kernel, 0.6275 under the graded one, so two thirds of the drop is the re-profiling.
 ITSNdb is the smallest and highest-prevalence screen (59.7 %) and its cell resolution is
-1/89 = 0.0112, so the move is about two resolution units. Reported, not absorbed.
+1/89 = 0.0112, so the move is under two resolution units. Reported, not absorbed.
+
+**The hierarchical prior needed fixing, and the failed arm is the evidence.** `beta_b ~
+MvNormal(0, Sigma_b)` with an LKJ prior on `Sigma_b` is not hierarchical when there is one global
+`beta_b` per block -- `Sigma_b` is then estimated from a single draw. Run anyway it behaves exactly
+so: on v3 it mixes but every estimated correlation's 94 % interval is 1.48-1.66 wide, the prior
+unmoved by 354,909 rows; on v4 the extra unidentified parameters make the geometry unsamplable (max
+Rhat 1.6122, min ESS 7). Fixing the block correlation to the **measured predictor correlation** --
+which is where the -0.84 actually lives -- leaves one scale free per block and both designs converge
+in a third of the time. The posterior confirms the point estimates and, on the ten-term arm,
+`d_occupancy` at -0.0173, 94 % HDI [-0.0469, +0.0121], P(sign) 0.863.
 
 **Open, in order.**
 
