@@ -943,7 +943,7 @@ def _read_unit_rows(path):
         if missing:
             raise SystemExit(f"{path}: missing column(s) {', '.join(missing)}; with --context a "
                              f"candidate table needs {', '.join(need)}, which is what `rank` emits "
-                             "(rename its `score` column to `p`)")
+                             "(rename its `p_response` column to `p`)")
         rows = []
         for line in fh:
             f = line.rstrip("\n").split("\t")
