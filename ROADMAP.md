@@ -61,7 +61,7 @@ diffusion model, and the downstream predictors.
 | `C_corpus` — the label-free corpus factor of Complementarity | `mhcmatch.mimicry.corpus_R` | **v0.21.0** (`docs/corpus.rst`) |
 | TCR precursor frequency (six estimators) | `mhcmatch.precursor` | **v0.12.0** re-export of `vdjmatch.precursor` (§5a) |
 | Reference expression by GTEx tissue / TCGA tumour type | `mhcmatch.expression` | **v0.9.0** |
-| Neoantigen ranking: the fitted `GRAND` aggregate (`--score gate` is the pre-0.19.0 noisy-AND) | `mhcmatch.rank` | **v0.21.0** (§5b) |
+| Neoantigen ranking: the fitted `EPIC` aggregate, v4, eight terms in four blocks (`--score gate` is the pre-0.19.0 noisy-AND) | `mhcmatch.rank` | **v0.27.0** (§5b-7, §5b-12) |
 | Known-epitope reference sets, exact-match lookup | `mhcmatch.known` | **v0.18.0** |
 | Łuksza `R = Z/(1+Z)` recognition term | `mhcmatch.luksza` | **v0.17.0** |
 | Per-allele `%rank` / `P(present)` / band calibration | `mhcmatch.calibrate` | **v0.9.0** |
@@ -507,18 +507,18 @@ them would break every citation the manuscript and the slides make, to buy nothi
 The `all_epitopes_210826_ms` hand-off therefore carries one name throughout, which is what deferring
 the rename out of 0.24.1 was for.
 
-## 5b-11. Three generated appendix tables are never `\input`, and the chapter hand-types them (OPEN)
+## 5b-11. Three generated appendix tables were never `\input` (LANDED 2026-08-23)
 
-`bench/neoag/make_grand_tables.py` writes `appendix/grand_coefs.tex`, `grand_ladder.tex` and
-`grand_loo.tex`. Nothing includes them. `appendix/chapters/07a-grand.tex` types their equivalents by
-hand instead, which is the one-way rule broken in the one place it is easiest to break -- a number
-that changes in the benchmark does not change in the manuscript, and nothing says so.
+`appendix/chapters/07a-grand.tex` hand-typed the equivalents of three generated fragments, which is
+the one-way rule broken in the place it is easiest to break: a number that changed in the benchmark
+did not change in the manuscript, and nothing said so.
 
-Two things have to happen together, and the second is why this is still open. Wire the three
-`\input`s in, **and** move the chapter from v3 to v4: its worked decomposition of `VYCEEYYLF` uses
-v3 coefficients and re-deriving it needs the candidate re-scored under the shipped artifact, not a
-transcription. The chapter now carries a note saying which version it describes, so the manuscript
-is not asserting anything false in the meantime.
+Both halves landed together, which is why it took a chapter rewrite rather than three `\input`
+lines. `bench/immuno/epic_v4_appendix.py` now generates `appendix/epic_ladder.tex`,
+`epic_terms_appendix.tex` and `epic_worked.tex`; the chapter `\input`s all three (lines 37, 44,
+193) and is v4 throughout. The worked decomposition of `VYCEEYYLF` is re-scored under the shipped
+artifact rather than transcribed, so it moves when the artifact moves. The v3 generator
+(`make_grand_tables.py`) and its three `grand_*.tex` outputs are deleted.
 
 ## 5b-7. EPIC v4 -- four terms respecified, and the BLOSUM verdict reversed (v0.27.0, SHIPPED)
 
@@ -630,6 +630,90 @@ in a third of the time. The posterior confirms the point estimates and, on the t
    not an argument.
 4. **`SHIPPED_CORPUS`.** `_build.py` names the `(k, mask)` a release commits to. It is `[(3,
    "slice")]`; if v4 ships it stays `(3, "slice")` -- the kernel is not part of the table.
+
+## 5b-12. The expression block is one term, a within-batch percentile (v0.27.0, SHIPPED)
+
+Analysis in `2026-mhcmatch-benchmark`: `bench/immuno/epic_expr_arms.py` -> `bench/results/`, a
+15-arm sweep with the other seven terms held identical.
+
+**`expr_missing` was a screen label, not a covariate.** `expr_source` is very nearly constant within
+a screen -- Neopep (87 % of the corpus) is 95.5 % GTEx `matched_tissue`, NCI and HiTIDE are 100 %
+`measured`, four small screens are 93-99 % `reference`, and only `IEDB_neoag` genuinely splits
+(49.8 % `none`). The fit already gives every screen its own unpenalised intercept, so in eight
+screens of nine the indicator was a constant that intercept already held. Drop-one priced it at
+**Delta BIC +36.6** (second largest of nine terms) against **0.0030** of held-out LOSO mean (the
+smallest of four). It was buying fit by re-encoding the screen.
+
+**What replaced it: `expr_pct`, the expression percentile within the scored batch.** `(rank+0.5)/n`
+over the non-NaN rows of one `rank` invocation; a NaN, a single-valued batch and an
+entirely-NaN batch all take 0.5, which is the middle of the batch's own ordering rather than a
+constant nobody chose. Against the previously shipped fit, on the same 354,909 rows / 958 positives
+/ 9 screens and with **one fewer parameter**:
+
+| | previous (`expr` + `expr_missing`) | shipped (`expr_pct`) |
+|---|--:|--:|
+| LOSO mean | 0.6654 | **0.6688** |
+| LOSO median | 0.6399 | **0.6497** |
+| CV, twin-grouped | 0.6399 | **0.6497** |
+| CV, peptide-grouped | 0.6455 | **0.6566** |
+| verdict | 2 improvements / 4 ties / **1 regression** | **2 / 5 / 0 -- ship bar met** |
+
+**Three alternatives were measured and are not what ships.** A constant TPM fill at 0.5 gives LOSO
+mean 0.6599 with two regressions, *below* the previous fit, and a GTEx typical-gene constant gives
+0.6602: a constant is not screen-neutral, because `expr` has a different scale in each screen and
+one number lands at a different quantile in each. A `noncanonical` indicator in place of the flag is
+a better column on its own terms -- present in nine screens of ten, 3.19 % positive against 0.23 %,
+a 14x enrichment -- but 4,517 of 354,909 rows cannot move a corpus-level ranking: 0.6633 against
+0.6654. TPM versus FPKM versus raw counts is solved by construction, since a rank is invariant to
+any monotone rescaling.
+
+**The price, stated where a reader meets it.** `score` is now cohort-relative: a peptide's
+`expr_pct` depends on what else was submitted with it. `rank` and `p_response` were already
+per-cohort; `score` has joined them. Recorded in the docstring, `CHANGELOG.md` and `docs/`.
+
+**Upstream, the deposits already knew the gene and the pipeline was asking the peptide.**
+`neoag_tested_hsa` carries `uniprot_id` on 99.7 % of rows and `_mmu` on 97.6 %, `nci_gartner_*`
+carries `gene_name` on 100 %, and `features_grand.py` read none of them. Reading them as cascade
+step 0 takes `IEDB_neoag`'s missing-expression share 49.8 % -> 43.9 %. **Measured and deliberately
+not taken:** raising the proteome gene search to `max_subs=3` resolves 84.6 % of the remaining
+`absent` group in 19 s using our own masked Hamming -- no BLAST -- but a 3-substitution gene
+assignment on an 8-11mer needs a uniqueness guard that was not worth writing against a release.
+
+## 5b-13. Release 0.27.0 and what deployment found (2026-08-23)
+
+**Reproducibility, measured against the published wheel rather than asserted.** CI regenerates every
+vendored artifact before cutting the wheel, and four of them came back byte-different from the
+checkout. Unpacking both and comparing values: **1,234,106 numbers across the four, max
+|wheel - local| = 1.82e-12** -- BLAS reassociation on a different host. `corpus_tables.npz` differed
+*only* in its `meta` blob and only in the `seconds` field: every `n`, `dense`, `k` and `mask`
+matches and all twelve tables are bit-identical. **A build records its own wall clock, so it is
+byte-nonreproducible by construction.** Dropping `seconds` from the artifact would make byte
+equality a usable check; it is not worth doing inside a release.
+
+**A version is not a cache key** (`bench/immuno/epic_optimize.py::_key`, benchmark repo).
+`epic_optimize_frame.parquet` was stamped `mhcmatch <version>` alone, and the cache-hit path returns
+before `_fresh` ever validates the two parquets it JOINs -- so an upstream rebuild under an unchanged
+library was invisible. On 2026-08-23 `features_grand.parquet` gained two gene columns at 0.27.0, the
+frame hit, and a 15-arm sweep reported the previous frame's numbers *to four decimals*, which is how
+it was caught. The key now folds in each input's mtime and size (two `stat` calls), and returns
+"never cache" for a `.dev` version, since an editable checkout moves `burial` and the corpus kernel
+without moving `__version__`. `bench/immuno/test_cache_stamp.py` holds the four assertions.
+
+**Not taken: `X.Y.Z.devN` in `pyproject.toml` between releases.** `mhcmatch build --check` compares
+artifact stamps to `__version__`, so a dev version would report all 27 stale on every commit and CI
+would sit red until release day. It needs `--check` to compare the release part first.
+
+**Three things a cluster gets wrong first**, measured on Aldan-3 and now written into
+`integrations/nextflow/mhcmatch/{README.md,slurm.config}`: `mhcmatch_slurm_queue` falls back to
+`normal`, which is a common partition name and not a universal one (Aldan-3 has
+`short`/`medium`/`long`/`infinite`, so every task would be rejected at submit, and the time limit
+matters because `MHCMATCH_VECTOR` asks for 8 h); the wheel needs Python >= 3.10 where a cluster's
+system `python3` is often older (Aldan-3's is 3.8, with no module system, so conda is the only
+source of a newer one); and `bootstrap --reference` was documented as a head-node step when it
+downloads and unpacks ~115 MB. The same audit found the module README hand-typing `native.tsv`'s
+column list at 27 names against the library's 28 -- `variant_type` landed in 0.24.0 and the
+paragraph did not notice -- in the one file that had opted out of the module's own "no stub types a
+header" rule. It prints the query now.
 
 ## 5b-10. `C_corpus_self` is the corpus block's intercept, not a tolerance term (2026-08-23)
 
@@ -1003,6 +1087,31 @@ within-screen.
    suite. Whether mimicry belongs *inside* the gate, as a third axis or as a re-weighting, is the
    open benchmark question; the columns exist so that question can be answered on real candidate
    tables without having pre-committed to an answer.
+
+## 5e. NEXT — cassette design, shipping as **1.0.1** (opened 2026-08-23)
+
+**This is the next thing we build.** The author has a design idea for it and will state it; nothing
+below pre-empts that. What this section is for is the state a reader needs before hearing it, so the
+idea is judged against what is already measured rather than re-derived.
+
+- **The release is 1.0.1**, per the author. Note that it skips 1.0.0 from 0.27.0 -- recorded here as
+  a deliberate choice so it does not get "corrected" into `pyproject.toml` as 1.0.0 by someone
+  tidying up.
+- **What already ships** is §5d: `screen`, `select`, `order`/`scan_junctions`, `unit`,
+  `back_translate`/`deslip`, the `vector` and `deslip` CLIs, and `portfolio` composition above
+  `select`. The V1-V4 backlog in §5d is the standing plan, built from a PubMed audit that tiers
+  every claim (`design/vector_evidence.md`) -- its central finding is that the field's recurring
+  linker conventions (`AAY`, `GPGPG`, `KK`, `EAAAK`) are almost never tested against an
+  alternative, and this module must not treat repetition as evidence.
+- **One live constraint from deployment, worth knowing before the design lands.** `portfolio`'s
+  block model refuses rather than clips: a unit cannot respond more often than its allotype block is
+  live, so any unit with marginal `p_response > q` raises `MarginalExceedsBlock`. Under EPIC v4 the
+  Gamaleya cohort's maxima are human 0.9223 (ISP rerank, class II) and 0.8507 (de novo, class I)
+  against mouse 0.9886 and **0.9948** -- so one `q` no longer serves both species, and the mouse
+  pools need `--block-live 0.999` where human composes at 0.95. The mechanism is `p_response`
+  anchoring per (sample, class) on an assumed prevalence: a small or top-heavy pool pushes its best
+  candidate toward 1. Whether `q` is the right knob, or whether the anchor should be pool-size aware,
+  is a cassette-design question and is open.
 
 ## 5d. Cassette assembly (`mhcmatch.vector`) — shipped v0.13.0/v0.14.0, V1–V4 planned (2026-08-18)
 
