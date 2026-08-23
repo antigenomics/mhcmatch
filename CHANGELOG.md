@@ -20,11 +20,13 @@ versioning is [SemVer](https://semver.org).
   | `C_phys_hydrop` | `C_phys_charge` | Kidera KF4 is burial measured a second way (r = −0.837 per peptide) and the pair was not identified. Atchley AF5 is orthogonal by measurement, r = +0.008. |
   | corpus kernel | Hamming → BLOSUM62 | identity-normalised, `K[u,x] = exp(κ(S[u,x] − S[u,u]))`, k = 3, sliced face |
 
-  On 354,909 rows and 958 immunogenic peptides over nine screens: BIC 4172.4, leave-one-screen-out
-  mean AUROC **0.6602** and median **0.6385**, twin-grouped five-fold cross-validation over the
-  whole database **0.6385**. Seven of the nine screens rank higher held out than under v3, by
-  +0.0018 (IEDB-neoag) to +0.0539 (VACCIMEL). ITSNdb falls 0.6500 → 0.6309 on 149 rows with 89
-  positives, and NCI, which has six held-out positives and does not decide, falls 0.8528 → 0.8263.
+  On 354,909 rows and 958 immunogenic peptides over nine screens: BIC 4212.2 → **4168.6**,
+  leave-one-screen-out mean AUROC over the seven deciding screens 0.6503 → **0.6654** and median
+  0.6325 → **0.6399**, twin-grouped five-fold cross-validation over the whole database 0.6325 →
+  **0.6399**. Seven of the nine screens rank higher held out than under v3, by +0.0007
+  (IEDB_neoag, 1,280 rows / 601 positives) to +0.0443 (VACCIMEL, 93 rows / 27 positives). ITSNdb
+  falls 0.6566 → 0.6399 on 149 rows with 89 positives, and NCI, which has six held-out positives
+  and does not decide, falls 0.8513 → 0.8248.
 
   **Nothing is deleted.** `aggregate_score` reads only the names the artifact's own `features` list
   asks for, and `rank._finish` supplies the union, so a v3 artifact still scores under this library
@@ -73,7 +75,19 @@ versioning is [SemVer](https://semver.org).
 - **Two schema drifts in the artifact.** v4 moved `fit.loo` to the top level and turned `blocks`
   from a list of pairs into a dict — a consumer reading `a["fit"]["loo"]` broke, and one reading
   `[b[0] for b in a["blocks"]]` silently got the first letter of each key. Both shapes are restored,
-  and `phys_scale_charge` names the second chemistry scale that is actually fitted.
+  and `phys_scale_charge` names the second chemistry scale that is actually fitted. All three are
+  now **written by `epic_v4_fit.py`** rather than patched into the file after the fact; the patched
+  copy is why the shipped artifact and its generator drifted apart (below).
+- **The shipped artifact is the one `bench/run_epic.sh` produces.** `epic_v4_fit.py` writes a
+  *candidate*, and copying it into the library is manual, so the two can drift — and `build --check`
+  cannot see it, because it compares version stamps and a hand-copied older fit stamped 0.27.0 is
+  current by that test. The file this release was going to ship was fitted against a frame whose
+  upstream `features_grand.parquet` and `dai_kd.parquet` were stale. Re-stamping those forced a
+  rebuild that recovered an expression value for **202 of the 354,909 rows** (`expr_missing` 1.705%
+  → 1.648%); every other column is bit-identical between the two frames, `mu` and `sigma` matching
+  to 0 on `pres`, `occupancy`, both chemistry scales and all three corpus channels. The refit is
+  better on every summary: BIC 4172.4 → 4168.6, LOSO mean 0.6602 → 0.6654, median 0.6385 → 0.6399,
+  twin-grouped CV pooled AUROC 0.7665 → 0.8100.
 - **The release workflow rebuilds every buildable artifact, and gates on all 27.** `publish.yml`
   ran `python tools/build_anchor_models.py` — one of the three families, through a shim — so a
   release could cut a wheel whose `corpus_tables.npz` was stamped behind `__version__` and nothing
