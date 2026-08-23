@@ -507,6 +507,19 @@ them would break every citation the manuscript and the slides make, to buy nothi
 The `all_epitopes_210826_ms` hand-off therefore carries one name throughout, which is what deferring
 the rename out of 0.24.1 was for.
 
+## 5b-11. Three generated appendix tables are never `\input`, and the chapter hand-types them (OPEN)
+
+`bench/neoag/make_grand_tables.py` writes `appendix/grand_coefs.tex`, `grand_ladder.tex` and
+`grand_loo.tex`. Nothing includes them. `appendix/chapters/07a-grand.tex` types their equivalents by
+hand instead, which is the one-way rule broken in the one place it is easiest to break -- a number
+that changes in the benchmark does not change in the manuscript, and nothing says so.
+
+Two things have to happen together, and the second is why this is still open. Wire the three
+`\input`s in, **and** move the chapter from v3 to v4: its worked decomposition of `VYCEEYYLF` uses
+v3 coefficients and re-deriving it needs the candidate re-scored under the shipped artifact, not a
+transcription. The chapter now carries a note saying which version it describes, so the manuscript
+is not asserting anything false in the meantime.
+
 ## 5b-7. EPIC v4 -- four terms respecified, and the BLOSUM verdict reversed (v0.27.0, SHIPPED)
 
 Analysis in `2026-mhcmatch-benchmark`: `bench/results/epic_corpus_kernel.md` (the 11-cell kernel x

@@ -45,7 +45,9 @@ versioning is [SemVer](https://semver.org).
   `~/.cache/mhcmatch/calibration`. Set `MHCMATCH_CALIBRATION_CACHE` to share one across a SLURM
   array, or to `0`/`off`/`none`/`false` to disable. A read-only home degrades to no cache rather
   than raising. The library version is in the key, so a bump invalidates rather than serving a
-  stale background, and deleting the directory is always safe.
+  stale background, and deleting the directory is always safe. Budget for it: one ~250 kB file
+  per (scorer fingerprint, allele), so a run over the whole 2,093-allele neoantigen panel
+  leaves on the order of 1 GB behind.
 
 - **`predict.binder_ranks(store, peptides, allele, …)`** — the transpose of `binder_score`: one
   allele, many peptides, which is the call shape a benchmark needs. Score-identical to

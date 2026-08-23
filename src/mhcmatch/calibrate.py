@@ -42,7 +42,10 @@ def cache_dir() -> str | None:
     rebuilt every allele it touched on every run. On the neoantigen feature build, 2,093 distinct
     alleles in fourteen workers, that was the entire cost of the stage.
 
-    Deleting the directory is always safe: it is derived data and rebuilds on demand.
+    One file per (scorer fingerprint, allele), ~250 kB each -- a 10,000-score background and an
+    isotonic fit. A run that touches the whole 2,093-allele neoantigen panel through all three
+    calibrators leaves on the order of 1 GB behind. Deleting the directory is always safe: it
+    is derived data and rebuilds on demand.
     """
     d = os.environ.get(CACHE_ENV)
     if d is not None:
