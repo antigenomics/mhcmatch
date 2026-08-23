@@ -45,7 +45,7 @@ __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
            "BASE_COLUMNS", "MIMICRY_PAIRS", "EXTENDED_COLUMNS", "ANNOTATE_COLUMNS", "columns",
            "aggregate", "aggregate_score", "probability", "POOL_PREVALENCE",
            "AGGREGATE_FEATURES", "AGGREGATE_COLUMNS",
-           "AGGREGATE_BLOCKS", "CHANNEL_COLUMNS", "PHYS_COLUMNS"]
+           "AGGREGATE_BLOCKS", "CHANNEL_COLUMNS", "PHYS_COLUMNS", "expr_percentile"]
 
 #: The `mhcmatch rank` output schema, one source of truth. It lives here rather than inline in the
 #: CLI because a *consumer* -- a pipeline module's stub, a downstream join -- has to be able to name
@@ -55,7 +55,7 @@ __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
 BASE_COLUMNS: tuple = ("rank", "peptide", "allele", "gene", "score", "p_response",
                        "presentation", "binder",
                        "occupancy", "d_occupancy", "wt_absent",
-                       "agretopicity", "physchem", "expression", "expr_imputed",
+                       "agretopicity", "physchem", "expression", "expr_pct", "expr_imputed",
                        "n_alleles_presenting", "alleles_presenting",
                        "imputed", "wt_peptide", "known_epitope", "variant_type")
 #: The aggregate's recognition features, emitted whenever the aggregate is what scored. A model
@@ -125,7 +125,7 @@ _AGG: dict | None = None
 #: The features the shipped aggregate expects, in order. Read it rather than typing the list --
 #: ``O`` replaced ``D`` in 0.19.0, the four recognition columns collapsed to two in 0.21.0, and a
 #: hardcoded copy of this tuple would have gone stale silently either time.
-AGGREGATE_FEATURES: tuple = ("pres", "occupancy", "expr", "expr_missing",
+AGGREGATE_FEATURES: tuple = ("pres", "occupancy", "expr_pct",
                              "C_phys_buried", "C_phys_charge",
                              "C_corpus_thymus", "C_corpus_self", "C_corpus_viral")
 #: The hierarchy the aggregate was fitted as, in pipeline order. Blocks are entered one on top of
@@ -134,10 +134,46 @@ AGGREGATE_FEATURES: tuple = ("pres", "occupancy", "expr", "expr_missing",
 #: because a consumer grouping the emitted columns should not have to re-derive the grouping.
 AGGREGATE_BLOCKS: tuple = (
     ("presentation", ("pres", "occupancy")),
-    ("expression", ("expr", "expr_missing")),
+    ("expression", ("expr_pct",)),
     ("physchem", ("C_phys_buried", "C_phys_charge")),
     ("corpus", ("C_corpus_thymus", "C_corpus_self", "C_corpus_viral")),
 )
+
+
+def expr_percentile(rows) -> list:
+    """:attr:`Ranked.expression`'s percentile within ``rows``, in (0, 1); ``0.5`` where absent.
+
+    **The fitted expression term is a rank, not a level, and that is deliberate.** ``expression`` is
+    ``log1p(TPM)``, and TPM is not comparable across the cohorts the model was fitted on -- a GTEx
+    normal-tissue value and a tumour RNA-seq value are different measurements. The fit already
+    grants each screen its own intercept; ranking inside the cohort is the matching move for the one
+    column whose units vary by cohort. Two consequences worth knowing:
+
+    * **The unit stops mattering.** TPM, FPKM and raw counts give the same column, because a
+      percentile is invariant to any monotone rescaling of abundance. A caller does not have to
+      convert, and cannot convert wrongly.
+    * **Missing needs no imputation constant and no indicator.** A row with no expression value sits
+      at ``0.5``, which is what "no information" means on a percentile scale. The retired
+      ``expr_missing`` flag was metadata -- its source was very nearly a screen label, so the
+      per-screen intercept already carried it (``bench/results/epic_expr_arms.md``).
+
+    The cost, stated: **the term is cohort-relative.** One peptide's ``expr_pct`` depends on what
+    else was scored with it, so a row's score is a statement about its standing in the submitted
+    list. Rank and ``p_response`` were already per-cohort quantities; this makes ``score`` one too.
+
+    A batch with fewer than two finite values -- including one that is entirely absent -- is all
+    ``0.5``: one point has no percentile.
+    """
+    vals = [r.expression for r in rows]
+    ok = [i for i, v in enumerate(vals) if v == v]            # NaN-safe
+    out = [0.5] * len(rows)
+    if len(ok) < 2:
+        return out
+    order = sorted(ok, key=lambda i: vals[i])
+    n = len(ok)
+    for rank, i in enumerate(order):
+        out[i] = (rank + 0.5) / n
+    return out
 
 
 def aggregate() -> dict:
@@ -286,8 +322,8 @@ def aggregate_score(features, imputed_out: list | None = None) -> "np.ndarray":
     Two things the caller owns, because getting them wrong is silent:
 
     * **Compute each feature the way the fit did.** ``binder`` is ``-log10`` of the calibrated
-      combined %rank, ``occupancy`` is ``a/(1+a)`` for ``a = 10 nM / Kd``, ``expr`` is
-      ``log1p(TPM)`` with ``expr_missing`` flagging an absent value, the ``C_phys`` pair is
+      presentation %rank, ``occupancy`` is ``a/(1+a)`` for ``a = 10 nM / Kd``, ``expr_pct`` is
+      :func:`expr_percentile` over the scored batch, the ``C_phys`` pair is
       :func:`mhcmatch.complement.burial` on the two scales of :data:`PHYS_COLUMNS`, and the three
       ``C_corpus`` channels are :func:`mhcmatch.mimicry.corpus_R`.
     * **The ``C_corpus`` channels are densities, not counts.** Each is a per-window mean over the
@@ -299,7 +335,7 @@ def aggregate_score(features, imputed_out: list | None = None) -> "np.ndarray":
       is to compute it against the fitted deposit, not to leave it out.
 
     >>> full = {f: [0.0, 0.0] for f in AGGREGATE_FEATURES}
-    >>> full["binder"] = [2.0, 0.1]
+    >>> full["pres"] = [2.0, 0.1]
     >>> bool(aggregate_score(full)[0] > aggregate_score(full)[1])
     True
     """
@@ -402,6 +438,10 @@ class Ranked:
     wt_absent: float = 0.0
     #: calibrated physicochemical log-probability of immunogenicity.
     physchem: float = float("nan")
+    #: :attr:`expression`'s percentile within the scored batch, in (0, 1); ``0.5`` where there is
+    #: no value. **This is the fitted expression term**, not :attr:`expression` itself -- see
+    #: :func:`expr_percentile`.
+    expr_pct: float = 0.5
     #: log1p(TPM), observed if the input carried one, else the tissue/tumour reference median.
     expression: float = float("nan")
     expression_imputed: bool = False
@@ -632,7 +672,10 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
                 "d_occupancy": [r.d_occupancy for r in rows],
                 "wt_absent": [float(r.wt_absent) for r in rows],
                 "expr": [r.expression for r in rows],
+                "expr_pct": expr_percentile(rows),
                 "expr_missing": [1.0 if r.expression_imputed else 0.0 for r in rows]}
+        for r, v in zip(rows, cols["expr_pct"]):
+            r.expr_pct = float(v)
         # Each C_phys column is a matrix product against a published residue vector -- free, and
         # needing no reference deposit, so the library computes them rather than making the caller
         # pass them. See PHYS_COLUMNS.

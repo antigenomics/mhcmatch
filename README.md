@@ -1,6 +1,12 @@
+<!-- The SVGs are transparent (the `_bg` variants carry a full-canvas white/dark fill and are not
+     used here); the PNG is the fallback. GitHub honours <source> and gets the SVG in both colour
+     schemes; PyPI ignores <picture>/<source> and does not render SVG at all, so it falls through
+     to the <img> and keeps the PNG it already renders well. Changing the <img> to an SVG would
+     blank the logo on the PyPI project page. -->
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/antigenomics/mhcmatch/master/assets/mhcmatch_dark.png">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/antigenomics/mhcmatch/master/assets/mhcmatch_dark.svg">
+    <source srcset="https://raw.githubusercontent.com/antigenomics/mhcmatch/master/assets/mhcmatch_light.svg">
     <img alt="mhcmatch" src="https://raw.githubusercontent.com/antigenomics/mhcmatch/master/assets/mhcmatch_light.png" width="340">
   </picture>
 </p>

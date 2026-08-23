@@ -304,32 +304,32 @@ slot.
      - −0.1033
      - **+0.0056** *(lowest of 141)*
    * - burial's coefficient
-     - +0.1609
-     - +0.1129
+     - +0.1605
+     - +0.1143
    * - burial's bootstrap sd
-     - 0.0869
-     - **0.0486**
+     - 0.0870
+     - **0.0487**
    * - burial's *z* / *p*
-     - +1.85 / 0.064
-     - **+2.32 / 0.0202**
+     - +1.84 / 0.065
+     - **+2.34 / 0.019**
    * - burial's sign stability
-     - 98 %
-     - **100 %**
+     - 97.5 %
+     - **99.8 %**
    * - second column's sign stability
-     - 74 %
-     - **87 %**
+     - 74.3 %
+     - **87.3 %**
    * - BIC
-     - 4173.3
-     - **4172.4**
+     - 4169.5
+     - **4168.6**
    * - leave-one-screen-out mean / median
-     - 0.6583 / 0.6309
-     - **0.6602 / 0.6385**
+     - 0.6639 / 0.6375
+     - **0.6654 / 0.6399**
    * - CV, grouped on peptide / twin
-     - 0.6307 / 0.6309
-     - **0.6386 / 0.6385**
+     - 0.6415 / 0.6375
+     - **0.6455 / 0.6399**
    * - held-out verdict
      - 2i/4t/1r
-     - **3i/3t/1r**
+     - 2i/4t/1r
 
 Burial's coefficient gets *smaller* and its evidence gets *stronger*, which is what removing a
 collinear partner does — the standard error halves, and the collinearity is gone. The pair is

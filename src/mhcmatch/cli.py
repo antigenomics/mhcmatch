@@ -606,7 +606,7 @@ def cmd_rank(a):
                      f"{r.presentation:.4g}", f"{r.binder:.4g}", f"{r.occupancy:.4g}",
                      f"{r.d_occupancy:.4g}", "1" if r.wt_absent else "0",
                      f"{r.agretopicity:.4g}",
-                     f"{r.physchem:.4g}", f"{r.expression:.4g}",
+                     f"{r.physchem:.4g}", f"{r.expression:.4g}", f"{r.expr_pct:.4g}",
                      "1" if r.expression_imputed else "0",
                      str(r.n_alleles_presenting), r.alleles_presenting,
                      r.imputed, r.wt_peptide,

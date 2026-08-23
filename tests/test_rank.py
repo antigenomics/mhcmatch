@@ -449,8 +449,9 @@ def test_default_score_is_the_fitted_aggregate_not_the_gate():
             Ranked(peptide="SIINFEKV", allele="H2-Kb", presentation=0.1, binder=0.1, occupancy=0.01,
                    physchem=-1.0, expression=0.5, components=dict(chan))]
     out = _finish([Ranked(**vars(r)) for r in rows], None)
+    # `expr_pct` is the within-batch percentile of `expression`: 3.0 and 0.5 over two rows.
     want = aggregate_score({"pres": [2.0, 0.1], "occupancy": [0.9, 0.01],
-                            "expr": [3.0, 0.5], "expr_missing": [0.0, 0.0],
+                            "expr_pct": [0.75, 0.25],
                             **{c: complement.burial(["SIINFEKL", "SIINFEKV"], scale=sc)
                                for c, sc in R.PHYS_COLUMNS.items()},
                             **{c: [chan[c], chan[c]] for c in CHANNEL_COLUMNS}})
@@ -599,8 +600,11 @@ def test_finish_supplies_every_feature_the_artifact_declares():
         r.components.update({c: 1e-3 for c in R.CHANNEL_COLUMNS})
     done = R._finish(list(rows), None, score="aggregate")
     have = set(done[0].components) | {"pres", "occupancy", "d_occupancy", "wt_absent",
-                                      "expr", "expr_missing"}
+                                      "expr", "expr_pct", "expr_missing"}
     want = set(R.AGGREGATE_FEATURES) | {"d_occupancy", "wt_absent"}
     assert want <= have, sorted(want - have)
     # and nothing from the retired vocabulary comes back
     assert not ({"C_phys_rose", "C_phys_hydrop"} & set(done[0].components))
+    # `expr_pct` is the fitted expression term and `expr` is not: a single row has no percentile
+    assert R.AGGREGATE_FEATURES.count("expr") == 0 and "expr_pct" in R.AGGREGATE_FEATURES
+    assert done[0].expr_pct == 0.5

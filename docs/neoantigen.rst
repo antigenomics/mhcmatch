@@ -115,57 +115,57 @@ from one patient share tumour, HLA and run.
      - sign stability
      - reading
    * - ``expr``
-     - **+0.3315**
-     - +4.93
-     - 8.3×10⁻⁷
+     - **+0.3307**
+     - +5.31
+     - 1.1×10⁻⁷
      - 100 %
      - the largest term in the model
    * - ``pres``
-     - +0.2376
-     - +6.46
-     - 1.0×10⁻¹⁰
+     - +0.2375
+     - +6.50
+     - 8.0×10⁻¹¹
      - 100 %
      - presentation ``%rank``, allele-relative
    * - ``occupancy``
-     - +0.1164
-     - +6.42
-     - 1.3×10⁻¹⁰
+     - +0.1150
+     - +6.32
+     - 2.7×10⁻¹⁰
      - 100 %
      - groove occupancy, absolute
    * - ``expr_missing``
-     - +0.1044
-     - +6.54
-     - 6.3×10⁻¹¹
+     - +0.1090
+     - +6.83
+     - 8.7×10⁻¹²
      - 100 %
      - which expression source the row got
    * - ``C_corpus_thymus``
-     - +0.1552
-     - +2.27
+     - +0.1542
+     - +2.28
      - 0.023
      - 99 %
      - danger
    * - ``C_corpus_self``
-     - **−0.2697**
-     - −3.16
-     - 1.6×10⁻³
+     - **−0.2733**
+     - −3.21
+     - 1.3×10⁻³
      - 100 %
      - the block's background — see :doc:`corpus`
    * - ``C_corpus_viral``
-     - +0.1456
-     - +1.69
-     - 0.092
-     - 96 %
+     - +0.1512
+     - +1.81
+     - 0.071
+     - 97 %
      - peripheral priming
    * - ``C_phys_buried``
-     - +0.1129
-     - +2.32
-     - 0.020
+     - +0.1143
+     - +2.34
+     - 0.019
      - 100 %
      - burial over the TCR face
    * - ``C_phys_charge``
-     - −0.0584
-     - −1.11
-     - 0.266
+     - −0.0591
+     - −1.12
+     - 0.261
      - 87 %
      - charge — see :doc:`burial`
 
