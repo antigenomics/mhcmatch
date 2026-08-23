@@ -288,7 +288,8 @@ a second multi-gigabyte index.
 All three channels, and why all three are scored
 -------------------------------------------------
 
-``components=`` selects the channels, and since EPIC v3 the shipped aggregate reads **all three**;
+``components=`` selects the channels, and since EPIC v3 the shipped aggregate has read **all
+three**;
 since v4 it reads them under the graded BLOSUM62 kernel.
 
 .. code-block:: python

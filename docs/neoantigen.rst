@@ -15,7 +15,7 @@ The model
 ---------
 
 ``mhcmatch rank`` scores each candidate with the fitted aggregate vendored at
-``data/aggregate_mhc1.json``, which declares itself **EPIC**, version 3: nine terms in four
+``data/aggregate_mhc1.json``, which declares itself **EPIC**, version 4: nine terms in four
 **hierarchical blocks**, one unpenalised intercept per screen. Read the feature list from
 :data:`mhcmatch.rank.AGGREGATE_FEATURES` and the grouping from
 :data:`mhcmatch.rank.AGGREGATE_BLOCKS` rather than typing either out.

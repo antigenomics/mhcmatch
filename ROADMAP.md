@@ -491,8 +491,9 @@ seven `docs/*.rst`, `SKILL.md`, `README.md`, the nextflow module, two test files
 
 **`MODELS.md` keeps `GRAND` as the former name**, exactly as `V` survived the `ipred` removal: a
 result recorded against 0.21.0–0.24.x cites a model this package used to call something else, and a
-registry that deletes the old name cannot say what those numbers were produced by. Keep
-`"version": 3` in the artifact for the same reason — the v2-vs-v3 head-to-head has to stay readable.
+registry that deletes the old name cannot say what those numbers were produced by. The
+artifact's version number moves with the fit — it is `4` since 0.27.0 — and the old feature names
+stay computed and emitted for the same reason the old model name does.
 
 **Landed, and narrower than scoped.** The artifact's `"model"` field is `EPIC` and it carries
 `"former_name": "GRAND"`; `rank`'s header line, the docstrings, seven `docs/*.rst`, `SKILL.md`,
