@@ -61,10 +61,10 @@ BASE_COLUMNS: tuple = ("rank", "peptide", "allele", "gene", "score", "p_response
 #: The aggregate's recognition features, emitted whenever the aggregate is what scored. A model
 #: emits the features it used and refuses to run without them.
 #:
-#: The two ``C_phys`` columns are computed here (:func:`mhcmatch.complement.burial` -- a matrix
+#: The ``C_phys`` columns are computed here (:func:`mhcmatch.complement.burial` -- a matrix
 #: product against a published residue vector, free). The three ``C_corpus`` channels are the only
 #: features a caller has to supply, because they need a reference deposit; see :func:`aggregate`.
-AGGREGATE_COLUMNS: tuple = ("C_phys_buried", "C_phys_rose", "C_phys_hydrop",
+AGGREGATE_COLUMNS: tuple = ("C_phys_buried", "C_phys_rose", "C_phys_hydrop", "C_phys_charge",
                             "C_corpus_thymus", "C_corpus_self", "C_corpus_viral")
 #: The subset of :data:`AGGREGATE_COLUMNS` that ``channels()`` has to return. The ``C_phys`` pair is
 #: not in it: the library can always compute them, so making the caller pass them would be ceremony.
@@ -74,8 +74,25 @@ CHANNEL_COLUMNS: tuple = ("C_corpus_thymus", "C_corpus_self", "C_corpus_viral")
 #: ``C_phys_buried`` is EPIC v4's name for what v3 called ``C_phys_rose``: **the same scale**,
 #: renamed because "Rose" names the paper and "buried" names the quantity -- the mean fraction of a
 #: residue's surface area occluded on folding. Both keys are computed so either artifact scores.
+#: ``column -> residue scale``, averaged over the TCR face by :func:`complement.burial`.
+#:
+#: **Rose ~ -KF4: burial and hydropathy are one axis, not two.** Measured on
+#: `chowell_rebuilt_hla_matched` (94,380 human / 21,212 mouse rows): r = -0.849 over the twenty
+#: residue types and **-0.782 at the peptide level**, and a symmetric PCA of the pair leaves the
+#: second component at chance on that corpus (AUROC 0.5014 human / 0.5085 mouse against pc1's
+#: 0.5884 / 0.6174). Both are kept -- hydropathy is the name the Chowell-family literature is
+#: written in, and the contrast may carry signal on the neoantigen screens where Chowell has none --
+#: but the pair is *collinear*, which is why their individual coefficients are not identified
+#: (+0.0600 from the ridge GLM against -0.0161 from the hierarchical posterior, on the same rows).
+#:
+#: ``C_phys_charge`` is the axis that is genuinely independent of burial: Atchley 2005's
+#: electrostatic-charge factor, r = +0.066 with Rose, separating at 0.5548 / 0.5291 against KF4's
+#: residual 0.5237 / 0.5275 -- and with the lowest cysteine loading of the 141 scales swept,
+#: -0.0028, which matters because the Chowell family carries a 12.5x mass-spectrometry cysteine
+#: gradient that a selected basis can learn. `bench/results/physchem_pc.md`.
 PHYS_COLUMNS: dict = {"C_phys_buried": "Rose", "C_phys_rose": "Rose",
-                      "C_phys_hydrop": "KIDERA:KF4"}
+                      "C_phys_hydrop": "KIDERA:KF4",
+                      "C_phys_charge": "ATCHLEY:AF5"}
 #: (reference, channel) in the order the mimicry columns are emitted.
 MIMICRY_PAIRS: tuple = tuple((c, ch) for c in ("viral", "self", "thymus")
                              for ch in ("anchor", "tcr"))
@@ -625,10 +642,11 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
                 "wt_absent": [float(r.wt_absent) for r in rows],
                 "expr": [r.expression for r in rows],
                 "expr_missing": [1.0 if r.expression_imputed else 0.0 for r in rows]}
-        # The C_phys pair is a matrix product against a published residue vector -- free, and
+        # Each C_phys column is a matrix product against a published residue vector -- free, and
         # needing no reference deposit, so the library computes them rather than making the caller
-        # pass them. Two scales since EPIC v3: Rose is burial on folding, KF4 is water/oil
-        # partition, and neither recovers the other when it is dropped.
+        # pass them. Rose is burial on folding and KF4 water/oil partition; they are **the same
+        # axis** at r = -0.78 peptide-level, and charge (Atchley AF5) is the one that is not.
+        # See PHYS_COLUMNS.
         if rows:
             from . import complement as CM
             peps = [r.peptide for r in rows]
