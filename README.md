@@ -119,11 +119,12 @@ Full treatment, including why a gradient-boosted score fixes the geometry but no
 ## What `rank` costs, and why it did not before
 
 Since 0.20.0 `rank --score aggregate` computes **every one** of the model's features before scoring:
-a model emits the features it used and refuses to run without them. Since 0.21.0 `EPIC` takes its
-corpus term from the **thymic** channel alone (26,513 peptides), so the host-proteome reference index
-— ~7.5 GB and 6 min 15 s — is off the ranking path and `--no-self` is allowed with
-`--score aggregate`. That index is still what `--extended` and `--annotate` cost, because they
-report the `self` channels.
+a model emits the features it used and refuses to run without them. The corpus term was the thymic
+channel alone in 0.21.0–0.23.x; since v3 (0.24.0) it is **all three** channels — `thymus`, `self`,
+`viral` — and they are affordable because the term contracts a k-mer table rather than searching an
+index, so the host-proteome reference index (~7.5 GB, 6 min 15 s) is still off the ranking path and
+`--no-self` is still allowed with `--score aggregate`. That index is what `--extended` and
+`--annotate` cost, because they report *which* reference peptide was hit.
 
 It used to be free because four of `BOECRT`'s nine were never computed. `aggregate_score`
 substituted their training means, so each contributed `coef × 0` to every candidate — inert, not
@@ -133,6 +134,14 @@ at +0.3154 among it. The emitted *ordering* was unaffected, since a constant off
 anything; what was wrong was the model the output named.
 
 `--score gate` uses the two-term noisy-AND and stays cheap.
+
+**The cost that remains is the per-allele `%rank` background, and 0.27.0 caches it.** Building one
+allele's calibration background is a 10,000-peptide draw scored under that allele's model, ~0.95 s,
+and it is a pure function of `(allele, model, background, footprint, seed, library version)`. The
+on-disk cache for it defaults on at `~/.cache/mhcmatch/calibration`; set
+`MHCMATCH_CALIBRATION_CACHE` to relocate or share it, or to `off` to disable. Measured on a
+363,324-pair, 2,093-allele build: **1,788 s → 15 s**, with the two outputs identical in all 40
+columns. Budget ~240 kB per (scorer, allele).
 
 **There is nothing left to cache on the corpus path.** `$MHCMATCH_REFERENCE_CACHE` is gone in
 0.24.0, along with the ~1 GB of index it held (yours to delete). `C_corpus` no longer searches: it
@@ -198,11 +207,16 @@ numpy product and a thread pool would buy nothing, so the flag is absent rather 
 
 Presentation is necessary and not sufficient: most presented peptides are ignored. mhcmatch keeps
 the two questions apart and scores them with the fitted **`EPIC`** aggregate (0.21.0), whose
-`C_phys_*` and `C_corpus_*` terms are the recognition axis and whose `binder`/`occupancy` terms are
-the presentation one. Version 3 (0.24.0) is **hierarchical**: nine columns in four blocks —
-presentation, expression, physchem, corpus — entered in pipeline order, so a recognition
-coefficient is what that term is worth *after* presentation and expression rather than in
-competition with them. Its predecessor **`BOECRT`** carried recognition as the 30-column `C`
+`C_phys_*` and `C_corpus_*` terms are the recognition axis and whose `pres`/`occupancy` terms are
+the presentation one. **Version 4 (0.27.0) is what ships**, and like v3 it is **hierarchical**:
+nine columns in four blocks — presentation, expression, physchem, corpus — entered in pipeline
+order, so a recognition coefficient is what that term is worth *after* presentation and expression
+rather than in competition with them. v4 respecifies four of v3's nine terms: `binder` → `pres`
+(presentation `%rank` alone, since `occupancy` already carries affinity), `C_phys_hydrop` →
+`C_phys_charge` (Kidera KF4 was burial measured twice, *r* = −0.837; Atchley AF5 is orthogonal at
++0.008), `C_phys_rose` → `C_phys_buried` (a rename), and the corpus kernel Hamming → BLOSUM62.
+Nothing is deleted — `aggregate_score` reads only the names the artifact's own `features` list asks
+for, so this library scores a v3 artifact unchanged and every v3 number keeps its meaning. Its predecessor **`BOECRT`** carried recognition as the 30-column `C`
 term (z +4.24) plus `R` and `T`; none of the recognition terms is fitted on immunogenicity labels. The older **gate** — a product of sigmoids rather than a sum, so a candidate
 failing either axis cannot be rescued by the other — is still reachable as
 `mhcmatch rank --score gate`.
