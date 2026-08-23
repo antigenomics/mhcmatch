@@ -120,29 +120,34 @@ still wants; `integrations/nextflow/mhcmatch/slurm.config` exports both.
 
 ## The shipped scorer (2026-08-21)
 
-`EPIC` **v3** — nine terms in four **hierarchical blocks**, entered in pipeline order so a
+`EPIC` **v4** — eight terms in four **hierarchical blocks**, entered in pipeline order so a
 recognition coefficient is what it is worth *after* presentation and expression. Vendored at
 `data/aggregate_mhc1.json`; `mhcmatch rank` scores with it by default. 354,909 rows / 958 positive /
-9 screens, per-screen intercept, `tau = 0.25`. **Leave-one-screen-out median AUROC 0.6500, mean
-0.6927** — better than v2 on 7 of 9 held-out screens (`bench/results/epic_versions.md`).
+9 screens, per-screen intercept, `tau = 0.25`. **Leave-one-screen-out mean AUROC 0.6688, median
+0.6497** over the seven screens with at least 20 held-out positives; twin-grouped five-fold CV
+0.6497. Eight terms.
 
-| block | term | coefficient | z | sequential z |
-|---|---|--:|--:|--:|
-| `presentation` | `binder` | +0.1392 | +4.00 | +7.70 |
-| `presentation` | `occupancy` | +0.1062 | +5.27 | +5.15 |
-| `expression` | `expr` | +0.3474 | +6.45 | +6.39 |
-| `expression` | `expr_missing` | +0.0935 | +6.03 | +5.96 |
-| `physchem` | `C_phys_rose` | +0.1012 | +1.22 | **+3.53** |
-| `physchem` | `C_phys_hydrop` | +0.0180 | +0.22 | −0.39 |
-| `corpus` | `C_corpus_thymus` | +0.2459 | +2.93 | **+2.53** |
-| `corpus` | `C_corpus_self` | −0.2409 | −2.82 | **−2.63** |
-| `corpus` | `C_corpus_viral` | +0.0750 | +1.13 | +1.13 |
+| block | term | coefficient | z | p | sign stability |
+|---|---|--:|--:|--:|--:|
+| `presentation` | `pres` | +0.2200 | +6.23 | 4.6e-10 | 100 % |
+| `presentation` | `occupancy` | +0.1206 | +6.84 | 8.2e-12 | 100 % |
+| `expression` | `expr_pct` | **+0.3007** | +5.46 | 4.6e-08 | 100 % |
+| `physchem` | `C_phys_buried` | +0.1146 | +2.34 | 0.020 | 100 % |
+| `physchem` | `C_phys_charge` | −0.0634 | −1.21 | 0.225 | 90 % |
+| `corpus` | `C_corpus_thymus` | +0.1362 | +2.01 | 0.044 | 97 % |
+| `corpus` | `C_corpus_self` | **−0.2636** | −3.12 | 0.002 | 100 % |
+| `corpus` | `C_corpus_viral` | +0.1474 | +1.78 | 0.075 | 97 % |
 
-- **Read the block test, not the per-term `z`.** `C_phys_rose` against `C_phys_hydrop` is Pearson
-  −0.836 and the three corpus channels run +0.71 to +0.79, so a conditional `z` splits one shared
-  axis across several coefficients and understates all of them. The block likelihood ratios are
-  physchem χ²(2) = 11.0 (p = 4.0e-3) and corpus χ²(3) = 15.7 (p = 1.3e-3), both **after**
-  presentation and expression. The *sequential* column above is the same fit in its Gram–Schmidt
+- **`expr_pct` is a rank, not a level.** The expression percentile *within the scored cohort*,
+  0.5 where there is no value. It is unit-free — TPM, FPKM and raw counts give the same column —
+  and it needs no missingness indicator, because 0.5 is what "no information" means on a
+  percentile scale. The consequence to know: the term is **cohort-relative**, so a peptide's score
+  depends on what else was submitted with it.
+- **Read the block test, not the per-term `z`.** The three corpus channels run +0.73 to +0.77, so a
+  conditional `z` splits one shared axis across several coefficients and understates all of them.
+  The block likelihood ratios are physchem χ²(2) = 14.2 (p = 8.1e-4) and corpus χ²(3) = 14.4
+  (p = 2.4e-3), both **after** presentation and expression. The chemistry block is *not* collinear
+  since v4 — burial against charge is r = +0.008, where the v3 burial/hydropathy pair was −0.837.
   basis (same span, max |Δη| = 3.1e-3); reversing the order inside a block moves the significance
   to the other member, which is what a shared axis looks like.
 - **`C_corpus` is exact and searches nothing.** The Łuksza weight factorises over positions, so the

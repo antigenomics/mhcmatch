@@ -105,8 +105,23 @@ def _(TABLE):
     import mhcmatch
     from mhcmatch import rank as R
 
+    from mhcmatch import mimicry as MM
+
     store = mhcmatch.Store.from_pmhc(tier="shortlist", species="human", classes=("mhc1",))
-    ranked = R.rank_table(TABLE, store=store, tumor="BRCA")
+
+    # The fitted aggregate scores on the features it declares, so the three corpus channels have
+    # to be supplied. The CLI builds this callable in `cli._aggregate_channels`; the geometry
+    # (k, face mask, substitution kernel) comes off the artifact, not a module default.
+    def channels(peptides):
+        g = MM.corpus_geometry()
+        spec = MM.corpus_spectrum(cls="mhc1", components=("thymus", "self", "viral"),
+                                  k=g["k"], self_species="human", mask=g["mask"],
+                                  kernel=g["kernel"])
+        rows = MM.corpus_R(list(peptides), spec, cls="mhc1")
+        return {f"C_corpus_{c}": [r.get(c, float("nan")) for r in rows]
+                for c in ("thymus", "self", "viral")}
+
+    ranked = R.rank_table(TABLE, store=store, tumor="BRCA", channels=channels)
 
     print(f"{'peptide':<12}{'allele':<14}{'gene':<8}{'score':>8}{'pres':>8}{'expr':>9}  known")
     for r in ranked:

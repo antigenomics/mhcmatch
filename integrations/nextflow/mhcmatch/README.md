@@ -86,8 +86,9 @@ python -c "from mhcmatch import rank; print(' · '.join(rank.columns()))"
 features) is appended whenever the aggregate is what scored, because a model emits the features it
 used. **The schema changed in 0.24.0**: `rank` is now the rank *by score* rather than the row
 number, `p_response` and `variant_type` joined `BASE_COLUMNS`, and the aggregate's own columns went
-from three to five (`C_phys_rose`, `C_phys_hydrop`, `C_corpus_thymus`, `C_corpus_self`,
-`C_corpus_viral`). Nothing downstream should be joining on position; ask the library.
+from three to five. **In 0.27.0 they are** `C_phys_buried`, `C_phys_charge`, `C_corpus_thymus`,
+`C_corpus_self`, `C_corpus_viral`, and `expr_pct` joined `BASE_COLUMNS`. Nothing downstream should
+be joining on position; ask the library — every stub in this module already does.
 
 `p_response` is `score` on a probability axis, anchored on `params.mhcmatch_prevalence` — the
 fraction of *this* candidate pool you expect to respond. It is a prior you own, not a model output:

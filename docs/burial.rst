@@ -227,8 +227,7 @@ at all.
 Burial and hydropathy are one axis
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-EPIC v3 shipped ``C_phys_rose`` **and** ``C_phys_hydrop``
-(:data:`mhcmatch.complement.PHYS_SCALE_HYDROP`, Kidera KF4). Rose measures how much surface a
+EPIC v3 shipped ``C_phys_rose`` **and** ``C_phys_hydrop`` (Kidera KF4). Rose measures how much surface a
 residue buries on folding; KF4 measures how it partitions between water and oil. Those are
 different physical questions, but on real peptides they are not different numbers:
 
@@ -304,32 +303,32 @@ slot.
      - −0.1033
      - **+0.0056** *(lowest of 141)*
    * - burial's coefficient
-     - +0.1605
-     - +0.1143
+     - +0.1491
+     - +0.1146
    * - burial's bootstrap sd
-     - 0.0870
+     - 0.0874
      - **0.0487**
    * - burial's *z* / *p*
-     - +1.84 / 0.065
-     - **+2.34 / 0.019**
+     - +1.71 / 0.088
+     - **+2.34 / 0.020**
    * - burial's sign stability
-     - 97.5 %
-     - **99.8 %**
+     - 96.5 %
+     - **100 %**
    * - second column's sign stability
-     - 74.3 %
-     - **87.3 %**
+     - 69.5 %
+     - **90 %**
    * - BIC
-     - 4169.5
-     - **4168.6**
+     - 4181.7
+     - **4180.3**
    * - leave-one-screen-out mean / median
-     - 0.6639 / 0.6375
-     - **0.6654 / 0.6399**
+     - 0.6661 / 0.6418
+     - **0.6688 / 0.6497**
    * - CV, grouped on peptide / twin
-     - 0.6415 / 0.6375
-     - **0.6455 / 0.6399**
+     - 0.6469 / 0.6418
+     - **0.6566 / 0.6497**
    * - held-out verdict
-     - 2i/4t/1r
-     - 2i/4t/1r
+     - 0i/6t/1r
+     - **2i/5t/0r**
 
 Burial's coefficient gets *smaller* and its evidence gets *stronger*, which is what removing a
 collinear partner does — the standard error halves, and the collinearity is gone. The pair is
@@ -363,13 +362,14 @@ Which ships
 and, the reason for the swap, on **burial** going from *p* = 0.064 at 98 % sign stability to
 *p* = 0.0202 at 100 %.
 
-The library computes **all four keys** — ``C_phys_rose``, ``C_phys_buried``, ``C_phys_hydrop``,
+The library computes **the two keys the shipped model fits** — ``C_phys_buried`` and
 ``C_phys_charge`` — from :data:`mhcmatch.rank.PHYS_COLUMNS`, and ``aggregate_score`` reads only the
-names the artifact's own ``features`` list asks for. So one library scores a v3 or a v4 artifact
-with no branch, and a recorded number stays readable under the name it was produced with.
+names the artifact's own ``features`` list asks for. The v3 pair (``C_phys_rose``,
+``C_phys_hydrop``) was carried alongside them until 0.27.0 and is gone: nothing shipped read it,
+and computing two matrix products per peptide for a model that is not shipped is not free.
 
-Both columns of whichever pair is in force are emitted, so the block is auditable rather than a
-single number with a footnote.
+Both columns of the pair in force are emitted, so the block is auditable rather than a single
+number with a footnote.
 
 :func:`mhcmatch.complement.score` grew ``mask_cys=`` for the same reason —
 :mod:`mhcmatch.posbayes` masks cysteine by construction and this module never did. It is off by

@@ -41,24 +41,21 @@ what that term is worth **after** presentation and expression rather than in com
      - :func:`mhcmatch.rank.occupancy`, ``a/(1+a)`` with ``a = [P]/Kd``. **Absolute**: what fraction
        of the groove the peptide actually holds. Needs no wild type.
    * - ``expression``
-     - ``expr``
-     - ``log1p(TPM)``, the cohort's own measurement where it has one, else the tumour-matched
-       reference, else the GTEx cross-tissue median.
-   * -
-     - ``expr_missing``
-     - which of those three the row got — the gap as a term rather than a fabricated zero.
+     - ``expr_pct``
+     - The **percentile of ``log1p(TPM)`` within the scored cohort** — the cohort's own
+       measurement where it has one, else the tumour-matched reference, else the GTEx
+       cross-tissue median, and ``0.5`` where there is none. One term, not two: see
+       :func:`mhcmatch.rank.expr_percentile`.
    * - ``physchem``
      - ``C_phys_buried``
      - :func:`mhcmatch.complement.burial`, the Rose burial propensity **averaged** over the TCR
-       face. An imported scale, so zero fitted residue parameters. ``C_phys_rose`` is the same
-       column under its v3 name and is still computed. See :doc:`burial`.
+       face. An imported scale, so zero fitted residue parameters. See :doc:`burial`.
    * -
      - ``C_phys_charge``
      - the same, on Atchley AF5 (electrostatic charge). v3 paired burial with Kidera KF4 hydropathy
        instead, and **that pair was collinear** — *r* = −0.837 per peptide, one chemistry axis in
        two columns — so burial was not identified. AF5 is orthogonal to burial at *r* = +0.008,
-       which is what resolves it. ``C_phys_hydrop`` is still computed. :doc:`burial` owns the
-       selection.
+       which is what resolves it. :doc:`burial` owns the selection.
    * - ``corpus``
      - ``C_corpus_thymus``
      - :func:`mhcmatch.mimicry.corpus_R` on the thymic channel — the **exact** Łuksza density over
@@ -114,59 +111,53 @@ from one patient share tumour, HLA and run.
      - *p*
      - sign stability
      - reading
-   * - ``expr``
-     - **+0.3307**
-     - +5.31
-     - 1.1×10⁻⁷
+   * - ``expr_pct``
+     - **+0.3007**
+     - +5.46
+     - 4.6×10⁻⁸
      - 100 %
-     - the largest term in the model
+     - the largest term in the model — expression *rank* within the scored cohort
    * - ``pres``
-     - +0.2375
-     - +6.50
-     - 8.0×10⁻¹¹
+     - +0.2200
+     - +6.23
+     - 4.6×10⁻¹⁰
      - 100 %
      - presentation ``%rank``, allele-relative
    * - ``occupancy``
-     - +0.1150
-     - +6.32
-     - 2.7×10⁻¹⁰
+     - +0.1206
+     - +6.84
+     - 8.2×10⁻¹²
      - 100 %
      - groove occupancy, absolute
-   * - ``expr_missing``
-     - +0.1090
-     - +6.83
-     - 8.7×10⁻¹²
-     - 100 %
-     - which expression source the row got
    * - ``C_corpus_thymus``
-     - +0.1542
-     - +2.28
-     - 0.023
-     - 99 %
+     - +0.1362
+     - +2.01
+     - 0.044
+     - 97 %
      - danger
    * - ``C_corpus_self``
-     - **−0.2733**
-     - −3.21
-     - 1.3×10⁻³
+     - **−0.2636**
+     - −3.12
+     - 1.8×10⁻³
      - 100 %
      - the block's background — see :doc:`corpus`
    * - ``C_corpus_viral``
-     - +0.1512
-     - +1.81
-     - 0.071
+     - +0.1474
+     - +1.78
+     - 0.075
      - 97 %
      - peripheral priming
    * - ``C_phys_buried``
-     - +0.1143
+     - +0.1146
      - +2.34
-     - 0.019
+     - 0.020
      - 100 %
      - burial over the TCR face
    * - ``C_phys_charge``
-     - −0.0591
-     - −1.12
-     - 0.261
-     - 87 %
+     - −0.0634
+     - −1.21
+     - 0.225
+     - 90 %
      - charge — see :doc:`burial`
 
 Two entries are doing something other than what their row suggests, and both are documented rather
@@ -341,13 +332,20 @@ two reach the ranker: ``tpm`` and ``gene_name``. When ``tpm`` is in the header, 
 * ``--tumor SKCM`` --- TCGA, keyed on the **peptide**, so it is specific to the epitope;
 * ``--tissue pancreas`` --- GTEx, keyed on the **gene**;
 * neither --- ``expression`` is ``NaN``, ``expr_imputed`` is 1, and the row still ranks. A missing
-  covariate never drops a candidate; the flag travels with it and ``expr_missing`` is a fitted
-  term of the model, so the gap is scored rather than papered over.
+  covariate never drops a candidate: it takes ``expr_pct = 0.5``, which is what "no information"
+  means on a percentile scale, so the gap is expressed *in* the term rather than beside it in a
+  flag. The retired ``expr_missing`` indicator is why — its source was very nearly a screen label,
+  so the per-screen intercept already carried it (``bench/results/epic_expr_arms.md``).
 
 .. note::
 
-   **TPM or FPKM: within one sample it cannot change the ranking, and sequence length will not
-   convert between them.**
+   **TPM or FPKM: the fitted term cannot tell them apart, by construction.**
+
+   ``expr_pct`` is a *rank* within the scored cohort, and a rank is invariant to any monotone
+   rescaling of abundance. TPM, FPKM and raw counts therefore give the identical column: a caller
+   does not have to convert, and cannot convert wrongly. The arithmetic below is why the two were
+   already interchangeable within one sample; the percentile makes it true by construction rather
+   than by argument.
 
    The two differ by a single library-wide constant, identical for every transcript:
 
@@ -375,10 +373,10 @@ Reading the output
 
 ``score`` is the aggregate; higher is better. ``rank`` is that score as a dense 1-based integer and
 ``p_response`` is it on a probability axis at ``--prevalence`` (above). Every one of the model's
-nine features is a column, because a row should report what produced it: ``pres``, ``occupancy``,
-``expression`` (with ``expr_imputed``), the two chemistry scales ``C_phys_buried`` and
-``C_phys_charge``, and the three corpus channels ``C_corpus_thymus`` / ``_self`` / ``_viral``.
-``binder``, ``C_phys_rose`` and ``C_phys_hydrop`` are emitted too, so a v3 record stays readable.
+eight features is a column, because a row should report what produced it: ``pres``, ``occupancy``,
+``expr_pct`` (with ``expression`` and ``expr_imputed`` beside it), the two chemistry scales
+``C_phys_buried`` and ``C_phys_charge``, and the three corpus channels ``C_corpus_thymus`` /
+``_self`` / ``_viral``.
 ``agretopicity``, ``physchem``, ``variant_type`` and
 ``n_alleles_presenting`` / ``alleles_presenting`` are reported beside them and are **not** in the
 model.

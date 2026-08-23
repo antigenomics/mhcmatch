@@ -16,6 +16,7 @@ versioning is [SemVer](https://semver.org).
   | v3 | v4 | why |
   |---|---|---|
   | `binder` | `pres` | `binder` Fisher-combined the presentation `%rank` with the affinity rank, and `occupancy` already carries affinity at Spearman −1.000000 against `kd_mt`. `pres` is the presentation rank alone. |
+  | `expr` + `expr_missing` | `expr_pct` | two terms to one: the within-cohort expression percentile, unit-free and needing no missingness flag (above) |
   | `C_phys_rose` | `C_phys_buried` | rename; the Rose 1985 scale *is* mean fractional area loss |
   | `C_phys_hydrop` | `C_phys_charge` | Kidera KF4 is burial measured a second way (r = −0.837 per peptide) and the pair was not identified. Atchley AF5 is orthogonal by measurement, r = +0.008. |
   | corpus kernel | Hamming → BLOSUM62 | identity-normalised, `K[u,x] = exp(κ(S[u,x] − S[u,u]))`, k = 3, sliced face |
@@ -45,7 +46,52 @@ versioning is [SemVer](https://semver.org).
   Four tests asserted the v3 half of a pair and now assert the v4 fact instead;
   `test_c_phys_buried_is_the_same_column_as_c_phys_rose` had nothing left to say and is deleted.
 
+### Changed
+
+- **The expression block is one term, `expr_pct`, and it is a rank.** It was `expr` (global *z* of
+  `ln(1+TPM)`, mean-imputed) plus `expr_missing`, a binary indicator. The indicator was metadata:
+  `expr_source` is very nearly a screen label — Neopep, 87% of the corpus, is 95.5% GTEx
+  matched-tissue; NCI and HiTIDE are 100% measured; four small screens are 93–99% reference — so
+  inside every screen but one the flag is a constant the per-screen intercept already carries.
+  Measured by drop-one: ΔBIC +36.6, the second largest of the nine, against a held-out cost of
+  0.6654 → 0.6624, the smallest of the four presentation and expression terms.
+
+  `expr_pct` is the percentile of `expression` **within the scored batch**
+  (`rank.expr_percentile`), and it buys two things a level cannot:
+
+  - **The unit stops mattering.** TPM, FPKM and raw counts give the identical column, because a
+    percentile is invariant to any monotone rescaling of abundance. A caller does not have to
+    convert, and cannot convert wrongly.
+  - **No imputation constant and no indicator.** A row with no expression value sits at `0.5`,
+    which is what "no information" means on a percentile scale. A batch with fewer than two finite
+    values — including one entirely absent — is all `0.5`: one point has no percentile.
+
+  On the same 354,909 rows and 958 positives, at **one fewer parameter**: leave-one-screen-out mean
+  0.6679 → **0.6688**, median 0.6434 → **0.6497**, twin-grouped CV 0.6434 → **0.6497**, BIC 4176.7
+  → 4180.3. Against the previously shipped fit: **2 improvements, 5 ties, 0 regressions — the ship
+  bar met for the first time.** Gfeller_GBM +0.0133 and IEDB_neoag +0.0165 improve; nothing
+  regresses.
+
+  **The cost, stated: the term is cohort-relative.** One peptide's `expr_pct` depends on what else
+  was scored with it. `rank` and `p_response` were already per-cohort quantities; `score` is now
+  one too.
+
+  Thirteen arms were measured (`bench/results/epic_expr_arms.md`). Two negative results worth
+  recording because both are the obvious idea: a **fixed constant fill does not work** — low
+  TPM = 0.5 gives 0.6599 with two regressions, the GTEx typical-gene median 0.6602 with two, both
+  *below* the previous fit, because a constant is not screen-neutral. And **`noncanonical`
+  (missense vs other) does not replace the indicator** — a better column, present in nine screens
+  of ten and 3.19% positive against 0.23% canonical, but 4,517 of 354,909 rows cannot move a
+  corpus-level ranking.
+
 ### Added
+
+- **The deposits' own gene is read before the peptide is asked.** `neoag_tested_hsa` carries
+  `uniprot_id` on 99.7% of rows, `_mmu` on 97.6%, `nci_gartner_*` carry `gene_name` on 100% — and
+  the pipeline read none of it, resolving the source gene by proteome search instead, which fails
+  on exactly the rows that then had no expression value. The corpus builder carries both fields
+  now and the accession is translated through the proteome headers. 33,197 of 363,324 rows name
+  their own gene; IEDB_neoag's missing rate falls 49.8% → 43.9%, corpus-wide 5,849 → 5,774.
 
 - **The per-allele calibration cache ships on.** A `%rank` background is a random-peptide draw
   scored under one allele's model — ~0.95 s to build, and a pure function of

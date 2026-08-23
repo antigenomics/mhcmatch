@@ -214,15 +214,18 @@ numpy product and a thread pool would buy nothing, so the flag is absent rather 
 Presentation is necessary and not sufficient: most presented peptides are ignored. mhcmatch keeps
 the two questions apart and scores them with the fitted **`EPIC`** aggregate (0.21.0), whose
 `C_phys_*` and `C_corpus_*` terms are the recognition axis and whose `pres`/`occupancy` terms are
-the presentation one. **Version 4 (0.27.0) is what ships**, and like v3 it is **hierarchical**:
-nine columns in four blocks — presentation, expression, physchem, corpus — entered in pipeline
+the presentation one. **Version 4 (0.27.0) is what ships**, and it is **hierarchical**:
+**eight** columns in four blocks — presentation, expression, physchem, corpus — entered in pipeline
 order, so a recognition coefficient is what that term is worth *after* presentation and expression
-rather than in competition with them. v4 respecifies four of v3's nine terms: `binder` → `pres`
-(presentation `%rank` alone, since `occupancy` already carries affinity), `C_phys_hydrop` →
-`C_phys_charge` (Kidera KF4 was burial measured twice, *r* = −0.837; Atchley AF5 is orthogonal at
-+0.008), `C_phys_rose` → `C_phys_buried` (a rename), and the corpus kernel Hamming → BLOSUM62.
-Nothing is deleted — `aggregate_score` reads only the names the artifact's own `features` list asks
-for, so this library scores a v3 artifact unchanged and every v3 number keeps its meaning. Its predecessor **`BOECRT`** carried recognition as the 30-column `C`
+rather than in competition with them. Against v3: `binder` → `pres` (presentation `%rank` alone,
+since `occupancy` already carries affinity), `C_phys_hydrop` → `C_phys_charge` (Kidera KF4 was
+burial measured twice, *r* = −0.837; Atchley AF5 is orthogonal at +0.008), `C_phys_rose` →
+`C_phys_buried` (a rename), the corpus kernel Hamming → BLOSUM62, and the expression block
+collapses from `expr` + `expr_missing` to a single **`expr_pct`** — the expression percentile
+*within the scored cohort*. That last one is why the model no longer cares whether you give it TPM
+or FPKM: a rank is invariant to any monotone rescaling of abundance, and a row with no expression
+value sits at 0.5, which is what "no information" means on a percentile scale. The price, stated:
+the term is cohort-relative, so a peptide's score depends on what else was submitted with it. Its predecessor **`BOECRT`** carried recognition as the 30-column `C`
 term (z +4.24) plus `R` and `T`; none of the recognition terms is fitted on immunogenicity labels. The older **gate** — a product of sigmoids rather than a sum, so a candidate
 failing either axis cannot be rescued by the other — is still reachable as
 `mhcmatch rank --score gate`.
