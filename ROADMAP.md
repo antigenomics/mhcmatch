@@ -606,21 +606,26 @@ in a third of the time. The posterior confirms the point estimates and, on the t
 
 **Open, in order.**
 
-1. **Ship or hold.** The author decides. If it ships: copy the artifact, add a `build aggregate`
-   target, bump `AGGREGATE_BLOCKS`, and re-baseline every recorded EPIC number.
-2. **A `build` target for the aggregate.** Half-closed as of 2026-08-23. `aggregate` is now a
-   `TARGETS` entry, so `--check` validates the artifact's presence and `build` prints the command
-   that makes it -- but the builder is still `None`, i.e. the chain
-   (`epic_optimize.load_frame` -> `epic_v4_fit`) lives in the benchmark repo and the artifact is
-   hand-copied across. What remains is moving it into `_build.py` and batching the binder pass,
-   which was 1,314 s at 338,319 of 363,324 pairs. **Re-measured 2026-08-23: batching the peptide
-   loop is the wrong work.** `binder_score` on a warm allele runs at **82,201 pair/s**, so all
-   363,324 pairs are **4.4 s** of scoring. The 1,314 s is elsewhere and is per-*allele*, not
-   per-pair: the first call against a cold allele costs **0.95 s** of `RankCalibrator` background
-   construction and there are **203** alleles (193 s, paid again in every worker that touches the
-   allele), on top of `Store.from_pmhc` at **4.5 s** per worker per host. Batching buys 4.4 s of
-   1,314 s. What would actually pay is sharing the three calibrators across workers, or building
-   them once and passing them in.
+1. **Ship or hold. CLOSED 2026-08-23 -- it ships.** `data/aggregate_mhc1.json` carries
+   `"version": 4`, `AGGREGATE_FEATURES`/`AGGREGATE_BLOCKS` are v4, and every recorded EPIC number
+   in the manuscript and the docs is re-baselined against it.
+2. **A `build` target for the aggregate. CLOSED 2026-08-23.** `bench/immuno/epic_v4_fit.py` writes
+   the artifact into the library checkout directly, so nothing is hand-copied; `mhcmatch build`
+   prints the command and `bench/run_epic.sh` is the chain that leads to it.
+
+   **The cost was never the peptide loop, and the fix is the cache.** `binder_score` on a warm
+   allele runs at **82,201 pair/s**, so all 363,324 pairs are **4.4 s** of scoring; batching them
+   (`predict.binder_ranks`, shipped) measures **1.13x** and is not a speed fix. The cost was
+   per-*allele*: **~0.95 s** of `RankCalibrator` background construction on first touch, paid again
+   in every worker that touches the allele, across **2,093** distinct alleles -- with a tail of
+   ~1,500 alleles carrying one peptide each, so alleles 1,100 -> 1,600 add 1,193 pairs and a third
+   of elapsed time.
+
+   The disk cache for exactly this already existed, atomic and correctly fingerprinted, and
+   `cache_dir()` returned `None` because `MHCMATCH_CALIBRATION_CACHE` was unset and nothing set it.
+   Defaulting it on (`d4bc3e5`) takes the binder pass **1,788 s -> 15 s** (119x) and the whole
+   features stage **2,061 s -> 271 s**, with the two frames **identical**: 0 of 40 columns differ
+   over all 363,324 rows. Footprint 4,331 files / 498 MB. Nothing remains to batch here.
 3. **ITSNdb.** One screen preferring the shipped kappa to any refit is worth a look at 149 rows,
    not an argument.
 4. **`SHIPPED_CORPUS`.** `_build.py` names the `(k, mask)` a release commits to. It is `[(3,

@@ -31,10 +31,11 @@ what that term is worth **after** presentation and expression rather than in com
      - term
      - what it is
    * - ``presentation``
-     - ``binder``
-     - ``-log10`` of the calibrated combined %rank — presentation and affinity heads
-       Fisher-combined. **Allele-relative**: where this peptide sits in its own allele's
-       distribution.
+     - ``pres``
+     - ``-log10`` of the calibrated presentation %rank. **Allele-relative**: where this peptide sits
+       in its own allele's distribution. v3 used ``binder``, which Fisher-combined this with the
+       affinity head — and ``occupancy`` below already carries affinity, at Spearman −1.000000
+       against ``kd_mt``, so the affinity half was counted twice. Both keys are still computed.
    * -
      - ``occupancy``
      - :func:`mhcmatch.rank.occupancy`, ``a/(1+a)`` with ``a = [P]/Kd``. **Absolute**: what fraction
@@ -47,15 +48,17 @@ what that term is worth **after** presentation and expression rather than in com
      - ``expr_missing``
      - which of those three the row got — the gap as a term rather than a fabricated zero.
    * - ``physchem``
-     - ``C_phys_rose``
+     - ``C_phys_buried``
      - :func:`mhcmatch.complement.burial`, the Rose burial propensity **averaged** over the TCR
-       face. An imported scale, so zero fitted residue parameters. See :doc:`burial`.
+       face. An imported scale, so zero fitted residue parameters. ``C_phys_rose`` is the same
+       column under its v3 name and is still computed. See :doc:`burial`.
    * -
-     - ``C_phys_hydrop``
-     - the same, on Kidera KF4 hydropathy. **The pair is collinear** — *r* = −0.837 per peptide —
-       so v3 carries one chemistry axis in two columns. The v4 candidate replaces this column with
-       ``C_phys_charge`` (Atchley AF5, electrostatic charge), orthogonal to burial at *r* = +0.008.
-       :doc:`burial` owns the selection.
+     - ``C_phys_charge``
+     - the same, on Atchley AF5 (electrostatic charge). v3 paired burial with Kidera KF4 hydropathy
+       instead, and **that pair was collinear** — *r* = −0.837 per peptide, one chemistry axis in
+       two columns — so burial was not identified. AF5 is orthogonal to burial at *r* = +0.008,
+       which is what resolves it. ``C_phys_hydrop`` is still computed. :doc:`burial` owns the
+       selection.
    * - ``corpus``
      - ``C_corpus_thymus``
      - :func:`mhcmatch.mimicry.corpus_R` on the thymic channel — the **exact** Łuksza density over
@@ -185,14 +188,15 @@ of any recognition block.
 
 **No term was dropped for being small.** The rule is replace-and-recalibrate: a term with a
 mechanism stays and gets a better basis, it does not get deleted for a *p*-value. ``C_corpus_viral``
-at *p* = 0.32 stays because dropping it costs the other two channels their significance.
+at *p* = 0.092 stays because dropping it costs the other two channels their significance.
 
-**The candidate, for comparison.** EPIC v4 respecifies four terms — ``binder`` → ``pres``,
+**What v4 changed, against the v3 it replaced.** Four terms respecified — ``binder`` → ``pres``,
 ``C_phys_hydrop`` → ``C_phys_charge``, the corpus kernel Hamming → BLOSUM62, and ``C_phys_rose`` →
 ``C_phys_buried`` (a rename). On identical rows at identical parameter count: BIC 4215.9 →
-**4172.4**, leave-one-screen-out mean 0.6432 → **0.6602**, median 0.6182 → **0.6385**. It is not
-shipped: it carries one explained regression (ITSNdb, 149 rows), and shipping a refit is a
-deliberate decision rather than a consequence of a better BIC. ``bench/results/epic_v4_fit.md``.
+**4172.4**, leave-one-screen-out mean 0.6432 → **0.6602**, median 0.6182 → **0.6385**. Seven of the
+nine screens rank higher held out. One regresses and is reported rather than absorbed: ITSNdb
+0.6500 → 0.6309 on 149 rows with 89 positives, under two units of that cell's own resolution
+(1/89 = 0.0112). ``bench/results/epic_v4_fit.md``.
 
 From a score to a probability
 -----------------------------

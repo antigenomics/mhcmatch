@@ -45,9 +45,13 @@ versioning is [SemVer](https://semver.org).
   `~/.cache/mhcmatch/calibration`. Set `MHCMATCH_CALIBRATION_CACHE` to share one across a SLURM
   array, or to `0`/`off`/`none`/`false` to disable. A read-only home degrades to no cache rather
   than raising. The library version is in the key, so a bump invalidates rather than serving a
-  stale background, and deleting the directory is always safe. Budget for it: one ~250 kB file
-  per (scorer fingerprint, allele), so a run over the whole 2,093-allele neoantigen panel
-  leaves on the order of 1 GB behind.
+  stale background, and deleting the directory is always safe.
+
+  Measured on the neoantigen feature build, 363,324 (peptide, allele) pairs over 2,093 alleles on
+  fourteen workers: the binder pass runs **1,788 s cold and 15 s warm**, a factor of 119, and the
+  whole stage 2,061 s → 271 s. The two frames are **identical** — 0 of 40 columns differ over all
+  363,324 rows — so this is a cache, not an approximation. Footprint after that run: 4,331 files
+  and 498 MB, about 2.07 entries and 238 kB per allele.
 
 - **`predict.binder_ranks(store, peptides, allele, …)`** — the transpose of `binder_score`: one
   allele, many peptides, which is the call shape a benchmark needs. Score-identical to
@@ -70,8 +74,6 @@ versioning is [SemVer](https://semver.org).
   from a list of pairs into a dict — a consumer reading `a["fit"]["loo"]` broke, and one reading
   `[b[0] for b in a["blocks"]]` silently got the first letter of each key. Both shapes are restored,
   and `phys_scale_charge` names the second chemistry scale that is actually fitted.
-
-## [Unreleased]
 
 ## [0.26.0] - 2026-08-22
 
