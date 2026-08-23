@@ -36,8 +36,24 @@ def test_cache_reproduces_the_uncached_percent_rank(tmp_path, monkeypatch):
     assert [b.percent_rank(al, 12.0) for al in ("A", "B")] == want
 
 
-def test_no_cache_when_env_unset(tmp_path, monkeypatch):
+def test_cache_is_on_by_default(tmp_path, monkeypatch):
+    """0.27.0 inverted this. The cache used to be opt-in through the env var and essentially
+    nothing set it, so every process rebuilt every allele it touched -- 1,788 s of a neoantigen
+    feature build that takes 15 s warm. Unset now means ON, under XDG_CACHE_HOME."""
     monkeypatch.delenv(C.CACHE_ENV, raising=False)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    a = _cal(tmp_path)
+    a.percent_rank("A", 12.0)
+    assert a._fp is not None
+    assert (tmp_path / "mhcmatch" / "calibration").is_dir()
+    assert list((tmp_path / "mhcmatch" / "calibration").iterdir()), "nothing was cached"
+
+
+@pytest.mark.parametrize("off", ["0", "off", "none", "false", "no", "", "  "])
+def test_the_env_var_can_still_turn_it_off(tmp_path, monkeypatch, off):
+    """Opting out has to keep working, for a timing run or a read-only sandbox."""
+    monkeypatch.setenv(C.CACHE_ENV, off)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     a = _cal(tmp_path)
     a.percent_rank("A", 12.0)
     assert a._fp is None

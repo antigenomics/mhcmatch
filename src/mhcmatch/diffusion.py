@@ -917,7 +917,7 @@ class AnchorModel:
 # ~4 s but is shipped too, so the vendored/version/panel-hash guarantee is uniform across classes and a
 # model only ever changes on an explicit rebuild. A vendored model is used only when the mhcmatch
 # version, the panel hash and the full build params all match; a custom ``--pmhc`` / tier / param set
-# safely falls back to building. Regenerate all of these with ``tools/build_anchor_models.py``.
+# safely falls back to building. Regenerate all of these with ``mhcmatch build anchor``.
 _VENDORED_MODELS = {
     ("mhc1", "adaptive", "proteome"): "anchor_model_mhc1_proteome_adaptive.pkl.gz",
     ("mhc2", "adaptive", "proteome"): "anchor_model_mhc2_proteome_adaptive.pkl.gz",
@@ -961,7 +961,7 @@ def load_vendored_anchor_model(store, cls, params):
 def save_vendored_anchor_model(store, cls, path, **kw):
     """Build the ``cls`` model (``kw`` overrides, e.g. ``footprint=`` / ``background=``; the rest are
     :meth:`Store.anchor_model` defaults) and serialize it, gzipped, with a version / panel / params
-    guard, to ``path``. The release-time regenerator (``tools/build_anchor_models.py``)."""
+    guard, to ``path``. The release-time regenerator (``mhcmatch build anchor``)."""
     from . import __version__
     model, params = store.anchor_model(cls, _vendored=False, _return_params=True, **kw)
     meta = {"version": __version__, "panel_sha": panel_sha(store, cls), "params": params}

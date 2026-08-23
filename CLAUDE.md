@@ -134,8 +134,11 @@ mhcmatch build corpus -v    # one target, with per-step wall clock
 ```
 
 - Builders live in `src/mhcmatch/_build.py`, **not** in `tools/`. A builder that only exists in a
-  source checkout is one a wheel user cannot run, and one that gets forgotten. `tools/build_*.py`
-  are shims kept only because `PROVENANCE.md` names those paths.
+  source checkout is one a wheel user cannot run, and one that gets forgotten. The
+  `tools/build_anchor_models.py` / `tools/build_corpus_tables.py` shims are **gone** — a second name
+  for one command is a second thing to keep current, and `publish.yml` had been calling the shim for
+  one family while the other went unrebuilt. `tools/build_recognition.py` stays: it needs ESM2 and
+  genuinely cannot run in-process, which is why `build` prints its command instead.
 - **A new shipped artifact is not done until it has a `build` target and a `PROVENANCE.md` entry.**
 - Inputs bootstrap from HuggingFace (`isalgo/pmhc_data`), never a local `~/hf/...` or
   `~/vcs/projects/...` path.

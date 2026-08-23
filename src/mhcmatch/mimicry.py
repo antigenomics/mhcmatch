@@ -555,7 +555,7 @@ _COUNTS: dict = {}
 
 _VENDORED: dict | None = None
 #: Filename of the vendored count tables under ``mhcmatch.data``; built by
-#: ``tools/build_corpus_tables.py``.
+#: ``mhcmatch build corpus``.
 VENDORED_COUNTS = "corpus_tables.npz"
 
 

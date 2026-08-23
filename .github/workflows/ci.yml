@@ -25,5 +25,11 @@ jobs:
           cache: pip
       - name: Install (pulls seqtree from PyPI; pure-Python package, no build)
         run: pip install -e ".[test]"
+      - name: No shipped artifact is stale for this version
+        # Builds nothing, exits 1 if any of the 27 files under src/mhcmatch/data is stamped behind
+        # __version__. The pytest guards below cover the anchor models and the corpus tables only;
+        # this covers every family, including the ones fitted in the benchmark repo. publish.yml
+        # runs it again after a real rebuild, as the last gate before the wheel is cut.
+        run: mhcmatch build --check
       - name: Run tests
         run: pytest -q

@@ -74,6 +74,19 @@ versioning is [SemVer](https://semver.org).
   from a list of pairs into a dict — a consumer reading `a["fit"]["loo"]` broke, and one reading
   `[b[0] for b in a["blocks"]]` silently got the first letter of each key. Both shapes are restored,
   and `phys_scale_charge` names the second chemistry scale that is actually fitted.
+- **The release workflow rebuilds every buildable artifact, and gates on all 27.** `publish.yml`
+  ran `python tools/build_anchor_models.py` — one of the three families, through a shim — so a
+  release could cut a wheel whose `corpus_tables.npz` was stamped behind `__version__` and nothing
+  in the publish path would notice. It now runs `mhcmatch build` (~6.5 min: anchor ~250 s, corpus
+  ~130 s) followed by `mhcmatch build --check`, which fails the release if *any* shipped artifact
+  is stale, including the ones whose generator lives in the benchmark repo and which the workflow
+  cannot rebuild itself.
+- **`tools/build_anchor_models.py` and `tools/build_corpus_tables.py` are gone.** They were thin
+  shims onto `mhcmatch._build`, and a second name for one command is a second thing to keep
+  current — which is exactly how the publish workflow stayed pinned to one family. `mhcmatch build
+  [target]` is the only entry point; `tools/build_recognition.py` stays, because it needs ESM2 and
+  genuinely cannot run in-process. Every docstring, test message and `PROVENANCE.md` command that
+  named a shim now names the CLI.
 
 ## [0.26.0] - 2026-08-22
 

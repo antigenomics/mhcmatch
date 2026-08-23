@@ -9,7 +9,7 @@
 # `uv run --with-editable . tools/build_recognition.py`) to build against working-tree source.
 """Rebuild the artifacts `mhcmatch.recognition` ships, from the bootstrapped pmhc_data corpus.
 
-A release-time task, like tools/build_anchor_models.py. Run it on a version bump or when the
+A release-time task, like `mhcmatch build anchor`. Run it on a version bump or when the
 immunogenicity corpus on `isalgo/pmhc_data` changes, then commit what it writes:
 
     src/mhcmatch/data/recognition_{head}_mhc1_human.json

@@ -544,9 +544,9 @@ def test_the_vendored_corpus_tables_are_current_and_rebuild_bit_identically():
 
     Two independent guards, because the artifact can go stale in two different ways:
 
-    1. **Provenance** -- every combination ``tools/build_corpus_tables.py`` declares is present, and
+    1. **Provenance** -- every combination ``mhcmatch build corpus`` declares is present, and
        the stamped version is this one. A release that bumps ``__version__`` without rerunning the
-       script fails here, exactly as the vendored anchor models do.
+       builder fails here, exactly as the vendored anchor models do.
     2. **Content** -- a live rebuild of the four *deposit* channels is bit-identical to the shipped
        table. Those are 0.7-1.6 s each; the two ``self`` channels are 51.4 s and 14.5 s and are
        checked on their totals instead, which is the number a wrong face or a changed proteome
@@ -558,9 +558,8 @@ def test_the_vendored_corpus_tables_are_current_and_rebuild_bit_identically():
     import numpy as np
 
     import mhcmatch
-    from mhcmatch import _build as build          # the builder moved into the package; `mhcmatch
-    #                                               build corpus` is now the entry point and
-    #                                               tools/build_corpus_tables.py is a shim onto it
+    from mhcmatch import _build as build          # the builder lives in the package; `mhcmatch
+    #                                               build corpus` is the only entry point
 
     mimicry._VENDORED = None                        # force a load off disk, not a warm process
     assert mimicry._vendored_counts("mhc1", "thymus", mimicry.CORPUS_K, "human") is not None, \

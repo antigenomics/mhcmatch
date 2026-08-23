@@ -234,7 +234,7 @@ def _load_vendored_meta(name):
     from importlib import resources
     res = resources.files("mhcmatch.data").joinpath(name)
     if not res.is_file():
-        pytest.skip(f"{name} not built (run tools/build_anchor_models.py)")
+        pytest.skip(f"{name} not built (run: mhcmatch build anchor)")
     return pickle.loads(gzip.decompress(res.read_bytes()))
 
 
@@ -245,7 +245,7 @@ def test_vendored_models_load_and_are_current():
     for (cls, _fp, _bg), name in D._VENDORED_MODELS.items():
         meta, _ = _load_vendored_meta(name)
         assert meta["version"] == __version__, \
-            f"vendored {name} is stale for this version; rerun tools/build_anchor_models.py"
+            f"vendored {name} is stale for this version; rerun: mhcmatch build anchor"
         orig = D.panel_sha
         D.panel_sha = lambda store, c: meta["panel_sha"]    # pretend the live panel matches
         try:

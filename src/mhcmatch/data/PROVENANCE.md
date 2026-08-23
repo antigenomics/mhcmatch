@@ -377,11 +377,11 @@ array carrying the build version and `k`.
 a version bump, a deposit change or a change to what a face is:
 
 ```zsh
-python tools/build_corpus_tables.py
+mhcmatch build corpus
 ```
 
-The script prints `** MOVED **` beside any table whose contents changed against the committed one,
+The builder prints `** MOVED **` beside any table whose contents changed against the committed one,
 so a rebuild that moves a number is visible at build time rather than in a downstream AUROC.
 `tests/test_mimicry.py::test_the_vendored_corpus_tables_are_current_and_rebuild_bit_identically`
-checks the version stamp, that every combination the script declares is present, and bit-identity
+checks the version stamp, that every combination the builder declares is present, and bit-identity
 against a live rebuild of the four deposit channels.

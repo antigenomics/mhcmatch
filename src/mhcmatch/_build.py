@@ -7,7 +7,9 @@ definition moves, regenerate rather than reasoning about whether it matters. ``m
 
 The builders live *here*, inside the package, rather than in ``tools/`` — a builder that only exists
 in a source checkout is one a wheel user cannot run and, more to the point, one that gets forgotten.
-``tools/build_*.py`` are kept as thin shims onto these functions.
+``mhcmatch build [target]`` is the only entry point; the ``tools/build_anchor_models.py`` and
+``tools/build_corpus_tables.py`` shims are gone, because a second name for one command is a second
+thing to keep current and the release workflow had been calling the shim.
 
 Two of the three shipped families are pure ``mhcmatch`` and live here. The third, the recognition
 heads, needs ESM2 (torch + transformers) — far heavier than the package's runtime requirements — so
