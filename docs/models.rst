@@ -420,7 +420,7 @@ binding-prefiltered set. That is what the gate encodes and what a pooled additiv
    **Read within-corpus numbers, not pooled ones, wherever both exist.** The seven neoantigen
    screens run from 0.048 % to 46.8 % positive, so pooling them manufactures AUROC: ``M`` scores
    0.849 pooled and **0.596** as the median within screen. On the aggregate arm, leave-one-cohort-out
-   is the honest comparison, and there presentation alone (``P``, one parameter) still leads at
+   is the like-for-like comparison, and there presentation alone (``P``, one parameter) still leads at
    0.7071 against ``PADEC`` 0.7000. The wins above are on **held-out, single-corpus** evaluations,
    which is the setting they should be quoted in.
 

@@ -239,7 +239,7 @@ step that requires a *named* corpus, because the screens behind any calibration 
 
 The tested-neoantigen database is exposed as :func:`mhcmatch.mimicry.annotate` — **prior evidence,
 never a fitted term**. Every labelled screen we hold sits inside that database, so a coefficient on
-it would be memorisation; held out honestly, fuzzy matching at two substitutions still recovers
+it would be memorisation; held out of the fit, fuzzy matching at two substitutions still recovers
 0.08–0.34 of a fresh screen's positives against 0.00–0.26 for exact lookup, which is what makes it
 worth reporting. Command line: ``mhcmatch neoag``.
 

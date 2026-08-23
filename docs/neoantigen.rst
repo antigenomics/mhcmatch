@@ -188,8 +188,8 @@ at *p* = 0.32 stays because dropping it costs the other two channels their signi
 ``C_phys_hydrop`` → ``C_phys_charge``, the corpus kernel Hamming → BLOSUM62, and ``C_phys_rose`` →
 ``C_phys_buried`` (a rename). On identical rows at identical parameter count: BIC 4215.9 →
 **4172.4**, leave-one-screen-out mean 0.6432 → **0.6602**, median 0.6182 → **0.6385**. It is not
-shipped: it carries one explained regression (ITSNdb, 149 rows) and what ships is a deliberate
-step. ``bench/results/epic_v4_fit.md``.
+shipped: it carries one explained regression (ITSNdb, 149 rows), and shipping a refit is a
+deliberate decision rather than a consequence of a better BIC. ``bench/results/epic_v4_fit.md``.
 
 From a score to a probability
 -----------------------------

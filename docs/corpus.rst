@@ -28,22 +28,22 @@ fitted signs before anything is estimated.
    * - channel
      - what a T cell does with it
      - reads as
-     - fitted sign
+     - shipped coefficient (EPIC v3)
    * - ``thymus``
      - The thymic immunopeptidome --- self displayed on MHC in the thymus. **The only one of the
        three that enters selection.**
      - danger
-     - ``+0.1761`` (*z* +3.35)
+     - ``+0.2459`` (*z* +2.52)
    * - ``self``
      - The host proteome. Encoded, with no guarantee of presentation; the self a mature T cell meets
        in the periphery, where tolerance is maintained rather than established.
-     - tolerance
-     - ``-0.1812`` (*z* -1.44)
+     - the block's background, not tolerance --- see below
+     - ``-0.2409`` (*z* -2.75)
    * - ``viral``
      - A foreign presented ligandome. **A thymocyte never sees this during selection.** A hit is
        about peripheral priming --- a different mechanism.
      - reference only
-     - ``+0.0166`` (*z* +0.23)
+     - ``+0.0750`` (*z* +0.99)
 
 Why the thymic channel is positive
 ----------------------------------
@@ -74,7 +74,7 @@ against is a property of the peptide, and it is the peptide the model scores.
 The prediction that follows is the sign dissociation, and it is what is measured: ``thymus`` and
 ``self`` are both similarity to self peptide sets, and they take **opposite** signs. A tolerance
 account predicts both negative. A "typicality" account predicts both the same sign. Only a
-curated-sample account predicts one of each.
+curated-display account predicts one of each, and no single-mechanism account does.
 
 Measured on the burial axis of :doc:`burial` (mean Rose propensity over the TCR face, human 9-mers):
 
@@ -98,11 +98,6 @@ Measured on the burial axis of :doc:`burial` (mean Rose propensity over the TCR 
 Thymus against random proteome, Cohen's *d* = **+0.1842**; thymus against *non-thymic presented
 self*, *d* = **+0.1650** (p = 1.0×10⁻⁸⁰). The second comparison holds the MHC-I presentation filter
 constant --- both sides are eluted human self 9-mers --- so the enrichment is thymus-specific.
-
-The confirmation is the **sign dissociation** in the table above. ``thymus`` and ``self`` are both
-similarity to *self* peptide sets. A naive tolerance account predicts both negative; a "typicality"
-account predicts both the same sign. Opposite signs is what the biased-sample account predicts, and
-no single-mechanism account does.
 
 The formula
 -----------
@@ -391,7 +386,7 @@ Read it in three lines.
   either channel on its own. Two channels sharing an uncorrected composition background cancel each
   other.
 
-So Refitting :math:`\kappa` per subset does not soften it --- ``thymus`` + ``viral`` without ``self``
+Refitting :math:`\kappa` per subset does not soften it --- ``thymus`` + ``viral`` without ``self``
 then reads *p* = 0.55 and *p* = 0.58, and ``self`` alone is unchanged at *p* = 0.69.
 
 So ``self`` is the intercept of the corpus block. The human proteome is the *null distribution of
