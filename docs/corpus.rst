@@ -51,11 +51,30 @@ Why the thymic channel is positive
 Read as tolerance, a positive coefficient is backwards: clonal deletion should make thymic
 similarity *reduce* immunogenicity. The sign is right and the reading was wrong.
 
-**The thymus is not a random sample of self.** Medullary thymic epithelial cells promiscuously
-express tissue-restricted antigens, under the control of *Aire* and, independently, *Fezf2* ---
-machinery whose purpose is to purge the clones that would otherwise cause autoimmunity. The thymic
-immunopeptidome is therefore enriched for the self peptides **worth tolerising against**, and
-resembling one is evidence of intrinsic immunogenic potential.
+**The thymus is not a random sample of self, because it cannot afford to be.** A medullary
+epithelium a few million cells across cannot display the whole proteome to every passing thymocyte
+--- there is not enough presentation capacity, and each cell shows only a small slice of what the
+tissue as a whole can show. Something has to choose what makes the cut. Dedicated machinery does:
+medullary thymic epithelial cells promiscuously express tissue-restricted antigens under the control
+of *Aire* and, independently, *Fezf2*, and losing either produces organ-specific autoimmune disease
+rather than a general failure of tolerance.
+
+**So the working hypothesis this term rests on is a selection argument.** If display is scarce and
+its purpose is to prevent autoimmunity, the peptides that get displayed are the ones whose escape
+would be most damaging --- the self antigens that *would* drive a destructive response if a
+reactive clone survived. The thymic immunopeptidome is then a curated list of **what self looks like
+when it is dangerous**, not a uniform sample of self.
+
+That inverts what a thymic hit means for a neoantigen. A candidate resembling a thymic ligand is not
+being flagged as tolerated; it is being flagged as **built like the self peptides the immune system
+was specifically defended against** --- which is exactly the shape a T cell responds strongly to.
+Escaping deletion is a property of the individual's repertoire; looking like something worth deleting
+against is a property of the peptide, and it is the peptide the model scores.
+
+The prediction that follows is the sign dissociation, and it is what is measured: ``thymus`` and
+``self`` are both similarity to self peptide sets, and they take **opposite** signs. A tolerance
+account predicts both negative. A "typicality" account predicts both the same sign. Only a
+curated-sample account predicts one of each.
 
 Measured on the burial axis of :doc:`burial` (mean Rose propensity over the TCR face, human 9-mers):
 
@@ -392,7 +411,10 @@ Three consequences that a user should take away.
   own *p* is 0.090.
 * **The sign dissociation still stands and still needs the mechanism above.** A background term
   explains why ``self`` is negative and large; it does not explain why ``thymus`` --- similarity to
-  a *self* peptide set --- is **positive**. That remains the Aire/Fezf2 biased-sample account.
+  a *self* peptide set, measured against the same background --- comes out **positive**. Nothing
+  about a shared composition axis produces opposite signs. That is the curated-display argument at
+  the top of this page, and the ladder is what isolates it: once ``self`` absorbs what the two
+  channels have in common, what is left in ``thymus`` points the other way.
 
 The correlation is a property of the density scale, not of :math:`\kappa`
 --------------------------------------------------------------------------
