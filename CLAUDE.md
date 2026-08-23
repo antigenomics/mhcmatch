@@ -142,13 +142,22 @@ mhcmatch build corpus -v    # one target, with per-step wall clock
 - **A new shipped artifact is not done until it has a `build` target and a `PROVENANCE.md` entry.**
 - Inputs bootstrap from HuggingFace (`isalgo/pmhc_data`), never a local `~/hf/...` or
   `~/vcs/projects/...` path.
-- **`aggregate_mhc1.json` (the EPIC scorer) builds like everything else, since 0.27.0.**
-  `bench/immuno/epic_v4_fit.py --physchem rose_af5` writes the artifact straight into the library
-  checkout, and `bench/run_epic.sh` is the whole chain that leads to it -- deposits, features, Kd,
-  Chowell, kernel grid, fit, corpus ladder, chemistry arms, selection, then the manuscript tables.
-  Stage 0 gates on `mhcmatch --version` matching the checkout's `pyproject.toml`; that flag did not
-  exist until 0.27.0, so the chain had never run past stage 0. The hand-copy that let the
-  GRAND -> EPIC rename reach the artifact but not its generator is gone with it.
+- **`aggregate_mhc1.json` (the EPIC scorer) has a real generator, and it still does not ship itself.**
+  `bench/immuno/epic_v4_fit.py --physchem rose_af5` writes a **candidate** to
+  `bench/immuno/aggregate_mhc1_v4.json` and deliberately does *not* copy it over
+  `src/mhcmatch/data/aggregate_mhc1.json` -- v4 carries one explained regression, and what ships is
+  the author's call, not the run's. `bench/run_epic.sh` is the whole chain that leads to the
+  candidate -- deposits, features, Kd, Chowell, kernel grid, fit, corpus ladder, chemistry arms,
+  selection, then the manuscript tables. Stage 0 gates on `mhcmatch --version` matching the
+  checkout's `pyproject.toml`; that flag did not exist until 0.27.0, so the chain had never run
+  past stage 0.
+
+  **Because the copy is manual, the shipped artifact drifts, and `build --check` cannot see it** --
+  it compares version stamps, and a hand-copied older fit stamped with the current version is
+  current by that test. Measured 2026-08-23: the shipped file was the 06:15 fit against a frame
+  whose upstream parquets were stale, and the chain at 08:50 produced BIC 4172.4 -> 4168.6, LOO
+  mean 0.6602 -> 0.6654. After any run of the chain, diff the candidate against the shipped file
+  before believing they agree.
   The binder pass is **not** the cost to optimise: `binder_score` on a warm allele is 82,201 pair/s,
   i.e. 4.4 s for all 363,324 pairs. The 1,314 s is per-allele calibrator construction -- 0.95 s cold
   x 203 alleles, per worker -- plus `Store.from_pmhc` at 4.5 s per worker per host. Batch the
