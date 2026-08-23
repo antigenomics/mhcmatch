@@ -457,11 +457,21 @@ Pseudosequences (34-mer grooves) and the fitted model parameters are vendored in
 
 ## Deployment
 
-`integrations/nextflow/mhcmatch/` is a self-contained nf-core-style module (`main.nf`,
-`nextflow.config`, `environment.yml`, `Dockerfile`) that drops in for MHCflurry class I and the
-class-II binding subworkflow, consuming the same `(meta, peptide.fasta, alleles)` channel and
-emitting a pipeline-compatible `.scored.csv`. The image bootstraps its panel at **build** time, so
-compute nodes need no network.
+`integrations/nextflow/mhcmatch/` is a self-contained nf-core-style module — **five processes**
+(`MHCMATCH_PREDICT`, `_RANK`, `_NEOAG`, `_MIMICRY`, `_VECTOR`) plus a `subworkflows/mhcmatch.nf`
+that chains them, with `nextflow.config`, a `slurm.config` executor profile, `environment.yml` and a
+`Dockerfile`. `PREDICT` drops in for MHCflurry class I and the class-II binding subworkflow,
+consuming the same `(meta, peptide.fasta, alleles)` channel and emitting a pipeline-compatible
+57-column `.scored.csv`; the other four cover ranking, prior evidence, safety and cassette assembly,
+which have no incumbent. No stub types a column header — each asks the installed library for its own
+schema, so `-stub-run` cannot drift from the real shape. The image bootstraps its panel at **build**
+time, so compute nodes need no network.
+
+`slurm.config` sizes each process to what it measurably consumes and points every task at one shared
+reference and calibration directory — without it a 200-sample run re-derives the same per-allele
+background 200 times. `integrations/nextflow/mhcmatch/README.md` is the full contract, including the
+two things a cluster gets wrong first: the partition name has no safe default, and the wheel needs
+Python ≥ 3.10 where a cluster's system `python3` is often older.
 
 ## Benchmarks
 

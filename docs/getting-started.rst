@@ -80,10 +80,12 @@ the WT counterpart + agretopicity / amplitude / DAI, the equilibrium ``occupancy
    mhcmatch predict sample.mhcI.peptide.fasta --alleles 'HLA-A*02:01,HLA-B*07:02' \
        --cls mhc1 --species human --scored-csv out.scored.csv --native out.native.tsv
 
-A ready nf-core-style Nextflow module (``MHCMATCH_PREDICT``) — a drop-in for MHCflurry (class I) and
-TLimmuno2 (class II) — lives in ``integrations/nextflow/mhcmatch/`` (``main.nf`` + ``nextflow.config``
-+ ``environment.yml`` + ``Dockerfile``); species follows ``params.genome``, mirroring the ``arda``
-module.
+A ready nf-core-style Nextflow module lives in ``integrations/nextflow/mhcmatch/`` — five processes
+(``MHCMATCH_PREDICT``, ``_RANK``, ``_NEOAG``, ``_MIMICRY``, ``_VECTOR``) plus a subworkflow chaining
+them, with ``nextflow.config``, a ``slurm.config`` executor profile, ``environment.yml`` and a
+``Dockerfile``. ``MHCMATCH_PREDICT`` is the drop-in for MHCflurry (class I) and TLimmuno2 (class II);
+species follows ``params.genome``, mirroring the ``arda`` module. See that directory's ``README.md``
+for the per-process input/output contract and for running it under SLURM.
 
 Data
 ----

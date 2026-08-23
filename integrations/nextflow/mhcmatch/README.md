@@ -55,13 +55,17 @@ presentation %rank) and — for k-mers spanning the somatic mutation — `agreto
 against the position-aligned wild type). It leaves expression, `CDR3`/`TCR-score` and the composite
 `score*` columns to their own modules.
 
-**`native.tsv` is mhcmatch's own 28 columns** (`mhcmatch.predict.NATIVE_COLUMNS`), which the fixed
-schema has nowhere to put:
+**`native.tsv` is mhcmatch's own columns** (`mhcmatch.predict.NATIVE_COLUMNS`), which the fixed
+schema has nowhere to put. The list is not reproduced here, for the same reason no stub in this
+module types a header — ask the installed library:
 
-`source · type · gene_name · chrom · pos · ref · alt · peptide · offset · best_allele · cls ·
-percent_rank · p_present · band · affinity_nm · affinity_rank · **binder_rank** · binder_band ·
-wt_peptide · wt_affinity_nm · agretopicity · amplitude · dai · synth_peptide · model_peptide ·
-anchors · tcr_facing`
+```zsh
+python -c "from mhcmatch.predict import NATIVE_COLUMNS as C; print(' · '.join(C))"
+```
+
+It was reproduced here until 2026-08-23, and by then it was 27 names against the library's 28 and in
+a different order: `variant_type` landed in 0.24.0 and this paragraph did not notice. That is the
+drift the stub convention exists to prevent, in the one file that had opted out of it.
 
 `binder_rank` is the recommended single-number binder index — a calibrated combined %rank fusing
 presentation × affinity through Fisher's method, i.e. a soft AND: strong only when a peptide is both
@@ -221,10 +225,10 @@ From `slurm.config` only:
 ## Build the image (only for `-profile docker`)
 
 ```zsh
-docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.24.1 \
-    --build-arg MHCMATCH_VERSION=0.24.1 \
+docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.27.0 \
+    --build-arg MHCMATCH_VERSION=0.27.0 \
     integrations/nextflow/mhcmatch/
-docker push <ISPRAS_REGISTRY>/mhcmatch:0.24.1
+docker push <ISPRAS_REGISTRY>/mhcmatch:0.27.0
 ```
 
 No data staging: the build runs `mhcmatch bootstrap --reference`, which fetches the ligand panel
@@ -264,15 +268,21 @@ profiles {
 }
 ```
 
-### Stage the references once, on the head node
+### Stage the references once, in a batch job
 
 Do this before the first run and never again. Both directories must be on a filesystem every
-compute node can see.
+compute node can see, and on a large one — **not** a home quota, which on a shared cluster is
+typically small, untracked and never cleaned up.
+
+Run it as a job, not on the login node. `bootstrap --reference` downloads ~115 MB and unpacks it;
+login nodes are shared, often two-core, and on some clusters a guard kills anything that looks like
+compute there.
 
 ```bash
-export MHCMATCH_PMHC_DIR=/shared/ref/mhcmatch/pmhc_data
-mhcmatch bootstrap --reference          # ligand panel + thymic/viral/neoantigen sets + expression
-mkdir -p /shared/ref/mhcmatch/calibration
+srun -p <partition> -c 4 --mem=8G bash -c '
+    export MHCMATCH_PMHC_DIR=/shared/ref/mhcmatch/pmhc_data
+    mhcmatch bootstrap --reference     # ligand panel + thymic/viral/neoantigen sets + expression
+    mkdir -p /shared/ref/mhcmatch/calibration'
 ```
 
 Then point the run at them:
@@ -281,9 +291,27 @@ Then point the run at them:
 nextflow run . -profile slurm \
     --mhcmatch_pmhc_dir          /shared/ref/mhcmatch/pmhc_data \
     --mhcmatch_calibration_cache /shared/ref/mhcmatch/calibration \
-    --mhcmatch_slurm_queue       normal \
+    --mhcmatch_slurm_queue       <partition> \
     --mhcmatch_vector_n0         6 \
     --mhcmatch_tumor             SKCM
+```
+
+**`--mhcmatch_slurm_queue` has no safe default and must be given.** It falls back to `normal`, which
+is a common name and not a universal one — Aldan-3, where this module is deployed, has
+`short`/`medium`/`long`/`infinite` and no `normal` at all, so every task would be rejected at submit
+with the default. Run `sinfo -o '%20P %5a %10l %6D %6c %10m'` and pass a partition that exists and
+whose time limit clears the table above; `MHCMATCH_VECTOR` asks for 8 h, which a 2 h queue cannot
+give it.
+
+### The interpreter
+
+The wheel needs **Python ≥ 3.10**, and a cluster's system `python3` is frequently older — Aldan-3's
+is 3.8, with no module system, so conda is the only source of a newer one. A plain `venv` on top of
+a conda interpreter is enough and is what `-profile conda` sidesteps entirely:
+
+```bash
+/path/to/conda/envs/<env>/bin/python3 -m venv .venv && . .venv/bin/activate
+pip install mhcmatch==0.27.0
 ```
 
 **Why the calibration directory is worth the trouble.** `mhcmatch` reports a %rank, which means each
@@ -345,8 +373,8 @@ task slower.
 ## A note on the stubs
 
 **No stub in this module types a column header.** Each asks the installed library for its own schema
-(`predict.SCORED_COLUMNS`, `predict.NATIVE_COLUMNS`, `rank.columns()`, `rank.MIMICRY_PAIRS`,
-`mimicry.NEOAG_COLUMNS`), so `-stub-run` produces files with exactly the real shape and cannot drift
+(`predict.SCORED_COLUMNS`, `predict.NATIVE_COLUMNS`, `rank.columns()`, `rank.CORE_COLUMNS`,
+`rank.MIMICRY_PAIRS`, `mimicry.NEOAG_COLUMNS`, `vector.MAP_COLUMNS`), so `-stub-run` produces files with exactly the real shape and cannot drift
 from it. One thing a stub cannot know: `neoag` and `mimicry` carry every non-`peptide` column of a
 `--peptides` TSV through unchanged, so a real run fed `ranked.tsv` emits those ahead of the schema
 the command adds. The stub types what the command adds. That is a repair, not a flourish: this
