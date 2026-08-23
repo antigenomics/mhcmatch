@@ -3,7 +3,7 @@
 // Five processes, in pipeline order:
 //
 //   MHCMATCH_PREDICT   variant windows -> per-allele presentation, affinity, agretopicity
-//   MHCMATCH_RANK      candidates      -> the fitted BOECRT aggregate, one ordered table
+//   MHCMATCH_RANK      candidates      -> the fitted EPIC aggregate, one ordered table
 //                                        (carries `occupancy` alongside `agretopicity`)
 //   MHCMATCH_NEOAG     peptides        -> proximity to the tested-neoantigen database
 //   MHCMATCH_MIMICRY   peptides        -> the six signed self/viral/thymus channels + autoimmune
