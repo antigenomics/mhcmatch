@@ -42,7 +42,7 @@ rather than guessing.
 | | |
 |---|---|
 | **in** | `tuple val(meta), path(fasta), val(alleles), val(cls)` — `cls ∈ {mhc1, mhc2}`; `alleles` comma-separated |
-| **out** | `scored` → `${prefix}.${cls}.mhcmatch.scored.csv` · `native` → `${prefix}.${cls}.mhcmatch.native.tsv` · `versions` |
+| **out** | `scored` → `${prefix}.${cls}.mhcmatch.scored.csv` · `native_tsv` → `${prefix}.${cls}.mhcmatch.native.tsv` · `versions` |
 
 Drop-in for `MHCFLURRY_PREDICT_SCAN` (class I) and the `MHCII_BINDING` subworkflow (class II):
 same input channel shape, and `cls` rides in the tuple so one process serves both classes —

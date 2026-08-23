@@ -40,6 +40,7 @@ and every model that ships by default runs on it.
 | `mhcmatch[structure]` | `tcren` | the structure-based ΔΔG head |
 | `mhcmatch[precursor]` | `vdjmatch` | precursor-frequency estimates |
 | `mhcmatch[notebooks]` | `marimo` | the worked examples in `notebooks/` |
+| `mhcmatch[logo]` | `logomaker`, `matplotlib` | **drawing** a motif logo (`logo.render`). `logo.motif` returns the matrix on the base install |
 
 `torch` is **not** required to score recognition. The default head is the six-block `complement`
 score, which is pure numpy, so a user who never installs `[esm]` gets a complete fitted model rather
@@ -212,7 +213,8 @@ numpy product and a thread pool would buy nothing, so the flag is absent rather 
 ## The two axes
 
 Presentation is necessary and not sufficient: most presented peptides are ignored. mhcmatch keeps
-the two questions apart and scores them with the fitted **`EPIC`** aggregate (0.21.0), whose
+the two questions apart and scores them with the fitted **`EPIC`** aggregate (shipped 0.21.0, named
+`EPIC` in 0.25.0), whose
 `C_phys_*` and `C_corpus_*` terms are the recognition axis and whose `pres`/`occupancy` terms are
 the presentation one. **Version 4 (0.27.0) is what ships**, and it is **hierarchical**:
 **eight** columns in four blocks — presentation, expression, physchem, corpus — entered in pipeline
@@ -252,8 +254,11 @@ its chemistry half and its fitted-identity half — exact partial sums via `scor
 two behave oppositely: the identity half wins in-corpus and the chemistry half transfers. Scoring
 all **576** candidate columns (every vendored residue vector × {anchor, TCR} × {sum, mean}) by ΔBIC
 *inside* the general model keeps exactly one: **the Rose burial propensity summed over the TCR
-face**, at z **+4.57**, the second-largest coefficient of ten behind expression alone, against the
-sixteen-column chemistry block's +0.18 in the same slot. Rose's scale is not a hydrophobicity scale
+face**, at z **+4.57** — the second-largest coefficient of the ten-term model it was selected in,
+behind expression alone — against the sixteen-column chemistry block's +0.18 in the same slot. In
+the shipped eight-term v4 it is `C_phys_buried` at **+0.1146 (z +2.34, p = 0.020)**: still the
+chemistry block's only fitted term, and smaller because the corpus block now carries three
+coefficients it previously shared one with. Rose's scale is not a hydrophobicity scale
 — it is the mean fraction of solvent-accessible area a residue loses on folding ([Rose et al.,
 *Science* 1985](https://doi.org/10.1126/science.4023714)) — so summed over the exposed face it
 scores the area a receptor *could* bury. Because its basis is imported rather than fitted it cannot
@@ -274,11 +279,11 @@ a statement about *passing thymic selection*, not about whether a T cell respond
 mutation. `mimicry.corpus_R` replaces it with a label-free neighbour density against three
 references, split by *when a T cell meets them*:
 
-| channel | what it is | reads as | fitted sign |
+| channel | what it is | reads as | fitted coefficient (EPIC v4) |
 |---|---|---|--:|
-| `thymus` | thymic immunopeptidome — **the only one that enters selection** | danger | +0.1761 (z +3.35) |
-| `self` | host proteome, met in the periphery | tolerance | −0.1812 (z −1.44) |
-| `viral` | foreign ligandome — **never seen during selection** | reference | +0.0166 (z +0.23) |
+| `thymus` | thymic immunopeptidome — **the only one that enters selection** | danger | +0.1362 (z +2.01) |
+| `self` | host proteome, met in the periphery | tolerance | −0.2636 (z −3.12) |
+| `viral` | foreign ligandome — **never seen during selection** | reference | +0.1474 (z +1.78) |
 
 The thymic channel is positive because the thymus is not a random sample of self: mTECs
 promiscuously express tissue-restricted antigens under *Aire* and *Fezf2* precisely to purge the
@@ -306,8 +311,9 @@ abbreviation** (`SKCM`, `LUAD`, …; `CRC` merges TCGA's `COAD` and `READ`) and 
 ICD-O-3, SNOMED CT or OncoTree — so a pipeline needing one brings its own crosswalk.
 `expression.matched_tissues("SKCM")` gives a tumour type's matched normal, which is what makes the
 safety read askable without knowing the pairing by heart; `mhcmatch expression --list-contexts`
-prints all 19 pairings and the 31 tissues that are safety-read-only. `HNSC` is marked approximate —
-GTEx has no head-and-neck mucosa.
+prints all 19 pairings and, of 104 GTEx tissues in total, the **82** that are no tumour type's
+matched normal and are for the safety read only. `HNSC` is marked approximate — it maps to Minor
+Salivary Gland / Esophagus - Mucosa, because GTEx has no head-and-neck mucosa.
 
 **Cross-reactivity.** `mhcmatch.mimics` reports near-identical reference peptides per category, and
 never sums them, because a hit in each argues something different: **thymus** (presented during
@@ -361,9 +367,50 @@ not recognition. Exclusion goes through `vector.self_origin_risk`
 
 ## Model names
 
-Every fitted model is named by the **acronym of its parameters** — `aggregate5` and "the full model"
-said nothing about what was in them, and two designs were once both "the neoantigen model". One
-letter per parameter, in a fixed canonical order:
+### `EPIC` — the shipped model, one letter per *block*
+
+**E**xpression, **P**resentation, **I**mmunogenic **C**omplementarity. Four letters, four blocks,
+entered in that pipeline order — so a later block's coefficient is what that term is worth *after*
+the earlier ones, not in competition with them. Shipped coefficients are **v4** (0.27.0), fitted on
+354,909 candidate rows / 958 positives across 9 screens, ridge with an unpenalised per-screen
+intercept at `tau = 0.25`; `sd`, `z`, `p` and the 95 % CI are a 400-resample cluster bootstrap over
+(patient, screen):
+
+| letter | block | column | coefficient | z | p |
+|---|---|---|--:|--:|--:|
+| `P` | presentation | `pres` | +0.2200 | +6.23 | 4.6×10⁻¹⁰ |
+| `P` | presentation | `occupancy` | +0.1206 | +6.84 | 8.2×10⁻¹² |
+| `E` | expression | `expr_pct` | **+0.3007** | +5.46 | 4.6×10⁻⁸ |
+| `I` | immunogenic — physchem | `C_phys_buried` | +0.1146 | +2.34 | 0.020 |
+| `I` | immunogenic — physchem | `C_phys_charge` | −0.0634 | −1.21 | 0.225 |
+| `C` | complementarity — corpus | `C_corpus_thymus` | +0.1362 | +2.01 | 0.044 |
+| `C` | complementarity — corpus | `C_corpus_self` | −0.2636 | −3.12 | 1.8×10⁻³ |
+| `C` | complementarity — corpus | `C_corpus_viral` | +0.1474 | +1.78 | 0.075 |
+
+The artifact is the source of truth, not this table — `coef`, `sd`, `z`, `p`, `ci95` and the whole
+fit record are in it, and `rank.AGGREGATE_BLOCKS` is the same block structure at runtime:
+
+```python
+import json, importlib.resources as R
+d = json.loads(R.files("mhcmatch.data").joinpath("aggregate_mhc1.json").read_text())
+d["model"], d["version"], d["features"], d["coef"]      # 'EPIC', 4, [...], {...}
+```
+
+(`mhcmatch mimicry --coefficients` prints the *mimicry* model's; the aggregate has no CLI equivalent
+yet.) The letters are a mnemonic for the blocks, **not** the fitting order — presentation enters
+before expression, and every conditional coefficient is reported against that order.
+
+**`EPIC` names blocks; its predecessors named parameters.** That is the convention change, not a
+cosmetic rename: once the block became the unit of inference, one letter per term stopped describing
+anything. `EPIC` was `GRAND` through 0.24.x and the artifact still carries `"former_name": "GRAND"`,
+because a result recorded under the old name has to stay attributable. The letter table below is the
+older, per-parameter vocabulary — still the way `BDEVF`, `PADEC` and the rest are read.
+
+### The per-parameter letters
+
+Every earlier fitted model is named by the **acronym of its parameters** — `aggregate5` and "the
+full model" said nothing about what was in them, and two designs were once both "the neoantigen
+model". One letter per parameter, in a fixed canonical order:
 
 | letter | parameter | from | what it is |
 |---|---|---|---|
@@ -422,14 +469,15 @@ store.scan_protein(my_protein, cls="mhc1")
 store.decompose("NLVPMVATV")                         # anchor / TCR-facing split, with X masks
 
 aff = store.affinity_model("mhc1")
-aff.predict_ic50("NLVPMVATV", "HLA-A*02:01")             # ~64 nM
+aff.predict_ic50("NLVPMVATV", "HLA-A*02:01")             # 52.5 nM (shortlist tier, 0.27.0)
 aff.amplitude("NLVPMVATL", "NLVPMVATV", "HLA-A*02:01")   # Kd_WT/Kd_MT (Łuksza eq. 9)
 
 complement.score(peptides)                           # vectorised: pass the list, not a loop
 complement.posterior(peptides, prior=4.2e-4)         # the log-odds carries NO prior; supply yours
 complement.score(peptides, species="mouse")          # separate table; the hosts are never pooled
 
-known.lookup("GILGFVFTL")                            # -> 'viral'
+known.lookup("GILGFVFTL")                            # -> 'neoantigen': the FIRST set in
+                                                     # SET_NAMES containing it, not the only one
 mimics.neighbours(peptides, ref_sets, threads=0)     # threaded C++ neighbour search
 
 pm = mhcmatch.Proteome.from_hf("human")

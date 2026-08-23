@@ -70,7 +70,7 @@ workflow MHCMATCH {
 
     emit:
     scored   = MHCMATCH_PREDICT.out.scored     // [ meta, cls, *.mhcmatch.scored.csv ]
-    native   = MHCMATCH_PREDICT.out.native     // [ meta, cls, *.mhcmatch.native.tsv ]
+    native_tsv = MHCMATCH_PREDICT.out.native_tsv   // [ meta, cls, *.mhcmatch.native.tsv ]
     ranked   = MHCMATCH_RANK.out.ranked        // [ meta, cls, *.mhcmatch.ranked.tsv ]
     neoag    = MHCMATCH_NEOAG.out.neoag        // [ meta, cls, *.mhcmatch.neoag.tsv ]
     mimicry  = MHCMATCH_MIMICRY.out.mimicry    // [ meta, cls, *.mhcmatch.mimicry.tsv ]

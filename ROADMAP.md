@@ -472,11 +472,17 @@ The author's name for the model, decided 2026-08-21: **EPIC** — **E**xpression
 term, which is what `GRAND`'s successive letters stopped doing once the blocks became the unit of
 inference:
 
-| EPIC letter | block | columns |
+**One letter per block, and `I` and `C` are one each** -- `I`mmunogenic is the physchem block,
+`C`omplementarity is the corpus block. Grouped as a single `IC` until 2026-08-23, which read as if
+the two blocks were one term. Columns below are v4, as shipped in 0.27.0; the v3 columns each letter
+carried are in §5b-7 and §5b-12.
+
+| EPIC letter | block | columns (v4) |
 |---|---|---|
-| `E` | `expression` | `expr`, `expr_missing` |
-| `P` | `presentation` | `binder`, `occupancy` |
-| `IC` | `physchem` + `corpus` | `C_phys_rose`, `C_phys_hydrop`, `C_corpus_thymus`, `C_corpus_self`, `C_corpus_viral` |
+| `E` | `expression` | `expr_pct` |
+| `P` | `presentation` | `pres`, `occupancy` |
+| `I` | `physchem` | `C_phys_buried`, `C_phys_charge` |
+| `C` | `corpus` | `C_corpus_thymus`, `C_corpus_self`, `C_corpus_viral` |
 
 The letters are a mnemonic for the blocks, **not** their entry order — the fit enters presentation
 first, then expression, and that order is what every conditional coefficient in `epic_recognition_terms.md`

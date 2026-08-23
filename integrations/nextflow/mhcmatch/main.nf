@@ -35,7 +35,13 @@ process MHCMATCH_PREDICT {
 
     output:
     tuple val(meta), val(cls), path("*.mhcmatch.scored.csv"), emit: scored
-    tuple val(meta), val(cls), path("*.mhcmatch.native.tsv"), emit: native
+    // `native_tsv`, not `native`: `native` is a Java/Groovy reserved word (a method modifier), and a
+    // parser that accepts it as an `emit:` name is doing us a favour rather than following a rule.
+    // Nextflow 21.10.6 does not -- it fails the WHOLE module with "Unexpected input: '{'" pointing at
+    // the enclosing `process {`, which reads as a corrupt file rather than one bad identifier.
+    // Measured on Aldan-3 2026-08-23: `emit: native` fails as a tuple output, as a `path` output and
+    // as the sole output; `emit: nativ` and `emit: native_tsv` all parse.
+    tuple val(meta), val(cls), path("*.mhcmatch.native.tsv"), emit: native_tsv
     path "versions.yml",                                      emit: versions
 
     when:
