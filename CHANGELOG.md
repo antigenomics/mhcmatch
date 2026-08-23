@@ -28,10 +28,22 @@ versioning is [SemVer](https://semver.org).
   falls 0.6566 → 0.6399 on 149 rows with 89 positives, and NCI, which has six held-out positives
   and does not decide, falls 0.8513 → 0.8248.
 
-  **Nothing is deleted.** `aggregate_score` reads only the names the artifact's own `features` list
-  asks for, and `rank._finish` supplies the union, so a v3 artifact still scores under this library
-  and `binder`, `C_phys_rose` and `C_phys_hydrop` are still computed and emitted. A recorded v3
-  number keeps its meaning.
+### Removed
+
+- **EPIC v3 is gone from the library — every path, name and fallback.** It was carried as a
+  parallel vocabulary so one library could score either artifact, and the cost of that was a
+  second definition of every changed term, live, with nothing exercising it. What went:
+
+  | removed | why |
+  |---|---|
+  | `C_phys_rose`, `C_phys_hydrop` from `AGGREGATE_COLUMNS` / `PHYS_COLUMNS` | computed and emitted on every row for a model nothing ships |
+  | `binder` from the feature union `rank._finish` supplies | v3's presentation term; `pres` is the fitted one. `predict.binder_score` and the `binder` output column are unaffected — they are a prediction API, not a model version |
+  | `complement.PHYS_SCALE_HYDROP` | replaced by `PHYS_SCALE_CHARGE = "ATCHLEY:AF5"`, the scale actually fitted |
+  | the Hamming default in `mimicry.corpus_geometry` | an artifact naming no kernel was silently contracted against Hamming — a `kappa` fitted against a graded kernel scored that way is a different feature, not a smaller effect. It now raises. So does an unknown face mask; the `"tcr5"` alias is gone |
+  | `supersedes` and `phys_scale_hydrop` from the artifact | v3 pointers, and `epic_v4_fit.py` no longer writes them |
+
+  Four tests asserted the v3 half of a pair and now assert the v4 fact instead;
+  `test_c_phys_buried_is_the_same_column_as_c_phys_rose` had nothing left to say and is deleted.
 
 ### Added
 

@@ -64,35 +64,24 @@ BASE_COLUMNS: tuple = ("rank", "peptide", "allele", "gene", "score", "p_response
 #: The ``C_phys`` columns are computed here (:func:`mhcmatch.complement.burial` -- a matrix
 #: product against a published residue vector, free). The three ``C_corpus`` channels are the only
 #: features a caller has to supply, because they need a reference deposit; see :func:`aggregate`.
-AGGREGATE_COLUMNS: tuple = ("C_phys_buried", "C_phys_rose", "C_phys_hydrop", "C_phys_charge",
+AGGREGATE_COLUMNS: tuple = ("C_phys_buried", "C_phys_charge",
                             "C_corpus_thymus", "C_corpus_self", "C_corpus_viral")
 #: The subset of :data:`AGGREGATE_COLUMNS` that ``channels()`` has to return. The ``C_phys`` pair is
 #: not in it: the library can always compute them, so making the caller pass them would be ceremony.
 CHANNEL_COLUMNS: tuple = ("C_corpus_thymus", "C_corpus_self", "C_corpus_viral")
 #: ``C_phys`` column -> the residue scale :func:`mhcmatch.complement.burial` reads for it. One place,
-#: because the column name and the scale it means are two halves of the same fact.
-#: ``C_phys_buried`` is EPIC v4's name for what v3 called ``C_phys_rose``: **the same scale**,
-#: renamed because "Rose" names the paper and "buried" names the quantity -- the mean fraction of a
-#: residue's surface area occluded on folding. Both keys are computed so either artifact scores.
-#: ``column -> residue scale``, averaged over the TCR face by :func:`complement.burial`.
+#: because the column name and the scale it means are two halves of the same fact. Each is averaged
+#: over the TCR face by :func:`complement.burial`.
 #:
-#: **Rose ~ -KF4: burial and hydropathy are one axis, not two.** Measured on
-#: `chowell_rebuilt_hla_matched` (94,380 human / 21,212 mouse rows): r = -0.849 over the twenty
-#: residue types and **-0.782 at the peptide level**, and a symmetric PCA of the pair leaves the
-#: second component at chance on that corpus (AUROC 0.5014 human / 0.5085 mouse against pc1's
-#: 0.5884 / 0.6174). Both are kept -- hydropathy is the name the Chowell-family literature is
-#: written in, and the contrast may carry signal on the neoantigen screens where Chowell has none --
-#: but the pair is *collinear*, which is why their individual coefficients are not identified
-#: (+0.0600 from the ridge GLM against -0.0161 from the hierarchical posterior, on the same rows).
-#:
-#: ``C_phys_charge`` is the axis that is genuinely independent of burial: Atchley 2005's
-#: electrostatic-charge factor, r = +0.066 with Rose, separating at 0.5548 / 0.5291 against KF4's
-#: residual 0.5237 / 0.5275 -- and with the lowest cysteine loading of the 141 scales swept,
-#: -0.0028, which matters because the Chowell family carries a 12.5x mass-spectrometry cysteine
-#: gradient that a selected basis can learn. `bench/results/physchem_pc.md`.
-PHYS_COLUMNS: dict = {"C_phys_buried": "Rose", "C_phys_rose": "Rose",
-                      "C_phys_hydrop": "KIDERA:KF4",
-                      "C_phys_charge": "ATCHLEY:AF5"}
+#: ``C_phys_buried`` is the Rose 1985 burial propensity -- the mean fraction of a residue's surface
+#: area occluded on folding -- and ``C_phys_charge`` is Atchley 2005's electrostatic-charge factor.
+#: **The two are orthogonal by measurement, r = +0.008 at the peptide level**, which is the whole
+#: reason the block carries them rather than a hydropathy scale: hydropathy is burial measured a
+#: second way (r = -0.837 peptide-level) and the pair was not identified. Charge also has the
+#: lowest cysteine loading of the 141 scales swept, -0.0028, which matters because the
+#: Chowell-family corpora carry a 12.5x mass-spectrometry cysteine gradient that a selected basis
+#: can learn. `bench/results/physchem_pc.md`.
+PHYS_COLUMNS: dict = {"C_phys_buried": "Rose", "C_phys_charge": "ATCHLEY:AF5"}
 #: (reference, channel) in the order the mimicry columns are emitted.
 MIMICRY_PAIRS: tuple = tuple((c, ch) for c in ("viral", "self", "thymus")
                              for ch in ("anchor", "tcr"))
@@ -157,9 +146,8 @@ def aggregate() -> dict:
     **EPIC** -- Expression, Presentation, Immunogenic Complementarity --
     names the four blocks the nine columns are fitted in, not the order they enter in; the pipeline
     order is presentation, expression, physchem, corpus, and the two recognition blocks are the two
-    halves of Complementarity. Shipped as ``GRAND`` through 0.24.x under the same artifact and the
-    same coefficients: ``"version": 3`` is unchanged, ``"former_name"`` records the old name, and
-    every recorded result under the old name is a result about this model. Renamed in 0.25.0.
+    halves of Complementarity. Shipped as ``GRAND`` through 0.24.x, renamed in 0.25.0; the
+    artifact's ``"former_name"`` records that.
 
     Fitted by ``bench/immuno/epic_v4_fit.py`` over nine neoantigen screens (354,909 rows / 958
     positive) as a ridge logistic regression with an unpenalised **per-screen intercept**, which
@@ -170,18 +158,17 @@ def aggregate() -> dict:
     recognition coefficient is therefore what the term is worth *after* presentation and expression,
     not in competition with them.
 
-    * ``presentation`` -- ``pres`` (the presentation ``%rank`` alone) and ``occupancy``. v3's
-      ``binder`` folded the affinity rank in a second time, where ``occupancy`` already carries it
-      at Spearman -1.000000 against ``kd_mt``.
+    * ``presentation`` -- ``pres`` (the presentation ``%rank`` alone) and ``occupancy``. The two
+      are separate axes: ``occupancy`` carries affinity at Spearman -1.000000 against ``kd_mt``,
+      so a presentation term that folded the affinity rank in as well would enter it twice.
     * ``expression`` -- ``expr`` (``log1p`` of TPM), ``expr_missing``.
     * ``physchem`` -- ``C_phys_buried`` and ``C_phys_charge``, :func:`mhcmatch.complement.burial`
       over the TCR face on the Rose burial propensity and on Atchley AF5 electrostatic charge.
       Imported scales, so **zero fitted residue parameters**; burial carries a cysteine loading of
       +0.108 against the retired 30-column ``complement`` block's +0.693, and charge's is +0.0056,
-      the lowest of 141 scales swept. Kidera KF4 was the second column through v3 and is dropped:
-      it is burial measured a different way, r = -0.837 per peptide, and the pair was not
-      identified. Charge is orthogonal by measurement, r = +0.008. ``C_phys_rose`` and
-      ``C_phys_hydrop`` are still computed and emitted so a v3 record stays readable.
+      the lowest of 141 scales swept. The two are orthogonal by measurement, r = +0.008 per
+      peptide, which is what a chemistry block needs and what a burial/hydropathy pair does not
+      have (r = -0.837, not identified).
     * ``corpus`` -- ``C_corpus_thymus``, ``C_corpus_self``, ``C_corpus_viral``,
       :func:`mhcmatch.mimicry.corpus_R` against three reference corpora, split by *when a T cell
       meets them*. The thymic immunopeptidome is a biased sample of self -- mTECs express
@@ -200,8 +187,8 @@ def aggregate() -> dict:
 
     **An aggregate score is cheap and stays cheap.** ``BOECRT`` needed the host-proteome reference
     index -- 6 min 15 s and ~7.5 GB, the largest single cost in the package -- because ``self_tcr``
-    was its second-largest coefficient. v3 puts ``self`` back in the model and it costs a 64 KB
-    table, because the contraction needs counts rather than a trie. ``--no-self`` and
+    was its second-largest coefficient. ``self`` is back in the model and costs a 64 KB table,
+    because the contraction needs counts rather than a trie. ``--no-self`` and
     ``--score aggregate`` are not in conflict.
 
     **There is no intercept and that is deliberate.** Each screen was given its own, unpenalised,
@@ -405,8 +392,9 @@ class Ranked:
     #: needs no wild type -- so it is defined for a frameshift or fusion product that has none.
     occupancy: float = float("nan")
     #: ``occupancy(Kd_MT) - occupancy(Kd_WT)`` -- agretopicity in Michaelis-Menten form, bounded in
-    #: ``[-1, +1]`` and defined with or without a wild type (:func:`d_occupancy`). The EPIC v4
-    #: presentation block scores this where v3 scored :attr:`occupancy`; both are emitted.
+    #: ``[-1, +1]`` and defined with or without a wild type (:func:`d_occupancy`). Emitted and
+    #: measured, and **not** fitted -- it has no axis of its own once :attr:`occupancy` is in the
+    #: model, and entered alongside it the coefficient flips sign.
     d_occupancy: float = float("nan")
     #: 1.0 when no wild type was recoverable, so :attr:`d_occupancy` fell back to the mutant's own
     #: occupancy and :attr:`agretopicity` is undefined. The same object as the corpus's
@@ -636,13 +624,10 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
     """
     if score == "aggregate":
         a = aggregate()
-        # Every column both model versions can read. `aggregate_score` takes only the names the
-        # artifact's `features` list asks for, so supplying the union costs nothing and is what
-        # lets one library score a v3 and a v4 artifact without a branch:
-        #   v3  binder        occupancy      C_phys_rose
-        #   v4  pres          d_occupancy    C_phys_buried   (+ wt_absent)
-        cols = {"binder": [r.binder for r in rows],
-                "pres": [r.presentation for r in rows],
+        # `aggregate_score` takes only the names the artifact's `features` list asks for.
+        # `d_occupancy` and `wt_absent` are emitted and measured but not fitted -- neither earned
+        # its parameter -- so they are supplied here and simply not read.
+        cols = {"pres": [r.presentation for r in rows],
                 "occupancy": [r.occupancy for r in rows],
                 "d_occupancy": [r.d_occupancy for r in rows],
                 "wt_absent": [float(r.wt_absent) for r in rows],
@@ -650,9 +635,7 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
                 "expr_missing": [1.0 if r.expression_imputed else 0.0 for r in rows]}
         # Each C_phys column is a matrix product against a published residue vector -- free, and
         # needing no reference deposit, so the library computes them rather than making the caller
-        # pass them. Rose is burial on folding and KF4 water/oil partition; they are **the same
-        # axis** at r = -0.78 peptide-level, and charge (Atchley AF5) is the one that is not.
-        # See PHYS_COLUMNS.
+        # pass them. See PHYS_COLUMNS.
         if rows:
             from . import complement as CM
             peps = [r.peptide for r in rows]

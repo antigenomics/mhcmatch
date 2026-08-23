@@ -197,9 +197,9 @@ TARGETS = {
 #: generator on record, and ``build`` says so rather than inventing one.
 EXTERNAL = {
     "recognition": "uv run tools/build_recognition.py",
-    # `aggregate_mhc1.json`'s own `generator` field. The fit writes this file directly into the
-    # library checkout, so the hand-copy that let the GRAND -> EPIC rename reach the artifact but
-    # not its generator is gone. `bench/run_epic.sh` runs the whole chain that leads to it.
+    # `aggregate_mhc1.json`'s own `generator` field. The fit writes a *candidate* to
+    # `bench/immuno/aggregate_mhc1_v4.json`; copying it here is manual, so diff the two after any
+    # run of `bench/run_epic.sh`, which is the chain that leads to it.
     "aggregate": "python bench/immuno/epic_v4_fit.py --physchem rose_af5   # benchmark repo",
     "affinity": "python bench/affinity/train.py --cls mhc1 --species human   # benchmark repo",
     "potts": "python bench/affinity/fit_potts.py --cls mhc1    # and --cls mhc2; benchmark repo",

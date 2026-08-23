@@ -367,22 +367,25 @@ def corpus_geometry(artifact: dict | None = None) -> dict:
 
     Same convention as :func:`corpus_shapes`, and for the same reason: the artifact defines the
     scored column, so a refit that changes the face or the substitution kernel moves the column
-    rather than leaving a caller on a stale module default. Without this a v4 artifact -- whose
-    ``kappa`` was fitted against a graded kernel -- would be scored under the Hamming one, which is
-    not a smaller effect but a different feature.
+    rather than leaving a caller on a stale module default. A ``kappa`` fitted against a graded
+    kernel scored under a Hamming one is not a smaller effect, it is a different feature.
 
-    ``kernel`` is ``None`` for the Hamming default or a callable ``kappa -> (A, A)`` array.
+    **Every field is required, and there is no default.** A silent fallback here is how an artifact
+    that names nothing gets scored under whatever the module last happened to prefer, which is the
+    one failure mode this function exists to prevent.
+
+    ``kernel`` is a callable ``kappa -> (A, A)`` array.
     """
     if artifact is None:
         from .rank import aggregate
         artifact = aggregate()
-    mask = str(artifact.get("corpus_mask") or "slice")
-    mask = mask if mask in CORPUS_MASKS else "slice"        # "tcr5" is v3's name for the slice
+    mask = str(artifact.get("corpus_mask") or "")
+    if mask not in CORPUS_MASKS:
+        raise ValueError(f"artifact names an unknown corpus face mask {mask!r}; "
+                         f"expected one of {sorted(CORPUS_MASKS)}")
     k = int(artifact.get("corpus_k") or CORPUS_K)
-    fam = str(artifact.get("corpus_kernel") or "hamming")
-    if fam == "hamming":
-        kern = None
-    elif fam in ("blosum62_normalised", "blosum62_raw"):
+    fam = str(artifact.get("corpus_kernel") or "")
+    if fam in ("blosum62_normalised", "blosum62_raw"):
         from functools import partial
         kern = partial(blosum62_kernel, normalise=(fam == "blosum62_normalised"), mask=mask)
     else:

@@ -495,10 +495,12 @@ def test_c_phys_is_computed_rather_than_demanded_from_the_caller():
 def test_phys_columns_name_the_scales_the_module_declares():
     """`PHYS_COLUMNS` and `complement`'s two scale constants are two halves of one fact."""
     from mhcmatch import complement
-    assert R.PHYS_COLUMNS["C_phys_rose"] == complement.PHYS_SCALE
-    assert R.PHYS_COLUMNS["C_phys_hydrop"] == complement.PHYS_SCALE_HYDROP
+    assert R.PHYS_COLUMNS["C_phys_buried"] == complement.PHYS_SCALE
+    assert R.PHYS_COLUMNS["C_phys_charge"] == complement.PHYS_SCALE_CHARGE
     assert R.aggregate()["phys_scale"] == complement.PHYS_SCALE
-    assert R.aggregate()["phys_scale_hydrop"] == complement.PHYS_SCALE_HYDROP
+    assert R.aggregate()["phys_scale_charge"] == complement.PHYS_SCALE_CHARGE
+    # exactly two, and both fitted -- a third computed-but-unfitted scale is what v3 carried
+    assert set(R.PHYS_COLUMNS) == {"C_phys_buried", "C_phys_charge"}
 
 
 def test_the_header_carries_the_features_the_model_used():
@@ -585,40 +587,20 @@ def test_d_occupancy_saturates_where_the_log_ratio_does_not():
     assert R.d_occupancy(3.0, float("nan")) == R.occupancy(3.0)   # unusable wild type == none
 
 
-def test_finish_supplies_every_feature_name_v3_or_v4_can_ask_for():
-    """One library, two artifacts, no branch.
-
-    `aggregate_score` reads only the names in the artifact's `features` list, so `_finish` supplies
-    the union of both vocabularies. A v4 artifact naming `pres`/`d_occupancy`/`C_phys_buried` must
-    score without a code change, and a v3 artifact naming `binder`/`occupancy`/`C_phys_rose` must
-    keep scoring exactly as before.
-    """
+def test_finish_supplies_every_feature_the_artifact_declares():
+    """`aggregate_score` reads only the names in the artifact's `features` list, so `_finish` has to
+    supply all of them -- plus `d_occupancy` and `wt_absent`, which are emitted and measured but not
+    fitted, and so must be present without being read."""
     from mhcmatch import rank as R
 
     rows = [R.Ranked(peptide="GILGFVFTL", allele="HLA-A*02:01", presentation=2.3, binder=2.1,
                      occupancy=0.77, d_occupancy=0.66, wt_absent=0.0, expression=3.0)]
     for r in rows:
         r.components.update({c: 1e-3 for c in R.CHANNEL_COLUMNS})
-    R._finish(list(rows), None, score="aggregate")           # v3 artifact: must not raise
-
-    v3, v4 = set(R.AGGREGATE_FEATURES), {"pres", "d_occupancy", "wt_absent", "expr",
-                                         "expr_missing", "C_phys_buried", "C_phys_hydrop",
-                                         "C_corpus_thymus", "C_corpus_self", "C_corpus_viral"}
     done = R._finish(list(rows), None, score="aggregate")
-    have = set(done[0].components) | {"binder", "pres", "occupancy", "d_occupancy", "wt_absent",
+    have = set(done[0].components) | {"pres", "occupancy", "d_occupancy", "wt_absent",
                                       "expr", "expr_missing"}
-    assert v3 <= have and v4 <= have, sorted((v3 | v4) - have)
-
-
-def test_c_phys_buried_is_the_same_column_as_c_phys_rose():
-    """A rename, asserted rather than intended: "Rose" names the paper, "buried" names the number."""
-    from mhcmatch import rank as R
-    assert R.PHYS_COLUMNS["C_phys_buried"] == R.PHYS_COLUMNS["C_phys_rose"] == "Rose"
-
-    rows = [R.Ranked(peptide=p, allele="HLA-A*02:01", presentation=2.0, binder=2.0, occupancy=0.5,
-                     d_occupancy=0.1, expression=1.0)
-            for p in ("GILGFVFTL", "NLVPMVATV", "SIINFEKLA")]
-    for r in rows:
-        r.components.update({c: 1e-3 for c in R.CHANNEL_COLUMNS})
-    for r in R._finish(rows, None, score="aggregate"):
-        assert r.components["C_phys_buried"] == r.components["C_phys_rose"]
+    want = set(R.AGGREGATE_FEATURES) | {"d_occupancy", "wt_absent"}
+    assert want <= have, sorted(want - have)
+    # and nothing from the retired vocabulary comes back
+    assert not ({"C_phys_rose", "C_phys_hydrop"} & set(done[0].components))

@@ -3,10 +3,6 @@
  "former_name": "GRAND",
  "version": 4,
  "generator": "bench/immuno/epic_v4_fit.py",
- "supersedes": {
-  "version": 3,
-  "note": "binder -> pres; + d_occupancy; C_phys_rose renamed C_phys_buried; corpus kernel Hamming -> BLOSUM62"
- },
  "features": [
   "pres",
   "occupancy",
@@ -155,7 +151,6 @@
   "viral": 1.35
  },
  "phys_scale": "Rose",
- "phys_scale_hydrop": "KIDERA:KF4",
  "phys_scale_charge": "ATCHLEY:AF5",
  "phys_per_residue": true,
  "blocks": [

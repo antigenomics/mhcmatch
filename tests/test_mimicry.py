@@ -756,36 +756,36 @@ def test_the_artifact_defines_the_corpus_geometry_not_a_module_default():
     """
     import numpy as np
 
-    g = mimicry.corpus_geometry()                    # the shipped artifact: v4, graded
+    g = mimicry.corpus_geometry()                    # the shipped artifact
     assert g["k"] == mimicry.CORPUS_K
-    assert g["mask"] == "slice"                      # v3 spells it "tcr5"; same face
+    assert g["mask"] == "slice"
     assert g["family"] == "blosum62_normalised"
     K = g["kernel"](1.65)
     assert K.shape == (20, 20) and (K.diagonal() == 1.0).all()
-
-    # and a v3 artifact still reads, which is the point: the geometry is the artifact's, not a
-    # module constant, so one library scores either version with no branch.
-    v3 = {"corpus_k": 3, "corpus_mask": "tcr5",
-          "corpus_shapes": {"thymus": 3.0, "self": 5.0, "viral": 8.0}}
-    g3 = mimicry.corpus_geometry(v3)
-    assert g3["family"] == "hamming" and g3["kernel"] is None
-    assert mimicry.corpus_shapes(v3) == {"thymus": 3.0, "self": 5.0, "viral": 8.0}
 
     wild = mimicry.corpus_geometry({"corpus_k": 4, "corpus_mask": "wildcard",
                                     "corpus_kernel": "blosum62_raw"})
     assert wild["k"] == 4 and wild["mask"] == "wildcard"
     assert wild["kernel"](0.1).shape == (21, 21)
 
+    # **No default and no fallback.** An artifact that names no kernel, or an unknown one, or an
+    # unknown face, raises rather than being scored under whatever the module last preferred --
+    # which is exactly how a graded `kappa` would end up contracted against a Hamming kernel.
     with pytest.raises(ValueError, match="unknown corpus kernel"):
-        mimicry.corpus_geometry({"corpus_kernel": "levenshtein"})
+        mimicry.corpus_geometry({"corpus_kernel": "levenshtein", "corpus_mask": "slice"})
+    with pytest.raises(ValueError, match="unknown corpus kernel"):
+        mimicry.corpus_geometry({"corpus_mask": "slice"})
+    with pytest.raises(ValueError, match="unknown corpus face mask"):
+        mimicry.corpus_geometry({"corpus_kernel": "blosum62_normalised", "corpus_mask": "tcr5"})
 
 
 def test_a_v4_shaped_artifact_scores_through_the_library_unchanged():
     """The candidate artifact must be loadable, not merely well-formed.
 
-    `rank._finish` supplies both vocabularies and `aggregate_score` reads only the names the
-    artifact asks for, so this is the check that the two actually meet: a ten-term v4 feature list
-    scores every row without a code change and without touching the shipped file.
+    `aggregate_score` reads only the names the artifact asks for and `rank._finish` supplies every
+    one of them, so this is the check that the two actually meet: a ten-term feature list -- the
+    nine that ship plus `d_occupancy`, which is emitted and not fitted -- scores every row without
+    a code change and without touching the shipped file.
     """
     import numpy as np
 
@@ -793,7 +793,7 @@ def test_a_v4_shaped_artifact_scores_through_the_library_unchanged():
 
     v4 = {"model": "EPIC", "version": 4,
           "features": ["pres", "occupancy", "d_occupancy", "expr", "expr_missing",
-                       "C_phys_buried", "C_phys_hydrop",
+                       "C_phys_buried", "C_phys_charge",
                        "C_corpus_thymus", "C_corpus_self", "C_corpus_viral"],
           "coef": [0.2382, 0.1270, -0.0184, 0.3303, 0.1064, 0.1593, 0.0559,
                    0.1867, -0.2625, 0.1293],

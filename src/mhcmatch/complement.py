@@ -425,18 +425,14 @@ def _zone_positions(L: int, anc: np.ndarray, anchor_idx: tuple, cls: str) -> lis
 #: never substituted silently. The shipped aggregate records the same name as ``phys_scale``; this
 #: constant is what :func:`burial` actually reads.
 PHYS_SCALE = "Rose"
-#: The second chemistry scale, carried **alongside** Rose rather than instead of it since EPIC v3.
-#: Kidera KF4 is the hydropathy factor -- the fourth of Kidera et al.'s ten orthogonal factors over
-#: 188 physical properties -- and it is the axis the Chowell-family immunogenicity literature is
-#: usually written against, so it is the comparison a reader expects to see made.
-#:
-#: **The two are not redundant and not interchangeable.** Rose measures how much surface a residue
-#: buries on folding; KF4 measures how it partitions between water and oil. They agree on the
-#: extremes and disagree in the middle, which is why the fit wants both: on the neoantigen corpus
-#: Rose carries the larger coefficient and KF4 keeps an independent one, and on the Chowell-family
-#: corpora KF4 is the stronger of the two standalone. Whichever is dropped, the other does not
-#: recover it. See ``bench/results/physchem_cv.md`` and ``bench/results/epic_recognition_terms.md``.
-PHYS_SCALE_HYDROP = "KIDERA:KF4"
+#: The second chemistry scale, carried **alongside** Rose rather than instead of it. Atchley 2005's
+#: fifth factor is electrostatic charge, and it is the axis that is genuinely independent of
+#: burial: r = +0.008 with Rose at the peptide level, against -0.837 for a hydropathy scale, which
+#: is burial measured a second way and does not identify against it. It also carries the lowest
+#: cysteine loading of the 141 scales swept, -0.0028 -- the Chowell-family corpora have a 12.5x
+#: mass-spectrometry cysteine gradient that a selected basis can learn.
+#: See ``bench/results/physchem_pc.md`` and ``bench/results/epic_physchem_arms.md``.
+PHYS_SCALE_CHARGE = "ATCHLEY:AF5"
 
 
 def phys_scale(scale=PHYS_SCALE) -> dict:
