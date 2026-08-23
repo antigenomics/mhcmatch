@@ -287,12 +287,212 @@ removes that cost --- three channels are three 64 KB tables --- and the held-out
 carry them: adding the corpus block moves leave-one-screen-out mean AUROC from 0.6840 to
 **0.6927**, the largest gain of any recognition block.
 
-The three are **not independent**, and the report says so plainly rather than picking a favourite.
-Their sequential *z* depends on entry order: entered thymus → self → viral they read +2.53, −2.63,
-+1.13, and entered in reverse the viral channel reads +2.02. That is what a shared axis looks like.
-What is *not* order-dependent is the **sign dissociation** --- ``thymus`` positive, ``self``
-negative --- which is the evidence for the mechanism above and which no single-mechanism account
-predicts.
+The three are **not independent**, and the next section is what that turns out to mean.
+
+``self`` is the block's background term, not a third measurement
+-----------------------------------------------------------------
+
+``C_corpus_self`` fits at **−0.2697** (*z* −3.11, *p* = 1.9×10⁻³) while its own marginal AUROC is
+**0.4662**, below chance. A large, highly significant coefficient on a column that predicts nothing
+by itself has two readings, and they matter for how the score should be explained to a user:
+
+1. **tolerance** --- resembling the proteome genuinely lowers the odds of a response; or
+2. **background** --- ``self`` is the *reference level* the other two channels are read against, the
+   term an R formula removes with ``~ 0 +``.
+
+The three channels correlate **+0.70 to +0.79**, so both readings fit the full model equally well.
+What tells them apart is dropping partners: a tolerance measurement keeps its sign and its size
+alone, a background term does not. Every non-empty subset, entered on the same base block, at the
+shipped v4 :math:`\kappa` = (1.65, 0.65, 1.35), and read off the **same** 400 cluster resamples ---
+one bootstrap for all eight designs, so a coefficient that grows when a partner is added grew on the
+same resampled patients (``bench/results/epic_corpus_decor.md``):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 10 10 18 18 18
+
+   * - channels in the model
+     - BIC
+     - LOO
+     - ``thymus``
+     - ``self``
+     - ``viral``
+   * - ``self`` alone
+     - 4162.8
+     - 0.6475
+     -
+     - **−0.018** *(z −0.40, p 0.69, 63 %)*
+     -
+   * - ``thymus`` alone
+     - 4158.9
+     - 0.6527
+     - +0.085 *(z +2.05, p 0.041)*
+     -
+     -
+   * - ``viral`` alone
+     - 4160.3
+     - 0.6508
+     -
+     -
+     - +0.065 *(z +1.75, p 0.081)*
+   * - ``thymus`` + ``viral``
+     - 4171.6
+     - 0.6521
+     - +0.080 *(z +1.14, p 0.25)*
+     -
+     - +0.006 *(z +0.09, p 0.93)*
+   * - ``thymus`` + ``self``
+     - 4163.4
+     - 0.6599
+     - **+0.216** *(z +3.77, p 1.7×10⁻⁴)*
+     - **−0.188** *(z −2.95, p 3.2×10⁻³)*
+     -
+   * - ``self`` + ``viral``
+     - 4164.6
+     - 0.6541
+     -
+     - **−0.215** *(z −2.45, p 0.014)*
+     - **+0.220** *(z +2.98, p 2.9×10⁻³)*
+   * - all three
+     - 4172.4
+     - **0.6602**
+     - +0.155 *(z +2.29, p 0.022)*
+     - **−0.270** *(z −3.11, p 1.9×10⁻³)*
+     - +0.146 *(z +1.70, p 0.090)*
+
+Read it in three lines.
+
+* **Alone, ``self`` is nothing** --- −0.018, *p* = 0.69, and it holds its sign in only 63 % of
+  resamples, which is a coin flip. There is no tolerance effect to measure on its own.
+* **Give it any partner and it is significant and ten times larger**, and so is the partner:
+  ``thymus`` goes +0.085 → +0.216 beside it (2.5×), ``viral`` +0.065 → +0.220 (3.4×). Neither
+  channel is readable until the background is in the model.
+* **Take it away and the block dies.** ``thymus`` + ``viral`` without ``self`` is the decisive cell:
+  *both* fall to non-significant (*p* = 0.25 and 0.93) and the held-out mean drops to 0.6521, below
+  either channel on its own. Two channels sharing an uncorrected composition background cancel each
+  other.
+
+So Refitting :math:`\kappa` per subset does not soften it --- ``thymus`` + ``viral`` without ``self``
+then reads *p* = 0.55 and *p* = 0.58, and ``self`` alone is unchanged at *p* = 0.69.
+
+So ``self`` is the intercept of the corpus block. The human proteome is the *null distribution of
+peptide-like sequence*: a candidate scores high against thymus or viral partly because it looks like
+a thymic or viral ligand and partly because it is made of common amino acids in common
+arrangements, and ``self`` is the best available estimate of that second part. Its negative sign is
+the subtraction, not a tolerance measurement --- which is also why it is negative on a corpus where
+similarity to self should, on a naive tolerance account, be protective.
+
+Three consequences that a user should take away.
+
+* **Never quote ``C_corpus_self`` on its own.** It is not "how self-like this peptide is, and that is
+  bad". Out of the block it is meaningless, and its marginal direction is the opposite of the story
+  its coefficient tells.
+* **The block is one term with three columns.** Drop any of the three and the remaining two are
+  worth less than they look; this is why the shipped model carries all three even though ``viral``'s
+  own *p* is 0.090.
+* **The sign dissociation still stands and still needs the mechanism above.** A background term
+  explains why ``self`` is negative and large; it does not explain why ``thymus`` --- similarity to
+  a *self* peptide set --- is **positive**. That remains the Aire/Fezf2 biased-sample account.
+
+The correlation is a property of the density scale, not of :math:`\kappa`
+--------------------------------------------------------------------------
+
+The obvious repair is to sharpen the kernel until the channels separate. It does not work. Sweeping
+one :math:`\kappa` across all three, the pairwise *r* on the raw :math:`\rho` **saturates** --- it
+stops falling past :math:`\kappa` = 3 and sits at +0.760 / +0.699 / +0.696 forever, because a
+bounded density is dominated by the same handful of high-mass *k*-mers in every reference. On
+:math:`\log\rho` the same sweep keeps falling, to +0.359 / +0.365 / +0.294 at :math:`\kappa` = 8.
+
+The less obvious repair is to change coordinates, and that is worth stating because it is a trap.
+Four representations were fitted --- raw, :math:`\log\rho`, enrichment over self
+(:math:`\log(\rho_c/\rho_{\text{self}})`), Gram--Schmidt, and principal components. The last four
+are **exact rotations of each other**, and they return the identical BIC of 4177.7 and the identical
+held-out mean of 0.6522, with Gram--Schmidt and PCA reporting ``max |r| = 0.000``. A rotation
+relabels a linear model's coefficients; it does not change what the model predicts. Orthogonalising
+the block makes ``self`` collapse to −0.019 (*z* −0.35, 71 %) and hands its weight to
+``thymus_perp`` --- which is the same finding as the ladder above, arrived at by rotation, and buys
+nothing in fit.
+
+What *does* change the numbers is changing the **measurement**. Reducing the query's face windows by
+their **maximum** rather than their mean --- the nearest-window reading, same references and same
+:math:`\kappa` --- gives the best BIC of any arm, **4167.8**, and is the only configuration in which
+all three channels are individually significant with the expected signs: ``thymus`` +0.150
+(*z* +3.28, *p* = 1.1×10⁻³, 100 %), ``self`` −0.261 (*z* −3.04, *p* = 2.4×10⁻³, 96 %), ``viral``
++0.192 (*z* +2.29, *p* = 0.022, 100 %). Its held-out mean, 0.6557, is below the mean-reduced 0.6602,
+so what ships is not settled by this arm alone. Both are recorded.
+
+The check that the channels are behaving: they do not solve Chowell
+--------------------------------------------------------------------
+
+Chowell separates foreign immunogenic peptides from **self eluted ligands**. Similarity to self is
+close to that label definition run backwards, and the thymic deposit is a presented subset of the
+same negative set --- so a corpus channel that scored *well* there would be reading how the negative
+set was built rather than measuring immunogenicity. The expected result is nothing, and that is what
+is measured:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 10 12 12 14 14 14
+
+   * - corpus
+     - host
+     - n
+     - positives
+     - ``thymus``
+     - ``self``
+     - ``viral``
+   * - ``chowell``
+     - human
+     - 464,161
+     - 14,712
+     - 0.442
+     - 0.452
+     - 0.525
+   * - ``chowell``
+     - mouse
+     - 47,140
+     - 5,154
+     - 0.448
+     - 0.433
+     - 0.507
+   * - ``chowell_vanilla``
+     - pooled
+     - 9,888
+     - 5,035
+     - 0.467
+     - 0.472
+     - 0.554
+   * - ``kesmir``
+     - human
+     - 58,789
+     - 17,346
+     - 0.533
+     - 0.506
+     - 0.480
+   * - ``kesmir``
+     - mouse
+     - 6,948
+     - 5,267
+     - 0.536
+     - 0.507
+     - 0.500
+   * - ``kesmir_vanilla``
+     - mouse
+     - 1,393
+     - 1,053
+     - 0.486
+     - 0.423
+     - 0.487
+
+Every Chowell cell is at or **below** chance, ``self`` most of all --- the right direction when the
+negatives *are* self ligands. On Kešmir, whose negatives are foreign ligands that failed to be
+immunogenic, ``thymus`` moves the other way (0.533 / 0.536). Compare the chemistry term, whose
+largest deviation on the same corpora is 0.160 against the corpus block's 0.077: chemistry
+transfers to a selection corpus and the corpus channels do not, which is the separation the two
+factors are supposed to have.
+
+On the neoantigen screens the block does carry signal on its own: fitted with screen intercepts and
+nothing else, leave-one-screen-out mean **0.5781** against 0.6602 for the full model.
 
 The matching option on the chemistry side is :func:`mhcmatch.complement.burial`'s ``scale=``, which
 selects the residue basis; :doc:`burial` owns it, together with the 576-candidate selection that
@@ -312,12 +512,26 @@ per-row factor :math:`e^{\kappa(L-a_0)}` spanning :math:`e^{2\kappa}` = 90× bet
 11-mer, and dropping it saturated ``R``. The per-window divisor replaces that compensation with an
 explicit one, so the parameter is gone rather than absorbed.
 
-**Grading the substitutions bought nothing.** Replacing the Hamming count with a BLOSUM62 score over
-the TCR face did not improve on it: the fitted weight ran to zero and the deviance surface was flat
-there, and at zero the score *is* the raw hit count (r = 0.998108). What the channel carries is how
-many references sit nearby, not how gracefully they differ. The graded kernel is still reachable ---
-:func:`~mhcmatch.mimicry.contract` takes one and is exact with it --- so re-testing costs a keyword
-argument rather than a reimplementation.
+**Grading the substitutions "bought nothing", and that verdict was wrong.** The recorded arm
+reported the fitted weight running to zero and the score collapsing to the raw hit count
+(r = 0.998108). It scored the graded form with a **radius-capped neighbour search** against an
+exact contraction, so it compared a truncation to the real thing: 18.5 % / 16.0 % of queries
+returned no hit at all, "running to zero" was the first point of its own grid, and it carried two
+channels of three because a proteome index was unaffordable under a search.
+
+Re-run as a contraction with an identity-normalised kernel,
+:math:`K[u,x] = e^{\kappa(\sigma(u,x) - \sigma(u,u))}` so :math:`K[u,u] = 1` exactly, the graded
+kernel **wins**: leave-one-screen-out mean 0.6452 and median 0.6275, against 0.6440 and 0.6197 for
+Hamming under an identical :math:`\kappa`-refit protocol. :func:`~mhcmatch.mimicry.blosum62_kernel`
+builds it and :func:`~mhcmatch.mimicry.contract` takes it. **The corpus channels are BLOSUM62 from
+v4 on**; Hamming is kept so pre-0.27 results reproduce.
+
+Two variants do **not** pay, and both are informative. Wildcarding the anchors *in place* instead of
+slicing them out costs at least 0.014 of leave-one-screen-out mean under **both** kernels, and is
+not recovered at *k* = 4 or *k* = 5 --- the anchors carry nothing this term can use. And the
+unnormalised kernel, taking :math:`\sigma(X,a) = \sigma(a,a)` literally, pins :math:`\kappa` at the
+grid floor in all three channels, because BLOSUM62's diagonal spans 4--11 half-bits and that is the
+only way to neutralise a wildcard row of :math:`e^{\kappa\sigma(a,a)}`.
 
 Scope
 -----

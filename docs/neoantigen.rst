@@ -52,17 +52,20 @@ what that term is worth **after** presentation and expression rather than in com
        face. An imported scale, so zero fitted residue parameters. See :doc:`burial`.
    * -
      - ``C_phys_hydrop``
-     - the same, on Kidera KF4 hydropathy. Carried alongside Rose rather than instead of it: they
-       measure different things — surface buried on folding against water/oil partition — and which
-       is stronger depends on the corpus.
+     - the same, on Kidera KF4 hydropathy. **The pair is collinear** — *r* = −0.837 per peptide —
+       so v3 carries one chemistry axis in two columns. The v4 candidate replaces this column with
+       ``C_phys_charge`` (Atchley AF5, electrostatic charge), orthogonal to burial at *r* = +0.008.
+       :doc:`burial` owns the selection.
    * - ``corpus``
      - ``C_corpus_thymus``
      - :func:`mhcmatch.mimicry.corpus_R` on the thymic channel — the **exact** Łuksza density over
        the TCR face, label-free. Reads as **danger**, coefficient positive. See :doc:`corpus`.
    * -
      - ``C_corpus_self``
-     - the same against the host proteome. Reads as **tolerance**, coefficient negative. The sign
-       dissociation against ``thymus`` is the evidence for the mechanism.
+     - the same against the host proteome, coefficient negative. **Not a tolerance measurement on
+       its own** — alone it is *p* = 0.69 and its marginal AUROC is below chance. It is the corpus
+       block's *background* term, the reference level the other two are read against; remove it and
+       both of them fall to non-significant. :doc:`corpus` has the subset ladder that shows this.
    * -
      - ``C_corpus_viral``
      - the same against a foreign presented ligandome — a thymocyte never sees this during
@@ -87,6 +90,106 @@ Standardisation (``mu``, ``sigma``) travels **inside** the artifact, so a caller
 score exactly. A feature you cannot supply contributes its training mean — which is what "no
 information" should do — so a candidate with no expression value is scored on the terms it has
 rather than dropped.
+
+What the coefficients are
+-------------------------
+
+Standardised, so a coefficient is the log-odds shift per standard deviation of its own column and
+the sizes are directly comparable. **This is the vendored artifact**, EPIC v3
+(``data/aggregate_mhc1.json``), fitted on 354,909 rows / 958 immunogenic over 9 screens with one
+unpenalised intercept per screen and ridge :math:`\tau` = 0.25. ``z``, ``p`` and sign stability come
+from a cluster bootstrap over **(patient, screen)** — 4,022 clusters, 400 resamples — because rows
+from one patient share tumour, HLA and run.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 14 12 12 14 28
+
+   * - term
+     - coefficient
+     - *z*
+     - *p*
+     - sign stability
+     - reading
+   * - ``expr``
+     - **+0.3474**
+     - +5.31
+     - 1.1×10⁻⁷
+     - 100 %
+     - the largest term in the model
+   * - ``binder``
+     - +0.1392
+     - +3.19
+     - 1.4×10⁻³
+     - 100 %
+     - presentation, allele-relative
+   * - ``occupancy``
+     - +0.1062
+     - +5.09
+     - 3.7×10⁻⁷
+     - 100 %
+     - groove occupancy, absolute
+   * - ``expr_missing``
+     - +0.0935
+     - +6.02
+     - 1.8×10⁻⁹
+     - 100 %
+     - which expression source the row got
+   * - ``C_corpus_thymus``
+     - +0.2459
+     - +2.52
+     - 0.012
+     - 100 %
+     - danger
+   * - ``C_corpus_self``
+     - **−0.2409**
+     - −2.75
+     - 6.0×10⁻³
+     - 100 %
+     - the block's background — see :doc:`corpus`
+   * - ``C_corpus_viral``
+     - +0.0750
+     - +0.99
+     - 0.32
+     - 86 %
+     - peripheral priming
+   * - ``C_phys_rose``
+     - +0.1012
+     - +1.19
+     - 0.23
+     - 89 %
+     - burial over the TCR face
+   * - ``C_phys_hydrop``
+     - +0.0180
+     - +0.21
+     - 0.83
+     - 62 %
+     - collinear with burial — see :doc:`burial`
+
+Two entries are doing something other than what their row suggests, and both are documented rather
+than tidied away:
+
+* ``C_phys_hydrop`` at 62 % sign stability is **not** a weak effect. It is the second half of one
+  axis that ``C_phys_rose`` already carries. Replacing it with charge is what the v4 candidate does.
+* ``C_corpus_self``'s large negative coefficient is a **background subtraction**, not tolerance.
+
+Three things this table does not say, so read them here.
+
+**A coefficient is conditional on its block being entered.** The blocks go in pipeline order, so a
+recognition coefficient is what the term is worth *after* presentation and expression. Adding the
+whole corpus block moves leave-one-screen-out mean AUROC from 0.6840 to **0.6927**, the largest gain
+of any recognition block.
+
+**No term was dropped for being small.** The rule is replace-and-recalibrate: a term with a
+mechanism stays and gets a better basis, it does not get deleted for a *p*-value. ``C_corpus_viral``
+at *p* = 0.32 stays because dropping it costs the other two channels their significance.
+
+**The candidate, for comparison.** EPIC v4 respecifies four terms — ``binder`` → ``pres``,
+``C_phys_hydrop`` → ``C_phys_charge``, the corpus kernel Hamming → BLOSUM62, and ``C_phys_rose`` →
+``C_phys_buried`` (a rename). On identical rows at identical parameter count: BIC 4215.9 →
+**4172.4**, leave-one-screen-out mean 0.6432 → **0.6602**, median 0.6182 → **0.6385**. It is not
+shipped: it carries one explained regression (ITSNdb, 149 rows) and what ships is a deliberate
+step. ``bench/results/epic_v4_fit.md``.
 
 From a score to a probability
 -----------------------------

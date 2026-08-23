@@ -220,18 +220,119 @@ the length variance was hiding it.
 Two scales, carried together
 ----------------------------
 
-Since EPIC v3 the model carries ``C_phys_rose`` **and** ``C_phys_hydrop``
+The chemistry block is **two columns, never one**. The first is always burial. The second is the
+question this section answers, because the obvious choice turns out not to be a second measurement
+at all.
+
+Burial and hydropathy are one axis
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+EPIC v3 ships ``C_phys_rose`` **and** ``C_phys_hydrop``
 (:data:`mhcmatch.complement.PHYS_SCALE_HYDROP`, Kidera KF4). Rose measures how much surface a
-residue buries on folding; KF4 measures how it partitions between water and oil. They agree at the
-extremes and disagree in the middle, and which one looks stronger depends on the corpus:
+residue buries on folding; KF4 measures how it partitions between water and oil. Those are
+different physical questions, but on real peptides they are not different numbers:
 
-* On the **neoantigen** fit, Rose carries the block (sequential *z* +3.53) and KF4 adds nothing
-  beyond it (−0.39) --- unsurprising at *r* = −0.836.
-* On the **Chowell-family** corpora, which is where a chemistry term was motivated in the first
-  place, KF4 is the stronger of the two standalone. ``bench/results/physchem_cv.md`` runs both,
-  five-fold peptide-grouped, on Chowell and Kešmir in human and mouse.
+.. list-table::
+   :header-rows: 1
+   :widths: 46 27 27
 
-Both are emitted as columns, so the pair is auditable rather than a single number with a footnote.
+   * - correlation of Rose with Kidera KF4
+     - value
+     - over
+   * - per residue, averaged scale
+     - **−0.849**
+     - the 20 residue types
+   * - per peptide, TCR-face mean
+     - **−0.837**
+     - the 354,909-row fit population
+
+The signature of that in a fit is a Wald test and a likelihood-ratio test disagreeing about the same
+block: χ² = 3.18, *p* = 0.204 against LR χ² = 11.0, *p* = 4.0×10⁻³. The block matters; neither
+column can be said to be the one that matters. Rotating the pair into principal components does not
+help — PC2 lands at AUROC 0.5014 / 0.5085, i.e. chance — because a rotation of two collinear columns
+still spans one direction.
+
+The corroboration is that the *fitted* basis had already said so. The retired 16-column chemistry
+head's own PC1 reproduces KF4 at ``r = −0.9238``: a predictor fitted freely on this data rediscovers
+hydropathy as its dominant axis, and burial is that axis measured a different way.
+
+No hydropathy scale escapes it, and they carry the cysteine artefact
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Swept over **141 complete residue scales** on the HLA-matched Chowell rebuild, every transfer-free-
+energy scale sits between ``|r| = 0.74`` and ``0.95`` of Rose. Ranked on raw AUROC the winner is
+whichever one is *closest* to burial — Casari at 0.6008, ``r = +0.9524`` with Rose. Ranked on the
+**residual** after Rose, which is the quantity that matters, nothing beats KF4. There is no better
+hydropathy scale; there is no hydropathy scale that is a second axis.
+
+There is also a reason not to want one here. The Chowell family carries a **12.5× cysteine
+enrichment** among immunogenic peptides which does not appear on the neoantigen screens, so a scale
+that loads on cysteine imports it. Every candidate scale reports its cysteine loading, and the
+spread is the point: KF4 loads **−0.1033**, Casari **+0.1861**.
+
+The second axis is charge, and it is orthogonal by measurement
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``C_phys_charge`` is **Atchley AF5**, the fifth factor of Atchley *et al.* (*PNAS* 2005,
+`doi:10.1073/pnas.0408677102 <https://doi.org/10.1073/pnas.0408677102>`_) — electrostatic charge. It is not a hydropathy scale, which is exactly why it works:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 30 30
+
+   * -
+     - Rose + Kidera KF4
+     - Rose + Atchley AF5
+   * - *r* between the two columns, per peptide
+     - −0.837
+     - **+0.008**
+   * - cysteine loading of the second scale
+     - −0.1033
+     - **+0.0056** *(lowest of 141)*
+   * - burial's bootstrap sd
+     - 0.0869
+     - **0.0486**
+   * - burial's *z* / *p*
+     - +1.85 / 0.064
+     - **+2.32 / 0.020**
+   * - burial's sign stability
+     - 98 %
+     - **100 %**
+   * - second column's sign stability
+     - 74 %
+     - **87 %**
+
+Burial's coefficient gets *smaller* and its evidence gets *stronger*, which is what removing a
+collinear partner does. The pair is orthogonal without any rotation, so the two columns keep their
+physical names.
+
+Charge is also the axis a structure argues for. In the MART-1 decamer ELAGIGILTV the P1 glutamate
+contacts germline TCR α CDR1 in **eight of nine** native complexes — a positive Arg partner in three
+at close range, down to 2.71 Å in 3QDM, and a polar Gln partner in six (3.05–4.25 Å). Several other
+charged epitopes in the same set behave the same way. A charged TCR-facing residue is read *as
+charge*, by a germline element, and burial has nothing to say about it.
+
+What it costs, recorded
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Charge transfers across species **worse** than burial does: human→mouse 0.554 and mouse→human 0.539,
+against Rose's 0.581 and 0.579. And on the Chowell family AF5 is the weaker marginal column
+(0.528 / 0.550 / 0.536 against Rose's 0.641 / 0.579 / 0.618) — though on ``kesmir_vanilla`` mouse it
+is the **strongest** chemistry column measured, 0.576 against 0.519 and 0.481.
+
+Which ships
+~~~~~~~~~~~
+
+**EPIC v3, the vendored artifact, carries Rose + KF4.** Rose + AF5 is the measured v4 candidate:
+BIC 4173.3 → 4172.4, leave-one-screen-out mean 0.6583 → 0.6602, median and both cross-validations
+0.6309 → 0.6385. The library computes **all four keys** — ``C_phys_rose``, ``C_phys_buried``,
+``C_phys_hydrop``, ``C_phys_charge`` — from :data:`mhcmatch.rank.PHYS_COLUMNS`, and
+``aggregate_score`` reads only the names the artifact's own ``features`` list asks for. So one
+library scores either version with no branch, and a recorded number stays readable under the name it
+was produced with.
+
+Both columns of whichever pair is in force are emitted, so the block is auditable rather than a
+single number with a footnote.
 
 :func:`mhcmatch.complement.score` grew ``mask_cys=`` for the same reason —
 :mod:`mhcmatch.posbayes` masks cysteine by construction and this module never did. It is off by
