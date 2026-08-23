@@ -139,20 +139,17 @@ mhcmatch build corpus -v    # one target, with per-step wall clock
 - **A new shipped artifact is not done until it has a `build` target and a `PROVENANCE.md` entry.**
 - Inputs bootstrap from HuggingFace (`isalgo/pmhc_data`), never a local `~/hf/...` or
   `~/vcs/projects/...` path.
-- **`aggregate_mhc1.json` (the EPIC scorer) has no `build` target yet, and this is the open loop.**
-  Not for want of data: all four labelled deposits it is fitted on are already published at
-  `isalgo/pmhc_data/neoantigens/` (`neoag_tested.tsv.gz` 321,825 rows, `neoantigens_tested_peptides.tsv.gz`
-  31,804, `neoag_tested_mmu.tsv.gz` 866, `neoag_tested_hsa.tsv.gz` 414), and of the fit frame's 47
-  columns only **28 are irreducible** — 4.7 MB of parquet — while the other 19 are computed by
-  mhcmatch itself. What is missing is that the assembly, the feature build and the fit live in the
-  benchmark repo (`corpus_grand.py` -> `grand_corpus.py` -> `grand_ship.py`) and the artifact is
-  hand-copied across. That hand-copy is how the GRAND -> EPIC rename reached the artifact but not its
-  generator. Closing it needs the chain moved into `_build.py` **and** the binder pass batched: it
-  was recorded at 338,319 of 363,324 pairs in 1,314 s. **That number does not mean what it was read
-  to mean** (re-measured 2026-08-23): `binder_score` on a warm allele is 82,201 pair/s, i.e. 4.4 s
-  for all 363,324 pairs. The cost is per-allele calibrator construction -- 0.95 s cold x 203
-  alleles, per worker -- plus `Store.from_pmhc` at 4.5 s per worker per host. Batch the calibrator
-  builds, not the peptide loop.
+- **`aggregate_mhc1.json` (the EPIC scorer) builds like everything else, since 0.27.0.**
+  `bench/immuno/epic_v4_fit.py --physchem rose_af5` writes the artifact straight into the library
+  checkout, and `bench/run_epic.sh` is the whole chain that leads to it -- deposits, features, Kd,
+  Chowell, kernel grid, fit, corpus ladder, chemistry arms, selection, then the manuscript tables.
+  Stage 0 gates on `mhcmatch --version` matching the checkout's `pyproject.toml`; that flag did not
+  exist until 0.27.0, so the chain had never run past stage 0. The hand-copy that let the
+  GRAND -> EPIC rename reach the artifact but not its generator is gone with it.
+  The binder pass is **not** the cost to optimise: `binder_score` on a warm allele is 82,201 pair/s,
+  i.e. 4.4 s for all 363,324 pairs. The 1,314 s is per-allele calibrator construction -- 0.95 s cold
+  x 203 alleles, per worker -- plus `Store.from_pmhc` at 4.5 s per worker per host. Batch the
+  calibrator builds, not the peptide loop.
 - On a version bump, regenerate rather than reasoning about whether it matters, then *verify* the
   scores did not move. Both existing builders are instrumented for this: `corpus_tables` prints
   `** MOVED **` for any cell that changed, and the anchor rebuild is checked against the previous

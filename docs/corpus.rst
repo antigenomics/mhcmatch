@@ -28,22 +28,22 @@ fitted signs before anything is estimated.
    * - channel
      - what a T cell does with it
      - reads as
-     - shipped coefficient (EPIC v3)
+     - shipped coefficient (EPIC v4)
    * - ``thymus``
      - The thymic immunopeptidome --- self displayed on MHC in the thymus. **The only one of the
        three that enters selection.**
      - danger
-     - ``+0.2459`` (*z* +2.52)
+     - ``+0.1552`` (*z* +2.27)
    * - ``self``
      - The host proteome. Encoded, with no guarantee of presentation; the self a mature T cell meets
        in the periphery, where tolerance is maintained rather than established.
      - the block's background, not tolerance --- see below
-     - ``-0.2409`` (*z* -2.75)
+     - ``-0.2697`` (*z* -3.16)
    * - ``viral``
      - A foreign presented ligandome. **A thymocyte never sees this during selection.** A hit is
        about peripheral priming --- a different mechanism.
      - reference only
-     - ``+0.0750`` (*z* +0.99)
+     - ``+0.1456`` (*z* +1.69)
 
 Why the thymic channel is positive
 ----------------------------------
@@ -288,7 +288,8 @@ a second multi-gigabyte index.
 All three channels, and why all three are scored
 -------------------------------------------------
 
-``components=`` selects the channels, and since EPIC v3 the shipped aggregate reads **all three**.
+``components=`` selects the channels, and since EPIC v3 the shipped aggregate reads **all three**;
+since v4 it reads them under the graded BLOSUM62 kernel.
 
 .. code-block:: python
 
@@ -306,7 +307,7 @@ The three are **not independent**, and the next section is what that turns out t
 ``self`` is the block's background term, not a third measurement
 -----------------------------------------------------------------
 
-``C_corpus_self`` fits at **−0.2697** (*z* −3.11, *p* = 1.9×10⁻³) while its own marginal AUROC is
+``C_corpus_self`` fits at **−0.2697** (*z* −3.16, *p* = 1.6×10⁻³) while its own marginal AUROC is
 **0.4662**, below chance. A large, highly significant coefficient on a column that predicts nothing
 by itself has two readings, and they matter for how the score should be explained to a user:
 

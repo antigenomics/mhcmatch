@@ -279,8 +279,8 @@ def test_aggregate_artifact_is_self_consistent():
         assert 1e-6 < a["sigma"][a["features"].index(c)] < 1e-2
 
 
-def test_aggregate_score_is_monotone_in_binder_and_refuses_a_subset():
-    """Higher binder ranks higher, and a model that was handed 4 of its 9 features does not score.
+def test_aggregate_score_is_monotone_in_presentation_and_refuses_a_subset():
+    """Higher presentation ranks higher, and a model handed 4 of its 9 features does not score.
 
     Until 0.20.0 a missing column became the training mean. That reads as "no information" and is
     not: after standardization it contributes ``coef * 0`` to *every* candidate, so the feature is
@@ -291,13 +291,13 @@ def test_aggregate_score_is_monotone_in_binder_and_refuses_a_subset():
     import math
 
     full = {f: [0.0] * 3 for f in R.AGGREGATE_FEATURES}
-    full["binder"] = [2.0, 0.1, -1.0]
+    full["pres"] = [2.0, 0.1, -1.0]
     s = R.aggregate_score(full)
     assert all(math.isfinite(v) for v in s)
     assert s[0] > s[1] > s[2]
 
     with pytest.raises(ValueError, match="were not supplied"):
-        R.aggregate_score({"binder": [2.0, 0.1, -1.0]})
+        R.aggregate_score({"pres": [2.0, 0.1, -1.0]})
 
     # a non-finite value in a SUPPLIED column is one candidate with incomplete data, not a
     # different model: it takes the training mean and the row is required to say so.
@@ -314,19 +314,21 @@ def test_aggregate_carries_the_fit_provenance_a_reader_needs():
     # MHC genus, CEDAR and Gfeller held out.
     assert a["fit"]["rows"] == 354909 and a["fit"]["positives"] == 958
     assert len(a["fit"]["screens"]) == 9
-    assert a["generator"].endswith("grand_ship.py")
+    assert a["generator"].endswith("epic_v4_fit.py")
     # every screen is held out in turn and scored with the mean intercept -- what a new cohort gets
     assert a["fit"]["holdout"] == "leave-one-screen-out"
     assert len(a["fit"]["loo"]) == len(a["fit"]["screens"])
     # the corpus term's construction travels with the coefficient: a different mask, k-mer width
     # or decay is a different axis, and the standardizer would not transfer to it
-    assert a["corpus_mask"] == "tcr5" and a["corpus_k"] == 3
+    assert a["corpus_mask"] == "slice" and a["corpus_k"] == 3
+    # and the kernel, which is the v4 change: a graded BLOSUM62 contraction, not Hamming
+    assert a["corpus_kernel"] == "blosum62_normalised"
     # there is no search any more, so there is no radius to record
     assert "corpus_radius" not in a
     # one kappa per component, not a (kappa, a0) pair: a0 is retired
     assert set(a["corpus_shapes"]) == {"thymus", "self", "viral"}
     assert all(isinstance(v, float) for v in a["corpus_shapes"].values())
-    assert a["phys_scale"] == "Rose" and a["phys_scale_hydrop"] == "KIDERA:KF4"
+    assert a["phys_scale"] == "Rose" and a["phys_scale_charge"] == "ATCHLEY:AF5"
     # C_phys is the per-residue mean; the summed form was 91% peptide-length variance
     assert a["phys_per_residue"] is True
     # the hierarchy the fit was run as travels too, so a consumer need not re-derive the grouping
@@ -442,12 +444,12 @@ def test_default_score_is_the_fitted_aggregate_not_the_gate():
     from mhcmatch import complement
     from mhcmatch.rank import CHANNEL_COLUMNS, Ranked, _finish, aggregate, aggregate_score
     chan = dict(CHANNELS)
-    rows = [Ranked(peptide="SIINFEKL", allele="H2-Kb", binder=2.0, occupancy=0.9,
+    rows = [Ranked(peptide="SIINFEKL", allele="H2-Kb", presentation=2.0, binder=2.0, occupancy=0.9,
                    physchem=1.5, expression=3.0, components=dict(chan)),
-            Ranked(peptide="SIINFEKV", allele="H2-Kb", binder=0.1, occupancy=0.01,
+            Ranked(peptide="SIINFEKV", allele="H2-Kb", presentation=0.1, binder=0.1, occupancy=0.01,
                    physchem=-1.0, expression=0.5, components=dict(chan))]
     out = _finish([Ranked(**vars(r)) for r in rows], None)
-    want = aggregate_score({"binder": [2.0, 0.1], "occupancy": [0.9, 0.01],
+    want = aggregate_score({"pres": [2.0, 0.1], "occupancy": [0.9, 0.01],
                             "expr": [3.0, 0.5], "expr_missing": [0.0, 0.0],
                             **{c: complement.burial(["SIINFEKL", "SIINFEKV"], scale=sc)
                                for c, sc in R.PHYS_COLUMNS.items()},

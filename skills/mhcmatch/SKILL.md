@@ -124,7 +124,7 @@ still wants; `integrations/nextflow/mhcmatch/slurm.config` exports both.
 recognition coefficient is what it is worth *after* presentation and expression. Vendored at
 `data/aggregate_mhc1.json`; `mhcmatch rank` scores with it by default. 354,909 rows / 958 positive /
 9 screens, per-screen intercept, `tau = 0.25`. **Leave-one-screen-out median AUROC 0.6500, mean
-0.6927** — better than v2 on 7 of 9 held-out screens (`bench/results/grand_versions.md`).
+0.6927** — better than v2 on 7 of 9 held-out screens (`bench/results/epic_versions.md`).
 
 | block | term | coefficient | z | sequential z |
 |---|---|--:|--:|--:|

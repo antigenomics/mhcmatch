@@ -195,11 +195,10 @@ TARGETS = {
 #: generator on record, and ``build`` says so rather than inventing one.
 EXTERNAL = {
     "recognition": "uv run tools/build_recognition.py",
-    # `aggregate_mhc1.json`'s own `generator` field. This is the standing open loop: the chain
-    # (corpus_grand.py -> grand_corpus.py -> grand_ship.py) lives in the benchmark repo and the
-    # artifact is hand-copied across, which is how the GRAND -> EPIC rename reached the artifact
-    # but not its generator. See CLAUDE.md.
-    "aggregate": "python bench/immuno/grand_ship.py            # benchmark repo",
+    # `aggregate_mhc1.json`'s own `generator` field. The fit writes this file directly into the
+    # library checkout, so the hand-copy that let the GRAND -> EPIC rename reach the artifact but
+    # not its generator is gone. `bench/run_epic.sh` runs the whole chain that leads to it.
+    "aggregate": "python bench/immuno/epic_v4_fit.py --physchem rose_af5   # benchmark repo",
     "affinity": "python bench/affinity/train.py --cls mhc1 --species human   # benchmark repo",
     "potts": "python bench/affinity/fit_potts.py --cls mhc1    # and --cls mhc2; benchmark repo",
     "complement1": "python bench/neoag/complement.py --fit chowell_rebuilt --tables all",

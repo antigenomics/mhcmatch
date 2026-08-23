@@ -435,7 +435,7 @@ PHYS_SCALE = "Rose"
 #: extremes and disagree in the middle, which is why the fit wants both: on the neoantigen corpus
 #: Rose carries the larger coefficient and KF4 keeps an independent one, and on the Chowell-family
 #: corpora KF4 is the stronger of the two standalone. Whichever is dropped, the other does not
-#: recover it. See ``bench/results/physchem_cv.md`` and ``bench/results/grand_corpus.md``.
+#: recover it. See ``bench/results/physchem_cv.md`` and ``bench/results/epic_recognition_terms.md``.
 PHYS_SCALE_HYDROP = "KIDERA:KF4"
 
 

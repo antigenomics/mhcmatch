@@ -6,6 +6,49 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [0.27.0] - 2026-08-23
+
+### Changed
+
+- **The shipped scorer is EPIC v4.** `data/aggregate_mhc1.json` carries `"version": 4`, and four of
+  the nine terms are respecified rather than refitted:
+
+  | v3 | v4 | why |
+  |---|---|---|
+  | `binder` | `pres` | `binder` Fisher-combined the presentation `%rank` with the affinity rank, and `occupancy` already carries affinity at Spearman −1.000000 against `kd_mt`. `pres` is the presentation rank alone. |
+  | `C_phys_rose` | `C_phys_buried` | rename; the Rose 1985 scale *is* mean fractional area loss |
+  | `C_phys_hydrop` | `C_phys_charge` | Kidera KF4 is burial measured a second way (r = −0.837 per peptide) and the pair was not identified. Atchley AF5 is orthogonal by measurement, r = +0.008. |
+  | corpus kernel | Hamming → BLOSUM62 | identity-normalised, `K[u,x] = exp(κ(S[u,x] − S[u,u]))`, k = 3, sliced face |
+
+  On 354,909 rows and 958 immunogenic peptides over nine screens: BIC 4172.4, leave-one-screen-out
+  mean AUROC **0.6602** and median **0.6385**, twin-grouped five-fold cross-validation over the
+  whole database **0.6385**. Seven of the nine screens rank higher held out than under v3, by
+  +0.0018 (IEDB-neoag) to +0.0539 (VACCIMEL). ITSNdb falls 0.6500 → 0.6309 on 149 rows with 89
+  positives, and NCI, which has six held-out positives and does not decide, falls 0.8528 → 0.8263.
+
+  **Nothing is deleted.** `aggregate_score` reads only the names the artifact's own `features` list
+  asks for, and `rank._finish` supplies the union, so a v3 artifact still scores under this library
+  and `binder`, `C_phys_rose` and `C_phys_hydrop` are still computed and emitted. A recorded v3
+  number keeps its meaning.
+
+### Added
+
+- **`mhcmatch --version`.** `bench/run_epic.sh` stage 0 gates the whole reproduction on the
+  installed version matching the checkout's `pyproject.toml`, and read it from this flag. There was
+  no such flag, so `grep` found nothing, `pipefail` propagated, and the chain stopped at stage 0
+  looking like a clean exit.
+
+### Fixed
+
+- **`build aggregate` has a real generator.** `bench/immuno/epic_v4_fit.py` writes the artifact into
+  the library checkout directly, so the hand-copy that let the GRAND → EPIC rename reach the
+  artifact but not its generator is gone. `mhcmatch build` prints the command; `bench/run_epic.sh`
+  runs the chain that leads to it.
+- **Two schema drifts in the artifact.** v4 moved `fit.loo` to the top level and turned `blocks`
+  from a list of pairs into a dict — a consumer reading `a["fit"]["loo"]` broke, and one reading
+  `[b[0] for b in a["blocks"]]` silently got the first letter of each key. Both shapes are restored,
+  and `phys_scale_charge` names the second chemistry scale that is actually fitted.
+
 ## [Unreleased]
 
 ## [0.26.0] - 2026-08-22

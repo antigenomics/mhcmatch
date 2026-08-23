@@ -84,7 +84,7 @@ for the first time.
 The predecessor, **BOECRT**, carried the 30-column :func:`mhcmatch.complement.score` as ``C``, the
 Łuksza ``viral_R`` as ``R`` and the three TCR-face mimicry densities as ``T``. ``luksza.viral_r``
 and ``complement.score`` still ship and are still computable; they are no longer terms of the
-shipped model. Every alternative is re-measured in ``bench/results/grand_corpus.md``.
+shipped model. Every alternative is re-measured in ``bench/results/epic_recognition_terms.md``.
 
 Standardisation (``mu``, ``sigma``) travels **inside** the artifact, so a caller reproduces the
 score exactly. A feature you cannot supply contributes its training mean — which is what "no
@@ -95,7 +95,7 @@ What the coefficients are
 -------------------------
 
 Standardised, so a coefficient is the log-odds shift per standard deviation of its own column and
-the sizes are directly comparable. **This is the vendored artifact**, EPIC v3
+the sizes are directly comparable. **This is the vendored artifact**, EPIC v4
 (``data/aggregate_mhc1.json``), fitted on 354,909 rows / 958 immunogenic over 9 screens with one
 unpenalised intercept per screen and ridge :math:`\tau` = 0.25. ``z``, ``p`` and sign stability come
 from a cluster bootstrap over **(patient, screen)** — 4,022 clusters, 400 resamples — because rows
@@ -112,65 +112,68 @@ from one patient share tumour, HLA and run.
      - sign stability
      - reading
    * - ``expr``
-     - **+0.3474**
-     - +5.31
-     - 1.1×10⁻⁷
+     - **+0.3315**
+     - +4.93
+     - 8.3×10⁻⁷
      - 100 %
      - the largest term in the model
-   * - ``binder``
-     - +0.1392
-     - +3.19
-     - 1.4×10⁻³
+   * - ``pres``
+     - +0.2376
+     - +6.46
+     - 1.0×10⁻¹⁰
      - 100 %
-     - presentation, allele-relative
+     - presentation ``%rank``, allele-relative
    * - ``occupancy``
-     - +0.1062
-     - +5.09
-     - 3.7×10⁻⁷
+     - +0.1164
+     - +6.42
+     - 1.3×10⁻¹⁰
      - 100 %
      - groove occupancy, absolute
    * - ``expr_missing``
-     - +0.0935
-     - +6.02
-     - 1.8×10⁻⁹
+     - +0.1044
+     - +6.54
+     - 6.3×10⁻¹¹
      - 100 %
      - which expression source the row got
    * - ``C_corpus_thymus``
-     - +0.2459
-     - +2.52
-     - 0.012
-     - 100 %
+     - +0.1552
+     - +2.27
+     - 0.023
+     - 99 %
      - danger
    * - ``C_corpus_self``
-     - **−0.2409**
-     - −2.75
-     - 6.0×10⁻³
+     - **−0.2697**
+     - −3.16
+     - 1.6×10⁻³
      - 100 %
      - the block's background — see :doc:`corpus`
    * - ``C_corpus_viral``
-     - +0.0750
-     - +0.99
-     - 0.32
-     - 86 %
+     - +0.1456
+     - +1.69
+     - 0.092
+     - 96 %
      - peripheral priming
-   * - ``C_phys_rose``
-     - +0.1012
-     - +1.19
-     - 0.23
-     - 89 %
+   * - ``C_phys_buried``
+     - +0.1129
+     - +2.32
+     - 0.020
+     - 100 %
      - burial over the TCR face
-   * - ``C_phys_hydrop``
-     - +0.0180
-     - +0.21
-     - 0.83
-     - 62 %
-     - collinear with burial — see :doc:`burial`
+   * - ``C_phys_charge``
+     - −0.0584
+     - −1.11
+     - 0.266
+     - 87 %
+     - charge — see :doc:`burial`
 
 Two entries are doing something other than what their row suggests, and both are documented rather
 than tidied away:
 
-* ``C_phys_hydrop`` at 62 % sign stability is **not** a weak effect. It is the second half of one
-  axis that ``C_phys_rose`` already carries. Replacing it with charge is what the v4 candidate does.
+* ``C_phys_charge`` at *p* = 0.266 is **not** a failed term, and its own *p* is not the statistic
+  to read on it. It earns its place by what it does to its partner: burial beside Kidera KF4 was
+  not identified (one axis at r = −0.837, burial *p* = 0.064), and beside charge (r = +0.008)
+  burial's standard error halves and it resolves at *p* = 0.0202 on a smaller coefficient. Charge's
+  own sign stability rises to 87 % from KF4's 74 %. See :doc:`burial`.
 * ``C_corpus_self``'s large negative coefficient is a **background subtraction**, not tolerance.
 
 Three things this table does not say, so read them here.
@@ -368,9 +371,10 @@ Reading the output
 
 ``score`` is the aggregate; higher is better. ``rank`` is that score as a dense 1-based integer and
 ``p_response`` is it on a probability axis at ``--prevalence`` (above). Every one of the model's
-nine features is a column, because a row should report what produced it: ``binder``, ``occupancy``,
-``expression`` (with ``expr_imputed``), the two chemistry scales ``C_phys_rose`` and
-``C_phys_hydrop``, and the three corpus channels ``C_corpus_thymus`` / ``_self`` / ``_viral``.
+nine features is a column, because a row should report what produced it: ``pres``, ``occupancy``,
+``expression`` (with ``expr_imputed``), the two chemistry scales ``C_phys_buried`` and
+``C_phys_charge``, and the three corpus channels ``C_corpus_thymus`` / ``_self`` / ``_viral``.
+``binder``, ``C_phys_rose`` and ``C_phys_hydrop`` are emitted too, so a v3 record stays readable.
 ``agretopicity``, ``physchem``, ``variant_type`` and
 ``n_alleles_presenting`` / ``alleles_presenting`` are reported beside them and are **not** in the
 model.
@@ -454,7 +458,7 @@ Limits
 * **The retired mimicry terms were not established in direction.** ``viral_tcr`` and ``thymus_tcr``
   flip sign in 22 % and 35 % of bootstrap resamples. They were in ``BOECRT``; they were not
   evidence, and ``EPIC`` does not carry them. Its own sign stabilities are in
-  ``bench/results/grand_corpus.md``.
+  ``bench/results/epic_recognition_terms.md``.
 * **The prior is a property of your candidate pool, not of biology.** The fitted prevalence is
   0.31 %, which is how these screens were assembled. Supply your own.
 * ``--score gate`` reproduces the pre-0.19.0 ordering if you need to compare against an earlier run.

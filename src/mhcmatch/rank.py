@@ -136,17 +136,17 @@ _AGG: dict | None = None
 #: The features the shipped aggregate expects, in order. Read it rather than typing the list --
 #: ``O`` replaced ``D`` in 0.19.0, the four recognition columns collapsed to two in 0.21.0, and a
 #: hardcoded copy of this tuple would have gone stale silently either time.
-AGGREGATE_FEATURES: tuple = ("binder", "occupancy", "expr", "expr_missing",
-                             "C_phys_rose", "C_phys_hydrop",
+AGGREGATE_FEATURES: tuple = ("pres", "occupancy", "expr", "expr_missing",
+                             "C_phys_buried", "C_phys_charge",
                              "C_corpus_thymus", "C_corpus_self", "C_corpus_viral")
 #: The hierarchy the aggregate was fitted as, in pipeline order. Blocks are entered one on top of
 #: the last, so a recognition coefficient is what it is worth **after** presentation and expression
-#: rather than in competition with them. Reported by ``bench/results/grand_corpus.md``; carried here
+#: rather than in competition with them. Reported by ``bench/results/epic_recognition_terms.md``; carried here
 #: because a consumer grouping the emitted columns should not have to re-derive the grouping.
 AGGREGATE_BLOCKS: tuple = (
-    ("presentation", ("binder", "occupancy")),
+    ("presentation", ("pres", "occupancy")),
     ("expression", ("expr", "expr_missing")),
-    ("physchem", ("C_phys_rose", "C_phys_hydrop")),
+    ("physchem", ("C_phys_buried", "C_phys_charge")),
     ("corpus", ("C_corpus_thymus", "C_corpus_self", "C_corpus_viral")),
 )
 
@@ -161,23 +161,27 @@ def aggregate() -> dict:
     same coefficients: ``"version": 3`` is unchanged, ``"former_name"`` records the old name, and
     every recorded result under the old name is a result about this model. Renamed in 0.25.0.
 
-    Fitted by ``bench/immuno/grand_corpus.py`` over nine neoantigen screens (354,909 rows / 958
-    positive) as a partially-pooled logistic regression with a **per-screen intercept**; the
-    standardizer is emitted alongside by ``bench/immuno/grand_ship.py``.
+    Fitted by ``bench/immuno/epic_v4_fit.py`` over nine neoantigen screens (354,909 rows / 958
+    positive) as a ridge logistic regression with an unpenalised **per-screen intercept**, which
+    also writes this file; ``bench/run_epic.sh`` is the whole chain that leads to it.
 
-    **Version 3 is hierarchical and Complementarity is kept whole.** The nine columns enter in four
+    **Version 4 is hierarchical and Complementarity is kept whole.** The nine columns enter in four
     blocks, in pipeline order, each on top of the last -- see :data:`AGGREGATE_BLOCKS`. A
     recognition coefficient is therefore what the term is worth *after* presentation and expression,
     not in competition with them.
 
-    * ``presentation`` -- ``binder``, ``occupancy``.
+    * ``presentation`` -- ``pres`` (the presentation ``%rank`` alone) and ``occupancy``. v3's
+      ``binder`` folded the affinity rank in a second time, where ``occupancy`` already carries it
+      at Spearman -1.000000 against ``kd_mt``.
     * ``expression`` -- ``expr`` (``log1p`` of TPM), ``expr_missing``.
-    * ``physchem`` -- ``C_phys_rose`` and ``C_phys_hydrop``, :func:`mhcmatch.complement.burial` over
-      the TCR face on the Rose burial propensity and on Kidera KF4 hydropathy. Imported scales, so
-      **zero fitted residue parameters**; ``C_phys_rose`` carries a cysteine loading of +0.108
-      against the retired 30-column ``complement`` block's +0.693. The two are carried together
-      because they measure different things -- surface buried on folding against water/oil
-      partition -- and which is stronger depends on the corpus.
+    * ``physchem`` -- ``C_phys_buried`` and ``C_phys_charge``, :func:`mhcmatch.complement.burial`
+      over the TCR face on the Rose burial propensity and on Atchley AF5 electrostatic charge.
+      Imported scales, so **zero fitted residue parameters**; burial carries a cysteine loading of
+      +0.108 against the retired 30-column ``complement`` block's +0.693, and charge's is +0.0056,
+      the lowest of 141 scales swept. Kidera KF4 was the second column through v3 and is dropped:
+      it is burial measured a different way, r = -0.837 per peptide, and the pair was not
+      identified. Charge is orthogonal by measurement, r = +0.008. ``C_phys_rose`` and
+      ``C_phys_hydrop`` are still computed and emitted so a v3 record stays readable.
     * ``corpus`` -- ``C_corpus_thymus``, ``C_corpus_self``, ``C_corpus_viral``,
       :func:`mhcmatch.mimicry.corpus_R` against three reference corpora, split by *when a T cell
       meets them*. The thymic immunopeptidome is a biased sample of self -- mTECs express
@@ -185,12 +189,14 @@ def aggregate() -> dict:
       purging -- so similarity to it reads as **danger** and its coefficient is positive, while
       ``self`` (the periphery) reads as tolerance and is negative.
 
-    **Two definitional changes from v2, both in the corpus term.** It is now the *exact* Luksza
-    sum, evaluated as a k-mer table contraction rather than a radius-2 trie walk that captured a
-    median 0.4999 of it; and it is computed for every row rather than read from a peptide-keyed
-    cache whose query set never contained three of the nine screens. ``C_corpus_missing`` went with
-    that cache -- there is no gap left to flag, so the column would be identically zero.
-    ``bench/results/corpus_exact.md``.
+    **The corpus channels are the exact Luksza sum under a graded kernel.** Evaluated as a k-mer
+    table contraction rather than the radius-2 trie walk that captured a median 0.4999 of it, and
+    computed for every row rather than read from a peptide-keyed cache whose query set never
+    contained three of the nine screens. Since v4 the kernel is identity-normalised BLOSUM62,
+    ``K[u,x] = exp(kappa (S[u,x] - S[u,u]))``, at k = 3 over the sliced face -- held-out mean 0.6452
+    against 0.6440 for Hamming under an identical kappa-refit. ``C_corpus_missing`` went with the
+    cache -- there is no gap left to flag, so the column would be identically zero.
+    ``bench/results/corpus_exact.md`` and ``epic_corpus_kernel.md``.
 
     **An aggregate score is cheap and stays cheap.** ``BOECRT`` needed the host-proteome reference
     index -- 6 min 15 s and ~7.5 GB, the largest single cost in the package -- because ``self_tcr``

@@ -757,18 +757,20 @@ def test_the_artifact_defines_the_corpus_geometry_not_a_module_default():
     """
     import numpy as np
 
-    g = mimicry.corpus_geometry()                    # the shipped artifact
+    g = mimicry.corpus_geometry()                    # the shipped artifact: v4, graded
     assert g["k"] == mimicry.CORPUS_K
     assert g["mask"] == "slice"                      # v3 spells it "tcr5"; same face
-    assert g["family"] == "hamming" and g["kernel"] is None
-
-    v4 = {"corpus_k": 3, "corpus_mask": "slice", "corpus_kernel": "blosum62_normalised",
-          "corpus_shapes": {"thymus": 1.65, "self": 0.65, "viral": 1.35}}
-    g4 = mimicry.corpus_geometry(v4)
-    assert g4["family"] == "blosum62_normalised"
-    K = g4["kernel"](1.65)
+    assert g["family"] == "blosum62_normalised"
+    K = g["kernel"](1.65)
     assert K.shape == (20, 20) and (K.diagonal() == 1.0).all()
-    assert mimicry.corpus_shapes(v4) == {"thymus": 1.65, "self": 0.65, "viral": 1.35}
+
+    # and a v3 artifact still reads, which is the point: the geometry is the artifact's, not a
+    # module constant, so one library scores either version with no branch.
+    v3 = {"corpus_k": 3, "corpus_mask": "tcr5",
+          "corpus_shapes": {"thymus": 3.0, "self": 5.0, "viral": 8.0}}
+    g3 = mimicry.corpus_geometry(v3)
+    assert g3["family"] == "hamming" and g3["kernel"] is None
+    assert mimicry.corpus_shapes(v3) == {"thymus": 3.0, "self": 5.0, "viral": 8.0}
 
     wild = mimicry.corpus_geometry({"corpus_k": 4, "corpus_mask": "wildcard",
                                     "corpus_kernel": "blosum62_raw"})

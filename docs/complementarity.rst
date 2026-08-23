@@ -373,7 +373,7 @@ In the ``BOECRT`` aggregate this whole page was the ``C`` term — coefficient *
 ``EPIC`` replaced it in 0.21.0 with the two factors it reduces to: ``C_phys`` at **+0.2579**, z
 **+4.30** (:doc:`burial`) and ``C_corpus_thymus`` at **+0.1871**, z **+5.48** with its missing flag
 at **−0.3510**, z **−3.96** (:doc:`corpus`), over 354,909 rows and 958 positives at BIC 4160.1
-(``bench/results/grand_corpus.md``, and :doc:`neoantigen` for the shipped model end to end). The
+(``bench/results/epic_recognition_terms.md``, and :doc:`neoantigen` for the shipped model end to end). The
 thirty-column score is still what :func:`mhcmatch.recognition.score` uses when no head is named; it
 is no longer a term of the ranker.
 

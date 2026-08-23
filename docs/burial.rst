@@ -227,7 +227,7 @@ at all.
 Burial and hydropathy are one axis
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-EPIC v3 ships ``C_phys_rose`` **and** ``C_phys_hydrop``
+EPIC v3 shipped ``C_phys_rose`` **and** ``C_phys_hydrop``
 (:data:`mhcmatch.complement.PHYS_SCALE_HYDROP`, Kidera KF4). Rose measures how much surface a
 residue buries on folding; KF4 measures how it partitions between water and oil. Those are
 different physical questions, but on real peptides they are not different numbers:
@@ -270,8 +270,22 @@ enrichment** among immunogenic peptides which does not appear on the neoantigen 
 that loads on cysteine imports it. Every candidate scale reports its cysteine loading, and the
 spread is the point: KF4 loads **−0.1033**, Casari **+0.1861**.
 
-The second axis is charge, and it is orthogonal by measurement
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The second axis is charge, and what it buys is burial's stability
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The column being fixed here is **burial**, not the one being swapped in. Beside a collinear partner
+burial's coefficient is inflated and its standard error with it; beside an orthogonal one both come
+down and the evidence goes up. AF5's own coefficient in the model is small and its own *p* is not
+the statistic to read on it.
+
+What AF5 has to be is two things, and it is both. **Orthogonal to burial** — r = +0.008 per
+peptide, where every one of the 39 transfer scales swept sits at 0.74 to 0.95. And **carrying its
+own signal**, so that the second slot holds a measurement rather than noise: on the selection
+corpora it is above chance everywhere (0.528 / 0.550 / 0.536 across the Chowell arms) and it is the
+**strongest of the three chemistry columns** on ``kesmir_vanilla`` mouse at 0.576, against Rose's
+0.519 and KF4's 0.481 — the corpus where the contrast is not confounded by self versus non-self.
+An orthogonal axis that were merely noise would stabilise burial too, and would deserve none of the
+slot.
 
 ``C_phys_charge`` is **Atchley AF5**, the fifth factor of Atchley *et al.* (*PNAS* 2005,
 `doi:10.1073/pnas.0408677102 <https://doi.org/10.1073/pnas.0408677102>`_) — electrostatic charge. It is not a hydropathy scale, which is exactly why it works:
@@ -289,27 +303,41 @@ The second axis is charge, and it is orthogonal by measurement
    * - cysteine loading of the second scale
      - −0.1033
      - **+0.0056** *(lowest of 141)*
-   * - burial's Laplace sd / *z*
-     - 0.0823 / +1.96
-     - **0.0485 / +2.33**
+   * - burial's coefficient
+     - +0.1609
+     - +0.1129
+   * - burial's bootstrap sd
+     - 0.0869
+     - **0.0486**
+   * - burial's *z* / *p*
+     - +1.85 / 0.064
+     - **+2.32 / 0.0202**
+   * - burial's sign stability
+     - 98 %
+     - **100 %**
+   * - second column's sign stability
+     - 74 %
+     - **87 %**
    * - BIC
      - 4173.3
      - **4172.4**
-   * - leave-one-screen-out mean
-     - 0.6583
-     - **0.6602**
+   * - leave-one-screen-out mean / median
+     - 0.6583 / 0.6309
+     - **0.6602 / 0.6385**
+   * - CV, grouped on peptide / twin
+     - 0.6307 / 0.6309
+     - **0.6386 / 0.6385**
+   * - held-out verdict
+     - 2i/4t/1r
+     - **3i/3t/1r**
 
 Burial's coefficient gets *smaller* and its evidence gets *stronger*, which is what removing a
-collinear partner does. The pair is orthogonal without any rotation, so the two columns keep their
-physical names. (The screening statistic above is the Laplace ``|z|``, which is what
-``bench/results/epic_physchem_arms.md`` records for every arm; a 400-resample cluster bootstrap
-costs 290 s per arm and is run only for the arm that is selected.)
+collinear partner does — the standard error halves, and the collinearity is gone. The pair is
+orthogonal without any rotation, so the two columns keep their physical names.
 
-**KF4 is dropped, and the shipped chemistry block is Rose + AF5.** Its bootstrapped statistics, from
-the same 400 resamples of *(patient, screen)* clusters as every other v4 term: burial **+0.1129**,
-sd 0.0486, *z* **+2.32**, *p* **0.0202**, sign stability **99.5 %**; charge −0.0584, sd 0.0525,
-*z* −1.11, *p* 0.266, 87 %. Charge is not individually resolved and is not meant to be --- it earns
-its place by what it does to its partner.
+**Rose + AF5 is what ships.** 354,909 rows / 958 positives over nine screens, 400 cluster
+bootstraps. KF4 stays in :data:`mhcmatch.rank.PHYS_COLUMNS` and is still computed and emitted, so
+every number recorded under the KF4 arm keeps its meaning.
 
 Charge is also the axis a structure argues for. In the MART-1 decamer ELAGIGILTV the P1 glutamate
 contacts germline TCR α CDR1 in **eight of nine** native complexes — a positive Arg partner in three
@@ -321,20 +349,24 @@ What it costs, recorded
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 Charge transfers across species **worse** than burial does: human→mouse 0.554 and mouse→human 0.539,
-against Rose's 0.581 and 0.579. And on the Chowell family AF5 is the weaker marginal column
-(0.528 / 0.550 / 0.536 against Rose's 0.641 / 0.579 / 0.618) — though on ``kesmir_vanilla`` mouse it
-is the **strongest** chemistry column measured, 0.576 against 0.519 and 0.481.
+against Rose's 0.581 and 0.579. And on the Chowell family it is the weaker of the two marginals
+(0.528 / 0.550 / 0.536 against Rose's 0.641 / 0.579 / 0.618), which is what a minor axis looks like
+next to the major one. Recorded as measured.
 
 Which ships
 ~~~~~~~~~~~
 
-**EPIC v3, the vendored artifact, carries Rose + KF4.** Rose + AF5 is the measured v4 candidate:
-BIC 4173.3 → 4172.4, leave-one-screen-out mean 0.6583 → 0.6602, median and both cross-validations
-0.6309 → 0.6385. The library computes **all four keys** — ``C_phys_rose``, ``C_phys_buried``,
-``C_phys_hydrop``, ``C_phys_charge`` — from :data:`mhcmatch.rank.PHYS_COLUMNS`, and
-``aggregate_score`` reads only the names the artifact's own ``features`` list asks for. So one
-library scores either version with no branch, and a recorded number stays readable under the name it
-was produced with.
+**The vendored artifact is EPIC v4 and carries Rose + AF5** (``C_phys_buried`` and
+``C_phys_charge``). It was selected on BIC 4173.3 → 4172.4, leave-one-screen-out mean
+0.6583 → 0.6602 and median 0.6309 → 0.6385, and CV 0.6307 → 0.6386 grouped on peptide and
+0.6309 → 0.6385 on twin group, against the KF4 arm on identical rows at nine terms either way ---
+and, the reason for the swap, on **burial** going from *p* = 0.064 at 98 % sign stability to
+*p* = 0.0202 at 100 %.
+
+The library computes **all four keys** — ``C_phys_rose``, ``C_phys_buried``, ``C_phys_hydrop``,
+``C_phys_charge`` — from :data:`mhcmatch.rank.PHYS_COLUMNS`, and ``aggregate_score`` reads only the
+names the artifact's own ``features`` list asks for. So one library scores a v3 or a v4 artifact
+with no branch, and a recorded number stays readable under the name it was produced with.
 
 Both columns of whichever pair is in force are emitted, so the block is auditable rather than a
 single number with a footnote.

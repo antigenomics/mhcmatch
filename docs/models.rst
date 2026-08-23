@@ -222,19 +222,25 @@ The models
        ``EPIC`` v3. Seven terms, 354,909
        rows / 958 positive / 9 screens, BIC 4160.1, leave-one-screen-out median AUROC 0.6391
    * - ``EPIC`` v3
-     - the same four blocks with Complementarity kept whole: ``C_phys_rose`` + ``C_phys_hydrop``,
-       and ``K`` as ``C_corpus_thymus`` / ``_self`` / ``_viral``
-     - **the shipped scorer** (``data/aggregate_mhc1.json``, default since 0.24.0; shipped as
-       ``GRAND`` through 0.24.x and **renamed in 0.25.0** -- same artifact, same coefficients,
-       ``"version": 3`` unchanged, and ``"former_name"`` in the artifact records the old one, so
-       every recorded result under ``GRAND`` is a result about this model). **E**\ xpression,
+     - the same four blocks with Complementarity kept whole: ``binder`` + ``occupancy``,
+       ``C_phys_rose`` + ``C_phys_hydrop``, and ``K`` as ``C_corpus_thymus`` / ``_self`` /
+       ``_viral`` under a Hamming kernel
+     - superseded by v4, and still readable: ``aggregate_score`` takes the names the artifact's own
+       ``features`` list asks for, so a recorded v3 number keeps its meaning. Shipped as ``GRAND``
+       through 0.24.x and **renamed in 0.25.0** -- same artifact, same coefficients,
+       ``"former_name"`` records the old name. ``C_corpus_missing`` is retired -- the corpus term
+       is exact and defined for every canonical peptide, so the flag would be identically zero
+   * - ``EPIC`` v4
+     - four terms respecified: ``binder`` -> ``pres``, ``C_phys_hydrop`` -> ``C_phys_charge``,
+       ``C_phys_rose`` -> ``C_phys_buried`` (a rename), and the corpus kernel Hamming -> BLOSUM62
+     - **the shipped scorer** (``data/aggregate_mhc1.json``, since 0.27.0). **E**\ xpression,
        **P**\ resentation, **I**\ mmunogenic **C**\ omplementarity names the four blocks, not
-       the order they enter in. Nine terms in
-       four **hierarchical blocks** (:data:`mhcmatch.rank.AGGREGATE_BLOCKS`), one unpenalised
-       intercept per screen, no global intercept. Same corpus; leave-one-screen-out median AUROC
-       **0.6500**, mean 0.6927, better than v2 on 7 of 9 held-out screens
-       (``bench/results/grand_versions.md``). ``C_corpus_missing`` is retired -- the corpus term is
-       now exact and defined for every canonical peptide, so the flag would be identically zero
+       the order they enter in. Nine terms in four **hierarchical blocks**
+       (:data:`mhcmatch.rank.AGGREGATE_BLOCKS`), one unpenalised intercept per screen, no global
+       intercept, ridge :math:`\tau` = 0.25. BIC 4172.4, leave-one-screen-out mean AUROC
+       **0.6602** and median **0.6385**, twin-grouped five-fold CV over the whole database 0.6385;
+       seven of the nine screens rank higher held out than under v3
+       (``bench/results/epic_v4_fit.md``)
    * - ``BDEVF``
      - binder, agretopicity, expression, vanilla physicochemistry, foreignness
      - the older design; folds presentation into ``B``
