@@ -433,9 +433,9 @@ nothing in fit.
 What *does* change the numbers is changing the **measurement**. Reducing the query's face windows by
 their **maximum** rather than their mean --- the nearest-window reading, same references and same
 :math:`\kappa` --- gives the best BIC of any arm, **4167.8**, and is the only configuration in which
-all three channels are individually significant with the expected signs: ``thymus`` +0.150
-(*z* +3.28, *p* = 1.1×10⁻³, 100 %), ``self`` −0.261 (*z* −3.04, *p* = 2.4×10⁻³, 96 %), ``viral``
-+0.192 (*z* +2.29, *p* = 0.022, 100 %). Its held-out mean, 0.6557, is below the mean-reduced 0.6602,
+all three channels are individually significant with the expected signs: ``thymus`` +0.1501
+(*z* +2.53, *p* = 0.011, 99 %), ``self`` −0.2610 (*z* −3.05, *p* = 2.3×10⁻³, 100 %), ``viral``
++0.1918 (*z* +2.24, *p* = 0.025, 99 %). Its held-out mean, 0.6557, is below the mean-reduced 0.6602,
 so what ships is not settled by this arm alone. Both are recorded.
 
 The check that the channels are behaving: they do not solve Chowell

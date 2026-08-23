@@ -30,7 +30,7 @@ import os
 import sys
 import time
 
-from . import Proteome, Store, pseudoseq
+from . import Proteome, Store, __version__, pseudoseq
 
 #: Verbosity, set once by :func:`main` from ``-v`` / ``-q``. 0 quiet, 1 normal, 2 verbose.
 #: Module-level because every ``cmd_*`` reads it and threading it through 19 signatures would be
@@ -1328,6 +1328,9 @@ def cmd_build(a):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="mhcmatch", description="peptide-MHC presentation tools")
+    # `bench/run_epic.sh` gates the whole reproduction on this matching the checkout's pyproject,
+    # so it has to exist and it has to print the installed distribution's version, not a constant.
+    ap.add_argument("--version", action="version", version=f"mhcmatch {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     d = sub.add_parser("decompose", help="split a peptide into anchor / TCR-facing parts (X masks)")

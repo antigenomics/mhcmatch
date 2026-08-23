@@ -289,22 +289,27 @@ The second axis is charge, and it is orthogonal by measurement
    * - cysteine loading of the second scale
      - −0.1033
      - **+0.0056** *(lowest of 141)*
-   * - burial's bootstrap sd
-     - 0.0869
-     - **0.0486**
-   * - burial's *z* / *p*
-     - +1.85 / 0.064
-     - **+2.32 / 0.020**
-   * - burial's sign stability
-     - 98 %
-     - **100 %**
-   * - second column's sign stability
-     - 74 %
-     - **87 %**
+   * - burial's Laplace sd / *z*
+     - 0.0823 / +1.96
+     - **0.0485 / +2.33**
+   * - BIC
+     - 4173.3
+     - **4172.4**
+   * - leave-one-screen-out mean
+     - 0.6583
+     - **0.6602**
 
 Burial's coefficient gets *smaller* and its evidence gets *stronger*, which is what removing a
 collinear partner does. The pair is orthogonal without any rotation, so the two columns keep their
-physical names.
+physical names. (The screening statistic above is the Laplace ``|z|``, which is what
+``bench/results/epic_physchem_arms.md`` records for every arm; a 400-resample cluster bootstrap
+costs 290 s per arm and is run only for the arm that is selected.)
+
+**KF4 is dropped, and the shipped chemistry block is Rose + AF5.** Its bootstrapped statistics, from
+the same 400 resamples of *(patient, screen)* clusters as every other v4 term: burial **+0.1129**,
+sd 0.0486, *z* **+2.32**, *p* **0.0202**, sign stability **99.5 %**; charge −0.0584, sd 0.0525,
+*z* −1.11, *p* 0.266, 87 %. Charge is not individually resolved and is not meant to be --- it earns
+its place by what it does to its partner.
 
 Charge is also the axis a structure argues for. In the MART-1 decamer ELAGIGILTV the P1 glutamate
 contacts germline TCR α CDR1 in **eight of nine** native complexes — a positive Arg partner in three

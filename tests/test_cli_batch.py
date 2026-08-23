@@ -186,3 +186,20 @@ def test_every_batch_capable_command_makes_its_positional_optional(capsys):
             cli.main([cmd, "--help"])
         usage = capsys.readouterr().out.split("\n\n")[0]
         assert "[peptide]" in usage, f"{cmd}: {usage}"
+
+
+def test_cli_reports_its_version():
+    """`mhcmatch --version` is the gate `bench/run_epic.sh` stage 0 runs on.
+
+    It did not exist until 0.27.0, so the guard's `grep` found nothing, `pipefail` killed the
+    script, and the whole reproduction chain stopped at stage 0 without saying so.
+    """
+    import subprocess
+    import sys
+
+    import mhcmatch
+
+    out = subprocess.run([sys.executable, "-m", "mhcmatch.cli", "--version"],
+                         capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == f"mhcmatch {mhcmatch.__version__}"
