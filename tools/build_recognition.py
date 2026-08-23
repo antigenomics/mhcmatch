@@ -2,8 +2,11 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = ["numpy", "polars>=1.0", "scikit-learn", "torch>=2.2", "transformers>=4.40",
-#                 "mhcmatch @ file:///Users/mikesh/vcs/code/mhcmatch"]
+#                 "mhcmatch"]
 # ///
+# ponytail: `mhcmatch` unpinned so this runs from any checkout. It pinned one machine's
+# file:///Users/... path, which resolves nowhere else. Run it from an activated repo venv (or
+# `uv run --with-editable . tools/build_recognition.py`) to build against working-tree source.
 """Rebuild the artifacts `mhcmatch.recognition` ships, from the bootstrapped pmhc_data corpus.
 
 A release-time task, like tools/build_anchor_models.py. Run it on a version bump or when the

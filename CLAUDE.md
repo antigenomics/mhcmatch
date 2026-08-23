@@ -148,8 +148,11 @@ mhcmatch build corpus -v    # one target, with per-step wall clock
   benchmark repo (`corpus_grand.py` -> `grand_corpus.py` -> `grand_ship.py`) and the artifact is
   hand-copied across. That hand-copy is how the GRAND -> EPIC rename reached the artifact but not its
   generator. Closing it needs the chain moved into `_build.py` **and** the binder pass batched: it
-  was recorded at 338,319 of 363,324 pairs in 1,314 s, which busts the budget until it gets the same
-  one-batched-call treatment that took `store_binder` 15.8x.
+  was recorded at 338,319 of 363,324 pairs in 1,314 s. **That number does not mean what it was read
+  to mean** (re-measured 2026-08-23): `binder_score` on a warm allele is 82,201 pair/s, i.e. 4.4 s
+  for all 363,324 pairs. The cost is per-allele calibrator construction -- 0.95 s cold x 203
+  alleles, per worker -- plus `Store.from_pmhc` at 4.5 s per worker per host. Batch the calibrator
+  builds, not the peptide loop.
 - On a version bump, regenerate rather than reasoning about whether it matters, then *verify* the
   scores did not move. Both existing builders are instrumented for this: `corpus_tables` prints
   `** MOVED **` for any cell that changed, and the anchor rebuild is checked against the previous

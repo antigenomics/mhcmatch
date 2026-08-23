@@ -593,7 +593,14 @@ in a third of the time. The posterior confirms the point estimates and, on the t
    that makes it -- but the builder is still `None`, i.e. the chain
    (`epic_optimize.load_frame` -> `epic_v4_fit`) lives in the benchmark repo and the artifact is
    hand-copied across. What remains is moving it into `_build.py` and batching the binder pass,
-   which was 1,314 s at 338,319 of 363,324 pairs.
+   which was 1,314 s at 338,319 of 363,324 pairs. **Re-measured 2026-08-23: batching the peptide
+   loop is the wrong work.** `binder_score` on a warm allele runs at **82,201 pair/s**, so all
+   363,324 pairs are **4.4 s** of scoring. The 1,314 s is elsewhere and is per-*allele*, not
+   per-pair: the first call against a cold allele costs **0.95 s** of `RankCalibrator` background
+   construction and there are **203** alleles (193 s, paid again in every worker that touches the
+   allele), on top of `Store.from_pmhc` at **4.5 s** per worker per host. Batching buys 4.4 s of
+   1,314 s. What would actually pay is sharing the three calibrators across workers, or building
+   them once and passing them in.
 3. **ITSNdb.** One screen preferring the shipped kappa to any refit is worth a look at 149 rows,
    not an argument.
 4. **`SHIPPED_CORPUS`.** `_build.py` names the `(k, mask)` a release commits to. It is `[(3,
