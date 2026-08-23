@@ -19,17 +19,42 @@ from collections import Counter
 
 _AA = "ACDEFGHIKLMNPQRSTVWY"
 
-#: Directory for the on-disk per-allele calibration cache. Set ``MHCMATCH_CALIBRATION_CACHE`` to a
-#: shared path to let a SLURM array or a Nextflow run reuse each other's work. Unset = no cache.
+#: Override for the on-disk per-allele calibration cache. Point it at a shared path to let a SLURM
+#: array or a Nextflow run reuse each other's work; set it to ``"0"``, ``"off"``, ``"none"`` or
+#: ``"false"`` to disable caching entirely.
 CACHE_ENV = "MHCMATCH_CALIBRATION_CACHE"
+
+#: Where the cache lives when nothing overrides it -- ``$XDG_CACHE_HOME`` if set, else
+#: ``~/.cache``, which is also what macOS users get and is fine there.
+CACHE_DEFAULT = "mhcmatch/calibration"
+
+_OFF = {"0", "off", "none", "false", "no"}
 
 
 def cache_dir() -> str | None:
-    """The configured cache directory, or ``None``. Created on first use."""
+    """The calibration cache directory, or ``None`` if caching is off. Created on first use.
+
+    **On by default since 0.27.0.** A per-allele background is a random-peptide draw scored under
+    one allele's model: ~0.95 s to build, and a pure function of
+    ``(allele, model, background, footprint, seed, library version)`` -- every one of which is in
+    the cache key, so a stale entry cannot be served across a refit or a version bump. Before this
+    it was opt-in through :data:`CACHE_ENV` and essentially nothing set it, so every process
+    rebuilt every allele it touched on every run. On the neoantigen feature build, 2,093 distinct
+    alleles in fourteen workers, that was the entire cost of the stage.
+
+    Deleting the directory is always safe: it is derived data and rebuilds on demand.
+    """
     d = os.environ.get(CACHE_ENV)
-    if not d:
-        return None
-    os.makedirs(d, exist_ok=True)
+    if d is not None:
+        if not d.strip() or d.strip().lower() in _OFF:
+            return None
+    else:
+        root = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+        d = os.path.join(root, *CACHE_DEFAULT.split("/"))
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        return None            # read-only home, a container without one: score, do not crash
     return d
 
 

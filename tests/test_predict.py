@@ -4,6 +4,7 @@ Parsing / header / writer tests are pure; the two scoring tests need the shortli
 the way everything else in this repo does -- ``Store.from_pmhc`` with no path, bootstrapped from
 ``isalgo/pmhc_data``. They carry ``@pytest.mark.hfdata`` (see ``tests/conftest.py``).
 """
+import os
 import csv
 
 import pytest
@@ -283,3 +284,50 @@ def test_binder_score():
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+def test_binder_ranks_is_the_transpose_of_binder_score_and_scores_identically():
+    """`binder_ranks` is one allele x many peptides; `binder_score` is one peptide x many alleles.
+
+    The two share every calibrator, so the transpose must be bit-identical, not merely close. It
+    is a call-shape convenience and **not** a speed fix -- measured at 1.13x on a warm allele,
+    because the cost is the cold per-allele calibrator build, not the peptide loop.
+    """
+    import mhcmatch
+    from mhcmatch import predict as P
+
+    store = mhcmatch.Store.from_pmhc(tier="full", species="human", classes=("mhc1",))
+    peps = ["GILGFVFTL", "NLVPMVATV", "SLYNTVATL", "RMFPNAPYL", "CINGVCWTV"]
+    allele = "HLA-A*02:01"
+    pr, ar, br, _nm = P.binder_ranks(store, peps, allele, cls="mhc1", seed=0)
+    for i, pep in enumerate(peps):
+        got = P.binder_score(store, pep, alleles=[allele], cls="mhc1", seed=0)
+        assert got, pep
+        b = got[0]
+        assert b.presentation_rank == pr[i]
+        assert b.affinity_rank == ar[i]
+        assert b.binder_rank == br[i]
+
+
+def test_calibration_cache_is_on_by_default_and_can_be_turned_off(tmp_path, monkeypatch):
+    """Shipped on since 0.27.0. It was opt-in, nothing set it, and every run rebuilt every allele.
+
+    A per-allele background costs ~0.95 s and is a pure function of the model, the draw and the
+    library version -- all of which are in the cache key -- so defaulting it on cannot serve a
+    stale number across a refit. The three things that must hold: a default path exists, an
+    explicit path wins, and an off switch reaches `None` rather than silently caching somewhere.
+    """
+    from mhcmatch import calibrate
+
+    monkeypatch.delenv(calibrate.CACHE_ENV, raising=False)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    d = calibrate.cache_dir()
+    assert d is not None and os.path.isdir(d)
+    assert d.startswith(str(tmp_path)) and d.endswith(os.path.join("mhcmatch", "calibration"))
+
+    monkeypatch.setenv(calibrate.CACHE_ENV, str(tmp_path / "shared"))
+    assert calibrate.cache_dir() == str(tmp_path / "shared")
+
+    for off in ("0", "off", "none", "false", ""):
+        monkeypatch.setenv(calibrate.CACHE_ENV, off)
+        assert calibrate.cache_dir() is None, off

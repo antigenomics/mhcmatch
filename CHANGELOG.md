@@ -33,6 +33,26 @@ versioning is [SemVer](https://semver.org).
 
 ### Added
 
+- **The per-allele calibration cache ships on.** A `%rank` background is a random-peptide draw
+  scored under one allele's model — ~0.95 s to build, and a pure function of
+  `(allele, model, background, footprint, seed, library version)`. The on-disk cache for it has
+  existed, atomic and correctly fingerprinted, since it was written; it was **opt-in through
+  `MHCMATCH_CALIBRATION_CACHE` and essentially nothing set it**, so every process rebuilt every
+  allele it touched on every run. On the neoantigen feature build — 2,093 distinct alleles across
+  fourteen workers — that was the whole cost of the stage.
+
+  It now defaults to `$XDG_CACHE_HOME/mhcmatch/calibration`, falling back to
+  `~/.cache/mhcmatch/calibration`. Set `MHCMATCH_CALIBRATION_CACHE` to share one across a SLURM
+  array, or to `0`/`off`/`none`/`false` to disable. A read-only home degrades to no cache rather
+  than raising. The library version is in the key, so a bump invalidates rather than serving a
+  stale background, and deleting the directory is always safe.
+
+- **`predict.binder_ranks(store, peptides, allele, …)`** — the transpose of `binder_score`: one
+  allele, many peptides, which is the call shape a benchmark needs. Score-identical to
+  `binder_score` by construction and pinned as such by a test. It is **not** a speed fix and is not
+  described as one: measured at 1.13× on a warm allele (82,241/s against 72,966/s over 5,000
+  peptides), because the cost was never the peptide loop.
+
 - **`mhcmatch --version`.** `bench/run_epic.sh` stage 0 gates the whole reproduction on the
   installed version matching the checkout's `pyproject.toml`, and read it from this flag. There was
   no such flag, so `grep` found nothing, `pipefail` propagated, and the chain stopped at stage 0
