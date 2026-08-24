@@ -44,6 +44,15 @@ A restriction cell holding a whole genotype is now read as the alleles it names.
 
 ### Added
 
+- **`allele_scored`, a new column between `allele` and `gene`.** Splitting the restriction cell means
+  the allele a row is scored against is not always the one supplied, and a caller still has to be
+  able to join the output back to its input. `allele` is now always the cell as given and
+  `allele_scored` is the allele the row's numbers are against; they differ only where the cell named
+  several. Downstream, keying a join on the wrong one of these silently dropped 15,005 of NCI's
+  420,786 rows, and keying it on `(peptide, wt_peptide, gene)` instead mislabelled 4 of 103
+  positives, because the same peptide from the same gene is immunogenic at one allele and not at
+  another in 5 of that screen's key groups.
+
 - **`mhcmatch.rank.split_alleles(cell, cls)`** --- the alleles one restriction cell names, in input
   order, without repeats, dropping what the pseudosequence tables do not know.
 

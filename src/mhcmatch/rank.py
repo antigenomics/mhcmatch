@@ -54,7 +54,7 @@ __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
 #: the columns without running the command, and a schema typed out a second time is a schema that
 #: drifts. That is not hypothetical: the nextflow module's stub carried an 18-column header against
 #: a 57-column table until 2026-08-18.
-BASE_COLUMNS: tuple = ("rank", "peptide", "allele", "gene", "score", "p_response",
+BASE_COLUMNS: tuple = ("rank", "peptide", "allele", "allele_scored", "gene", "score", "p_response",
                        "presentation", "binder",
                        "occupancy", "d_occupancy", "wt_absent",
                        "agretopicity", "physchem", "expression", "expr_pct", "expr_imputed",
@@ -412,6 +412,10 @@ class Ranked:
 
     peptide: str
     allele: str
+    #: The allele the row's numbers are actually against. Equal to ``allele`` except where the input
+    #: named several (``split_alleles``), in which case ``allele`` is the cell as supplied and this
+    #: is the best presenter of the set. Keeping both means a caller can still join on what it sent.
+    allele_scored: str = ""
     gene: str = ""
     source: str = ""
     #: -log10(presentation %rank); larger = better presented.
@@ -801,7 +805,8 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
         dai = float("nan")
         if wt_nm is not None and p.affinity_nm == p.affinity_nm and p.affinity_nm > 0:
             dai = math.log10(wt_nm / p.affinity_nm)
-        rows.append(Ranked(peptide=p.peptide, allele=p.allele, gene=gene, source=p.source,
+        rows.append(Ranked(peptide=p.peptide, allele=p.allele, allele_scored=p.allele,
+                           gene=gene, source=p.source,
                            variant_type=P.variant_product(var),
                            presentation=_neglog10(p.percent_rank),
                            binder=_neglog10(p.binder_rank) if p.binder_rank == p.binder_rank
@@ -843,7 +848,7 @@ def _unscored(r: dict, cls: str, tissue, tumor, refs, binding_core, phys: dict) 
         tpm = None
     expr, imputed = _expression_for(gene, tpm, tissue, tumor, r["peptide"])
     nan = float("nan")
-    rk = Ranked(peptide=r["peptide"], allele=r["allele"], gene=gene,
+    rk = Ranked(peptide=r["peptide"], allele=r["allele"], allele_scored="", gene=gene,
                 source=str(r.get("source") or ""),
                 variant_type=str(r.get("variant_type") or "").strip(),
                 presentation=nan, binder=nan, occupancy=nan, d_occupancy=nan,
@@ -900,6 +905,11 @@ def rank_pairs(store, rows, cls: str = "mhc1", *, tissue: str | None = None,
     Rows are grouped by allele and each group scored in one :func:`mhcmatch.predict.binder_ranks`
     call, so the per-allele calibrator background is paid once per allele rather than once per row.
     Output order is the input's, not the grouping's.
+
+    **The reported ``allele`` is the one scored against, which is not always the one supplied.** A
+    cell naming several alleles is split (:func:`split_alleles`) and the best presenter stands for
+    the row, so every number in that row is against the reported allele. A caller joining the output
+    back to its input must key on the peptide, not on the allele.
     """
     from . import predict as P
     from .store import binding_core
@@ -946,7 +956,7 @@ def rank_pairs(store, rows, cls: str = "mhc1", *, tissue: str | None = None,
             dai = float("nan")
             if w is not None and nm[k] == nm[k] and nm[k] > 0:
                 dai = math.log10(w / nm[k])
-            rk = Ranked(peptide=r["peptide"], allele=allele, gene=gene,
+            rk = Ranked(peptide=r["peptide"], allele=r["allele"], allele_scored=allele, gene=gene,
                         source=str(r.get("source") or ""),
                         variant_type=str(r.get("variant_type") or "").strip(),
                         presentation=_neglog10(pr[k]), binder=_neglog10(br[k]),
@@ -1014,7 +1024,7 @@ def rank_table(path: str, *, channels=None,
             # recoverable here at all -- `d_occupancy` degrades to the mutant's own occupancy and
             # says so, rather than going missing and being imputed to a training mean.
             nm = _ic50_of(rec)
-            r = Ranked(peptide=pep, allele=allele, gene=gene,
+            r = Ranked(peptide=pep, allele=allele, allele_scored=allele, gene=gene,
                        source=os.path.basename(path), presentation=pres, binder=binder,
                        occupancy=occupancy(nm) if nm is not None else float("nan"),
                        d_occupancy=d_occupancy(nm) if nm is not None else float("nan"),

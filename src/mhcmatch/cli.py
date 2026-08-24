@@ -690,7 +690,9 @@ def cmd_rank(a):
     try:
         print("\t".join(cols), file=out)
         for i, r in enumerate(rows, 1):
-            cells = [str(r.rank), r.peptide, _allele(a, r.allele), r.gene, f"{r.score:.6g}",
+            cells = [str(r.rank), r.peptide, _allele(a, r.allele),
+                     _allele(a, r.allele_scored) if r.allele_scored else "",
+                     r.gene, f"{r.score:.6g}",
                      f"{r.p_response:.4g}",
                      f"{r.presentation:.4g}", f"{r.binder:.4g}", f"{r.occupancy:.4g}",
                      f"{r.d_occupancy:.4g}", "1" if r.wt_absent else "0",

@@ -343,7 +343,8 @@ def test_rank_pairs_calibrates_once_per_allele_not_once_per_genotype_string(monk
                         score="gate")
     assert sorted(set(calls)) == ["HLA-A*01:01", "HLA-B*07:02"]   # two alleles, not one genotype
     assert len(calls) == 2                                        # and one call each, not per row
-    assert {r.allele for r in rows} == {"HLA-B*07:02"}            # the better presenter stands
+    assert {r.allele for r in rows} == {genotype}                 # the cell as supplied, for joins
+    assert {r.allele_scored for r in rows} == {"HLA-B*07:02"}     # the better presenter stands
     assert all(r.presentation == r.presentation for r in rows)    # not NaN
 
 
