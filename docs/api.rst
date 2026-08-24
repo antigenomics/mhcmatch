@@ -103,6 +103,17 @@ whole query set through one threaded C++ index per (category, length).
    :undoc-members:
    :show-inheritance:
 
+mhcmatch.cassette module
+------------------------
+
+Choosing the units of a cassette, and scoring one that already exists. The narrative version, with
+the derivation and the measured numbers, is :doc:`cassette`.
+
+.. automodule:: mhcmatch.cassette
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 mhcmatch.vector module
 ----------------------
 

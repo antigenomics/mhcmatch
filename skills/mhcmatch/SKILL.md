@@ -83,6 +83,7 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 | `mhcmatch.mimics` | `neighbours`, `KINDS`, `DEFAULT_REFS` | the raw scan, per category, **never summed** — each category argues something different |
 | `mhcmatch.mimicry` | `score`, `probability`, `annotate`, `safety`, `masks`, `corpus_R`, `features`, `load_references` | the *fitted* form: `viral`/`self`/`thymus` × `anchor`/`tcr` as signed log-odds. `probability` demands a **named** corpus. `annotate` (tested-neoantigen DB) is prior evidence and **never a fitted term**. **`corpus_R` is `C_corpus`** — the **exact** Luksza density over the TCR face, evaluated as a sliding-k-mer table contraction (`corpus_counts` + `contract`), not a search. All three components (`thymus`/`self`/`viral`) ship in EPIC, under a graded BLOSUM62 kernel since v4; `SHAPES` is one `kappa` each (`a0` retired). `self_species=` picks the proteome, so mouse self for mouse. Counts are memoised per `(cls, comp, k, species)` and **not** keyed on `kappa`, so a kappa sweep is free; there is **no disk cache** ([docs/corpus.rst](../../docs/corpus.rst)). `load_references` still builds the index `features`/`annotate`/`safety` need, because those report *which* reference was hit |
 | `mhcmatch.vector` | `screen`, `self_origin_risk`, `select`, `order`, `slippery_sites`, `epitope_map`, `write_map` | **cassette assembly**, the step after `rank`: withdraw on safety, then how many units per allotype, in what order, joined by what. `screen` **excludes**, never down-ranks. Scoring is injected (`binder`, `risk`), so the layout logic needs no panel. `epitope_map`/`write_map` (v0.16.0) emit the TSV/JSON cassette map — unit, linker and epitope rows with 1-based coordinates, the class-II core, cross-class overlaps and per-unit `self_help`; **one row per (peptide, allele)**, so a heterozygote is duplicated by construction |
+| `mhcmatch.cassette` | `select`, `score`, `lam`, `prob_offset`, `group_offsets`, `goal_energy`, `greedy`, `refine`, `overlap`, `pair_stats`, `log_ek`, `energy` | **cassette design** (1.0.1): pick *k* units maximising `H = sum h - sum J`, the mean-variance objective derived from the design goal, and score a finished cassette. `lam` is `H` minus the exact log partition function over every size-*k* subset of the donor's own pool — the one axis comparable across donors AND sizes, and it needs no shared calibration. `select` takes the **whole pool**; a shortlist already cut on binding/expression has no range left along the two largest coefficients. Greedy + bounded swap reaches the brute-force optimum on every enumerable pool. `score` deliberately does **not** report `H`: `goal_energy` renormalises to the set it is handed, so an `H` on a cassette alone scores a diversifying rule identically to one that did not |
 | `mhcmatch.portfolio` | `pareto_front`, `linearly_supported`, `chebyshev_score`, `corner`, `p_at_least`, `n_effective`, `dispersion`, `betabinom_rho` | **cassette composition**, the layer above `vector.select`. Fits nothing: it says what a proposed *set* is worth. `vector.select` now takes `block=` (a callable `Unit -> hashable`, default the allotype) so the budget can saturate against allotype **x** mechanism; `Selection.expected_yield` follows whatever partition the rule used, and `per_block()` reports it. `linearly_supported` is exact (LP), the sampled searches in the benchmark repo are not. SciPy is a **lazy** import — `linearly_supported` and `betabinom_rho` need it, nothing else does |
 | `mhcmatch.luksza` | `viral_r`, `r_term`, `counts_by_distance`, `shape` | the Łuksza `R = Z/(1+Z)` term (v0.17.0). `viral_R` was a term of the retired `BOECRT` aggregate and used to be computable only in the benchmark repo; `EPIC` does not score with it. `k`/`a0` are **read from the artifact**, never hardcoded. The neighbour search is 98.6% of the runtime — do not micro-optimise the rest |
 | `mhcmatch.recognition` | `score`, `default_head`, `lowest_bic_head`, `roles_for`, `score_mhc2` | the head dispatcher over the recognition axis: `complement` (the **default**), `posbayes`, `physchem_glm`, `esm64_glm`. `default_head` and `lowest_bic_head` answer different questions and do not agree — see [docs/complementarity.rst](../../docs/complementarity.rst) |
@@ -92,20 +93,26 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 
 ## CLI
 
-Nineteen commands. Full reference: [docs/cli.rst](../../docs/cli.rst).
+Twenty commands, one of them with sub-verbs. Full reference: [docs/cli.rst](../../docs/cli.rst).
 
 | axis | commands |
 |---|---|
 | presentation | `predict` · `restriction` · `binder` · `affinity` · `scan` · `span` · `decompose` · `logo` |
 | recognition | `complement` · `mimics` · `mimicry` · `neoag` |
 | integration | `rank` · `explain` · `expression` · `source` |
-| cassette | `vector` · `deslip` |
+| cassette | `cassette select` · `cassette score` · `cassette build` · `cassette order` · `cassette deslip` |
 | setup | `bootstrap` |
 
 `mhcmatch binder <peptide> --alleles ... --cls mhc1` ranks alleles by the generalized binder score.
-`mhcmatch vector --candidates units.tsv --n0 8 [--screen]` assembles a cassette; its input is
+`mhcmatch cassette select --candidates pool.tsv -k 20 [--tol 3]` chooses the units; give it the
+donor's **whole** pool, never a shortlist already cut on binding or expression (those are the two
+largest coefficients in the model, so a cut pool has no range left along them).
+`mhcmatch cassette score --cassettes c.tsv [--pool p.tsv]` scores finished ones — with `--pool` you
+also get `lam`, the only axis comparable across donors *and* sizes.
+`mhcmatch cassette build --candidates units.tsv --n0 8 [--screen]` assembles; its input is
 **long windows**, not `rank`'s minimal epitopes, and `--screen` is opt-in because it costs a
-whole-proteome index. Without it no safety check runs at all.
+whole-proteome index. Without it no safety check runs at all. `vector` and `deslip` survive as
+deprecated aliases for `cassette build` / `cassette deslip` and print a deprecation line.
 
 **Pass `--peptides FILE`, never loop the shell.** The setup a per-peptide invocation re-pays is the
 whole cost: the presentation/affinity calibrators ~5 s, a human-proteome length index ~70 s. One
@@ -219,6 +226,12 @@ tumour-matched refit across all eight cohorts at once (ROADMAP §6).
 - **Keep the zero-response patients** when measuring dispersion. They carry most of the information,
   and a minimum-pool-size filter deletes precisely them. `betabinom_rho`'s p-value is *conservative*
   at these cohort sizes (realised type-I error 0.022 at nominal 0.05 for 13 patients x 20 units).
+- **The calibration offset decides what you are reporting, and it is silent.** `rank.probability`
+  anchors the mean of *the batch it is handed*. Called once per donor it pins every donor's pool
+  mean to the declared prevalence — 7,261 TCGA donors, pools of 1 to 5,221, every mean on 0.060163
+  with sd 2.75e-17. Use `cassette.prob_offset` over the whole batch for a **level**,
+  `cassette.group_offsets` for an **enrichment** (measurably the stronger readout against immune
+  infiltrate: rho +0.1298 vs +0.1115), and know which one you asked for.
 - **`portfolio.corner` is a proxy, not a latent variable.** It reports which objective a candidate is
   relatively strongest on. That is a defensible stand-in for *why* it might work and nothing more.
 
