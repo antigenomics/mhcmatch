@@ -45,7 +45,8 @@ __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
            "BASE_COLUMNS", "MIMICRY_PAIRS", "EXTENDED_COLUMNS", "ANNOTATE_COLUMNS", "columns",
            "aggregate", "aggregate_score", "probability", "POOL_PREVALENCE",
            "AGGREGATE_FEATURES", "AGGREGATE_COLUMNS",
-           "AGGREGATE_BLOCKS", "CHANNEL_COLUMNS", "PHYS_COLUMNS", "expr_percentile"]
+           "AGGREGATE_BLOCKS", "CHANNEL_COLUMNS", "PHYS_COLUMNS", "expr_percentile",
+           "rank_pairs"]
 
 #: The `mhcmatch rank` output schema, one source of truth. It lives here rather than inline in the
 #: CLI because a *consumer* -- a pipeline module's stub, a downstream join -- has to be able to name
@@ -798,6 +799,85 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
                            core=p.core, core_offset=p.core_offset, core_source=p.core_source))
     _fill_channels(rows, channels)
     return _finish(rows, gate, score, prevalence)
+
+
+def rank_pairs(store, rows, cls: str = "mhc1", *, tissue: str | None = None,
+               tumor: str | None = None, refs: dict | None = None, gate: dict | None = None,
+               score: str = "aggregate", channels=None,
+               prevalence: float = POOL_PREVALENCE) -> list[Ranked]:
+    """Rank ``(peptide, wt_peptide, allele)`` triples -- the shape a benchmark or a variant table has.
+
+    :func:`rank_fasta` needs mutation-spanning windows and :func:`rank_table` needs another tool's
+    ``.scored.csv``; neither is what you have when a caller has already given you the mutant k-mer,
+    its germline counterpart and the restricting allele. That third shape is the one every
+    neoantigen screen is distributed in, so scoring one used to mean reimplementing this function
+    outside the package -- and a reimplementation is a second model nobody benchmarked.
+
+    ``rows`` is an iterable of mappings with ``peptide`` and ``allele``; ``wt_peptide``, ``gene``
+    and ``tpm`` are optional. **A row with no wild type is not an error**: ``wt_absent`` carries it,
+    agretopicity is undefined rather than zero, and occupancy falls back to the mutant's own --
+    which is the case a frameshift or a fusion product is in, and imputing a germline peptide for
+    it would report a number for a quantity that does not exist.
+
+    Rows are grouped by allele and each group scored in one :func:`mhcmatch.predict.binder_ranks`
+    call, so the per-allele calibrator background is paid once per allele rather than once per row.
+    Output order is the input's, not the grouping's.
+    """
+    from . import predict as P
+    from .store import binding_core
+
+    recs = [dict(r) for r in rows]
+    for i, r in enumerate(recs):
+        r["_i"] = i
+        r["peptide"] = str(r.get("peptide") or "").strip().upper()
+        r["wt_peptide"] = str(r.get("wt_peptide") or "").strip().upper()
+        r["allele"] = str(r.get("allele") or "").strip()
+    recs = [r for r in recs if r["peptide"] and r["peptide"].isalpha() and r["allele"]]
+
+    by_allele: dict[str, list] = {}
+    for r in recs:
+        by_allele.setdefault(r["allele"], []).append(r)
+
+    out = {}
+    for allele, group in by_allele.items():
+        pr, ar, br, nm = P.binder_ranks(store, [r["peptide"] for r in group], allele, cls=cls)
+        # The wild types go through the same call, so a WT IC50 and a mutant IC50 are the same
+        # estimator on the same calibrator -- the ratio between them is then a property of the
+        # substitution and not of two code paths.
+        wt_rows = [r for r in group if r["wt_peptide"]]
+        wt_nm = {}
+        if wt_rows:
+            _, _, _, wnm = P.binder_ranks(store, [r["wt_peptide"] for r in wt_rows], allele, cls=cls)
+            wt_nm = {r["_i"]: v for r, v in zip(wt_rows, wnm)}
+        for k, r in enumerate(group):
+            gene = str(r.get("gene") or "").strip()
+            try:
+                tpm = float(r["tpm"]) if r.get("tpm") not in (None, "") else None
+            except (TypeError, ValueError):
+                tpm = None
+            expr, imputed = _expression_for(gene, tpm, tissue, tumor, r["peptide"])
+            w = wt_nm.get(r["_i"])
+            w = float(w) if (w is not None and w == w and w > 0) else None
+            dai = float("nan")
+            if w is not None and nm[k] == nm[k] and nm[k] > 0:
+                dai = math.log10(w / nm[k])
+            rk = Ranked(peptide=r["peptide"], allele=allele, gene=gene,
+                        source=str(r.get("source") or ""),
+                        variant_type=str(r.get("variant_type") or "").strip(),
+                        presentation=_neglog10(pr[k]), binder=_neglog10(br[k]),
+                        occupancy=occupancy(nm[k]) if nm[k] == nm[k] else float("nan"),
+                        d_occupancy=d_occupancy(nm[k], w) if nm[k] == nm[k] else float("nan"),
+                        wt_absent=0.0 if w is not None else 1.0,
+                        agretopicity=dai,
+                        physchem=_recognition(r["peptide"], cls=cls),
+                        expression=expr, expression_imputed=imputed,
+                        wt_peptide=r["wt_peptide"], known_epitope=_known(r["peptide"], refs))
+            rk.core, rk.core_offset = binding_core(r["peptide"], cls)
+            rk.core_source = ("footprint" if cls != "mhc2" else "heuristic") if rk.core else ""
+            out[r["_i"]] = rk
+    rows_out = [out[i] for i in sorted(out)]
+    _fill_channels(rows_out, channels)
+    return _finish(rows_out, gate, score, prevalence)
 
 
 def rank_table(path: str, *, channels=None,

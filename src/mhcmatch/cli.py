@@ -640,7 +640,14 @@ def cmd_rank(a):
     # None -> mhcmatch.known's built-in sets; --no-known-refs -> {} -> lookup off
     refs = _load_refs(getattr(a, "refs", None)) if getattr(a, "refs", None) else \
         ({} if getattr(a, "no_known_refs", False) else None)
-    if a.mode == "fasta":
+    if a.mode == "pairs":
+        store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
+        rows = R.rank_pairs(store, _read_table(a.input), cls=a.cls,
+                            tissue=a.tissue, tumor=a.tumor, refs=refs, score=a.score,
+                            prevalence=a.prevalence,
+                            channels=_aggregate_channels(a.cls, a.no_self, a.species)
+                            if a.score == "aggregate" else None)
+    elif a.mode == "fasta":
         store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
         rows = R.rank_fasta(store, a.input, _read_alleles(a.alleles), cls=a.cls,
                             tissue=a.tissue, tumor=a.tumor, refs=refs,
@@ -974,21 +981,22 @@ def cmd_expression(a):
         # is not a table anything can parse.
         out = _Out(a, "row")
         out.header("key", "context", "source", "median_tpm", "q25_tpm", "q75_tpm", "n")
-        rec = EX.lookup(a.key, tissue=a.tissue, tumor=a.tumor)
+        rec = EX.lookup(a.key, tissue=a.tissue, tumor=a.tumor) if (a.tissue or a.tumor) else None
         if rec:
             out.row(a.key, a.tumor or a.tissue or "", rec["source"], f"{rec['median_tpm']:.6g}",
                     f"{rec['q25_tpm']:.6g}", f"{rec['q75_tpm']:.6g}", rec["n"])
-        else:
+        elif a.tissue or a.tumor:
             say(f"no reference row for {a.key!r} in {a.tumor or a.tissue!r}")
         if a.safety:
             for t, v in EX.safety_profile(a.key, top=a.top or 10):
                 out.row(a.key, t, "GTEx", f"{v:.6g}", "", "", "")
         out.close()
         return
-    rec = EX.lookup(a.key, tissue=a.tissue, tumor=a.tumor)
+    rec = EX.lookup(a.key, tissue=a.tissue, tumor=a.tumor) if (a.tissue or a.tumor) else None
     if not rec:
-        print(f"# no reference row for {a.key!r} in "
-              f"{a.tumor or a.tissue!r}")
+        if a.tissue or a.tumor:
+            print(f"# no reference row for {a.key!r} in "
+                  f"{a.tumor or a.tissue!r}")
     else:
         print(f"{a.key}\t{a.tumor or a.tissue}\t{rec['source']}\t"
               f"median {rec['median_tpm']:.4g}\tIQR {rec['q25_tpm']:.4g}-{rec['q75_tpm']:.4g}"
@@ -1851,11 +1859,14 @@ def main(argv=None):
     bs.set_defaults(fn=cmd_bootstrap)
 
     rk = sub.add_parser("rank", help="rank neoantigen candidates (FASTA of windows, or a scored table)")
-    rk.add_argument("mode", nargs="?", choices=("fasta", "table"),
+    rk.add_argument("mode", nargs="?", choices=("fasta", "table", "pairs"),
                     help="fasta: mutation-spanning window FASTA + donor alleles. "
                          "table: a .scored.csv already produced by another tool. "
+                         "pairs: a TSV of peptide / wt_peptide / allele (+ optional gene, tpm) -- "
+                         "the shape a neoantigen screen is distributed in. "
                          "Omit with --coefficients / --holdout")
-    rk.add_argument("input", nargs="?", help="the .peptide.fasta or the .scored.csv")
+    rk.add_argument("input", nargs="?",
+                    help="the .peptide.fasta, the .scored.csv, or the pairs TSV (.gz ok, - = stdin)")
     rk.add_argument("--coefficients", action="store_true",
                     help="print the fitted aggregate as TSV (block, term, coef, sd, boot_sd, z, "
                          "p, 95%% interval, sign stability) and score nothing. Read from the "

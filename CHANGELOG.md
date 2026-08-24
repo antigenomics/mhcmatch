@@ -21,6 +21,17 @@ The command line can now emit every table a figure needs.
   and refit nothing, so a figure built on them and a run of `rank` are the same model by
   construction rather than by a comparison someone has to remember to make. `mode` and `input` are
   optional under either flag.
+- **`mhcmatch rank pairs FILE`** --- a third input shape, a TSV of `peptide` / `wt_peptide` /
+  `allele` (+ optional `gene`, `tpm`). `rank fasta` needs mutation-spanning windows and `rank table`
+  needs another tool's `.scored.csv`; neither is what you have when a caller has already given you
+  the mutant k-mer, its germline counterpart and the restricting allele --- which is how every
+  neoantigen screen is distributed. Scoring one therefore meant reimplementing `rank` outside the
+  package, and a reimplementation is a second model nobody benchmarked. Rows are grouped by allele
+  and each group scored in one `predict.binder_ranks` call, so the per-allele calibrator background
+  is paid once per allele rather than once per row; the wild types go through the same call, so the
+  ratio between a WT and a mutant IC50 is a property of the substitution and not of two code paths.
+  A row with no wild type is kept: `wt_absent` carries it and agretopicity stays undefined rather
+  than zero. Exposed as `mhcmatch.rank.rank_pairs`.
 - **TSV output for `scan`, `logo` and `expression`,** under `--out FILE` or `--tsv`. All three
   printed aligned text only. `expression` wrote `median 0.33` and `IQR 0.1-0.9` *inside* cells,
   which reads well and parses badly; `logo` kept the top three residues per position where the TSV
@@ -30,6 +41,9 @@ The command line can now emit every table a figure needs.
 
 ### Changed
 
+- `expression --safety` no longer requires `--tissue`/`--tumor`. `lookup()` demands exactly one of
+  them, and `cmd_expression` called it before reaching the safety block, so asking only for the
+  cross-tissue profile raised instead of answering.
 - Shipped artifacts re-stamped to 1.0.4 (`mhcmatch build`): three anchor models and
   `corpus_tables.npz`. Contents unchanged; `mhcmatch build --check` reports 0 stale of 27.
 

@@ -262,3 +262,44 @@ def test_scan_and_logo_offer_a_tsv_form(capsys):
         usage = capsys.readouterr().out
         assert "--tsv" in usage, cmd
         assert "--out" in usage, cmd
+
+
+def test_rank_pairs_is_offered_and_needs_a_peptide_column(tmp_path, capsys):
+    """`pairs` is the third input shape: (mutant, wild type, allele), which is how every neoantigen
+    screen is distributed. Without it, scoring one meant reimplementing `rank` outside the package,
+    and a reimplementation is a second model nobody benchmarked."""
+    with pytest.raises(SystemExit):
+        cli.main(["rank", "--help"])
+    assert "pairs" in capsys.readouterr().out
+
+    bad = tmp_path / "no_peptide.tsv"
+    bad.write_text("epitope\tallele\nGILGFVFTL\tHLA-A*02:01\n")
+    with pytest.raises(SystemExit, match="peptide"):
+        cli.main(["rank", "pairs", str(bad)])
+
+
+def test_rank_pairs_keeps_a_row_with_no_wild_type(monkeypatch):
+    """A frameshift or a fusion product has no germline counterpart. `wt_absent` carries that and
+    agretopicity stays undefined -- imputing a wild type would report a number for a quantity that
+    does not exist."""
+    from mhcmatch import rank as R
+
+    seen = {}
+
+    def fake_binder_ranks(store, peptides, allele, cls=None, **kw):
+        seen.setdefault(allele, []).append(list(peptides))
+        n = len(peptides)
+        return [1.0] * n, [1.0] * n, [1.0] * n, [100.0] * n
+
+    monkeypatch.setattr("mhcmatch.predict.binder_ranks", fake_binder_ranks)
+    monkeypatch.setattr(R, "_recognition", lambda p, cls="mhc1": 0.0)
+    monkeypatch.setattr(R, "_fill_channels", lambda rows, ch: None)
+    rows = R.rank_pairs(None, [{"peptide": "GILGFVFTL", "allele": "A", "wt_peptide": ""},
+                               {"peptide": "NLVPMVATV", "allele": "A", "wt_peptide": "NLVPMVATL"}],
+                        score="gate")
+    by_pep = {r.peptide: r for r in rows}
+    assert by_pep["GILGFVFTL"].wt_absent == 1.0
+    assert by_pep["GILGFVFTL"].agretopicity != by_pep["GILGFVFTL"].agretopicity  # nan
+    assert by_pep["NLVPMVATV"].wt_absent == 0.0
+    # one call for the mutants and one for the wild types, not one call per row
+    assert len(seen["A"]) == 2 and seen["A"][0] == ["GILGFVFTL", "NLVPMVATV"]
