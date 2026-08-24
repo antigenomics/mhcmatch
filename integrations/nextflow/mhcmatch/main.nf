@@ -1,13 +1,14 @@
 // mhcmatch as a set of drop-in nf-core-style local processes.
 //
-// Five processes, in pipeline order:
+// Six processes, in pipeline order:
 //
 //   MHCMATCH_PREDICT   variant windows -> per-allele presentation, affinity, agretopicity
 //   MHCMATCH_RANK      candidates      -> the fitted EPIC aggregate, one ordered table
 //                                        (carries `occupancy` alongside `agretopicity`)
 //   MHCMATCH_NEOAG     peptides        -> proximity to the tested-neoantigen database
 //   MHCMATCH_MIMICRY   peptides        -> the six signed self/viral/thymus channels + autoimmune
-//   MHCMATCH_VECTOR    ranked units    -> a screened polyepitope cassette, amino acid and CDS
+//   MHCMATCH_CASSETTE  ranked units    -> a screened polyepitope cassette, amino acid and CDS
+//   MHCMATCH_CASSETTE_SCORE  every donor -> one shared calibration, so donors are comparable
 //
 // `subworkflows/mhcmatch.nf` chains them; see ./README.md for the input and output contract of each.
 //
@@ -28,7 +29,7 @@ process MHCMATCH_PREDICT {
     label 'process_medium'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.27.0"
+    container "mhcmatch:1.0.1"
 
     input:
     tuple val(meta), path(fasta), val(alleles), val(cls)
@@ -90,7 +91,7 @@ process MHCMATCH_RANK {
     label 'process_medium'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.27.0"
+    container "mhcmatch:1.0.1"
 
     // `rank` reads the known-epitope sets, the mimicry references and the expression tables on top
     // of the ligand panel. The image bakes them (`bootstrap --reference`); a bare `bootstrap` image
@@ -156,7 +157,7 @@ process MHCMATCH_NEOAG {
     label 'process_single'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.27.0"
+    container "mhcmatch:1.0.1"
 
     input:
     tuple val(meta), path(peptides), val(cls)
@@ -205,7 +206,7 @@ process MHCMATCH_MIMICRY {
     label 'process_medium'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.27.0"
+    container "mhcmatch:1.0.1"
 
     input:
     tuple val(meta), path(peptides), val(cls)
@@ -247,12 +248,12 @@ print('\\t'.join(cols))" > ${prefix}.${cls}.mhcmatch.mimicry.tsv
 }
 
 
-process MHCMATCH_VECTOR {
+process MHCMATCH_CASSETTE {
     tag "${meta.id}"
     label 'process_high'
 
     conda "${moduleDir}/environment.yml"
-    container "mhcmatch:0.27.0"
+    container "mhcmatch:1.0.1"
 
     // `--screen` builds one whole-proteome index per register length: ~12 GB peak each and a few
     // minutes apiece, which is why this process carries `process_high` and why the flag is a param.
@@ -300,7 +301,7 @@ process MHCMATCH_VECTOR {
                        "--evenness ${params.mhcmatch_vector_evenness ?: 0.0}" : ''
     if (n0 == null) error "params.mhcmatch_vector_n0 is required and has no default: per-allotype capacity is not fitted by anything in the public record, so the value is yours to set and it is recorded in the output"
     """
-    mhcmatch vector \\
+    mhcmatch cassette build \\
         --candidates ${candidates} ${ctx} \\
         --n0 ${n0} \\
         --alleles '${alleles}' \\
@@ -325,6 +326,86 @@ process MHCMATCH_VECTOR {
     python -c "from mhcmatch.vector import MAP_COLUMNS as C; print('\\t'.join(C))" \\
         > ${prefix}.cassette.map.tsv
     echo '{"units": [], "features": []}' > ${prefix}.cassette.map.json
+
+    cat <<-END_VERSIONS > versions.yml
+    "${task.process}":
+        mhcmatch: \$(python -c "import mhcmatch; print(mhcmatch.__version__)")
+    END_VERSIONS
+    """
+}
+
+
+process MHCMATCH_CASSETTE_SCORE {
+    tag "cohort:${tables.size()}"
+    label 'process_single'
+
+    conda "${moduleDir}/environment.yml"
+    container "mhcmatch:1.0.1"
+
+    // THE WHOLE POINT OF THIS PROCESS IS THAT IT IS NOT PER DONOR.
+    //
+    // `rank` runs once per sample, and `p_response` is anchored on the batch it is handed -- so a
+    // per-donor invocation makes every donor's mean candidate probability equal the declared
+    // prevalence, whatever their pool holds. Measured on 7,261 TCGA donors with pools spanning 1 to
+    // 5,221 candidates: every per-donor-anchored pool mean lands on 0.060163, standard deviation
+    // 2.75e-17. Two donors' numbers are then the same number and a cross-donor triage reads noise.
+    //
+    // `cassette score` fits ONE offset over every row it is given, so this process takes the
+    // COLLECTED tables of the whole run. That is why its input is a plain `path` list and not a
+    // `tuple val(meta), ...`: there is no per-sample meta, because the calibration is the cohort's.
+    //
+    // Set `params.mhcmatch_cassette_per_donor_offset` only if you want the ENRICHMENT reading --
+    // how far each donor's chosen units sit above their own background -- and know that the result
+    // is no longer a probability and no longer comparable between donors.
+    input:
+    path tables
+    path pools
+
+    output:
+    path "cohort.cassette_score.tsv", emit: score
+    path "versions.yml",              emit: versions
+
+    when:
+    task.ext.when == null || task.ext.when
+
+    script:
+    def args = task.ext.args ?: ''
+    def prev = params.mhcmatch_prevalence ? "--prevalence ${params.mhcmatch_prevalence}" : ''
+    def rho  = params.mhcmatch_cassette_rho ? "--rho ${params.mhcmatch_cassette_rho}" : ''
+    def per  = params.mhcmatch_cassette_per_donor_offset ? '--per-donor-offset' : ''
+    def pool = pools.name != 'NO_FILE' ? "--pool cohort.pool.tsv" : ''
+    """
+    # One table, one header, a `donor` column carrying the sample id each row came from. awk rather
+    # than a python one-liner so the concatenation is visible in the .command.sh of a failed run.
+    for f in ${tables}; do
+        d=\$(basename \$f | sed 's/\\..*//')
+        awk -v d="\$d" 'NR==1 && !h {print "donor\\t" \$0; h=1; next} FNR>1 {print d "\\t" \$0}' \\
+            OFS='\\t' \$f
+    done > cohort.cassettes.tsv
+
+    if [ -n "${pool}" ]; then
+        for f in ${pools}; do
+            d=\$(basename \$f | sed 's/\\..*//')
+            awk -v d="\$d" 'NR==1 && !h {print "donor\\t" \$0; h=1; next} FNR>1 {print d "\\t" \$0}' \\
+                OFS='\\t' \$f
+        done > cohort.pool.tsv
+    fi
+
+    mhcmatch cassette score \\
+        --cassettes cohort.cassettes.tsv \\
+        ${pool} ${prev} ${rho} ${per} ${args} \\
+        --out cohort.cassette_score.tsv
+
+    cat <<-END_VERSIONS > versions.yml
+    "${task.process}":
+        mhcmatch: \$(python -c "import mhcmatch; print(mhcmatch.__version__)")
+    END_VERSIONS
+    """
+
+    stub:
+    """
+    printf 'donor\\tk\\tyield\\tp_mean\\tp_at_least\\toffset\\trho\\tn_effective\\tlam\\n' \\
+        > cohort.cassette_score.tsv
 
     cat <<-END_VERSIONS > versions.yml
     "${task.process}":

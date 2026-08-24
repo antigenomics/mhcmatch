@@ -6,12 +6,16 @@
 //   windows.fasta ─► PREDICT ─► native.tsv                        both classes
 //                 └► RANK ────► ranked.tsv ─┬─► NEOAG   ─► neoag.tsv     class I only
 //                                           ├─► MIMICRY ─► mimicry.tsv   class I only
-//                                           └─► VECTOR  ─► cassette      class I only
+//                                           └─► CASSETTE─► cassette      class I only
+//                                                        └─► CASSETTE_SCORE (all donors at once)
 //
-// PREDICT and RANK serve both classes. NEOAG, MIMICRY and VECTOR are CD8-only by design, not by
-// omission -- see the comment at the filter and docs/safety.rst.
+// PREDICT and RANK serve both classes. NEOAG, MIMICRY and CASSETTE are CD8-only by design, not
+// by omission -- see the comment at the filter and docs/safety.rst.
 //
-// VECTOR takes `ranked.tsv` as its candidate table AND the original `windows.fasta` as `--context`:
+// CASSETTE_SCORE is the one step that is NOT per sample: it waits for every donor so the
+// calibration offset is fitted once over the run. See its comment in ../main.nf.
+//
+// CASSETTE takes `ranked.tsv` as its candidate table AND the original `windows.fasta` as `--context`:
 // `rank` emits minimal epitopes and a unit is the long window around the mutation, so neither side
 // alone can build one (see mhcmatch.vector.units_from_context). Injecting the minimal epitope is not
 // a smaller version of the right thing, it is the tolerising configuration.
@@ -20,7 +24,8 @@ include { MHCMATCH_PREDICT  } from '../main.nf'
 include { MHCMATCH_RANK     } from '../main.nf'
 include { MHCMATCH_NEOAG    } from '../main.nf'
 include { MHCMATCH_MIMICRY  } from '../main.nf'
-include { MHCMATCH_VECTOR   } from '../main.nf'
+include { MHCMATCH_CASSETTE       } from '../main.nf'
+include { MHCMATCH_CASSETTE_SCORE } from '../main.nf'
 
 workflow MHCMATCH {
 
@@ -40,7 +45,7 @@ workflow MHCMATCH {
     // through, so the ranked table goes in unchanged and comes back annotated.
     ch_ranked = MHCMATCH_RANK.out.ranked                       // [ meta, cls, ranked.tsv ]
 
-    // CLASS I ONLY, for all three of NEOAG, MIMICRY and VECTOR. Prior evidence and safety are built
+    // CLASS I ONLY, for all three of NEOAG, MIMICRY and CASSETTE. Prior evidence and safety are built
     // on a CD8 mechanism -- a minimal epitope close enough to a confirmed neoantigen that one
     // clonotype could see both, and a register that IS an essential-tissue self peptide killing the
     // cell presenting it. Neither becomes a class-II question by widening the length range: CD4
@@ -65,8 +70,19 @@ workflow MHCMATCH {
         .join( ch_windows.map { meta, fa, alleles, cls -> [ meta, fa, alleles ] } )
         .map { meta, cls, ranked, fa, alleles -> [ meta, ranked, fa, alleles, cls ] }
 
-    MHCMATCH_VECTOR( ch_vector )
-    ch_versions = ch_versions.mix( MHCMATCH_VECTOR.out.versions.first() )
+    MHCMATCH_CASSETTE( ch_vector )
+    ch_versions = ch_versions.mix( MHCMATCH_CASSETTE.out.versions.first() )
+
+    // ONE calibration for the whole run, which is why this is `.collect()` and not a per-sample
+    // call. `rank` anchors `p_response` on the batch it is handed, so scoring each donor alone
+    // makes every donor's mean the declared prevalence and no two donors comparable. Collecting
+    // first is the fix, and it is the only place in this subworkflow where a process deliberately
+    // waits for every sample.
+    MHCMATCH_CASSETTE_SCORE(
+        MHCMATCH_CASSETTE.out.report.map { meta, tsv -> tsv }.collect(),
+        ch_ranked.filter { meta, cls, tsv -> cls == 'mhc1' }.map { meta, cls, tsv -> tsv }.collect()
+    )
+    ch_versions = ch_versions.mix( MHCMATCH_CASSETTE_SCORE.out.versions )
 
     emit:
     scored   = MHCMATCH_PREDICT.out.scored     // [ meta, cls, *.mhcmatch.scored.csv ]
@@ -74,8 +90,9 @@ workflow MHCMATCH {
     ranked   = MHCMATCH_RANK.out.ranked        // [ meta, cls, *.mhcmatch.ranked.tsv ]
     neoag    = MHCMATCH_NEOAG.out.neoag        // [ meta, cls, *.mhcmatch.neoag.tsv ]
     mimicry  = MHCMATCH_MIMICRY.out.mimicry    // [ meta, cls, *.mhcmatch.mimicry.tsv ]
-    cassette = MHCMATCH_VECTOR.out.protein     // [ meta, *.cassette.faa ]
-    cds      = MHCMATCH_VECTOR.out.cds         // [ meta, *.cassette.fna ]
-    report   = MHCMATCH_VECTOR.out.report      // [ meta, *.cassette.tsv ]
+    cassette = MHCMATCH_CASSETTE.out.protein   // [ meta, *.cassette.faa ]
+    cds      = MHCMATCH_CASSETTE.out.cds       // [ meta, *.cassette.fna ]
+    report   = MHCMATCH_CASSETTE.out.report    // [ meta, *.cassette.tsv ]
+    score    = MHCMATCH_CASSETTE_SCORE.out.score  // cohort.cassette_score.tsv, ONE per run
     versions = ch_versions
 }

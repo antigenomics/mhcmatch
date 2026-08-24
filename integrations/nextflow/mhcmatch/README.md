@@ -90,7 +90,7 @@ python -c "from mhcmatch import rank; print(' · '.join(rank.columns()))"
 features) is appended whenever the aggregate is what scored, because a model emits the features it
 used. **The schema changed in 0.24.0**: `rank` is now the rank *by score* rather than the row
 number, `p_response` and `variant_type` joined `BASE_COLUMNS`, and the aggregate's own columns went
-from three to five. **In 0.27.0 they are** `C_phys_buried`, `C_phys_charge`, `C_corpus_thymus`,
+from three to five. **In 1.0.1 they are** `C_phys_buried`, `C_phys_charge`, `C_corpus_thymus`,
 `C_corpus_self`, `C_corpus_viral`, and `expr_pct` joined `BASE_COLUMNS`. Nothing downstream should
 be joining on position; ask the library — every stub in this module already does.
 
@@ -144,15 +144,20 @@ reads, goes with *less* immunogenicity. A conventional whole-peptide distance av
 lands near zero. The actionable one is the **TCR-facing self/thymus channel**: it is simultaneously
 a deprioritisation signal and the autoimmunity flag, so report it, do not bury it in a sum.
 
-### `MHCMATCH_VECTOR`
+### `MHCMATCH_CASSETTE`
 
 | | |
 |---|---|
 | **in** | `tuple val(meta), path(candidates), path(context), val(alleles), val(cls)` — `context` may be `NO_FILE` if `candidates` already carries long windows |
 | **out** | `report` → `${prefix}.cassette.tsv` · `protein` → `.cassette.faa` · `cds` → `.cassette.fna` · `map` → `.cassette.map.tsv` · `map_json` → `.cassette.map.json` · `versions` |
 
-Screen → select → order → back-translate. The report is long-form (`section, i, key, value, detail`)
-with sections `withdrawn`, `allotype`, `not selected`, `unit`, `junction`, `cassette`, `sequence`.
+Runs `mhcmatch cassette build` — screen → select → order → back-translate. The report is long-form
+(`section, i, key, value, detail`) with sections `withdrawn`, `allotype`, `not selected`, `unit`,
+`junction`, `cassette`, `sequence`.
+
+**Renamed from `MHCMATCH_VECTOR` in 1.0.1**, when `mhcmatch vector` became `mhcmatch cassette build`.
+The `params.mhcmatch_vector_*` names are deliberately **unchanged**: an unknown Nextflow parameter is
+ignored rather than rejected, so renaming them would silently drop every deployed config's settings.
 
 - **`params.mhcmatch_vector_n0` is required and has no default.** Per-allotype capacity is not
   fitted by anything in the public record, so the value is yours to defend; it is recorded in the
@@ -225,10 +230,10 @@ From `slurm.config` only:
 ## Build the image (only for `-profile docker`)
 
 ```zsh
-docker build -t <ISPRAS_REGISTRY>/mhcmatch:0.27.0 \
-    --build-arg MHCMATCH_VERSION=0.27.0 \
+docker build -t <ISPRAS_REGISTRY>/mhcmatch:1.0.1 \
+    --build-arg MHCMATCH_VERSION=1.0.1 \
     integrations/nextflow/mhcmatch/
-docker push <ISPRAS_REGISTRY>/mhcmatch:0.27.0
+docker push <ISPRAS_REGISTRY>/mhcmatch:1.0.1
 ```
 
 No data staging: the build runs `mhcmatch bootstrap --reference`, which fetches the ligand panel
@@ -253,7 +258,7 @@ the predictor swap.
 
 ## Running it on a SLURM cluster
 
-`slurm.config` is the executor profile: it sets `executor = 'slurm'`, sizes the five processes to
+`slurm.config` is the executor profile: it sets `executor = 'slurm'`, sizes the six processes to
 what they actually consume, retries the two exit codes a *scheduler* produces rather than the code
 (137 OOM-kill, 140 wall-clock kill) with `task.attempt` scaling the request, and points every task
 at one shared reference directory.
@@ -300,7 +305,7 @@ nextflow run . -profile slurm \
 is a common name and not a universal one — Aldan-3, where this module is deployed, has
 `short`/`medium`/`long`/`infinite` and no `normal` at all, so every task would be rejected at submit
 with the default. Run `sinfo -o '%20P %5a %10l %6D %6c %10m'` and pass a partition that exists and
-whose time limit clears the table above; `MHCMATCH_VECTOR` asks for 8 h, which a 2 h queue cannot
+whose time limit clears the table above; `MHCMATCH_CASSETTE` asks for 8 h, which a 2 h queue cannot
 give it.
 
 ### The interpreter
@@ -311,7 +316,7 @@ a conda interpreter is enough and is what `-profile conda` sidesteps entirely:
 
 ```bash
 /path/to/conda/envs/<env>/bin/python3 -m venv .venv && . .venv/bin/activate
-pip install mhcmatch==0.27.0
+pip install mhcmatch==1.0.1
 ```
 
 **Why the calibration directory is worth the trouble.** `mhcmatch` reports a %rank, which means each
@@ -349,7 +354,7 @@ nextflow run . -profile slurm,singularity -resume \
     --mhcmatch_vector_n0 6
 ```
 
-`-resume` is not optional in practice: `MHCMATCH_VECTOR --screen` builds a whole-proteome index per
+`-resume` is not optional in practice: `MHCMATCH_CASSETTE --screen` builds a whole-proteome index per
 register length and a re-run without it repeats hours of work that has not changed.
 
 ### What each process asks for
@@ -360,9 +365,36 @@ register length and a re-run without it repeats hours of work that has not chang
 | `MHCMATCH_RANK` | 8 | 8 GB | 1 h | the aggregate alone; **24 GB / 6 h** under `--mhcmatch_rank_extended`, which loads the self-mimicry reference |
 | `MHCMATCH_NEOAG` | 4 | 32 GB | 4 h | one seqtree index over the reference window set |
 | `MHCMATCH_MIMICRY` | 4 | 32 GB | 4 h | the same, six channels |
-| `MHCMATCH_VECTOR` | 4 | **48 GB** | 8 h | one whole-proteome index **per register length**, ~12 GB peak each |
+| `MHCMATCH_CASSETTE` | 4 | **48 GB** | 8 h | one whole-proteome index **per register length**, ~12 GB peak each |
+| `MHCMATCH_CASSETTE_SCORE` | 1 | 2 GB | 20 m | one pass over the collected tables; waits for every sample |
 
-`MHCMATCH_VECTOR` drops to 8 GB / 1 h with `--mhcmatch_vector_screen false` — **and then no safety
+### `MHCMATCH_CASSETTE_SCORE`
+
+| | |
+|---|---|
+| **in** | `path tables`, `path pools` — the **collected** cassette reports and ranked tables of every sample in the run |
+| **out** | `score` → `cohort.cassette_score.tsv` (one file per run) · `versions` |
+
+**The one process that is not per sample, and that is the point.** `mhcmatch rank` anchors
+`p_response` on the batch it is handed, so a per-donor call makes every donor's mean candidate
+probability equal the declared prevalence whatever their pool holds. Measured on 7,261 TCGA donors
+with pools spanning 1 to 5,221 candidates: every per-donor-anchored pool mean lands on **0.060163**,
+standard deviation **2.75 × 10⁻¹⁷**. Two donors' numbers are then the same number, and a cross-donor
+triage built on them reads noise.
+
+This process collects first and fits **one** offset over the whole run, so `yield` — the expected
+number of responding units — is a level two donors can be compared on. It also emits `lam`, nats
+above a uniform random subset of that donor's own pool, which is comparable across donors *and*
+across cassette sizes without any shared calibration.
+
+- **`params.mhcmatch_cassette_per_donor_offset`** (default `false`) switches to one offset per donor.
+  That reports an **enrichment** against each donor's own background: a real quantity, measurably the
+  stronger readout against immune infiltrate (ρ = +0.1298 vs +0.1115 on 4,073 TCGA donors), but no
+  longer a probability and no longer comparable between donors. Choose deliberately.
+- **`params.mhcmatch_cassette_rho`** overrides the intra-cassette response correlation (default
+  0.091, IVAC MUTANOME). Measure your own with `mhcmatch.portfolio.betabinom_rho`.
+
+`MHCMATCH_CASSETTE` drops to 8 GB / 1 h with `--mhcmatch_vector_screen false` — **and then no safety
 screen runs at all** and the cassette carries whatever it was handed. The 48 GB is the price of the
 screen and it is the reason the flag defaults to on.
 

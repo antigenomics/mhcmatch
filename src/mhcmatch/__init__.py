@@ -8,6 +8,8 @@
 - :class:`Pseudoseq` -- pseudosequence allele similarity & cross-allele diffusion (rare-allele rescue).
 - :func:`logo.motif` -- per-allele motif logos + length distributions.
 - :mod:`predict` -- score a variant peptide-window FASTA into native + pipeline-``.scored.csv`` output.
+- :mod:`cassette` -- choose the units of a cassette to a target size, and score one that already
+  exists on axes that survive changing donor and changing size.
 - :mod:`vector` -- assemble a polyepitope vaccine cassette: how many units per allotype, in what
   order, joined by what spacer.
 - :mod:`luksza` -- the ``R = Z/(1+Z)`` recognition term, so ``viral_R`` -- a term of the retired
@@ -18,7 +20,7 @@ Theory: the theory appendix. Roadmap: ``ROADMAP.md``.
 """
 from importlib.metadata import PackageNotFoundError, version as _version
 
-from . import logo, luksza, mimics, portfolio, predict, search, vector
+from . import cassette, logo, luksza, mimics, portfolio, predict, search, vector
 from .affinity import AffinityModel, PottsAffinity
 from .structure import StructureScorer
 from .diffusion import AnchorModel
@@ -61,6 +63,7 @@ __all__ = [
     "mimics",
     "luksza",
     "portfolio",
+    "cassette",
     "vector",
     "__version__",
 ]
@@ -70,4 +73,4 @@ try:
 except PackageNotFoundError:  # running from a source tree without an install
     # Keep in step with pyproject.toml. It drifted to two minors behind once, and the value is what
     # every `versions.yml` in the nextflow module reports, so a stale one mislabels a pipeline run.
-    __version__ = "0.27.0"
+    __version__ = "1.0.1"

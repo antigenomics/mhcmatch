@@ -6,6 +6,59 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [1.0.1] - 2026-08-24
+
+First 1.x. The version skips 1.0.0 deliberately (`ROADMAP.md` sec. 5e).
+
+### Added
+
+- **`mhcmatch.cassette` — the two operations a cassette needs, as one module.** Everything below
+  existed as an algorithm somewhere in the benchmark repository; what it did not have was a shipped
+  home, a CLI, or a test.
+
+  | | |
+  |---|---|
+  | `select(scores, peptides, alleles, k, tol)` | choose *k* units (+/- `tol`) maximising `H = sum h - sum J`, the mean-variance objective derived from the design goal. Greedy `O(kN)` plus a bounded swap pass; reaches the brute-force optimum on every pool small enough to enumerate |
+  | `score(...)` | expected responding units, `P(>= k)` under the block model, `n_effective`, allotype coverage, the three pairwise statistics, and `lam` |
+  | `lam(h, sel, k)` | **the axis that compares cassettes across donors and across sizes** — `H(S)` minus the exact log partition function over every size-*k* subset of that donor's own pool, plus `log C(N, k)`. Zero is a uniformly random subset of the same pool |
+  | `prob_offset` / `group_offsets` | the calibration offset, fitted over a batch that does not move, or one per group. **These report different quantities** — a level and an enrichment — and the docstrings say which |
+  | `goal_energy`, `greedy`, `refine`, `overlap`, `pair_stats`, `log_ek`, `energy` | the primitives, each with its closed form checked against the `O(k^2)` or brute-force sum it replaces |
+
+- **`mhcmatch cassette` — the CLI, with sub-verbs.** `select`, `score`, `build`, `order`, `deslip`.
+  The first two-level command in this CLI; the `-v`/`-q` loop in `main` descends into it, because
+  otherwise `cassette select -v` is an unrecognised argument while `cassette -v select` works.
+
+- **`MHCMATCH_CASSETTE_SCORE`, a Nextflow process that is deliberately not per sample.** It collects
+  every donor's table and fits **one** calibration offset over the run. `rank` anchors `p_response`
+  on the batch it is handed, so a per-donor call pins every donor's mean candidate probability to
+  the declared prevalence: measured on 7,261 TCGA donors with pools spanning 1 to 5,221 candidates,
+  every per-donor-anchored pool mean lands on **0.060163**, standard deviation **2.75e-17**. Two
+  donors' numbers are then the same number. `params.mhcmatch_cassette_per_donor_offset` asks for the
+  enrichment reading instead, and says in its own help what that costs.
+
+- `portfolio.betabinom_rho(..., profile=False)` maximises over `(p, rho)` jointly and reports the
+  fitted `p`. The benchmark repository had grown a second implementation of this estimator for
+  exactly that; it now calls this one.
+
+### Changed
+
+- **`mhcmatch vector` is now `mhcmatch cassette build`**, and `mhcmatch deslip` is
+  `mhcmatch cassette deslip`. Both old names remain as aliases for one release and print a
+  deprecation line to stderr. `MHCMATCH_VECTOR` is `MHCMATCH_CASSETTE` in the Nextflow module; its
+  `params.mhcmatch_vector_*` names are **unchanged**, because an unknown Nextflow parameter is
+  ignored rather than rejected and a rename would silently drop every deployed config's settings.
+- `cassette order` runs the assembly half alone on units already chosen, so `--n0` is not required
+  there. Same code path as `build`, so the two cannot diverge.
+
+### Notes
+
+- `score` does **not** report `H`. `goal_energy` renormalises the overlap to the set it is handed
+  and `overlap`'s dominance channel is scaled by that set's range, so an `H` computed on a cassette
+  alone is not the `H` `select` maximised over the pool — and a rule that spent expected count on
+  non-overlapping units would score identically to one that did not. To compare two rules on the
+  objective, build `(h, J)` once over the pool and evaluate both index sets with `energy`. `lam`
+  needs none of that and is the axis that already crosses donors and sizes.
+
 ## [0.27.0] - 2026-08-23
 
 ### Changed
