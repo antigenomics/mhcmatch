@@ -19,7 +19,8 @@ from collections import Counter
 from functools import lru_cache
 from importlib import resources
 
-from .pseudoseq import (Pseudoseq, blosum62_conditional, learn_anchor_weights, load_pseudo,
+from .pseudoseq import (Pseudoseq, learn_anchor_weights, load_pseudo,
+                        substitution_conditional,
                         normalize_allele)
 
 # Presentation-scoring footprint: the N-pocket (P1,P2,P3) + C-pocket (PΩ-1,PΩ). P2/PΩ are the
@@ -103,7 +104,7 @@ class AnchorModel:
                  learn_weights=True, prune_dpi=False, weights="learned",
                  register_em=2, footprint="anchor", rare_max=30, background="ligand",
                  length_prior="score", length_motifs=True, register="marginal", n_motifs=3,
-                 pseudocount=0.0):
+                 pseudocount=0.0, pseudo_matrix="blosum62"):
         """``weights``: ``"learned"`` (per-anchor MI over the panel, default) or ``"uniform"``.
         ``learn_weights=False`` forces uniform.
 
@@ -234,9 +235,9 @@ class AnchorModel:
         self._tau = self._fit_tau() if prior_strength == "auto" else None
         if cls == "mhc2" and n_motifs > 1:  # needs the offset prior: the E-step scores the marginal
             self._refit_mixture(store)
-        self._add_pseudocounts(pseudocount)   # last: everything above fits on raw counts
+        self._add_pseudocounts(pseudocount, pseudo_matrix)  # last: all the above fits raw counts
 
-    def _add_pseudocounts(self, beta):
+    def _add_pseudocounts(self, beta, matrix="blosum62"):
         """Mass-preserving BLOSUM substitution pseudocount on every residue counter (Nielsen et al. 2004,
         PMID 14962912). ``beta=0`` (default) returns immediately and the model is bit-identical.
 
@@ -263,7 +264,7 @@ class AnchorModel:
         """
         if beta <= 0:
             return
-        cond = blosum62_conditional()
+        cond = substitution_conditional(matrix)
 
         def smooth(c):
             n = sum(c.values())

@@ -270,9 +270,54 @@ BLOSUM62_BG = {
 }
 
 
-@lru_cache(maxsize=1)
-def blosum62_conditional() -> dict:
-    """``{observed: {r: P(r | observed)}}`` -- the BLOSUM62 substitution conditional.
+def _scale(m, hi: float = 5.0, iters: int = 200):
+    """The Karlin-Altschul scale L of a log-odds matrix: the unique L > 0 with
+    ``sum_ab p_a p_b exp(L * s_ab) = 1``. ``None`` when no positive root exists.
+
+    **This is why a matrix cannot simply be swapped in.** A log-odds matrix is
+    ``s_ab = (1/L) ln(q_ab / (p_a p_b))``, and L is a property of the published table, not a
+    constant: measured against ``BLOSUM62_BG`` the matrices seqtree carries come out at BLOSUM62
+    0.321 and PAM100 0.332 (half-bit units, ``ln2/2 = 0.347``) but BLOSUM80 0.231, BLOSUM45 0.231
+    and PAM250 0.219 (third-bit). Hardcoding ``2^(s/2)`` therefore recovers BLOSUM62 correctly and
+    overstates the others' exponent by ~1.4x -- enough to make BLOSUM45 look *more* conservative
+    than BLOSUM62, which inverts the very ordering a matrix sweep is asking about.
+
+    ``structural`` has no positive root (its entries are all >= 0, mean +6.6), so it is a
+    similarity score and not a log-odds matrix; the identity does not apply to it at all.
+    """
+    p = BLOSUM62_BG
+
+    def f(L):
+        return sum(p[a] * p[b] * math.exp(L * m.similarity(a, b))
+                   for a in _AAU for b in _AAU) - 1.0
+
+    if f(hi) < 0:                        # mean score is non-negative: no crossing, not log-odds
+        return None
+    lo = 1e-9
+    for _ in range(iters):
+        mid = 0.5 * (lo + hi)
+        if f(mid) < 0:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi) if 0.5 * (lo + hi) > 1e-4 else None
+
+
+#: Substitution matrices seqtree carries, and therefore the whole menu for the pseudocount blend.
+#: Note what is NOT here. There is no BLOSUM90 or BLOSUM100 to try, and seqtree's ``structural``
+#: is excluded on purpose: its entries are all non-negative (mean +6.6), so it has no positive
+#: Karlin-Altschul scale and is a similarity score rather than a log-odds matrix.
+#:
+#: The two families run in OPPOSITE directions. BLOSUM-n is built from blocks clustered at >= n%
+#: identity, so a HIGHER number means closer relatives and a more conservative substitution model;
+#: PAM-n is n accepted point mutations per 100 residues, so a HIGHER number means MORE divergence.
+#: Roughly BLOSUM80 ~ PAM120, BLOSUM62 ~ PAM160-200, BLOSUM45 ~ PAM250.
+PSEUDO_MATRICES: tuple = ("blosum62", "blosum45", "blosum80", "pam250", "pam100")
+
+
+@lru_cache(maxsize=len(PSEUDO_MATRICES))
+def substitution_conditional(matrix: str = "blosum62") -> dict:
+    """``{observed: {r: P(r | observed)}}`` -- a substitution conditional from any seqtree matrix.
 
     The ``q(a|b)`` of Nielsen et al. 2004 (PMID 14962912), used to spread an anchor's observed residue
     counts onto chemically similar residues (see :meth:`mhcmatch.diffusion.AnchorModel._add_pseudocounts`).
@@ -285,13 +330,25 @@ def blosum62_conditional() -> dict:
     -- only the 20 background frequencies survive. Reads ``.similarity()`` (the raw signed half-bits);
     ``.penalty()`` is the Gram form ``s_aa + s_bb - 2·s_ab``, which forces the diagonal to zero and so
     cannot recover the log-odds.
+
+    ``BLOSUM62_BG`` is used as ``p_a`` for every matrix. That is exact for BLOSUM62 and an
+    approximation for the others, whose own background differs; the identity is
+    ``P(a|b) ∝ p_a·2^(s_ab/2)``, so a wrong ``p`` tilts the conditional without changing which
+    residues it calls similar. Stated because it bounds what a matrix sweep can conclude.
     """
     import seqtree
 
-    m = seqtree.SubstitutionMatrix.blosum62()
+    if matrix not in PSEUDO_MATRICES:
+        raise ValueError(f"unknown substitution matrix {matrix!r}; "
+                         f"seqtree carries {', '.join(PSEUDO_MATRICES)}")
+    m = getattr(seqtree.SubstitutionMatrix, matrix)()
+    lam = _scale(m)
+    if lam is None:
+        raise ValueError(f"{matrix!r} has no positive Karlin-Altschul scale, so it is not a "
+                         "log-odds matrix and P(a|b) cannot be recovered from it")
     out = {}
     for b in _AAU:
-        col = {a: BLOSUM62_BG[a] * 2 ** (m.similarity(a, b) / 2) for a in _AAU}
+        col = {a: BLOSUM62_BG[a] * math.exp(lam * m.similarity(a, b)) for a in _AAU}
         z = sum(col.values())
         out[b] = {a: v / z for a, v in col.items()}
     return out
@@ -445,3 +502,12 @@ class Pseudoseq:
             for res, c in nbr.items():
                 pooled[res] = pooled.get(res, 0.0) + prior_strength * (c / m)
         return {res: c / total for res, c in pooled.items()}
+
+
+def blosum62_conditional() -> dict:
+    """The BLOSUM62 conditional --- :func:`substitution_conditional` at its default.
+
+    Kept as a name because it is what the anchor model has always called; the matrix is now a
+    parameter rather than a constant.
+    """
+    return substitution_conditional("blosum62")

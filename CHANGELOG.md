@@ -53,6 +53,23 @@ A restriction cell holding a whole genotype is now read as the alleles it names.
   positives, because the same peptide from the same gene is immunogenic at one allele and not at
   another in 5 of that screen's key groups.
 
+- **`pseudo_matrix` on `AnchorModel` and `store.anchor_model`, and `pseudoseq.substitution_conditional`.**
+  `CHANGELOG.md:1766` has documented a `pseudo_matrix` argument since 0.20.x; it did not exist. It
+  does now, over the five log-odds matrices seqtree carries --- `blosum62`, `blosum45`, `blosum80`,
+  `pam250`, `pam100`. There is no BLOSUM90 or BLOSUM100, and `structural` is excluded because its
+  entries are all non-negative, so it has no positive Karlin-Altschul scale and is a similarity
+  score rather than a log-odds matrix. The key enters the params dict only when non-default, so all
+  twenty-seven vendored artifacts stay valid instead of being invalidated into a refit.
+
+- **The substitution conditional now recovers each matrix's own scale.** `P(a|b) ∝ p_a·2^(s/2)`
+  hardcodes half-bit units. Measured against `BLOSUM62_BG`, the tables seqtree carries come out at
+  BLOSUM62 $\lambda = 0.321$ and PAM100 $0.332$ (half-bit, $\ln 2/2 = 0.347$) but BLOSUM80 $0.231$,
+  BLOSUM45 $0.231$ and PAM250 $0.219$ (third-bit), so the old exponent was right for BLOSUM62 and
+  overstated the rest by ~1.4x --- enough to make BLOSUM45 look *more* conservative than BLOSUM62 and
+  invert the ordering any matrix comparison is asking about. `_scale` solves
+  $\sum_{ab} p_a p_b e^{\lambda s_{ab}} = 1$ per matrix. Nothing shipped moves: the blend returns
+  immediately at the shipped $\beta = 0$.
+
 - **`mhcmatch.rank.split_alleles(cell, cls)`** --- the alleles one restriction cell names, in input
   order, without repeats, dropping what the pseudosequence tables do not know.
 
