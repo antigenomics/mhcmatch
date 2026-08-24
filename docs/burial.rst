@@ -301,7 +301,7 @@ slot.
      - **+0.008**
    * - cysteine loading of the second scale
      - −0.1033
-     - **+0.0056** *(lowest of 141)*
+     - **−0.0028** *(lowest of the 141 swept)*
    * - burial's coefficient
      - +0.1491
      - +0.1146

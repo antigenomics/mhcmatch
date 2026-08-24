@@ -76,6 +76,30 @@ Each answers something the block above it cannot express.
    same distribution is a second feature: a residue can have a mild mean energy and still
    discriminate sharply between receptors.
 
+   **The two are different physics, and the split is measured rather than assumed.** A generic
+   contact potential is essentially additive, and MJ1996 measures **96.4% one-body**, its two
+   leading modes correlating with Kyte–Doolittle at exactly **±0.851** — a hydrophobicity axis,
+   which is the right object for burial in a pocket. TCRen's **3.29%** sits *below* its own
+   composition-matched shuffle floor (**9.68 ± 2.16%**, 500 shuffles), and neither leading mode is
+   a hydropathy axis (**+0.353** on the receptor side, **−0.295** on the peptide side) — which is
+   what a potential inverted from a negatively-selected repertoire should look like.
+
+   **The face assignment is then checked against coordinates.** Predicting *does this side chain
+   reach the groove floor* over 3,875 (structure, position) rows from 374 crystals, MJ1996 alone
+   reaches AUROC **0.5818** and the TCRen marginal **0.4801** — below chance — which is the
+   ordering this block assumes. Class II does not reproduce it (**0.5171** MJ, **0.5368** TCRen
+   over 94 structures) and nothing here claims it does. Both scalars are lossy summaries: on top of
+   the geometric prior they add **+0.0012** AUROC against a free 20-way one-hot's **+0.0062**, so
+   they are carried for the distinction they draw rather than for the ranking they move. Their
+   fitted coefficients, per column standard deviation, are ``mj_anchor`` **+0.0354**, ``mj_tcr``
+   **−0.0927**, ``para_tcr`` **−0.0299** and ``para_sd_tcr`` **+0.0052**, against ``aa_tcr``'s
+   **−0.8796**.
+
+   The potentials, the 374-crystal contact maps and the spectral analysis are our own upstream
+   work, `antigenomics/tcren <https://github.com/antigenomics/tcren>`_. Both tables are **vendored
+   here**, so ``tcren`` is a runtime dependency of the optional ``[structure]`` extra alone and
+   nothing in this block imports it.
+
 ``motif``
    Contiguity of the **hydropathy stretch** — three features, all of them read off the TCR-facing
    residues only, because an anchor is buried in the groove and is not part of any stretch the

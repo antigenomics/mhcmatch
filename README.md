@@ -276,6 +276,30 @@ adjacent TCR-facing dipeptides. Fitted per species and never pooled across hosts
 whole published corpus scores in seconds, so pass a list. `mhcmatch.posbayes` is a strict special
 case of it and ships alongside for comparison.
 
+**MJ1996 and TCRen sit on opposite faces because they are different physics, and the difference is
+measured rather than assumed.** A generic contact potential is essentially additive: MJ1996 is
+**96.4% one-body**, its two leading modes correlating with Kyte–Doolittle at exactly **±0.851** — a
+hydrophobicity axis, which is the right object for burial in a pocket. TCRen, inverted from 374
+TCR:pMHC crystals, is **3.29% one-body**, *below* its own composition-matched shuffle floor
+(**9.68 ± 2.16%**, 500 shuffles), and neither leading mode is a hydropathy axis (**+0.353** on the
+receptor side, **−0.295** on the peptide side). There is no per-residue TCRen scale to extract,
+which is why the receptor side is integrated out instead of read off. The face assignment is then
+checked against coordinates: predicting *does this side chain reach the groove floor* over 3,875
+(structure, position) rows from the same 374 crystals, MJ1996 alone reaches **AUROC 0.5818** and
+TCRen alone **0.4801** — below chance — which is the ordering the block assumes. On class II
+neither separates alone (**0.5171** MJ, **0.5368** TCRen over 94 structures) and that ordering is
+not reproduced, so it is not claimed there.
+
+Both are lossy summaries, and they are carried for the distinction they draw rather than for the
+ranking they move: on top of the geometric prior the two scalars add **+0.0012** AUROC against a
+free 20-way one-hot's **+0.0062** on the same task, and in the shipped complement head their four
+columns are small next to the fitted-identity ones — per column standard deviation, `mj_anchor`
+**+0.0354**, `mj_tcr` **−0.0927**, `para_tcr` **−0.0299** and `para_sd_tcr` **+0.0052**, against
+`aa_tcr`'s **−0.8796** and `kmer_llr`'s **+0.6544**. The potentials, the 374-crystal contact maps
+and the spectral analysis are our own upstream work,
+[`antigenomics/tcren`](https://github.com/antigenomics/tcren); the tables are **vendored here**, so
+`tcren` is a runtime dependency of the optional `[structure]` extra alone.
+
 **The recognition axis reduces to one published scale, and the reduction is measured.** Split into
 its chemistry half and its fitted-identity half — exact partial sums via `score(blocks=...)` — the
 two behave oppositely: the identity half wins in-corpus and the chemistry half transfers. Scoring
@@ -283,15 +307,32 @@ all **576** candidate columns (every vendored residue vector × {anchor, TCR} ×
 *inside* the general model keeps exactly one: **the Rose burial propensity summed over the TCR
 face**, at z **+4.57** — the second-largest coefficient of the ten-term model it was selected in,
 behind expression alone — against the sixteen-column chemistry block's +0.18 in the same slot. In
-the shipped eight-term v4 it is `C_phys_buried` at **+0.1146 (z +2.34, p = 0.020)**: still the
-chemistry block's only fitted term, and smaller because the corpus block now carries three
-coefficients it previously shared one with. Rose's scale is not a hydrophobicity scale
+the shipped eight-term v4 it is `C_phys_buried` at **+0.1146 (z +2.34, p = 0.020)**: the larger of
+the block's two fitted terms, and smaller than at selection because the corpus block now carries
+three coefficients it previously shared one with. Rose's scale is not a hydrophobicity scale
 — it is the mean fraction of solvent-accessible area a residue loses on folding ([Rose et al.,
 *Science* 1985](https://doi.org/10.1126/science.4023714)) — so summed over the exposed face it
 scores the area a receptor *could* bury. Because its basis is imported rather than fitted it cannot
 memorise the corpus's cysteine artefact: correlation with per-peptide cysteine count is **+0.108**
 against the shipped score's **+0.688**. Full derivation in [docs/burial.rst](docs/burial.rst) and
 §11 of the theory appendix; all of it regenerable from `bench/immuno/` in the benchmark repo.
+
+**The second chemistry column is charge, and what it buys is burial's stability.** `C_phys_charge`
+is Atchley 2005's fifth factor — electrostatic charge ([Atchley et al., *PNAS*
+2005](https://doi.org/10.1073/pnas.0408677102)), read as the mean over the TCR face — and it was
+selected on its **residual against Rose**, not on its own AUROC. That is the point of it: all 39
+transfer scales swept correlate **0.74 to 0.95** with burial over the twenty residues, so a
+hydropathy scale is burial measured a second way and the two are not identified. v3 paired Rose
+with Kidera KF4 at *r* = **−0.837** per peptide; AF5 sits at **+0.008**. Swapping the partner
+leaves burial's coefficient *smaller* and its evidence *stronger*, which is what dropping a
+collinear term does: bootstrap sd **0.0874 → 0.0487**, *z* **+1.71 → +2.34**, *p* **0.088 →
+0.020**, sign stability **96.5% → 100%**, over 400 cluster bootstraps on the same 354,909 rows and
+958 immunogenic peptides. AF5 also carries the **lowest cysteine loading of the 141 complete
+residue scales swept, −0.0028**, which matters because the Chowell family runs a 12.5×
+mass-spectrometry cysteine enrichment a fitted basis can learn. Its own coefficient is small and
+not individually significant (**−0.0634, z −1.21, p = 0.225**) — the column being fixed here is
+burial, not the one swapped in. `mhcmatch.complement.PHYS_SCALE_CHARGE` names the scale;
+[docs/burial.rst](docs/burial.rst) carries the arms table.
 
 Four opt-in parameters came out of that work, all defaulting to the shipped behaviour so no recorded
 number moves: `blocks=` (score a subset of blocks, exact partial sum), `mask_cys=` (zero cysteine in

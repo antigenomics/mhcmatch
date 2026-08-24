@@ -20,7 +20,8 @@ partition energy (``MJ_PARTITION``). 142 of the 148 are complete and non-constan
 residues and are excluded from every statement here rather than imputed.
 
 Provenance is in the module docstring: ``DESCRIPTORS`` and ``HYDROPHOBICITY`` are vendored from
-peptides 0.5.0 (GPL-3.0-or-later), ``MJ_PARTITION`` from tcren 2.8.0, itself AAindex ``MIYS850101``.
+peptides 0.5.0 (GPL-3.0-or-later), ``MJ_PARTITION`` from tcren 2.8.0
+(`antigenomics/tcren <https://github.com/antigenomics/tcren>`_), itself AAindex ``MIYS850101``.
 The tables are generated, not hand-edited.
 
 1. PC1 is hydropathy

@@ -6,6 +6,49 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [Unreleased]
+
+Documentation only.
+
+### Added
+
+- **The charge column is named where it is used.** `C_phys_charge` is half of EPIC v4's chemistry
+  block and the README described that block as if burial were alone in it --- it said
+  `C_phys_buried` was "the chemistry block's only fitted term", which the shipped artifact
+  contradicts. The README now carries the arm: Atchley 2005's fifth factor, electrostatic charge,
+  averaged over the TCR face, selected on its **residual against Rose** rather than on its own
+  AUROC, orthogonal to burial at *r* = **+0.008** per peptide against **−0.837** for the Kidera KF4
+  pair it replaced, and paying for itself in burial's stability --- bootstrap sd **0.0874 →
+  0.0487**, *z* **+1.71 → +2.34**, *p* **0.088 → 0.020**, sign stability **96.5 % → 100 %** over 400
+  cluster bootstraps on 354,909 rows and 958 immunogenic peptides. Its own coefficient stays what it
+  is, **−0.0634 (z −1.21, p = 0.225)**: the column being fixed is burial.
+- **What MJ1996 and TCRen are for, in `docs/complementarity.rst` and the README.** They are 4 of the
+  30 columns of `complement.score` and are in **no** EPIC v4 term, so what they carry is a physics
+  distinction rather than a ranking. Stated with the measurement behind it: MJ1996 is **96.4 %
+  one-body** with its two leading modes at exactly **±0.851** against Kyte–Doolittle, TCRen is
+  **3.29 %** --- below its own composition-matched shuffle floor of **9.68 ± 2.16 %** over 500
+  shuffles --- with neither leading mode a hydropathy axis. The face assignment is checked on
+  coordinates: on 3,875 (structure, position) rows from 374 crystals, MJ1996 alone detects
+  groove-floor contact at AUROC **0.5818** and the TCRen marginal at **0.4801**, below chance, which
+  is the ordering the block assumes; class II reproduces neither (**0.5171** / **0.5368**, 94
+  structures) and the docs say so. Fitted coefficients per column standard deviation are recorded
+  alongside --- `mj_anchor` **+0.0354**, `mj_tcr` **−0.0927**, `para_tcr` **−0.0299**,
+  `para_sd_tcr` **+0.0052**, against `aa_tcr`'s **−0.8796**.
+- **[`antigenomics/tcren`](https://github.com/antigenomics/tcren) is credited and linked** from the
+  README, `docs/complementarity.rst` and `docs/property_basis.rst` --- the potentials, the
+  374-crystal contact maps and the spectral analysis are upstream work there. The tables are
+  vendored, so `tcren` stays a runtime dependency of the optional `[structure]` extra alone.
+
+### Fixed
+
+- **AF5's cysteine loading was transcribed wrongly in `docs/burial.rst`**, as **+0.0056**. That is
+  `PROTFP:ProtFP8`'s value --- the row above it in `bench/results/physchem_pc.md`. AF5's is
+  **−0.0028**, the lowest of the 141 complete scales swept, which is what
+  `complement.PHYS_SCALE_CHARGE`, `rank.PHYS_COLUMNS` and the theory appendix already carried.
+- **`skills/mhcmatch/SKILL.md` said `burial` sums over the TCR face.** It averages ---
+  `per_residue=True` is the default and the same file says so 86 lines later, because the summed
+  form was Pearson **+0.954** with peptide length. The cell now also names `C_phys_charge`.
+
 ## [1.0.3] - 2026-08-24
 
 Documentation only. **No executable code changed** except the version string: six of the seven
