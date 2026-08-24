@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mhcmatch"
-version = "1.0.1"
+version = "1.0.2"
 description = "Peptide-MHC presentation, cross-reactivity and motif tools on the seqtree substrate"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,19 +12,33 @@ license = { text = "GPL-3.0-or-later" }
 authors = [{ name = "ISALGO laboratory", email = "mikhail.shugay@gmail.com" }]
 keywords = ["MHC", "HLA", "epitope", "neoantigen", "immunology", "bioinformatics"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
 dependencies = ["seqtree>=0.7.0", "numpy", "huggingface_hub>=0.24"]
+
+[project.urls]
+Homepage = "https://github.com/antigenomics/mhcmatch"
+Documentation = "https://antigenomics.github.io/mhcmatch/"
+Repository = "https://github.com/antigenomics/mhcmatch"
+Changelog = "https://github.com/antigenomics/mhcmatch/blob/master/CHANGELOG.md"
+Issues = "https://github.com/antigenomics/mhcmatch/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=7.4"]
 logo = ["logomaker", "matplotlib"]   # only needed to render logos; PWM/bits compute is numpy-only
 docs = ["sphinx", "pydata-sphinx-theme"]
-viz = ["networkx"]                   # allele similarity / promiscuity graph (needs Graphviz `dot`)
+viz = ["networkx"]                   # NOT imported by the library: it is what the benchmark
+                                     # repo's promiscuity-graph figure generator needs, declared
+                                     # here so `pip install mhcmatch[viz]` reproduces those figures
 structure = ["tcren>=2.8"]           # optional: structure-based MJ ΔΔG head (mhcmatch.structure)
 precursor = ["vdjmatch[precursor]>=0.2.0"]  # mhcmatch.precursor re-exports vdjmatch.precursor
 notebooks = ["marimo", "polars>=1.0"]   # worked examples in notebooks/; polars only for the two that read a parquet deposit
@@ -32,10 +46,6 @@ esm = ["torch>=2.2", "transformers>=4.40"]   # ESM2 embeddings for mhcmatch.reco
 
 [project.scripts]
 mhcmatch = "mhcmatch.cli:main"
-
-[project.urls]
-Homepage = "https://github.com/antigenomics/mhcmatch"
-Repository = "https://github.com/antigenomics/mhcmatch"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

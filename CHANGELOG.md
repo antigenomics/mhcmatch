@@ -6,9 +6,57 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [1.0.2] - 2026-08-24
+
+A cleanup pass over 1.0.1, which was tagged but never published. No behaviour changes: every
+refactor below was checked bit-identical against the code it replaces before it was kept.
+
+### Changed
+
+- **One bisection, in one place.** `rank.probability` re-implemented `cassette.prob_offset`'s
+  root-find character for character; it now calls it. Verified bit-identical on 10, 500 and 5,000
+  scores including non-finite entries. The difference between the two functions is which batch you
+  hand it, not the arithmetic, and two copies of the arithmetic is how that distinction gets blurred.
+- **One clipped sigmoid in `cassette`**, `_p(scores, offset)`, replacing five hand-written copies of
+  `1/(1+exp(-clip(s+b, -60, 60)))`. `offset` broadcasts, which is what `group_offsets` needs.
+  `group_offsets` verified bit-identical on 3, 7 and 46 groups.
+- **One text opener in the CLI**, `_open_text`, replacing four copies of the gzip-or-plain /
+  stdin-or-file / `try`-`finally`-that-must-not-close-stdin dance. Parsing and error messages stay
+  in each reader, because those are the part that differs and the part a caller reads when their
+  table is wrong. Net -2 lines; the point is that the "never close stdin" invariant now has one home.
+
+### Added
+
+- `tests/test_structure.py`. `StructureScorer.__init__` calls `_require_tcren` before it does
+  anything, so no scorer behaviour is reachable in a default install and this module's coverage is
+  low **by construction**. The tests record which half is which: the vendored template table is
+  well-formed and actually read, the missing-extra path names `mhcmatch[structure]`, and the scorer
+  itself is `skipif`-gated on the extra.
+
+### Packaging
+
+- `Development Status :: 5 - Production/Stable` (it said Beta on a 1.0 release), explicit 3.10-3.13
+  and `OS Independent` classifiers, and a real `[project.urls]` -- Homepage, Documentation,
+  Repository, Changelog, Issues. There were two `[project.urls]` tables; the second silently won.
+- `viz = ["networkx"]` keeps its place but says what it is for: **the library does not import
+  networkx**. It is what the benchmark repository's promiscuity-graph figure generator needs.
+
+### Considered and not done
+
+- **`mhcmatch.recognition` is not dead code.** It has no caller inside the package, which is what an
+  import graph shows, but `bench/neoag/features_grand.py` calls `recognition.score` to build the
+  **EPIC fitting frame** and the theory appendix describes it as shipped. Removing it would break the
+  shipped model's own provenance.
+- `mhcmatch.luksza` stays. `EPIC` retired the term in 0.21.0 and only the `__init__` re-export
+  imports it, but it is the published Luksza quantity and computing it should not require the
+  benchmark repository.
+- The README is 44 KB and is the PyPI long description. That is a lot, and it is the author's prose;
+  trimming it is an editorial decision, not a refactor.
+
 ## [1.0.1] - 2026-08-24
 
 First 1.x. The version skips 1.0.0 deliberately (`ROADMAP.md` sec. 5e).
+**Tagged but never published to PyPI** --- superseded by 1.0.2 before the release gate opened.
 
 ### Added
 
