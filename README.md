@@ -164,38 +164,29 @@ subset of the same pool, and both pool depth and *k* divide out. On 3,064 TCGA d
 built by sorting the candidate list scores a median **−0.539 nats** — below a random subset — against
 **+3.417** for the greedy argmax, a gain of **+4.083**.
 
-## What `rank` costs, and why it did not before
+## What `rank` costs
 
-Since 0.20.0 `rank --score aggregate` computes **every one** of the model's features before scoring:
-a model emits the features it used and refuses to run without them. The corpus term was the thymic
-channel alone in 0.21.0–0.23.x; since v3 (0.24.0) it is **all three** channels — `thymus`, `self`,
-`viral` — and they are affordable because the term contracts a k-mer table rather than searching an
-index, so the host-proteome reference index (~7.5 GB, 6 min 15 s) is still off the ranking path and
+`rank --score aggregate` computes **every one** of the model's features before scoring: a model emits
+the features it used and refuses to run without them. All three corpus channels — `thymus`, `self`,
+`viral` — are affordable because the term contracts a k-mer table rather than searching an index, so
+the host-proteome reference index (~7.5 GB, 6 min 15 s) is off the ranking path entirely and
 `--no-self` is still allowed with `--score aggregate`. That index is what `--extended` and
 `--annotate` cost, because they report *which* reference peptide was hit.
 
-It used to be free because four of `BOECRT`'s nine were never computed. `aggregate_score`
-substituted their training means, so each contributed `coef × 0` to every candidate — inert, not
-neutral — and `mhcmatch rank` reported `BOECRT` while scoring `BOEC`, with or without `--extended`.
-That left **38.0% of the model's total absolute weight** (`sum |coef| = 1.3875`) at zero, `self_tcr`
-at +0.3154 among it. The emitted *ordering* was unaffected, since a constant offset cannot reorder
-anything; what was wrong was the model the output named.
+`--score gate` uses the two-term noisy-AND and stays cheaper still.
 
-`--score gate` uses the two-term noisy-AND and stays cheap.
-
-**The cost that remains is the per-allele `%rank` background, and 0.27.0 caches it.** Building one
+**The cost that remains is the per-allele `%rank` background, and it is cached.** Building one
 allele's calibration background is a 10,000-peptide draw scored under that allele's model, ~0.95 s,
 and it is a pure function of `(allele, model, background, footprint, seed, library version)`. The
-on-disk cache for it defaults on at `~/.cache/mhcmatch/calibration`; set
-`MHCMATCH_CALIBRATION_CACHE` to relocate or share it, or to `off` to disable. Measured on a
-363,324-pair, 2,093-allele build: **1,788 s → 15 s**, with the two outputs identical in all 40
-columns. Budget ~240 kB per (scorer, allele).
+on-disk cache defaults on at `~/.cache/mhcmatch/calibration`; set `MHCMATCH_CALIBRATION_CACHE` to
+relocate or share it, or to `off` to disable. Measured on a 363,324-pair, 2,093-allele build:
+**1,788 s → 15 s**, with the two outputs identical in all 40 columns. Budget ~240 kB per
+(scorer, allele).
 
-**There is nothing left to cache on the corpus path.** `$MHCMATCH_REFERENCE_CACHE` is gone in
-0.24.0, along with the ~1 GB of index it held (yours to delete). `C_corpus` no longer searches: it
-contracts a k-mer frequency table, which is the **exact** Łuksza sum rather than a radius-2
-truncation of it, and costs a 64 KB table per reference deposit instead of a 7.5 GB trie. The
-tables are memoised per process and need no lock — see `docs/corpus.rst`.
+**There is nothing to cache on the corpus path.** `C_corpus` does not search: it contracts a k-mer
+frequency table, which is the **exact** Łuksza sum rather than a radius-2 truncation of it, and
+costs a 64 KB table per reference deposit instead of a 7.5 GB trie. The tables are memoised per
+process and need no lock — see `docs/corpus.rst`.
 
 The indexed search is still there for what genuinely needs it: `features()`, `annotate()` and the
 self-mimicry safety scan report *which* reference peptide was hit and from what protein, which a
@@ -254,24 +245,21 @@ numpy product and a thread pool would buy nothing, so the flag is absent rather 
 ## The two axes
 
 Presentation is necessary and not sufficient: most presented peptides are ignored. mhcmatch keeps
-the two questions apart and scores them with the fitted **`EPIC`** aggregate (shipped 0.21.0, named
-`EPIC` in 0.25.0), whose
-`C_phys_*` and `C_corpus_*` terms are the recognition axis and whose `pres`/`occupancy` terms are
-the presentation one. **Version 4 (0.27.0) is what ships**, and it is **hierarchical**:
-**eight** columns in four blocks — presentation, expression, physchem, corpus — entered in pipeline
-order, so a recognition coefficient is what that term is worth *after* presentation and expression
-rather than in competition with them. Against v3: `binder` → `pres` (presentation `%rank` alone,
-since `occupancy` already carries affinity), `C_phys_hydrop` → `C_phys_charge` (Kidera KF4 was
-burial measured twice, *r* = −0.837; Atchley AF5 is orthogonal at +0.008), `C_phys_rose` →
-`C_phys_buried` (a rename), the corpus kernel Hamming → BLOSUM62, and the expression block
-collapses from `expr` + `expr_missing` to a single **`expr_pct`** — the expression percentile
-*within the scored cohort*. That last one is why the model no longer cares whether you give it TPM
-or FPKM: a rank is invariant to any monotone rescaling of abundance, and a row with no expression
-value sits at 0.5, which is what "no information" means on a percentile scale. The price, stated:
-the term is cohort-relative, so a peptide's score depends on what else was submitted with it. Its predecessor **`BOECRT`** carried recognition as the 30-column `C`
-term (z +4.24) plus `R` and `T`; none of the recognition terms is fitted on immunogenicity labels. The older **gate** — a product of sigmoids rather than a sum, so a candidate
-failing either axis cannot be rescued by the other — is still reachable as
-`mhcmatch rank --score gate`.
+the two questions apart and scores them with the fitted **`EPIC`** aggregate, whose `C_phys_*` and
+`C_corpus_*` terms are the recognition axis and whose `pres` / `occupancy` terms are the presentation
+one. It is **hierarchical**: eight columns in four blocks — presentation, expression, physchem,
+corpus — entered in pipeline order, so a recognition coefficient is what that term is worth *after*
+presentation and expression rather than in competition with them. None of the recognition terms is
+fitted on immunogenicity labels.
+
+**Expression enters as `expr_pct`, a percentile within the scored cohort.** That is why the model
+does not care whether you give it TPM or FPKM: a rank is invariant to any monotone rescaling of
+abundance, and a row with no expression value sits at 0.5, which is what "no information" means on a
+percentile scale. The price, stated: the term is cohort-relative, so a peptide's score depends on
+what else was submitted with it.
+
+A **gate** — a product of sigmoids rather than a sum, so a candidate failing either axis cannot be
+rescued by the other — is reachable as `mhcmatch rank --score gate`.
 
 **Presentation** — per-allele %rank / `P(present)` / band from a learned anchor model with
 cross-allele **pseudosequence diffusion** (rare alleles borrow from groove-similar frequent ones), a
@@ -286,9 +274,7 @@ per-role **residue log-odds**, with per-length and position-zone tables (class I
 relative third of the TCR face; class II bins 14/16/19 by register zone, via `cls="mhc2"`); and
 adjacent TCR-facing dipeptides. Fitted per species and never pooled across hosts. Vectorised — a
 whole published corpus scores in seconds, so pass a list. `mhcmatch.posbayes` is a strict special
-case of it and ships alongside for comparison. So was `mhcmatch.ipred`, the legacy physicochemical
-predictor — **shipped v0.9.0-0.21.0, removed in 0.22.0**; the legacy record, with every measured
-number, is in `docs/complementarity.rst` ("`ipred`: the retired predecessor").
+case of it and ships alongside for comparison.
 
 **The recognition axis reduces to one published scale, and the reduction is measured.** Split into
 its chemistry half and its fitted-identity half — exact partial sums via `score(blocks=...)` — the
@@ -412,7 +398,7 @@ not recognition. Exclusion goes through `vector.self_origin_risk`
 
 **E**xpression, **P**resentation, **I**mmunogenic **C**omplementarity. Four letters, four blocks,
 entered in that pipeline order — so a later block's coefficient is what that term is worth *after*
-the earlier ones, not in competition with them. Shipped coefficients are **v4** (0.27.0), fitted on
+the earlier ones, not in competition with them. Shipped coefficients are **v4**, fitted on
 354,909 candidate rows / 958 positives across 9 screens, ridge with an unpenalised per-screen
 intercept at `tau = 0.25`; `sd`, `z`, `p` and the 95 % CI are a 400-resample cluster bootstrap over
 (patient, screen):
@@ -441,60 +427,25 @@ d["model"], d["version"], d["features"], d["coef"]      # 'EPIC', 4, [...], {...
 yet.) The letters are a mnemonic for the blocks, **not** the fitting order — presentation enters
 before expression, and every conditional coefficient is reported against that order.
 
-**`EPIC` names blocks; its predecessors named parameters.** That is the convention change, not a
-cosmetic rename: once the block became the unit of inference, one letter per term stopped describing
-anything. `EPIC` was `GRAND` through 0.24.x and the artifact still carries `"former_name": "GRAND"`,
-because a result recorded under the old name has to stay attributable. The letter table below is the
-older, per-parameter vocabulary — still the way `BDEVF`, `PADEC` and the rest are read.
+### Presentation and affinity are not the same term
 
-### The per-parameter letters
+**Affinity is not a second presentation term.** Both end up as a `%rank` against the same kind of
+background, so the mechanism doesn't separate them — the training data and the target do. The Potts
+affinity head is fitted on **measured IEDB IC50**, targeting `Kd`: the biophysics of the groove. The
+`AnchorModel` behind `pres` is fitted on the **observed ligand panel**, targeting how *ligand-like* a
+peptide is, which carries processing, transport and abundance signal that binding alone does not.
+That is the field's binding-affinity vs eluted-ligand split, and the two are measurably not
+redundant — on TESLA-608 affinity scores 0.757 AUROC, presentation 0.763, and their Fisher
+combination (`binder_rank`) **0.786**. A combination cannot beat both parents by that margin on the
+same measurement twice.
 
-Every earlier fitted model is named by the **acronym of its parameters** — `aggregate5` and "the
-full model" said nothing about what was in them, and two designs were once both "the neoantigen
-model". One letter per parameter, in a fixed canonical order:
-
-| letter | parameter | from | what it is |
-|---|---|---|---|
-| `P` | presentation | `AnchorModel` | `-log10` of the per-allele `%rank`; fitted on **observed ligands** |
-| `B` | binder score | `predict.binder_score` | `-log10` of the calibrated combined `%rank` (Fisher of `P` and `A`) |
-| `A` | affinity | `PottsAffinity` | `-log10` of the Potts IC50 `%rank`; fitted on **measured IC50** |
-| `D` | differential agretopicity | `PottsAffinity.dai` | `log10(Kd_WT / Kd_MT)` vs the recovered wild type. **Reported, not fitted** — it does not resolve in any parameterisation tested |
-| `O` | occupancy | `rank.occupancy` | `a/(1+a)`, `a = [P]/Kd` — the equilibrium fraction of MHC held. Absolute, so additive to the allele-relative `B`; needs no wild type |
-| `E` | expression | `mhcmatch.expression` | `log1p(TPM)`, observed or reference-imputed |
-| `V` | vanilla physicochemistry | `mhcmatch.ipred` — **retired in 0.22.0** | the 13-parameter calibrated log-odds; the letter and its fitted coefficients stay |
-| `C` | complementarity | `mhcmatch.complement` | the six-block recognition log-odds |
-| `R` | Łuksza recognition | `mhcmatch.luksza` | `Z/(1+Z)`, a soft sum over near-matches rather than a distance cut |
-| `F` | foreignness | viral IEDB ligandome | distance to the nearest viral epitope |
-| `M` | mimicry | `mhcmatch.mimicry` | the six-channel signed aggregate |
-| `T` | TCR-facing mimicry | `mhcmatch.mimicry` | the three TCR-facing channels only; the anchor ones are dropped as collinear with `B` |
-| `K` | corpus complementarity (`C_corpus`) | `mimicry.corpus_R` | the exact Łuksza density over the TCR face against three reference corpora — thymic, self and viral — as a k-mer table contraction, not a search |
-
-So `PADEC` is presentation + affinity + agretopicity + expression + complementarity, and `PADECM`
-adds mimicry. Suffixes are fitting choices rather than parameters: `-scr` (screen indicators as
-nuisance columns). The screen-balanced refits were measured and dropped; the benchmark's `MODELS.md`
-records what they were.
-
-**`V` is "vanilla", not "ipred".** `ipred` was the *old* recognition term and `complement` is what
-replaced it — the same axis at two generations, with `ipred` a strict special case of `complement`.
-Naming the letter after the generation rather than the module makes `BDEVF` legible as "the old
-model" at a glance — and is what let the letter survive the module's removal in 0.22.0. `BDEVF`
-keeps its name and its recorded coefficients; `EPIC`, the shipped aggregate, never carried `V`.
-
-**`P` is not a second affinity term.** Both end up as a `%rank` against the same kind of background,
-so the mechanism doesn't separate them — the training data and the target do. `A` is a Potts model
-fitted on **measured IEDB IC50**, targeting `Kd`: the biophysics of the groove. `P` is the
-AnchorModel fitted on the **observed ligand panel**, targeting how *ligand-like* a peptide is, which
-carries processing, transport and abundance signal that binding alone does not. That is the field's
-binding-affinity vs eluted-ligand split, and the two are measurably not redundant — on TESLA-608
-`A` scores 0.757 AUROC, `P` 0.763, and their Fisher combination `B` **0.786**. A combination cannot
-beat both parents by that margin on the same measurement twice.
-
-**`P` is a rank, not a similarity search** — worth stating because the name invites the other
-reading. It is a score against a random-peptide background (10,000 peptides matched to the corpus's
-amino-acid and length distribution). Nothing is retrieved: no reference peptide is looked up and no
-anchor-matched protein is searched for. `A` and `B` are the same, so the whole presentation side is
-**scoring, not retrieval**. The searches are `restriction` (the epitope panel, anchor-masked — not in
-any acronym), `M` (thymic/viral/proteome windows) and `F` (the viral ligandome).
+**`pres` is a rank, not a similarity search** — worth stating because "presentation" invites the
+other reading. It is a score against a random-peptide background (10,000 peptides matched to the
+corpus's amino-acid and length distribution). Nothing is retrieved: no reference peptide is looked
+up and no anchor-matched protein is searched for. Affinity and `binder_rank` are the same, so the
+whole presentation side is **scoring, not retrieval**. The searches are `restriction` (the epitope
+panel, anchor-masked), `mimicry` (thymic / viral / proteome windows) and the viral ligandome behind
+foreignness.
 
 ## Python
 
@@ -510,7 +461,7 @@ store.scan_protein(my_protein, cls="mhc1")
 store.decompose("NLVPMVATV")                         # anchor / TCR-facing split, with X masks
 
 aff = store.affinity_model("mhc1")
-aff.predict_ic50("NLVPMVATV", "HLA-A*02:01")             # 52.5 nM (shortlist tier, 0.27.0)
+aff.predict_ic50("NLVPMVATV", "HLA-A*02:01")             # 52.5 nM (shortlist tier)
 aff.amplitude("NLVPMVATL", "NLVPMVATV", "HLA-A*02:01")   # Kd_WT/Kd_MT (Łuksza eq. 9)
 
 complement.score(peptides)                           # vectorised: pass the list, not a loop

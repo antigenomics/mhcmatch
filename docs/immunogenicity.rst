@@ -163,10 +163,7 @@ are :data:`mhcmatch.data.aa_tables.PROPERTY_PC1` and
    # ['I', 'F', 'L', 'W', 'V', 'M', 'C', 'Y', 'A', 'P', 'G', 'T', 'H', 'S', 'Q', 'N', 'E', 'K', 'D', 'R']
 
 The fitted model built on that axis is :func:`mhcmatch.complement.score`, which reads PC1/PC2 and
-length as its ``phys`` block and adds five more (:doc:`complementarity`). Its predecessor
-:mod:`!mhcmatch.ipred` — two components plus length, thirteen parameters, a calibrated
-``P(immunogenic)`` — **shipped through 0.21.0 and was removed in 0.22.0**; what it was, how it
-scored and why it went is recorded in full at :ref:`ipred-legacy`.
+length as its ``phys`` block and adds five more (:doc:`complementarity`).
 
 Use :func:`mhcmatch.complement.score` when you want the shipped answer and
 :func:`mhcmatch.immuno.features` when you want to fit your own. Neither is an alternative to the

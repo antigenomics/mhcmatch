@@ -1,6 +1,6 @@
 """Position-role naive Bayes: amino-acid evidence for immunogenicity, split by anchor / TCR-facing.
 
-The retired `ipred` predictor (shipped v0.9.0-0.21.0, removed in 0.22.0; :ref:`ipred-legacy`)
+A whole-peptide physicochemical predictor
 scored a peptide from pooled physicochemical descriptors and did not distinguish where a
 residue sits. But anchor and TCR-facing positions are different channels -- an anchor residue is
 buried in the MHC groove and a TCR-facing one is contacted by the receptor -- and the benchmark
@@ -33,7 +33,6 @@ metric                                  human     mouse
 rows                                   464,310    47,203
 immunogenic                             14,712     5,154
 **AUROC (this model)**                   0.712     0.758
-AUROC (retired ``ipred``, in-sample)     0.607     0.668
 ====================================  ========  ========
 
 Size-matched cross-species transfer, mean over 10 matched subsamples:
@@ -41,7 +40,6 @@ Size-matched cross-species transfer, mean over 10 matched subsamples:
 * **human -> mouse: 0.731** (sd 0.003)
 * **mouse -> human: 0.692** (sd 0.000)
 
-``ipred``'s figures above are **in-sample** -- that corpus is its training set -- so the comparison
 is not like-for-like. It is quoted because an in-sample baseline that still loses is the
 conservative direction, not because it is a fair contest. The module is gone as of 0.22.0; the
 measurement is not, and neither is this row.
@@ -57,7 +55,7 @@ measurement is not, and neither is this row.
    It is therefore zeroed here. The cost is small and measured: grouped-CV AUROC 0.712 -> 0.690.
 
    Any model trained on MS-eluted negatives against assayed positives inherits this, including
-   the retired `ipred`, whose training corpus was built the same way.
+   any model whose training corpus was built the same way.
 """
 from __future__ import annotations
 

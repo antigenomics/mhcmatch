@@ -81,7 +81,7 @@ flag. And ``C_phys`` was a **sum** over a face of width *L* − 5 on a strictly 
 correlated +0.954 with peptide length; averaging it fixed that and made the two scales comparable
 for the first time.
 
-The predecessor, **BOECRT**, carried the 30-column :func:`mhcmatch.complement.score` as ``C``, the
+An earlier arrangement carried the 30-column :func:`mhcmatch.complement.score` as one term, the
 Łuksza ``viral_R`` as ``R`` and the three TCR-face mimicry densities as ``T``. ``luksza.viral_r``
 and ``complement.score`` still ship and are still computable; they are no longer terms of the
 shipped model. Every alternative is re-measured in ``bench/results/epic_recognition_terms.md``.
@@ -387,10 +387,7 @@ missense and earns a quota of its own in
 :func:`mhcmatch.portfolio.compose` (:doc:`portfolio`). It is the **product class** ---
 ``missense``, ``frameshift``, ``inframe_deletion``, ``fusion``, ``isoform``, ``cnv`` --- and not
 the header's ``type`` field, which is provenance (``Somatic``) and says nothing about what the
-variant makes. Through 0.24.0 it was the latter, which sent every candidate of a real donor to the
-non-conventional arm and left the class-I and class-II arms unfillable; see
-:func:`mhcmatch.predict.variant_product`. (``physchem_ipred`` was a column here through 0.21.0; the module behind it was removed in
-0.22.0 --- :ref:`ipred-legacy`.) ``--extended`` appends the remaining mimicry channels and ``--annotate`` what each candidate
+variant makes; see :func:`mhcmatch.predict.variant_product`. ``--extended`` appends the remaining mimicry channels and ``--annotate`` what each candidate
 resembles; both add **columns only** and never change the ordering.
 
 .. _binding-core:
@@ -439,17 +436,42 @@ move a ranking.
    index — ~7.5 GB and 6 min 15 s, paid once for the whole candidate list — is still what
    ``--extended`` and ``--annotate`` cost, because they report the ``self`` channels.
 
-   *History, kept because it is what the rule exists to prevent.* Before 0.20.0 the recognition
-   channels were free, because ``BOECRT``'s four were never computed: ``aggregate_score``
-   substituted their training means, so each contributed ``coef × 0`` to every candidate and
-   ``rank`` reported ``BOECRT`` while scoring ``BOEC``. That put **38.0 % of the model's total
-   absolute weight** (``sum |coef| = 1.3875``) permanently at zero, including ``self_tcr`` at
-   +0.3154 — its second-largest coefficient. The *ordering* was unaffected, since a constant offset
-   cannot reorder; the reported model was wrong.
-
    The ``imputed`` column names any feature that had to take its training mean for **that row** — a
    candidate with no IC50 has no occupancy, a frameshift has no wild type. Those are candidates with
    incomplete data, not a different model, so they are scored and the substitution is declared.
+
+.. _occupancy-vs-agretopicity:
+
+Occupancy and agretopicity
+--------------------------
+
+Both come from the same competitive-binding equilibrium and differ in what the peptide is competing
+against — the allele's own self-ligandome for one, its own wild type for the other:
+
+.. math::
+
+   \theta_{MT} = \frac{[P]/K_{MT}}{1 + [P]/K_{MT} + \sum_i [P_i]/K_i}
+   \qquad
+   \phi = \frac{[P]/K_{MT}}{[P]/K_{MT} + [P]/K_{WT}} = \frac{K_{WT}}{K_{WT}+K_{MT}}
+
+Three properties of :math:`\theta` come out of the physics rather than being imposed on it. A
+mutant that does not bind occupies nothing whatever its wild type does, so a binder gate is
+automatic. The free-MHC ``1`` in the denominator is exactly the pseudocount Łuksza applies to both
+dissociation constants — which is why that :math:`\varepsilon` carries units of inverse
+concentration. And :math:`\theta` is bounded in :math:`[0,1]`, so the four-decade tail of the raw
+ratio cannot set a slope.
+
+:math:`\theta` is **additive to the binder %rank, not redundant with it**: a %rank says where a
+peptide sits in its allele's own distribution, occupancy says how much groove it actually holds, and
+an allele with a permissive groove has a large self load its candidates must out-compete. Fitted
+together on the grand corpus, ``binder`` holds z +6.5 while occupancy carries z +3.6 to +3.8, stable
+across :math:`[P]` from 1 to 1,000 nM.
+
+:math:`\phi` does not resolve — z −0.48, and 0.4979 on its own. Neither do the raw ratio, the
+pseudocount amplitude, a logistic squashing of it, or gating on anchor substitutions and genuine
+binders; the benchmark records all seven parameterisations. It is emitted as a column and is not a
+term of the fitted model.
+
 
 Limits
 ------
@@ -457,10 +479,10 @@ Limits
 * **Held-out performance is well below in-fit performance.** Leave-one-twin-group-out on the
   ``gfeller`` group gives 0.5781 where the in-fit number is far higher, because Gfeller and
   Gfeller-GBM share 96.5 % of their peptides and TESLA/Neopep 71.8 %. Quote the twin-group column.
-* **The retired mimicry terms were not established in direction.** ``viral_tcr`` and ``thymus_tcr``
-  flip sign in 22 % and 35 % of bootstrap resamples. They were in ``BOECRT``; they were not
-  evidence, and ``EPIC`` does not carry them. Its own sign stabilities are in
-  ``bench/results/epic_recognition_terms.md``.
+* **Not every mimicry channel is established in direction.** ``viral_tcr`` and ``thymus_tcr`` flip
+  sign in 22 % and 35 % of bootstrap resamples, which is why ``EPIC`` does not carry them. Its own
+  sign stabilities are in ``bench/results/epic_recognition_terms.md``.
 * **The prior is a property of your candidate pool, not of biology.** The fitted prevalence is
   0.31 %, which is how these screens were assembled. Supply your own.
-* ``--score gate`` reproduces the pre-0.19.0 ordering if you need to compare against an earlier run.
+* ``--score gate`` is the two-term product-of-sigmoids, kept for when a candidate failing either
+  axis should not be rescuable by the other.

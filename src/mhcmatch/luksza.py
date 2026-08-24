@@ -1,11 +1,9 @@
 """The Łuksza recognition term :math:`R = Z/(1+Z)`, computable without the benchmark repo.
 
-``viral_R`` was a term of the ``BOECRT`` aggregate, and nothing in the library could *produce* that
-column: the Boltzmann sum lived only in the benchmark's ``bench/neoag/luksza_r.py``, so an installed
-user had no way to supply one of the features the fitted model then wanted. This module closed that.
-``EPIC`` retired the term in 0.21.0 (see :data:`SHAPE`), so the shipped aggregate does **not** score
-with it -- but the quantity is still the published recognition term, still computable here, and still
-what a refit or a head-to-head against the Łuksza model needs.
+The shipped ``EPIC`` aggregate does **not** score with this term (see :data:`SHAPE`). It ships
+because the quantity is the published recognition term, and a refit or a head-to-head against the
+Łuksza model needs it computable from an installed library rather than only inside the benchmark
+repository.
 
 **The model.** A soft partition function over near-matches, replacing a hard distance cut
 (Balachandran, Łuksza et al., *Nature* 551:512--516, 2017, ``doi:10.1038/nature24462``; Łuksza et al.,

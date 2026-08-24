@@ -12,9 +12,8 @@
   exists on axes that survive changing donor and changing size.
 - :mod:`vector` -- assemble a polyepitope vaccine cassette: how many units per allotype, in what
   order, joined by what spacer.
-- :mod:`luksza` -- the ``R = Z/(1+Z)`` recognition term, so ``viral_R`` -- a term of the retired
-  ``BOECRT`` aggregate, and the published Łuksza quantity -- is computable without the benchmark
-  repo.
+- :mod:`luksza` -- the published Łuksza ``R = Z/(1+Z)`` recognition term, computable without the
+  benchmark repo. The shipped aggregate does not score with it.
 
 Theory: the theory appendix. Roadmap: ``ROADMAP.md``.
 """
@@ -73,4 +72,4 @@ try:
 except PackageNotFoundError:  # running from a source tree without an install
     # Keep in step with pyproject.toml. It drifted to two minors behind once, and the value is what
     # every `versions.yml` in the nextflow module reports, so a stale one mislabels a pipeline run.
-    __version__ = "1.0.2"
+    __version__ = "1.0.3"
