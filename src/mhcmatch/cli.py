@@ -382,6 +382,18 @@ def cmd_scan(a):
                                   alleles=[a.allele] if a.allele else "all", top=a.top,
                                   correction=a.correction)
     label = f" ({a.correction} FWER/FDR)" if a.correction else ""
+    if getattr(a, "out", None) or getattr(a, "tsv", False):
+        # One row per (window, allele): the aligned form collapses the alleles into one cell, which
+        # cannot be grouped or counted downstream.
+        say(f"{len(hits)} presented window(s){label}")
+        out = _Out(a, "hit")
+        out.header("position", "peptide", "allele", "enrichment", "n_votes", "binder")
+        for pos, pep, binders in hits:
+            for b in binders:
+                out.row(pos, pep, _allele(a, b.allele), f"{b.enrichment:.6g}", b.n_votes,
+                        int(bool(b.binder)))
+        out.close()
+        return
     print(f"# {len(hits)} presented window(s){label}")
     for pos, pep, binders in hits:
         print(f"{pos:>5}  {pep:<14}  {','.join(_allele(a, b.allele) for b in binders)}")
@@ -457,6 +469,18 @@ def cmd_predict(a):
 def cmd_logo(a):
     from . import logo
     m = logo.motif(_store(a), a.allele, a.cls or "mhc1")
+    if getattr(a, "out", None) or getattr(a, "tsv", False):
+        # The full PWM, one row per (position, residue) -- the aligned form keeps only the top 3,
+        # which is a display choice and not something a figure should inherit.
+        say(f"{a.allele} width={m['width']} n={m['n']} "
+            f"lengths={dict(sorted(m['length_hist'].items()))}")
+        out = _Out(a, "cell")
+        out.header("pos", "bits", "aa", "p")
+        for i, (bits, col) in enumerate(zip(m["bits"], m["pwm"]), 1):
+            for aa, q in sorted(col.items(), key=lambda x: -x[1]):
+                out.row(i, f"{bits:.4f}", aa, f"{q:.6g}")
+        out.close()
+        return
     print(f"# {a.allele}  width={m['width']}  n={m['n']}  lengths={dict(sorted(m['length_hist'].items()))}")
     for i, (bits, col) in enumerate(zip(m["bits"], m["pwm"]), 1):
         top = sorted(col.items(), key=lambda x: -x[1])[:3]
@@ -555,6 +579,48 @@ def _aggregate_channels(cls: str, no_self: bool, species: str = "human"):
     return channels
 
 
+def _rank_model(a):
+    """Print the shipped aggregate itself instead of scoring anything.
+
+    Both tables are read out of ``data/aggregate_mhc1.json`` -- the artifact the benchmark fitted
+    and the library ships. Nothing is refitted here, so a figure built on this output and a run of
+    ``rank`` are the same model by construction rather than by a comparison someone has to make."""
+    from . import rank as R
+    m = R.aggregate()
+    f = m["fit"]
+    say(f"{m['model']} v{m['version']}, fitted by {m['generator']}")
+    say(f"{f['rows']:,} rows / {f['positives']:,} positives over {len(f['screens'])} screens; "
+        f"BIC {f['bic']:.1f}, ridge tau {f['tau']}")
+    say(f"intervals from {f['n_boot']} resamples of {f['bootstrap_unit']}; holdout {f['holdout']}")
+    say("no global intercept: every screen was given its own, unpenalised")
+    out = _Out(a, "term" if not getattr(a, "holdout", False) else "screen")
+    if getattr(a, "holdout", False):
+        out.header("screen", "n", "pos", "neg", "auroc", "decided")
+        for r in m["loo"]:
+            out.row(r["level"], r["n"], r["pos"], r["neg"], f"{r['auroc']:.4f}",
+                    "yes" if r["decided"] else "no")
+        for k in ("cv_peptide", "cv_twin"):
+            c = m[k]
+            out.row(k, "", "", "", f"{c['median_decided']:.4f}", f"{c['folds']}-fold, "
+                    f"{c['groups']:,} groups, {c['n_decided']} decided, "
+                    f"pooled {c['pooled_auroc']:.4f}")
+        v = m["verdict"]
+        say(f"verdict: {v['improvements']} improvement(s), {v['ties']} tie(s), "
+            f"{v['regressions']} regression(s)")
+    else:
+        block = {t: b for b, ts in m["blocks"] for t in ts}
+        out.header("block", "term", "coef", "sd", "boot_sd", "z", "p",
+                   "ci_low", "ci_high", "sign_stab")
+        for i, t in enumerate(m["features"]):
+            lo, hi = m["ci95"][i]
+            out.row(block.get(t, ""), t, f"{m['coef'][i]:+.4f}", f"{m['sd'][i]:.4f}",
+                    f"{m['boot_sd'][i]:.4f}", f"{m['z'][i]:+.2f}", f"{m['p'][i]:.3g}",
+                    f"{lo:+.4f}", f"{hi:+.4f}", f"{m['sign_stability'][i]:.4f}")
+        say("blocks are entered in pipeline order, each on top of the last: a recognition "
+            "coefficient is what it is worth AFTER presentation and expression")
+    out.close()
+
+
 def cmd_rank(a):
     """Rank neoantigen candidates from a window FASTA or an already-scored table.
 
@@ -566,6 +632,11 @@ def cmd_rank(a):
     host-proteome index is off the ranking path entirely.
     """
     from . import rank as R
+    if getattr(a, "coefficients", False) or getattr(a, "holdout", False):
+        _rank_model(a)
+        return
+    if not a.mode or not a.input:
+        raise SystemExit("rank needs a mode and an input, or --coefficients / --holdout")
     # None -> mhcmatch.known's built-in sets; --no-known-refs -> {} -> lookup off
     refs = _load_refs(getattr(a, "refs", None)) if getattr(a, "refs", None) else \
         ({} if getattr(a, "no_known_refs", False) else None)
@@ -897,6 +968,22 @@ def cmd_expression(a):
               "any tumour type's matched normal and are for the safety read only:")
         for t in unmatched:
             print(f"  {t}")
+        return
+    if getattr(a, "out", None) or getattr(a, "tsv", False):
+        # Numeric cells, no "median "/"IQR " prefixes inside them: the aligned form is readable and
+        # is not a table anything can parse.
+        out = _Out(a, "row")
+        out.header("key", "context", "source", "median_tpm", "q25_tpm", "q75_tpm", "n")
+        rec = EX.lookup(a.key, tissue=a.tissue, tumor=a.tumor)
+        if rec:
+            out.row(a.key, a.tumor or a.tissue or "", rec["source"], f"{rec['median_tpm']:.6g}",
+                    f"{rec['q25_tpm']:.6g}", f"{rec['q75_tpm']:.6g}", rec["n"])
+        else:
+            say(f"no reference row for {a.key!r} in {a.tumor or a.tissue!r}")
+        if a.safety:
+            for t, v in EX.safety_profile(a.key, top=a.top or 10):
+                out.row(a.key, t, "GTEx", f"{v:.6g}", "", "", "")
+        out.close()
         return
     rec = EX.lookup(a.key, tissue=a.tissue, tumor=a.tumor)
     if not rec:
@@ -1697,6 +1784,9 @@ def main(argv=None):
     s.add_argument("--correction", choices=("bonferroni", "bh"),
                    help="multiple-testing control over windows x alleles (FWER / BH-FDR)")
     _add_store_opts(s)
+    s.add_argument("--out", help="write TSV here instead of the aligned text")
+    s.add_argument("--tsv", action="store_true",
+                    help="emit TSV to stdout rather than the aligned text")
     s.set_defaults(fn=cmd_scan)
     _add_mhc2_report(s)
 
@@ -1718,6 +1808,9 @@ def main(argv=None):
     lg.add_argument("allele")
     lg.add_argument("--cls", choices=("mhc1", "mhc2"))
     _add_store_opts(lg)
+    lg.add_argument("--out", help="write TSV here instead of the aligned text")
+    lg.add_argument("--tsv", action="store_true",
+                    help="emit TSV to stdout rather than the aligned text")
     lg.set_defaults(fn=cmd_logo)
 
     sp = sub.add_parser("span", help="extend an MHC-II binding core to the full presented ligand")
@@ -1758,10 +1851,18 @@ def main(argv=None):
     bs.set_defaults(fn=cmd_bootstrap)
 
     rk = sub.add_parser("rank", help="rank neoantigen candidates (FASTA of windows, or a scored table)")
-    rk.add_argument("mode", choices=("fasta", "table"),
+    rk.add_argument("mode", nargs="?", choices=("fasta", "table"),
                     help="fasta: mutation-spanning window FASTA + donor alleles. "
-                         "table: a .scored.csv already produced by another tool")
-    rk.add_argument("input", help="the .peptide.fasta or the .scored.csv")
+                         "table: a .scored.csv already produced by another tool. "
+                         "Omit with --coefficients / --holdout")
+    rk.add_argument("input", nargs="?", help="the .peptide.fasta or the .scored.csv")
+    rk.add_argument("--coefficients", action="store_true",
+                    help="print the fitted aggregate as TSV (block, term, coef, sd, boot_sd, z, "
+                         "p, 95%% interval, sign stability) and score nothing. Read from the "
+                         "shipped data/aggregate_mhc1.json, never refitted")
+    rk.add_argument("--holdout", action="store_true",
+                    help="print that fit's leave-one-screen-out and cross-validated AUROCs as "
+                         "TSV and score nothing")
     rk.add_argument("--alleles", help="comma-separated HLA alleles, or a file holding them "
                                       "(required for mode=fasta)")
     rk.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
@@ -2008,6 +2109,9 @@ def main(argv=None):
     xp.add_argument("--top", type=int, help="rows for --safety (default 10)")
     xp.add_argument("--list-contexts", action="store_true",
                     help="list every GTEx tissue and TCGA tumour type available")
+    xp.add_argument("--out", help="write TSV here instead of the aligned text")
+    xp.add_argument("--tsv", action="store_true",
+                    help="emit TSV to stdout rather than the aligned text")
     xp.set_defaults(fn=cmd_expression)
 
     bl = sub.add_parser("build",

@@ -203,3 +203,62 @@ def test_cli_reports_its_version():
                          capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == f"mhcmatch {mhcmatch.__version__}"
+
+
+# -- the model-dump and TSV forms the manuscript figures are built on ------------------------------
+#
+# Every figure in the mhcmatch paper has to be reproducible from the shipped command line, so these
+# four outputs are a published interface rather than a convenience. What they must not do is
+# recompute anything: `rank --coefficients` reads the artifact the benchmark fitted, and a test that
+# let it drift from `rank.aggregate()` would let a figure disagree with the model that made it.
+
+def test_rank_coefficients_dumps_the_shipped_artifact(capsys):
+    from mhcmatch import rank as R
+
+    cli.main(["rank", "--coefficients"])
+    rows = [r.split("\t") for r in capsys.readouterr().out.strip().split("\n")]
+    assert rows[0] == ["block", "term", "coef", "sd", "boot_sd", "z", "p",
+                       "ci_low", "ci_high", "sign_stab"]
+    m = R.aggregate()
+    assert [r[1] for r in rows[1:]] == list(m["features"]), "term order must be the artifact's"
+    assert [float(r[2]) for r in rows[1:]] == [round(c, 4) for c in m["coef"]]
+    blocks = {t: b for b, ts in m["blocks"] for t in ts}
+    assert [r[0] for r in rows[1:]] == [blocks[t] for t in m["features"]]
+
+
+def test_rank_holdout_dumps_every_screen_and_both_cross_validations(capsys):
+    from mhcmatch import rank as R
+
+    cli.main(["rank", "--holdout"])
+    rows = [r.split("\t") for r in capsys.readouterr().out.strip().split("\n")]
+    assert rows[0] == ["screen", "n", "pos", "neg", "auroc", "decided"]
+    m = R.aggregate()
+    assert [r[0] for r in rows[1:1 + len(m["loo"])]] == [r["level"] for r in m["loo"]]
+    assert [r[0] for r in rows[-2:]] == ["cv_peptide", "cv_twin"]
+    # a screen below the positives floor must say so rather than being silently dropped
+    assert any(r[5] == "no" for r in rows[1:1 + len(m["loo"])])
+
+
+def test_rank_without_a_mode_and_without_a_dump_flag_is_an_error():
+    """`mode` and `input` went optional so --coefficients could stand alone; ordinary use must
+    still refuse to run on nothing rather than scoring an empty list."""
+    with pytest.raises(SystemExit):
+        cli.main(["rank"])
+
+
+def test_expression_tsv_has_numeric_cells(tmp_path, capsys):
+    """The aligned form writes `median 0.33` and `IQR 0.1-0.9` *inside* cells, which no reader can
+    parse. The TSV form is the one a figure reads."""
+    with pytest.raises(SystemExit):
+        cli.main(["expression", "--help"])
+    usage = capsys.readouterr().out
+    assert "--tsv" in usage and "--out" in usage
+
+
+def test_scan_and_logo_offer_a_tsv_form(capsys):
+    for cmd in ("scan", "logo"):
+        with pytest.raises(SystemExit):
+            cli.main([cmd, "--help"])
+        usage = capsys.readouterr().out
+        assert "--tsv" in usage, cmd
+        assert "--out" in usage, cmd

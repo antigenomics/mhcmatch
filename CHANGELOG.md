@@ -6,6 +6,33 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [1.0.4] --- 2026-08-24
+
+The command line can now emit every table a figure needs.
+
+### Added
+
+- **`mhcmatch rank --coefficients` and `mhcmatch rank --holdout`.** The fitted EPIC aggregate had no
+  CLI equivalent, so anyone wanting the model itself --- rather than a scored candidate list --- had
+  to import the package and read `data/aggregate_mhc1.json` by hand. `--coefficients` prints it as
+  TSV (block, term, coefficient, Laplace and bootstrap sd, *z*, *p*, the 95 % cluster-bootstrap
+  interval, sign stability); `--holdout` prints the same fit's nine leave-one-screen-out AUROCs with
+  their decided/undecided flag, plus both grouped cross-validations. Both read the shipped artifact
+  and refit nothing, so a figure built on them and a run of `rank` are the same model by
+  construction rather than by a comparison someone has to remember to make. `mode` and `input` are
+  optional under either flag.
+- **TSV output for `scan`, `logo` and `expression`,** under `--out FILE` or `--tsv`. All three
+  printed aligned text only. `expression` wrote `median 0.33` and `IQR 0.1-0.9` *inside* cells,
+  which reads well and parses badly; `logo` kept the top three residues per position where the TSV
+  now carries the whole PWM; `scan` collapsed a window's alleles into one comma-joined cell, and the
+  TSV gives one row per (window, allele) with its enrichment and vote count. The aligned form is
+  unchanged and is still the default.
+
+### Changed
+
+- Shipped artifacts re-stamped to 1.0.4 (`mhcmatch build`): three anchor models and
+  `corpus_tables.npz`. Contents unchanged; `mhcmatch build --check` reports 0 stale of 27.
+
 ## [Unreleased]
 
 Documentation only.

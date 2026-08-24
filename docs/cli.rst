@@ -14,6 +14,20 @@ command also has ``mhcmatch <command> --help``.
    ``--threads`` exists **only** on ``source`` and ``mimics``, whose neighbour search runs in C++
    with the GIL released. Elsewhere it is absent rather than accepted and ignored.
 
+Machine-readable output
+-----------------------
+
+Every command whose result is a table takes ``--out FILE`` and writes tab-separated values with a
+header row; progress and provenance go to stderr behind ``#``. ``scan``, ``logo`` and ``expression``
+print an aligned, human-readable form by default and switch to TSV under ``--out`` or ``--tsv`` ---
+the aligned form of ``expression`` writes ``median 0.33`` and ``IQR 0.1-0.9`` *inside* cells, which
+reads well and parses badly, and the aligned form of ``logo`` keeps only the top three residues per
+position where the TSV carries the whole PWM.
+
+This is the interface the figures of the *mhcmatch* paper are built on: each one's underlying table
+is produced by a script that drives these commands, so a reader with the package installed
+regenerates the table rather than trusting it.
+
 Routine tasks
 -------------
 
@@ -37,6 +51,8 @@ Routine tasks
      - ``mhcmatch complement --peptides p.txt``
    * - Rank a donor's neoantigen candidates end to end
      - ``mhcmatch rank fasta cand.fasta --alleles donor.txt --tumor SKCM``
+   * - What model is doing the ranking, and how well does it hold out?
+     - ``mhcmatch rank --coefficients`` / ``mhcmatch rank --holdout``
    * - Why did *this* candidate rank where it did?
      - ``mhcmatch explain PEP --allele 'HLA-A*02:01'``
    * - Has this, or something within 1-2 substitutions, already been tested?
@@ -128,6 +144,12 @@ The commands, by axis
        ``agretopicity`` (reported, not fitted — see :ref:`occupancy-vs-agretopicity`), plus
        ``n_alleles_presenting`` / ``alleles_presenting``. ``--extended`` appends the remaining mimicry channels, ``--annotate`` what each
        candidate resembles — **columns only, the ordering is unchanged**.
+       ``--coefficients`` prints the fitted model itself as TSV --- block, term, coefficient,
+       Laplace and bootstrap sd, *z*, *p*, the 95 % cluster-bootstrap interval and sign
+       stability --- and ``--holdout`` prints its leave-one-screen-out and cross-validated
+       AUROCs. Both read ``data/aggregate_mhc1.json``, the artifact the benchmark fitted and
+       this package ships, so a figure built on them and a run of ``rank`` are the same model
+       by construction. Neither scores anything, and neither needs a *mode* or an *input*.
        **The aggregate computes every one of its features before scoring** — a model emits the
        features it used and refuses to run without them (0.20.0). ``EPIC`` takes its corpus term
        from the thymic channel alone (26,513 peptides), so since 0.21.0 the host-proteome reference
