@@ -31,6 +31,8 @@ import sys
 import time
 
 from . import Proteome, Store, __version__, pseudoseq
+from .cassette import RHO_ASSAYED as CA_RHO
+from .rank import POOL_PREVALENCE
 
 #: Verbosity, set once by :func:`main` from ``-v`` / ``-q``. 0 quiet, 1 normal, 2 verbose.
 #: Module-level because every ``cmd_*`` reads it and threading it through 19 signatures would be
@@ -1019,8 +1021,16 @@ def _read_unit_rows(path):
 
 
 def cmd_vector(a):
-    """Screen, select, order: a polyepitope cassette from a table of candidate units."""
+    """Screen, select, order: a polyepitope cassette from a table of candidate units.
+
+    ``cassette order`` reaches the same function with ``order_only`` set, which skips the per-
+    allotype sizing rule and lays out whatever units it was handed. That is the shape a caller who
+    has already chosen --- with ``cassette select``, or by hand, or from a trial's published
+    composition --- actually needs, and it is the same code path so the two cannot diverge.
+    """
     from . import vector as V
+
+    order_only = bool(getattr(a, "order_only", False))
 
     # Checked before anything expensive: `order` raises on this too, but only after the panel and
     # the calibrators have been built, which is ~10 s spent to learn about a typo.
@@ -1084,9 +1094,19 @@ def cmd_vector(a):
                       f"non-homologous expressed gene(s). Reported, not withdrawn -- read the "
                       "fingerprint before dosing", file=sys.stderr)
 
-    sel = V.select(units, n0=a.n0, cls=a.cls if a.cls_filter else None)
-    print(f"# selected {len(sel.units)} of {len(units)}, expected yield "
-          f"{sel.expected_yield:.2f} at n0={a.n0}", file=sys.stderr)
+    if order_only:
+        # Nothing to size: the caller already chose. `Selection` is still the carrier, so every
+        # downstream step -- ordering, the map, the report columns -- is byte-for-byte the path a
+        # selected cassette takes.
+        pool = [u for u in units if not a.cls_filter or u.cls == a.cls]
+        sel = V.Selection(units=pool, dropped=[], n0=float("nan"), trace=[],
+                          keys=[u.allele for u in pool])
+        print(f"# order only: laying out {len(sel.units)} unit(s) as given, no selection",
+              file=sys.stderr)
+    else:
+        sel = V.select(units, n0=a.n0, cls=a.cls if a.cls_filter else None)
+        print(f"# selected {len(sel.units)} of {len(units)}, expected yield "
+              f"{sel.expected_yield:.2f} at n0={a.n0}", file=sys.stderr)
 
     comp = topk = None
     if a.quota:
@@ -1324,6 +1344,307 @@ def cmd_build(a):
         with step(f"build {tgt}: {label}"):
             fn(say=lambda m: say(m, level=1, flush=True))
     say(f"shipped artifacts now stamped {__version__}; commit what changed")
+
+
+def _cassette_rows(path, score_col, need_score=True):
+    """Rows of a cassette / pool table, with the score column resolved and parsed.
+
+    ``rank`` writes its aggregate under ``aggregate``; a hand-made table usually calls it ``score``.
+    Rather than make the caller remember which, the default column is tried and the two known
+    aliases are accepted, with the resolved name reported --- silently scoring the wrong column is
+    the failure this avoids.
+    """
+    rows = _read_table(path)
+    if not rows:
+        raise SystemExit(f"{path}: no rows")
+    cols = list(rows[0])
+    col = next((c for c in (score_col, "aggregate", "score", "epic") if c in cols), None)
+    if col is None and need_score:
+        raise SystemExit(f"{path}: no score column (looked for {score_col!r}, `aggregate`, `score`, "
+                         f"`epic`; found {cols})")
+    if col != score_col:
+        say(f"score column: {col!r} (--score-column {score_col!r} not present)", level=1)
+    for r in rows:
+        try:
+            r["_score"] = float(r[col])
+        except (KeyError, TypeError, ValueError):
+            r["_score"] = float("nan")
+    return rows, col
+
+
+def _by_donor(rows):
+    """``{donor: [row]}`` preserving file order; one group called ``-`` when there is no column."""
+    out = {}
+    for r in rows:
+        out.setdefault((r.get("donor") or r.get("patient") or "-").strip() or "-", []).append(r)
+    return out
+
+
+def cmd_cassette_select(a):
+    """Choose k units from a donor's pool by maximising the mean-variance objective."""
+    import numpy as np
+
+    from . import cassette as CA
+
+    rows, col = _cassette_rows(a.candidates, a.score_column)
+    groups = _by_donor(rows)
+    kw = {k: v for k, v in (("prevalence", a.prevalence), ("rho", a.rho), ("gamma", a.gamma))
+          if v is not None}
+    say(f"{len(rows)} candidate(s) over {len(groups)} donor(s), scored on {col!r}; "
+        f"k = {a.size} +/- {a.tol}", level=1)
+
+    out, chosen = [], 0
+    for donor, g in groups.items():
+        bad = [i for i, r in enumerate(g) if not np.isfinite(r["_score"])]
+        g = [r for i, r in enumerate(g) if i not in set(bad)]
+        if bad:
+            say(f"{donor}: {len(bad)} candidate(s) with no finite score, dropped", level=2)
+        if not g:
+            continue
+        alleles = None if a.no_allele or "allele" not in g[0] else [r["allele"] for r in g]
+        c = CA.select([r["_score"] for r in g], [r["peptide"] for r in g], alleles,
+                      k=a.size, tol=a.tol, **kw)
+        if c.trimmed:
+            say(f"{donor}: pool of {c.pool_n} trimmed to {c.pool_n - c.trimmed} before the "
+                f"coupling matrix (see mhcmatch.cassette.MAX_POOL)", level=1)
+        chosen += c.k
+        for slot, (i, pi) in enumerate(zip(c.index, c.p), start=1):
+            r = dict(g[i])
+            r.pop("_score", None)
+            out.append({"donor": donor, "slot": slot, "peptide": r["peptide"],
+                        "allele": r.get("allele", ""), "gene": r.get("gene", ""),
+                        "score": f"{g[i]['_score']:.6f}", "p": f"{pi:.6f}",
+                        "k": c.k, "pool_n": c.pool_n, "offset": f"{c.offset:.6f}",
+                        "energy": f"{c.energy:.6f}", "lam": f"{c.lam:.6f}",
+                        "rho": c.rho, "gamma": c.gamma, "channels": "+".join(c.channels)})
+        # A tolerance that is spent is a result, not a detail: the objective has an internal
+        # optimum size, and it moves with the prevalence and with rho. Saying so is cheaper than
+        # letting somebody discover that `-k 20 --tol 5` returned 15 and wonder whether it broke.
+        if c.k != a.size:
+            say(f"{donor}: {c.k} units, not {a.size} -- the objective peaks there inside the "
+                f"tolerance (adding the next unit costs more variance than it buys in mean)",
+                level=1)
+        say(f"{donor}: {c.k} of {c.pool_n}, yield {c.yield_:.3f} unit(s), lam {c.lam:+.3f} nats",
+            level=2)
+    say(f"selected {chosen} unit(s) over {len(groups)} donor(s)", level=1)
+    _write_rows(out, a.out)
+
+
+def cmd_cassette_score(a):
+    """Score finished cassettes on axes that survive changing donor and changing size."""
+    from . import cassette as CA
+
+    rows, col = _cassette_rows(a.cassettes, a.score_column)
+    cass = _by_donor(rows)
+    pool = _by_donor(_cassette_rows(a.pool, a.score_column)[0]) if a.pool else {}
+    prev = POOL_PREVALENCE if a.prevalence is None else a.prevalence
+
+    # The offset is the whole question. One over the file makes two cassettes' `yield` comparable
+    # levels; one per donor makes it an enrichment against that donor's own background, and no two
+    # donors' numbers are then on one axis. Neither is wrong; the flag is which one was meant.
+    if a.per_donor_offset:
+        offs = {d: CA.prob_offset([r["_score"] for r in (pool.get(d) or g)], prev)
+                for d, g in cass.items()}
+        say(f"one offset per donor over {len(offs)} donor(s): every donor's mean probability is "
+            f"now {prev:.4f} by construction, so `yield` is an ENRICHMENT, not a level", level=1)
+    else:
+        src = [r["_score"] for g in (pool or cass).values() for r in g]
+        b = CA.prob_offset(src, prev)
+        offs = {d: b for d in cass}
+        say(f"one offset over {len(src)} row(s) of the {'pool' if pool else 'cassette'} file: "
+            f"b = {b:+.4f} at prevalence {prev:.4f}", level=1)
+
+    out = []
+    for donor, g in cass.items():
+        pg = pool.get(donor)
+        if a.pool and pg is None:
+            raise SystemExit(f"--pool has no rows for donor {donor!r}; every scored cassette needs "
+                             "the pool it was chosen from, or drop --pool")
+        alleles = [r["allele"] for r in g] if "allele" in g[0] else None
+        kw = {"rho": a.rho} if a.rho is not None else {}
+        s = CA.score([r["_score"] for r in g], [r["peptide"] for r in g], alleles,
+                     pool_scores=None if pg is None else [r["_score"] for r in pg],
+                     pool_peptides=None if pg is None else [r["peptide"] for r in pg],
+                     offset=offs[donor], block_live=a.block_live, target=a.target, **kw)
+        cov = s.pop("coverage", {}) or {}
+        s = {"donor": donor, **s,
+             "n_allotypes": cov.get("n_allotypes", ""), "allotype_gini": cov.get("gini", ""),
+             "allotype_entropy_ratio": cov.get("entropy_ratio", "")}
+        out.append({k: (f"{v:.6f}" if isinstance(v, float) else ("" if v is None else v))
+                    for k, v in s.items()})
+    say(f"scored {len(out)} cassette(s), sizes {min(len(g) for g in cass.values())}"
+        f"-{max(len(g) for g in cass.values())}", level=1)
+    _write_rows(out, a.out)
+
+
+def _write_rows(rows, out):
+    """One TSV, header from the first row, to ``out`` or stdout. Empty input writes nothing."""
+    if not rows:
+        say("nothing to write", level=1)
+        return
+    cols = list(rows[0])
+    fh = open(out, "w") if out else sys.stdout
+    try:
+        print("\t".join(cols), file=fh)
+        for r in rows:
+            print("\t".join(str(r.get(c, "")) for c in cols), file=fh)
+    finally:
+        if out:
+            fh.close()
+            say(f"wrote {len(rows)} row(s) -> {out}", level=1)
+
+
+def _add_deslip_opts(p) -> None:
+    """The `deslip` options, on one parser -- shared by `cassette deslip` and the alias."""
+    p.add_argument("cds", help="coding sequence, or a FASTA path (T or U, case-insensitive)")
+    p.add_argument("--fix", metavar="FILE",
+                   help="write the repaired CDS here: every TTT before a T/C-starting codon becomes "
+                        "TTC, which is synonymous, so the protein is unchanged")
+    p.add_argument("--out", metavar="FILE", help="write the site TSV here instead of stdout")
+
+
+def _add_vector_opts(p, require_n0: bool = True) -> None:
+    """Every option of the assembly pipeline, on one parser.
+
+    Called for ``cassette build``, for ``cassette order`` (which does not select, so
+    ``--n0`` is not required), and for the deprecated ``vector`` alias. One definition, so
+    the three cannot drift into three different flag sets.
+    """
+    p.add_argument("--candidates", required=True, metavar="FILE",
+                    help="TSV of units: peptide, gene, allele, p (+ optional mutation_index, cls). "
+                         "`peptide` is the LONG window around the mutation, not the minimal epitope "
+                         "-- a minimal peptide loads onto any cell without costimulation and is the "
+                         "tolerising configuration. `-` = stdin")
+    p.add_argument("--context", metavar="FILE",
+                    help="the window FASTA `rank` was run on. With it, --candidates may be `rank`'s "
+                         "own output of MINIMAL epitopes: each is joined back to its source window "
+                         "and re-centred as a long unit, one per variant rather than one per "
+                         "register. Without it --candidates must already carry long windows")
+    p.add_argument("--unit-length", type=int, default=27, metavar="N",
+                    help="unit window length for --context (default 27, the BioNTech backbone "
+                         "configuration; see mhcmatch.vector.unit)")
+    p.add_argument("--n0", type=float, required=require_n0, metavar="F",
+                    help="per-allotype capacity, the one free parameter of the stopping rule. "
+                         "REQUIRED and with no default on purpose: nothing in the public record fits "
+                         "it, so the value is yours to defend and it is recorded in the output")
+    p.add_argument("--quota", metavar="ARM=SLOTS:TARGET",
+                    help="compose the cassette to quotas instead of taking the ranked top, e.g. "
+                         "'mhc1=8:2,mhc2=4:1,nonconventional=3:1' -- eight class-I slots of which "
+                         "at least two should respond, and so on. Arms are disjoint: a unit whose "
+                         "`kind` column is anything but `missense` is charged to `nonconventional`, "
+                         "so the constraint bites. The same slot budgets filled by score alone are "
+                         "reported beside it, because 'not the same as ranking' is a claim about "
+                         "YOUR candidates")
+    p.add_argument("--block-live", type=float, default=0.5, metavar="Q",
+                    help="P(a block is live) in the response model behind --quota (default "
+                         "%(default)s). A block is an allotype: if the recipient never mounts a "
+                         "response on that allotype, none of its units respond however good they "
+                         "are. Measure it on your own readout with "
+                         "mhcmatch.portfolio.betabinom_rho before trusting a default")
+    p.add_argument("--evenness", type=float, default=0.0, metavar="W",
+                    help="weight on class-I allotype evenness (H/Hmax) in --quota's objective "
+                         "(default %(default)s = off). The block model already prefers spread when "
+                         "spread helps; this is for when it does not and you want it anyway. "
+                         "Homozygosity is handled: the denominator is the DISTINCT allotypes in "
+                         "--alleles, so a homozygous locus is not scored as a design flaw")
+    p.add_argument("--alleles", help="the recipient's allotypes for junction scoring "
+                                      "(comma-separated or a file); default = those in the table")
+    p.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
+    p.add_argument("--cls-filter", action="store_true",
+                    help="select only units whose own `cls` matches --cls")
+    p.add_argument("--screen", action="store_true",
+                    help="withdraw units on essential-tissue risk BEFORE selecting. Costs a "
+                         "whole-proteome index (minutes, several GB); without it no safety check "
+                         "runs at all and the cassette carries whatever it was handed")
+    p.add_argument("--screen-mode", default="veto", choices=("veto", "graded"),
+                    help="what --screen does with a finding (default %(default)s). `veto` withdraws "
+                         "the unit, as shipped. `graded` withdraws only findings at or above "
+                         "--veto-tpm and keeps the rest as a per-unit OFF-TARGET FINGERPRINT, "
+                         "reported in the reason rows and priced into --quota by "
+                         "--weight-offtarget. A 27-mer carries ~70 registers, so letting any one of "
+                         "them veto the unit is not the specificity the per-register measurement "
+                         "reads as")
+    p.add_argument("--min-tpm", type=float, default=0.25, metavar="F",
+                    help="essential-tissue expression floor for --screen: the REPORTING floor, "
+                         "below which a finding is not recorded at all. 0.25 because MAGE-A12 sits "
+                         "at 0.33 TPM in brain and killed two patients; a conventional 5 would pass "
+                         "it")
+    p.add_argument("--veto-tpm", type=float, default=5.0, metavar="F",
+                    help="essential-tissue expression at or above which a finding WITHDRAWS the "
+                         "unit under --screen-mode graded (default %(default)s, the conventional "
+                         "'is it expressed' cut). Distinct from --min-tpm on purpose: 0.25 TPM is "
+                         "'detectable somewhere', which nearly every human gene is, so it is a "
+                         "floor for reporting and not a line for exclusion")
+    p.add_argument("--weight-offtarget", type=float, default=0.0, metavar="W",
+                    help="price of one off-target fingerprint entry in --quota's objective "
+                         "(default %(default)s = off). The composed value becomes "
+                         "P(X >= target) - W * sum(distinct essential-tissue genes a unit reaches). "
+                         "Charged to the objective, never to the unit's calibrated p")
+    p.add_argument("--max-subs", type=int, default=0, metavar="N",
+                    help="self-origin search radius for --screen. 0 = exact coincidence, which is "
+                         "the default because the decision is per unit while the search is per "
+                         "register: at radius 1 over 8-11mers, 3 of 6 random 27-mers get withdrawn "
+                         "by chance. Raise it only together with dropping 8-mers")
+    p.add_argument("--report-subs", type=int, default=0, metavar="D", choices=(0, 1),
+                    help="also REPORT (never withdraw) registers within D substitutions of a "
+                         "different, non-homologous, expressed gene (default %(default)s = off; "
+                         "1 is the only other value). The two TCR deaths were near-identity, not "
+                         "identity, but a radius-1 veto costs two thirds of every cassette to buy "
+                         "a hazard --max-subs 0 has largely already taken: measured on 178 "
+                         "validated immunogenic neoantigens, exact withdraws 1.1%% and d=1 to any "
+                         "expressed gene reaches 70.2%%. So d=1 findings ride along in the "
+                         "fingerprint instead, priced only by --weight-offtarget")
+    p.add_argument("--report-identity", type=float, default=0.5, metavar="F",
+                    help="flanking-identity ceiling for --report-subs (default %(default)s). A d=1 "
+                         "match to a gene that shares the unit's flanks is descent, not mimicry, "
+                         "and tolerance already covers it; this cut is what takes the reported "
+                         "tier's different-gene hits from 230 to 74 at L=9, 130 of the 156 it "
+                         "removes being one locus under two symbols. It separates loci, not "
+                         "superfamilies: a 27-mer bounds the comparison at +/-9-10 residues, so "
+                         "NRAS -> KRAS survives at 0.23 and is reported")
+    p.add_argument("--report-threshold", type=float, default=-1.47712, metavar="F",
+                    help="-log10(%%rank) the off-target variant must itself reach to be reported "
+                         "under --report-subs (default %(default)s = 30%% rank). A d=1 coincidence "
+                         "no allotype presents is a sequence coincidence, not a safety "
+                         "consideration. The cut looks permissive because it is read off the "
+                         "positives: 97.2%% of 176 assayed immunogenic neoantigens clear 30%% on "
+                         "this scorer, where the conventional 2%% would discard three in ten of "
+                         "them -- the wrong error to make on a safety question")
+    p.add_argument("--objective", default="sum", choices=("sum", "rate"),
+                    help="junction cost: `sum` of the strongest binder per junction (pVACvector's "
+                         "logic, biased toward the shortest spacer), or `rate` = binders per "
+                         "register, which is length-neutral and needs --binder-threshold. The two "
+                         "disagree on real payloads, so choose")
+    p.add_argument("--binder-threshold", type=float, metavar="F",
+                    help="-log10(%%rank) above which a junction window counts as a binder; "
+                         "required by --objective rate")
+    p.add_argument("--threshold", type=float, metavar="F",
+                    help="stop at the first spacer whose worst junction falls at or below this, "
+                         "instead of trying them all and taking the cheapest")
+    p.add_argument("--fasta", metavar="FILE", help="also write the cassette sequence as FASTA")
+    p.add_argument("--fasta-nt", metavar="FILE",
+                    help="also write the cassette CODING SEQUENCE as FASTA -- highest-usage human "
+                         "codon per residue, backed off to avoid homopolymers, then deslipped. "
+                         "Epitope cassette only: no start, no stop, no leader, no trafficking "
+                         "domain")
+    p.add_argument("--map", metavar="FILE", dest="map_tsv",
+                    help="also write the cassette MAP as TSV: one row per unit, linker and "
+                         "predicted epitope, with 1-based coordinates over the cassette, the "
+                         "presenting allele, and which class-I and class-II epitopes overlap each "
+                         "other. A peptide presented by two of the recipient's alleles gets TWO "
+                         "rows -- at a heterozygous locus those are two presentation events")
+    p.add_argument("--map-json", metavar="FILE",
+                    help="the same map as JSON, plus the per-unit summary and the sequence, which "
+                         "is what a viewer needs to draw the cassette without recomputing anything")
+    p.add_argument("--map-threshold", type=float, default=2.0, metavar="F",
+                    help="%%rank at or below which a window enters the map (default 2.0)")
+    p.add_argument("--map-alleles-mhc2", metavar="LIST",
+                    help="the recipient's class-II allotypes (comma-separated or a file). Without "
+                         "them the map carries class I only, and a unit's `self_help` column -- "
+                         "whether its CD8 epitope has overlapping CD4 help from the SAME unit -- "
+                         "cannot be computed")
+    _add_store_opts(p)
+    p.add_argument("--out", metavar="FILE", help="write the report TSV here instead of stdout")
 
 
 def main(argv=None):
@@ -1585,155 +1906,103 @@ def main(argv=None):
     _add_thread_opt(mi)
     mi.set_defaults(fn=cmd_mimics)
 
-    vc = sub.add_parser("vector",
-                        help="assemble a polyepitope cassette: withdraw on safety, choose how many "
-                             "units per allotype, order them, pick a spacer")
-    vc.add_argument("--candidates", required=True, metavar="FILE",
-                    help="TSV of units: peptide, gene, allele, p (+ optional mutation_index, cls). "
-                         "`peptide` is the LONG window around the mutation, not the minimal epitope "
-                         "-- a minimal peptide loads onto any cell without costimulation and is the "
-                         "tolerising configuration. `-` = stdin")
-    vc.add_argument("--context", metavar="FILE",
-                    help="the window FASTA `rank` was run on. With it, --candidates may be `rank`'s "
-                         "own output of MINIMAL epitopes: each is joined back to its source window "
-                         "and re-centred as a long unit, one per variant rather than one per "
-                         "register. Without it --candidates must already carry long windows")
-    vc.add_argument("--unit-length", type=int, default=27, metavar="N",
-                    help="unit window length for --context (default 27, the BioNTech backbone "
-                         "configuration; see mhcmatch.vector.unit)")
-    vc.add_argument("--n0", type=float, required=True, metavar="F",
-                    help="per-allotype capacity, the one free parameter of the stopping rule. "
-                         "REQUIRED and with no default on purpose: nothing in the public record fits "
-                         "it, so the value is yours to defend and it is recorded in the output")
-    vc.add_argument("--quota", metavar="ARM=SLOTS:TARGET",
-                    help="compose the cassette to quotas instead of taking the ranked top, e.g. "
-                         "'mhc1=8:2,mhc2=4:1,nonconventional=3:1' -- eight class-I slots of which "
-                         "at least two should respond, and so on. Arms are disjoint: a unit whose "
-                         "`kind` column is anything but `missense` is charged to `nonconventional`, "
-                         "so the constraint bites. The same slot budgets filled by score alone are "
-                         "reported beside it, because 'not the same as ranking' is a claim about "
-                         "YOUR candidates")
-    vc.add_argument("--block-live", type=float, default=0.5, metavar="Q",
-                    help="P(a block is live) in the response model behind --quota (default "
-                         "%(default)s). A block is an allotype: if the recipient never mounts a "
-                         "response on that allotype, none of its units respond however good they "
-                         "are. Measure it on your own readout with "
-                         "mhcmatch.portfolio.betabinom_rho before trusting a default")
-    vc.add_argument("--evenness", type=float, default=0.0, metavar="W",
-                    help="weight on class-I allotype evenness (H/Hmax) in --quota's objective "
-                         "(default %(default)s = off). The block model already prefers spread when "
-                         "spread helps; this is for when it does not and you want it anyway. "
-                         "Homozygosity is handled: the denominator is the DISTINCT allotypes in "
-                         "--alleles, so a homozygous locus is not scored as a design flaw")
-    vc.add_argument("--alleles", help="the recipient's allotypes for junction scoring "
-                                      "(comma-separated or a file); default = those in the table")
-    vc.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
-    vc.add_argument("--cls-filter", action="store_true",
-                    help="select only units whose own `cls` matches --cls")
-    vc.add_argument("--screen", action="store_true",
-                    help="withdraw units on essential-tissue risk BEFORE selecting. Costs a "
-                         "whole-proteome index (minutes, several GB); without it no safety check "
-                         "runs at all and the cassette carries whatever it was handed")
-    vc.add_argument("--screen-mode", default="veto", choices=("veto", "graded"),
-                    help="what --screen does with a finding (default %(default)s). `veto` withdraws "
-                         "the unit, as shipped. `graded` withdraws only findings at or above "
-                         "--veto-tpm and keeps the rest as a per-unit OFF-TARGET FINGERPRINT, "
-                         "reported in the reason rows and priced into --quota by "
-                         "--weight-offtarget. A 27-mer carries ~70 registers, so letting any one of "
-                         "them veto the unit is not the specificity the per-register measurement "
-                         "reads as")
-    vc.add_argument("--min-tpm", type=float, default=0.25, metavar="F",
-                    help="essential-tissue expression floor for --screen: the REPORTING floor, "
-                         "below which a finding is not recorded at all. 0.25 because MAGE-A12 sits "
-                         "at 0.33 TPM in brain and killed two patients; a conventional 5 would pass "
-                         "it")
-    vc.add_argument("--veto-tpm", type=float, default=5.0, metavar="F",
-                    help="essential-tissue expression at or above which a finding WITHDRAWS the "
-                         "unit under --screen-mode graded (default %(default)s, the conventional "
-                         "'is it expressed' cut). Distinct from --min-tpm on purpose: 0.25 TPM is "
-                         "'detectable somewhere', which nearly every human gene is, so it is a "
-                         "floor for reporting and not a line for exclusion")
-    vc.add_argument("--weight-offtarget", type=float, default=0.0, metavar="W",
-                    help="price of one off-target fingerprint entry in --quota's objective "
-                         "(default %(default)s = off). The composed value becomes "
-                         "P(X >= target) - W * sum(distinct essential-tissue genes a unit reaches). "
-                         "Charged to the objective, never to the unit's calibrated p")
-    vc.add_argument("--max-subs", type=int, default=0, metavar="N",
-                    help="self-origin search radius for --screen. 0 = exact coincidence, which is "
-                         "the default because the decision is per unit while the search is per "
-                         "register: at radius 1 over 8-11mers, 3 of 6 random 27-mers get withdrawn "
-                         "by chance. Raise it only together with dropping 8-mers")
-    vc.add_argument("--report-subs", type=int, default=0, metavar="D", choices=(0, 1),
-                    help="also REPORT (never withdraw) registers within D substitutions of a "
-                         "different, non-homologous, expressed gene (default %(default)s = off; "
-                         "1 is the only other value). The two TCR deaths were near-identity, not "
-                         "identity, but a radius-1 veto costs two thirds of every cassette to buy "
-                         "a hazard --max-subs 0 has largely already taken: measured on 178 "
-                         "validated immunogenic neoantigens, exact withdraws 1.1%% and d=1 to any "
-                         "expressed gene reaches 70.2%%. So d=1 findings ride along in the "
-                         "fingerprint instead, priced only by --weight-offtarget")
-    vc.add_argument("--report-identity", type=float, default=0.5, metavar="F",
-                    help="flanking-identity ceiling for --report-subs (default %(default)s). A d=1 "
-                         "match to a gene that shares the unit's flanks is descent, not mimicry, "
-                         "and tolerance already covers it; this cut is what takes the reported "
-                         "tier's different-gene hits from 230 to 74 at L=9, 130 of the 156 it "
-                         "removes being one locus under two symbols. It separates loci, not "
-                         "superfamilies: a 27-mer bounds the comparison at +/-9-10 residues, so "
-                         "NRAS -> KRAS survives at 0.23 and is reported")
-    vc.add_argument("--report-threshold", type=float, default=-1.47712, metavar="F",
-                    help="-log10(%%rank) the off-target variant must itself reach to be reported "
-                         "under --report-subs (default %(default)s = 30%% rank). A d=1 coincidence "
-                         "no allotype presents is a sequence coincidence, not a safety "
-                         "consideration. The cut looks permissive because it is read off the "
-                         "positives: 97.2%% of 176 assayed immunogenic neoantigens clear 30%% on "
-                         "this scorer, where the conventional 2%% would discard three in ten of "
-                         "them -- the wrong error to make on a safety question")
-    vc.add_argument("--objective", default="sum", choices=("sum", "rate"),
-                    help="junction cost: `sum` of the strongest binder per junction (pVACvector's "
-                         "logic, biased toward the shortest spacer), or `rate` = binders per "
-                         "register, which is length-neutral and needs --binder-threshold. The two "
-                         "disagree on real payloads, so choose")
-    vc.add_argument("--binder-threshold", type=float, metavar="F",
-                    help="-log10(%%rank) above which a junction window counts as a binder; "
-                         "required by --objective rate")
-    vc.add_argument("--threshold", type=float, metavar="F",
-                    help="stop at the first spacer whose worst junction falls at or below this, "
-                         "instead of trying them all and taking the cheapest")
-    vc.add_argument("--fasta", metavar="FILE", help="also write the cassette sequence as FASTA")
-    vc.add_argument("--fasta-nt", metavar="FILE",
-                    help="also write the cassette CODING SEQUENCE as FASTA -- highest-usage human "
-                         "codon per residue, backed off to avoid homopolymers, then deslipped. "
-                         "Epitope cassette only: no start, no stop, no leader, no trafficking "
-                         "domain")
-    vc.add_argument("--map", metavar="FILE", dest="map_tsv",
-                    help="also write the cassette MAP as TSV: one row per unit, linker and "
-                         "predicted epitope, with 1-based coordinates over the cassette, the "
-                         "presenting allele, and which class-I and class-II epitopes overlap each "
-                         "other. A peptide presented by two of the recipient's alleles gets TWO "
-                         "rows -- at a heterozygous locus those are two presentation events")
-    vc.add_argument("--map-json", metavar="FILE",
-                    help="the same map as JSON, plus the per-unit summary and the sequence, which "
-                         "is what a viewer needs to draw the cassette without recomputing anything")
-    vc.add_argument("--map-threshold", type=float, default=2.0, metavar="F",
-                    help="%%rank at or below which a window enters the map (default 2.0)")
-    vc.add_argument("--map-alleles-mhc2", metavar="LIST",
-                    help="the recipient's class-II allotypes (comma-separated or a file). Without "
-                         "them the map carries class I only, and a unit's `self_help` column -- "
-                         "whether its CD8 epitope has overlapping CD4 help from the SAME unit -- "
-                         "cannot be computed")
-    _add_store_opts(vc)
-    vc.add_argument("--out", metavar="FILE", help="write the report TSV here instead of stdout")
-    vc.set_defaults(fn=cmd_vector)
+    # ---------------------------------------------------------------- cassette
+    # The one command group with sub-verbs. Everything about a cassette lives under it: what goes
+    # in (`select`), what a finished one is worth (`score`), and how it is assembled (`build`,
+    # `order`, `deslip`). `vector` and `deslip` remain as deprecated top-level aliases for one
+    # release, because they are in every published pipeline config we know of.
+    ca = sub.add_parser("cassette",
+                        help="choose the units of a vaccine cassette, score one, and assemble it")
+    casub = ca.add_subparsers(dest="cassette_cmd", required=True)
 
-    ds = sub.add_parser("deslip",
-                        help="find (and repair) the m1-pseudouridine +1 frameshift motif in a "
-                             "cassette coding sequence")
-    ds.add_argument("cds", help="coding sequence, or a FASTA path (T or U, case-insensitive)")
-    ds.add_argument("--fix", metavar="FILE",
-                    help="write the repaired CDS here: every TTT before a T/C-starting codon becomes "
-                         "TTC, which is synonymous, so the protein is unchanged")
-    ds.add_argument("--out", metavar="FILE", help="write the site TSV here instead of stdout")
-    ds.set_defaults(fn=cmd_deslip)
+    cs = casub.add_parser("select",
+                          help="choose k units (+/- tol) from a donor's candidate pool, maximising "
+                               "the mean-variance objective rather than sorting on the score")
+    cs.add_argument("--candidates", required=True, metavar="FILE",
+                    help="TSV of the donor's WHOLE candidate pool: peptide, score (+ optional "
+                         "allele, gene, id). `mhcmatch rank`'s output is the intended input. `-` = "
+                         "stdin. Do not pass a shortlist already filtered on binding or expression: "
+                         "those carry the two largest coefficients in the model, so a pool cut on "
+                         "them has no range left along them")
+    cs.add_argument("-k", "--size", type=int, default=20, metavar="N",
+                    help="target cassette size (default: 20)")
+    cs.add_argument("--tol", type=int, default=0, metavar="N",
+                    help="manufacturing tolerance: the reported size is the one in [k-tol, k+tol] "
+                         "with the largest objective (default: 0, i.e. exactly k)")
+    cs.add_argument("--prevalence", type=float, metavar="P",
+                    help=f"pool response prevalence the probabilities are anchored on "
+                         f"(default: {POOL_PREVALENCE:.4f}, TESLA's 37 of 615). Fitted ONCE over "
+                         "the pool and held; halving it roughly halves every probability and moves "
+                         "no rank")
+    cs.add_argument("--rho", type=float, metavar="R",
+                    help=f"intra-cassette response correlation (default: {CA_RHO}, IVAC MUTANOME). "
+                         "Measure your own with mhcmatch.portfolio.betabinom_rho")
+    cs.add_argument("--gamma", type=float, metavar="G",
+                    help="risk aversion: one unit of variance in the responding-unit count is worth "
+                         "this many expected units (default: 1.0). A stated design preference")
+    cs.add_argument("--score-column", default="score", metavar="COL",
+                    help="which column holds the aggregate log-odds (default: score; `rank` writes "
+                         "`aggregate`)")
+    cs.add_argument("--no-allele", action="store_true",
+                    help="ignore the allele column, so the overlap has no allotype channel. What a "
+                         "trial that published no per-patient genotype is left with")
+    cs.add_argument("--out", metavar="FILE", help="write the chosen units here instead of stdout")
+    cs.set_defaults(fn=cmd_cassette_select)
+
+    cq = casub.add_parser("score",
+                          help="score finished cassettes -- across donors and across sizes -- on "
+                               "expected responding units, P(>=1) under the block model, and lambda")
+    cq.add_argument("--cassettes", required=True, metavar="FILE",
+                    help="TSV of manufactured units: peptide, score (+ optional donor, allele). "
+                         "Rows are grouped by `donor` when the column is present, so one file may "
+                         "hold many cassettes of different sizes. `-` = stdin")
+    cq.add_argument("--pool", metavar="FILE",
+                    help="the candidate pool each cassette was chosen from, same columns. With it "
+                         "you also get `lam`: nats above a uniform random subset of that donor's own "
+                         "pool, which is the axis that survives changing donor AND changing size")
+    cq.add_argument("--prevalence", type=float, metavar="P",
+                    help="prevalence the shared offset is anchored on (see `cassette select`)")
+    cq.add_argument("--per-donor-offset", action="store_true",
+                    help="fit one offset per donor instead of one over the whole file. This reports "
+                         "an ENRICHMENT, not a level: every donor's mean probability becomes the "
+                         "prevalence by construction, so the numbers are no longer probabilities "
+                         "and no two donors' offsets are comparable")
+    cq.add_argument("--rho", type=float, metavar="R", help="intra-cassette response correlation")
+    cq.add_argument("--block-live", type=float, default=1.0, metavar="Q",
+                    help="how often each block is live. A unit whose marginal p exceeds it raises "
+                         "rather than being clipped (default: 1.0)")
+    cq.add_argument("--target", type=int, default=1, metavar="M",
+                    help="report P(at least M responses) (default: 1)")
+    cq.add_argument("--score-column", default="score", metavar="COL")
+    cq.add_argument("--out", metavar="FILE", help="write the report TSV here instead of stdout")
+    cq.set_defaults(fn=cmd_cassette_score)
+
+    cb = casub.add_parser("build",
+                          help="assemble a cassette end to end: withdraw on safety, size each "
+                               "allotype, order the units, pick a spacer, emit a map")
+    _add_vector_opts(cb)
+    cb.set_defaults(fn=cmd_vector)
+
+    co = casub.add_parser("order",
+                          help="the assembly half alone: order units already chosen and pick the "
+                               "spacer, minimising junctional binding")
+    _add_vector_opts(co, require_n0=False)
+    co.set_defaults(fn=cmd_vector, order_only=True)
+
+    cd = casub.add_parser("deslip",
+                          help="find (and repair) the m1-pseudouridine +1 frameshift motif in a "
+                               "cassette coding sequence")
+    _add_deslip_opts(cd)
+    cd.set_defaults(fn=cmd_deslip)
+
+    # ---------------------------------------------------------------- deprecated aliases
+    vc = sub.add_parser("vector", help="DEPRECATED alias for `cassette build`")
+    _add_vector_opts(vc)
+    vc.set_defaults(fn=cmd_vector, deprecated="cassette build")
+
+    ds = sub.add_parser("deslip", help="DEPRECATED alias for `cassette deslip`")
+    _add_deslip_opts(ds)
+    ds.set_defaults(fn=cmd_deslip, deprecated="cassette deslip")
 
     xp = sub.add_parser("expression", help="reference expression by normal tissue or tumour type")
     xp.add_argument("key", nargs="?", default="", help="gene symbol (with --tissue) or peptide "
@@ -1757,16 +2026,26 @@ def main(argv=None):
                          "__version__, one per line, and exit 1 if any are. What CI runs")
     bl.set_defaults(fn=cmd_build)
 
-    # Every subparser gets -v/-q, in one loop rather than 19 edits. Also on the top-level parser,
-    # so the flag works on either side of the subcommand name.
+    # Every subparser gets -v/-q, in one loop rather than 20 edits. Also on the top-level parser,
+    # so the flag works on either side of the subcommand name. `cassette` has sub-verbs, so the loop
+    # descends one level: without that, `mhcmatch cassette select -v` is an unrecognised argument
+    # while `mhcmatch cassette -v select` works, which is not a distinction anybody would guess.
     _add_verbosity(ap)
     for _p in sub.choices.values():
         _add_verbosity(_p)
+        for _act in _p._actions:
+            if isinstance(_act, argparse._SubParsersAction):
+                for _q in _act.choices.values():
+                    _add_verbosity(_q)
 
     a = ap.parse_args(argv)
     global _V
     _V = 0 if a.quiet else (2 if a.verbose else 1)
-    with step(f"mhcmatch {a.cmd}", level=2):
+    name = f"{a.cmd} {a.cassette_cmd}" if getattr(a, "cassette_cmd", None) else a.cmd
+    if getattr(a, "deprecated", None):
+        print(f"# `mhcmatch {a.cmd}` is deprecated and will be removed after 1.x; "
+              f"use `mhcmatch {a.deprecated}`", file=sys.stderr)
+    with step(f"mhcmatch {name}", level=2):
         a.fn(a)
 
 

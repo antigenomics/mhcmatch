@@ -326,7 +326,7 @@ def dispersion(m, k) -> dict:
             "ratio": var_obs / var_bin if var_bin else float("nan")}
 
 
-def betabinom_rho(m, k) -> dict:
+def betabinom_rho(m, k, profile: bool = True) -> dict:
     """Intra-patient correlation ``rho`` and a likelihood-ratio test against the binomial.
 
     The null ``rho = 0`` sits on the boundary of the parameter space, so the reference is the 50:50
@@ -336,6 +336,14 @@ def betabinom_rho(m, k) -> dict:
 
     Keep the zero-response patients. They carry most of the information about dispersion and are
     exactly what a minimum-pool-size filter deletes.
+
+    ``profile=True`` (the default) holds ``p`` at the pooled rate and profiles the likelihood over
+    ``rho`` alone; ``profile=False`` maximises over ``(p, rho)`` jointly. The two agree to about a
+    thousandth on the cohorts this has been run on --- the pooled rate *is* very nearly the joint
+    maximiser --- and the profile form is the default because it is a one-dimensional bounded search
+    with no starting point to get wrong. The joint form exists so a caller who needs the fitted ``p``
+    reported beside ``rho`` does not have to write a second estimator, which is how this function
+    acquired a duplicate in the first place.
     """
     try:
         from scipy.optimize import minimize_scalar
@@ -357,11 +365,31 @@ def betabinom_rho(m, k) -> dict:
         return -float(np.sum(lchoose + betaln(k + pbar * s, m - k + (1 - pbar) * s)
                              - betaln(pbar * s, (1 - pbar) * s)))
 
-    r = minimize_scalar(nll, bounds=(-12.0, 6.0), method="bounded")
-    d = 2.0 * (-r.fun - ll_bin)
-    return {"rho": float(1.0 / (1.0 + np.exp(-r.x))), "D": float(d),
+    if profile:
+        r = minimize_scalar(nll, bounds=(-12.0, 6.0), method="bounded")
+        rho, p_hat, ll = float(1.0 / (1.0 + np.exp(-r.x))), pbar, float(-r.fun)
+    else:
+        from scipy.optimize import minimize
+
+        def nll2(v):
+            q = 1.0 / (1.0 + np.exp(-v[0]))
+            rh = 1.0 / (1.0 + np.exp(-v[1]))
+            s = (1.0 - rh) / rh
+            return -float(np.sum(lchoose + betaln(k + q * s, m - k + (1 - q) * s)
+                                 - betaln(q * s, (1 - q) * s)))
+
+        # Tolerances rather than defaults: the default simplex stops while the third decimal of
+        # `rho` is still moving, which is one more digit than anybody reports and one fewer than a
+        # reproducible chain needs.
+        v0 = [float(np.log(pbar / (1 - pbar))), -3.0]
+        res = minimize(nll2, v0, method="Nelder-Mead",
+                       options=dict(xatol=1e-9, fatol=1e-12, maxiter=8000))
+        p_hat = float(1.0 / (1.0 + np.exp(-res.x[0])))
+        rho, ll = float(1.0 / (1.0 + np.exp(-res.x[1]))), float(-res.fun)
+    d = 2.0 * (ll - ll_bin)
+    return {"rho": rho, "p": float(p_hat), "D": float(d),
             "p_value": float(chi2.sf(max(d, 0.0), 1) / 2.0),
-            "loglik_binomial": ll_bin, "loglik_betabinom": float(-r.fun)}
+            "loglik_binomial": ll_bin, "loglik_betabinom": ll}
 # ------------------------------------------------------------------ quota-constrained composition
 @dataclass
 class Composition:
