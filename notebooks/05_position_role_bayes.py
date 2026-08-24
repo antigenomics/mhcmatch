@@ -16,9 +16,9 @@ def _(mo):
     mo.md(r"""
     # 5 — Position-role immunogenicity (`mhcmatch.posbayes`)
 
-    **What this demonstrates.** `ipred` — the legacy predictor, shipped v0.9.0-0.21.0 and removed
-    in 0.22.0 — scored a peptide from pooled physicochemical descriptors and did not distinguish
-    *where* a residue sits. But an anchor residue is buried in the MHC groove and
+    **What this demonstrates.** A model that scores a peptide from *pooled* physicochemical
+    descriptors cannot distinguish *where* a residue sits. But an anchor residue is buried in the
+    MHC groove and
     a TCR-facing residue is contacted by the receptor — different channels, and for several amino
     acids they carry **opposite signs**. Pooling averages that away.
 
@@ -49,7 +49,6 @@ def _(mo):
     | rows | 464,310 | 47,203 |
     | immunogenic | 14,712 | 5,154 |
     | **AUROC (`posbayes`)** | **0.712** | **0.758** |
-    | AUROC (retired `ipred`, *in-sample*) | 0.607 | 0.668 |
 
     Size-matched cross-species transfer, mean over 10 matched subsamples:
 
@@ -58,11 +57,6 @@ def _(mo):
     | human → mouse | **0.731** | 0.003 |
     | mouse → human | **0.692** | 0.000 |
 
-    > `ipred`'s figures are **in-sample** — that corpus is its training set — so this is not a
-    > like-for-like contest. It is quoted because an in-sample baseline that still loses is the
-    > conservative direction, not because it is fair. The module is gone as of 0.22.0; the
-    > measurement is not. Its full legacy record is `docs/complementarity.rst`, section
-    > "`ipred`: the retired predecessor".
     """)
     return
 
@@ -124,8 +118,7 @@ def _(mo):
     platform. Zeroing it costs grouped-CV AUROC 0.712 → 0.690 and *improves* transfer to neoantigen
     screens (TESLA 0.393 → 0.435, NCI 0.489 → 0.521).
 
-    Any model trained on MS-eluted negatives against assayed positives inherits this, the retired
-    `ipred` included.
+    Any model trained on MS-eluted negatives against assayed positives inherits this.
     """)
     return
 

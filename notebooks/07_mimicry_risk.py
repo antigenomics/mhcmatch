@@ -68,8 +68,8 @@ def _(mo):
     channel with the TCR channel unresolved.
 
     A different pattern (anchor positive, TCR-facing negative, across *every* reference) appears when
-    mimicry is fitted **residual to a model that already contains `ipred` (the retired
-    physicochemical predictor) and a foreignness term**.
+    mimicry is fitted **residual to a model that already contains a whole-peptide
+    physicochemical term and a foreignness term**.
     That is a statement about what mimicry adds to those terms, not about mimicry alone. The two are
     easy to confuse and the module docstring keeps them apart deliberately.
     """)

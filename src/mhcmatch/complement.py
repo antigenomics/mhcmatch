@@ -1,7 +1,6 @@
 """Complementarity: how well a presented peptide complements a T-cell repertoire.
 
-This is the recognition axis, and it is what ``ipred`` was reaching for. ``ipred`` -- the legacy
-physicochemical predictor, shipped v0.9.0-0.21.0 and removed in 0.22.0 (:ref:`ipred-legacy`) --
+This is the recognition axis. A whole-peptide physicochemical predictor --
 summed two principal components of the amino-acid property matrix over the whole peptide and added
 its length: 13 parameters, fitted by EM. That construction is kept and five blocks are added, each
 answering something the pooled version provably cannot:
@@ -10,7 +9,7 @@ answering something the pooled version provably cannot:
 block         what it adds
 ============  =========================================================================
 ``phys``      PC1/PC2 of the property matrix summed over the peptide, plus length. **The
-              retired `ipred` feature set**, kept as the floor everything else is measured
+              whole-peptide feature set**, kept as the floor everything else is measured
               against.
 ``role``      The same components computed **separately over MHC-facing and TCR-facing**
               residues, plus Kidera KF4 (hydropathy) per role. The two channels carry

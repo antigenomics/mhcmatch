@@ -6,9 +6,34 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [1.0.3] - 2026-08-24
+
+Documentation only. **No executable code changed** except the version string: six of the seven
+touched modules are AST-identical to 1.0.2 with docstrings excluded, and the seventh is the bump.
+
+### Changed
+
+- **The user-facing docs stop being a changelog.** README, the Sphinx pages, the agent skill and the
+  module docstrings carried a running account of models that no longer ship --- `BOECRT`, `PADEC`,
+  `BDEVF`, `GRAND`, `ipred` --- and of when each behaviour arrived ("Since 0.20.0...", "removed in
+  0.22.0", "the pre-0.19.0 ordering"). A reader installing the package now needs to know what it
+  does, not what it used to do. Every one of those is gone from the README (44 KB -> 39 KB), the
+  docs, `skills/mhcmatch/SKILL.md` and the notebooks; the history lives here and in the benchmark
+  repository's `MODELS.md`, which is where it belongs.
+- **`docs/models.rst` removed.** It was a naming registry for retired models. Its one live section,
+  the occupancy-versus-agretopicity derivation, moved to `docs/neoantigen.rst` and keeps its
+  `occupancy-vs-agretopicity` label so existing cross-references resolve.
+- `docs/complementarity.rst` loses its 463-line `ipred` archive (1,109 -> 644 lines).
+
+### Notes
+
+- 1.0.1 and 1.0.2 were tagged and neither reached PyPI; the 1.0.2 publish run was cancelled during
+  its artifact-regeneration step, before anything was uploaded. 1.0.3 is the first 1.x on PyPI.
+
 ## [1.0.2] - 2026-08-24
 
-A cleanup pass over 1.0.1, which was tagged but never published. No behaviour changes: every
+A cleanup pass over 1.0.1, which was tagged but never published. 1.0.2 was likewise
+tagged and never published --- see 1.0.3. No behaviour changes: every
 refactor below was checked bit-identical against the code it replaces before it was kept.
 
 ### Changed

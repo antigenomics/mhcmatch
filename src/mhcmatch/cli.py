@@ -520,13 +520,11 @@ def _aggregate_channels(cls: str, no_self: bool, species: str = "human"):
 
     Returns ``list[peptide] -> {C_corpus_thymus, C_corpus_self, C_corpus_viral}``.
 
-    **Since 0.24.0 there is no search here at all.** ``BOECRT`` needed ``self_tcr`` -- its
-    second-largest coefficient -- so an aggregate score forced the host-proteome reference index:
-    6 min 15 s and ~7.5 GB, the largest single cost in the package. 0.24.0 replaced the neighbour
-    search with a :func:`mhcmatch.mimicry.corpus_spectrum` table contraction, so all three channels
-    together cost three tables of 64 KB and the ranking path builds no trie at all. That is why
-    ``self`` and ``viral`` are back in the model: they were dropped in 0.21.0 for what they cost,
-    not for what they were worth. ``--no-self`` still matters for ``--extended``/``--annotate``,
+    **There is no search here at all.** The channels are a
+    :func:`mhcmatch.mimicry.corpus_spectrum` table contraction rather than a neighbour search, so
+    all three together cost three tables of 64 KB and the ranking path builds no trie -- against the
+    host-proteome reference index a search would force, 6 min 15 s and ~7.5 GB.
+    ``--no-self`` still matters for ``--extended``/``--annotate``,
     which report *which* reference peptide was nearest and do need the index, and for the safety
     scan.
 
@@ -560,14 +558,12 @@ def _aggregate_channels(cls: str, no_self: bool, species: str = "human"):
 def cmd_rank(a):
     """Rank neoantigen candidates from a window FASTA or an already-scored table.
 
-    With ``--score aggregate`` (the default) every one of the model's nine features is computed
-    *before* scoring and emitted as a column -- see :func:`_aggregate_channels`. Before 0.20.0 four
-    of the then nine were computed after scoring, or not at all, and contributed a constant to
-    every candidate while the output still said ``BOECRT``.
+    With ``--score aggregate`` (the default) every one of the model's features is computed
+    *before* scoring and emitted as a column -- see :func:`_aggregate_channels`. A model emits the
+    features it used and refuses to run without them.
 
-    ``--no-self`` and ``--score aggregate`` were mutually exclusive until 0.21.0, because
-    ``BOECRT`` scored on ``self_tcr``. ``EPIC`` does not, so the combination is now allowed and
-    the host-proteome index is off the ranking path entirely.
+    ``--no-self`` and ``--score aggregate`` compose: ``EPIC`` does not score on ``self_tcr``, so the
+    host-proteome index is off the ranking path entirely.
     """
     from . import rank as R
     # None -> mhcmatch.known's built-in sets; --no-known-refs -> {} -> lookup off

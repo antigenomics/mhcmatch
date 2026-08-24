@@ -90,7 +90,7 @@ python -c "from mhcmatch import rank; print(' · '.join(rank.columns()))"
 features) is appended whenever the aggregate is what scored, because a model emits the features it
 used. **The schema changed in 0.24.0**: `rank` is now the rank *by score* rather than the row
 number, `p_response` and `variant_type` joined `BASE_COLUMNS`, and the aggregate's own columns went
-from three to five. **In 1.0.2 they are** `C_phys_buried`, `C_phys_charge`, `C_corpus_thymus`,
+from three to five. **In 1.0.3 they are** `C_phys_buried`, `C_phys_charge`, `C_corpus_thymus`,
 `C_corpus_self`, `C_corpus_viral`, and `expr_pct` joined `BASE_COLUMNS`. Nothing downstream should
 be joining on position; ask the library — every stub in this module already does.
 
@@ -155,7 +155,7 @@ Runs `mhcmatch cassette build` — screen → select → order → back-translat
 (`section, i, key, value, detail`) with sections `withdrawn`, `allotype`, `not selected`, `unit`,
 `junction`, `cassette`, `sequence`.
 
-**Renamed from `MHCMATCH_VECTOR` in 1.0.2**, when `mhcmatch vector` became `mhcmatch cassette build`.
+**Renamed from `MHCMATCH_VECTOR` in 1.0.3**, when `mhcmatch vector` became `mhcmatch cassette build`.
 The `params.mhcmatch_vector_*` names are deliberately **unchanged**: an unknown Nextflow parameter is
 ignored rather than rejected, so renaming them would silently drop every deployed config's settings.
 
@@ -230,10 +230,10 @@ From `slurm.config` only:
 ## Build the image (only for `-profile docker`)
 
 ```zsh
-docker build -t <ISPRAS_REGISTRY>/mhcmatch:1.0.2 \
-    --build-arg MHCMATCH_VERSION=1.0.2 \
+docker build -t <ISPRAS_REGISTRY>/mhcmatch:1.0.3 \
+    --build-arg MHCMATCH_VERSION=1.0.3 \
     integrations/nextflow/mhcmatch/
-docker push <ISPRAS_REGISTRY>/mhcmatch:1.0.2
+docker push <ISPRAS_REGISTRY>/mhcmatch:1.0.3
 ```
 
 No data staging: the build runs `mhcmatch bootstrap --reference`, which fetches the ligand panel
@@ -316,7 +316,7 @@ a conda interpreter is enough and is what `-profile conda` sidesteps entirely:
 
 ```bash
 /path/to/conda/envs/<env>/bin/python3 -m venv .venv && . .venv/bin/activate
-pip install mhcmatch==1.0.2
+pip install mhcmatch==1.0.3
 ```
 
 **Why the calibration directory is worth the trouble.** `mhcmatch` reports a %rank, which means each

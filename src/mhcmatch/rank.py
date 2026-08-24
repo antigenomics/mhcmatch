@@ -182,8 +182,7 @@ def aggregate() -> dict:
     **EPIC** -- Expression, Presentation, Immunogenic Complementarity --
     names the four blocks the nine columns are fitted in, not the order they enter in; the pipeline
     order is presentation, expression, physchem, corpus, and the two recognition blocks are the two
-    halves of Complementarity. Shipped as ``GRAND`` through 0.24.x, renamed in 0.25.0; the
-    artifact's ``"former_name"`` records that.
+    halves of Complementarity.
 
     Fitted by ``bench/immuno/epic_v4_fit.py`` over nine neoantigen screens (354,909 rows / 958
     positive) as a ridge logistic regression with an unpenalised **per-screen intercept**, which
@@ -221,11 +220,10 @@ def aggregate() -> dict:
     cache -- there is no gap left to flag, so the column would be identically zero.
     ``bench/results/corpus_exact.md`` and ``epic_corpus_kernel.md``.
 
-    **An aggregate score is cheap and stays cheap.** ``BOECRT`` needed the host-proteome reference
-    index -- 6 min 15 s and ~7.5 GB, the largest single cost in the package -- because ``self_tcr``
-    was its second-largest coefficient. ``self`` is back in the model and costs a 64 KB table,
-    because the contraction needs counts rather than a trie. ``--no-self`` and
-    ``--score aggregate`` are not in conflict.
+    **An aggregate score is cheap.** The ``self`` channel costs a 64 KB table rather than the
+    host-proteome reference index a neighbour search would force (6 min 15 s, ~7.5 GB), because the
+    contraction needs counts rather than a trie. ``--no-self`` and ``--score aggregate`` are not in
+    conflict.
 
     **There is no intercept and that is deliberate.** Each screen was given its own, unpenalised,
     precisely so prevalence and candidate generation stayed out of the slopes; no single intercept
@@ -574,11 +572,9 @@ def _recognition(peptide: str, species: str = "human", cls: str = "mhc1") -> flo
     presentation alone is the honest option until a class-II table exists.
 
     Chosen over ``posbayes.llr`` -- which it contains as its ``aa`` block -- and over the retired
-    ``ipred.log_p`` (removed in 0.22.0; the legacy record is
-    :ref:`ipred-legacy`), on peptide-grouped 5-fold CV over all four deposited corpus arms
+    a whole-peptide physicochemical log-odds, on peptide-grouped 5-fold CV over all four deposited corpus arms
     x both hosts: it wins every one (chowell/human 0.7188 vs 0.7111, chowell/mouse 0.7718 vs
     0.7582, kesmir/human 0.6580 vs 0.6369; row and positive counts were not recorded per cell).
-    ``ipred``'s figures on that corpus are *in-sample*, since it is its training set.
 
     ``species`` selects the fitted table: ``"human"`` (464,161 rows) or ``"mouse"`` (47,140). The
     two hosts are never pooled -- different MHC, different thymic repertoires.
@@ -648,14 +644,12 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
     sat vendored with no internal caller, so ``mhcmatch rank`` and the published coefficients were
     two different models. ``score="gate"`` keeps the old path for comparability.
 
-    Since 0.20.0 a feature the caller cannot supply is an **error**, not a substituted mean. The
-    three corpus channels have to be filled into ``Ranked.components`` before this runs -- :func:`rank_fasta` and :func:`rank_table` do that
-    through their ``channels`` argument. Until 0.20.0 they were computed by the CLI *after* this
-    function had already scored, so they never reached the model and every run reported ``BOECRT``
-    while scoring ``BOEC``.
+    A feature the caller cannot supply is an **error**, not a substituted mean. The three corpus
+    channels have to be filled into ``Ranked.components`` before this runs -- :func:`rank_fasta` and
+    :func:`rank_table` do that through their ``channels`` argument.
 
-    There is also **no silent fallback to the gate**. Until 0.20.0 the whole aggregate branch sat
-    inside a bare ``except Exception: score = "gate"``, so a missing artifact, an unreadable file or
+    There is also **no silent fallback to the gate**. The aggregate branch must not sit inside a
+    bare ``except Exception: score = "gate"``, because a missing artifact, an unreadable file or
     an absent numpy swapped in a different model -- a two-term noisy-AND returning a probability
     where the aggregate returns log-odds -- and said nothing, leaving ``components["model"]`` unset.
     Asking for the aggregate and getting the gate is not a degraded answer, it is a different one.

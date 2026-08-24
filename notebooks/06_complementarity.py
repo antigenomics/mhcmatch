@@ -26,9 +26,9 @@ def _(mo):
        receptor), what kind of statistic is taken (a property average vs a contiguous motif vs
        residue identity), and which contact potential applies to which side are all different
        questions, and the answers disagree.
-    2. **Residue identity carries almost all of it.** The physicochemical blocks — the ones the
-       retired `ipred` was built from — are real but small next to a per-role log-odds over the 20
-       amino acids. The notebook shows this rather than asserting it.
+    2. **Residue identity carries almost all of it.** The physicochemical blocks are real but
+       small next to a per-role log-odds over the 20 amino acids. The notebook shows this rather
+       than asserting it.
 
     Everything here is vendored except the corpus in section 6.4.
     """)

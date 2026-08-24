@@ -84,8 +84,7 @@ monotone reparametrization, a projection onto this one axis. So:
 - **The package ships this basis rather than recomputing it**:
   :data:`mhcmatch.data.aa_tables.PROPERTY_PC1` and :data:`~mhcmatch.data.aa_tables.PROPERTY_PC2` are
   the frozen per-residue loadings, and the ``phys`` block of :func:`mhcmatch.complement.score` sums
-  PC1 along the sequence. Until 0.21.0 they were reached through ``ipred.residue_scores()``; that
-  module was removed in 0.22.0 (:ref:`ipred-legacy`) and the basis, being label-free, outlived it.
+  PC1 along the sequence. The basis is label-free, so it is independent of any fitted model.
 
 2. PCA on the Kidera factors is a no-op
 ---------------------------------------

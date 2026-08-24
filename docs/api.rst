@@ -180,8 +180,7 @@ Position-role naive Bayes over amino-acid identity: anchor and TCR-facing residu
 conditional distributions, because for several amino acids their contributions carry opposite signs
 and pooling averages that away. Emits a **log-likelihood ratio**, so the caller supplies the prior.
 
-Grouped 5-fold CV **0.712** human / **0.758** mouse (against the retired ``ipred`` *in-sample* at
-0.607 / 0.668 --- :ref:`ipred-legacy`);
+Grouped 5-fold CV **0.712** human / **0.758** mouse;
 size-matched transfer **0.731** human→mouse, **0.692** mouse→human. Cysteine is masked — see the
 module warning.
 
@@ -193,7 +192,7 @@ module warning.
 mhcmatch.complement module
 --------------------------
 
-The recognition axis as one score: the retired ``ipred``'s physicochemistry and length, the same components
+The recognition axis as one score: whole-peptide physicochemistry and length, the same components
 split MHC-facing vs TCR-facing, MJ1996 / repertoire-marginalised TCRen contact potentials,
 hydrophobic-run and dipeptide motifs, and per-role residue log-odds — pooled, **per length bin
 (8/9/10/11+ at class I, quartiles at 14/16/19 at class II)** and per position zone (relative thirds
@@ -226,7 +225,7 @@ mhcmatch.luksza module
 
 The Łuksza recognition term :math:`R = Z/(1+Z)` -- a soft partition function over near-matches,
 replacing a hard distance cut, so **how many** near-matches a candidate has and **how near** they
-are both enter. ``viral_R`` was a term of the retired ``BOECRT`` aggregate — before 0.17.0 the sum
+are both enter. ``viral_R`` is not a term of the shipped aggregate — the sum
 lived only in the benchmark repo, which made :func:`mhcmatch.rank.aggregate_score` callable with a
 feature no installed user could supply. ``EPIC`` retired the term in 0.21.0, so the shipped
 aggregate no longer scores with it; the quantity is still the published recognition term and is

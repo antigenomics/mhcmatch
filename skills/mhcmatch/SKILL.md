@@ -43,15 +43,15 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 | `background` | `"ligand"` | **the null, and the main per-task knob.** `"ligand"` = specificity (which allele? → restriction/hard-negative tasks). `"proteome"` = presentation `log(θ_A/p_proteome)` (is it presented at all? → screening). `"markov"` = order-1 proteome (measured slightly worse; opt-in) |
 | `footprint` | `"anchor"` | `"anchor"` (primary pockets) / `"core"` (all core positions) / `"adaptive"` (anchors for rare, core otherwise). ⚠️ `rare_max=30` is a hard threshold sitting on the eval stratum boundary — see `docs/hierarchical_rules.md` |
 | `n_motifs` | `3` (MHC-II) | motif-mixture components, fit by EM on the corpus. K=3 closes ~40% of the frequent gap. Self-adapting: an empty component returns the pooled motif *identically*. `1` = single-PWM escape hatch |
-| `register` | `"marginal"` | MHC-II: integrate the register out under the learned core-offset prior; `"max"` = pre-v0.6 |
-| `register_em` | `2` | best-frame register-EM passes. **`"converge"`** (v0.7.2) runs each allele to *its own* fixed point — closes 28% of the class-II frequent screening gap, but is a restriction cost. See below |
-| `prior_strength` (τ) | `10.0` | shrinkage strength. **`"auto"`** (v0.7.2) = empirical-Bayes τ per anchor position; largest rare gain measured (+0.041 AUPRC) |
+| `register` | `"marginal"` | MHC-II: integrate the register out under the learned core-offset prior; `"max"` picks the single best frame instead |
+| `register_em` | `2` | best-frame register-EM passes. **`"converge"`** runs each allele to *its own* fixed point — closes 28% of the class-II frequent screening gap, but is a restriction cost. See below |
+| `prior_strength` (τ) | `10.0` | shrinkage strength. **`"auto"`** = empirical-Bayes τ per anchor position; largest rare gain measured (+0.041 AUPRC) |
 | `pseudocount` (β) | `0.0` | BLOSUM substitution pseudocount. **A measured negative — leave off** |
 | `h` | `2.0` | kernel bandwidth |
 | `weights` | `"learned"` | groove-position weights: MI-learned, or `"uniform"` (`"structural"`/`"blend"` were removed — measured neutral) |
 | `length_prior`, `length_motifs` | `"score"`, `True` | MHC-I only; class-gated deliberately (measured, `length_prior_mhc2.md`) |
 
-### v0.7.2 — the per-allele estimators, and when to use them
+### The per-allele estimators, and when to use them
 
 - **`register_em="converge"`** — use for **screening** MHC-II. The class-II frequent gap is a register-EM
   convergence failure on **HLA-DP** (not a motif deficit): DPA1\*02:01's core-offset prior sits at
@@ -76,16 +76,16 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 | `mhcmatch.calibrate` | `RankCalibrator` | per-allele `%rank` / `P(present)` / band |
 | `mhcmatch.predict` | `predict_fasta`, `predict_windows` | variant-window scoring; native table carries `binder_rank`/`binder_band`/`affinity_rank` (the generalized binder score) alongside %rank/IC50/agretopicity. `.scored.csv` keeps the fixed 57-col pipeline schema |
 | `mhcmatch.structure` | `StructureScorer` | MJ ΔΔG; **optional `[structure]` extra** (needs `tcren`) |
-| `mhcmatch.complement` | `score`, `burial`, `design`, `feature_names`, `posterior` | the recognition axis: six blocks, per species, **never pooled across hosts**. Vectorised — pass a list. `posbayes` is a strict special case, and so was the retired `ipred`. **`burial` is `C_phys`** — the Rose burial propensity summed over the TCR face, an imported basis with **no fitted residue parameters**, and one of the two Complementarity factors the shipped aggregate carries ([docs/burial.rst](../../docs/burial.rst)). `cls="mhc2"` selects the separately fitted class-II table (v0.16.0), whose `aa` block is keyed on register zone **and** length; `recognition.score_mhc2` is a different, unfitted thing — do not confuse them |
-| `mhcmatch.rank` | `rank_fasta`, `rank_table`, `occupancy` | scores with the fitted `EPIC` aggregate since 0.21.0 (`BOECRT` from 0.19.0 to 0.20.0); `--score gate` is the pre-0.19.0 product-of-sigmoids. Emits `occupancy` — equilibrium fraction of MHC held, `a/(1+a)` with `a = [P]/Kd` — which is **absolute** where the binder `%rank` is allele-relative, and is defined for a frameshift or fusion product that has no wild type. `agretopicity` is reported, not fitted: it does not resolve in any parameterisation tested. `rank --extended` appends the mimicry contributions and `--annotate` what each candidate resembles — **columns only, the ordering is unchanged** |
+| `mhcmatch.complement` | `score`, `burial`, `design`, `feature_names`, `posterior` | the recognition axis: six blocks, per species, **never pooled across hosts**. Vectorised — pass a list. `posbayes` is a strict special case. **`burial` is `C_phys`** — the Rose burial propensity summed over the TCR face, an imported basis with **no fitted residue parameters**, and one of the two Complementarity factors the shipped aggregate carries ([docs/burial.rst](../../docs/burial.rst)). `cls="mhc2"` selects the separately fitted class-II table , whose `aa` block is keyed on register zone **and** length; `recognition.score_mhc2` is a different, unfitted thing — do not confuse them |
+| `mhcmatch.rank` | `rank_fasta`, `rank_table`, `occupancy` | scores with the fitted `EPIC` aggregate; `--score gate` is the two-term product-of-sigmoids. Emits `occupancy` — equilibrium fraction of MHC held, `a/(1+a)` with `a = [P]/Kd` — which is **absolute** where the binder `%rank` is allele-relative, and is defined for a frameshift or fusion product that has no wild type. `agretopicity` is reported, not fitted: it does not resolve in any parameterisation tested. `rank --extended` appends the mimicry contributions and `--annotate` what each candidate resembles — **columns only, the ordering is unchanged** |
 | `mhcmatch.known` | five built-in reference sets | exact-match lookup. An exact match outranks any model output, so `rank` flags it and never folds it into the score |
 | `mhcmatch.expression` | `lookup`, `safety_profile`, `matched_tissues`, `tumor_types`, `TUMOR_TISSUE` | GTEx `SMTSD` tissues and TCGA study abbreviations — **two vocabularies, never merged, neither clinical**. **Always pass the caller's own tumour type**; the benchmark's cross-tissue median exists for fit/holdout comparability, not as a default |
 | `mhcmatch.mimics` | `neighbours`, `KINDS`, `DEFAULT_REFS` | the raw scan, per category, **never summed** — each category argues something different |
 | `mhcmatch.mimicry` | `score`, `probability`, `annotate`, `safety`, `masks`, `corpus_R`, `features`, `load_references` | the *fitted* form: `viral`/`self`/`thymus` × `anchor`/`tcr` as signed log-odds. `probability` demands a **named** corpus. `annotate` (tested-neoantigen DB) is prior evidence and **never a fitted term**. **`corpus_R` is `C_corpus`** — the **exact** Luksza density over the TCR face, evaluated as a sliding-k-mer table contraction (`corpus_counts` + `contract`), not a search. All three components (`thymus`/`self`/`viral`) ship in EPIC, under a graded BLOSUM62 kernel since v4; `SHAPES` is one `kappa` each (`a0` retired). `self_species=` picks the proteome, so mouse self for mouse. Counts are memoised per `(cls, comp, k, species)` and **not** keyed on `kappa`, so a kappa sweep is free; there is **no disk cache** ([docs/corpus.rst](../../docs/corpus.rst)). `load_references` still builds the index `features`/`annotate`/`safety` need, because those report *which* reference was hit |
-| `mhcmatch.vector` | `screen`, `self_origin_risk`, `select`, `order`, `slippery_sites`, `epitope_map`, `write_map` | **cassette assembly**, the step after `rank`: withdraw on safety, then how many units per allotype, in what order, joined by what. `screen` **excludes**, never down-ranks. Scoring is injected (`binder`, `risk`), so the layout logic needs no panel. `epitope_map`/`write_map` (v0.16.0) emit the TSV/JSON cassette map — unit, linker and epitope rows with 1-based coordinates, the class-II core, cross-class overlaps and per-unit `self_help`; **one row per (peptide, allele)**, so a heterozygote is duplicated by construction |
+| `mhcmatch.vector` | `screen`, `self_origin_risk`, `select`, `order`, `slippery_sites`, `epitope_map`, `write_map` | **cassette assembly**, the step after `rank`: withdraw on safety, then how many units per allotype, in what order, joined by what. `screen` **excludes**, never down-ranks. Scoring is injected (`binder`, `risk`), so the layout logic needs no panel. `epitope_map`/`write_map`  emit the TSV/JSON cassette map — unit, linker and epitope rows with 1-based coordinates, the class-II core, cross-class overlaps and per-unit `self_help`; **one row per (peptide, allele)**, so a heterozygote is duplicated by construction |
 | `mhcmatch.cassette` | `select`, `score`, `lam`, `prob_offset`, `group_offsets`, `goal_energy`, `greedy`, `refine`, `overlap`, `pair_stats`, `log_ek`, `energy` | **cassette design** (1.0.1): pick *k* units maximising `H = sum h - sum J`, the mean-variance objective derived from the design goal, and score a finished cassette. `lam` is `H` minus the exact log partition function over every size-*k* subset of the donor's own pool — the one axis comparable across donors AND sizes, and it needs no shared calibration. `select` takes the **whole pool**; a shortlist already cut on binding/expression has no range left along the two largest coefficients. Greedy + bounded swap reaches the brute-force optimum on every enumerable pool. `score` deliberately does **not** report `H`: `goal_energy` renormalises to the set it is handed, so an `H` on a cassette alone scores a diversifying rule identically to one that did not |
 | `mhcmatch.portfolio` | `pareto_front`, `linearly_supported`, `chebyshev_score`, `corner`, `p_at_least`, `n_effective`, `dispersion`, `betabinom_rho` | **cassette composition**, the layer above `vector.select`. Fits nothing: it says what a proposed *set* is worth. `vector.select` now takes `block=` (a callable `Unit -> hashable`, default the allotype) so the budget can saturate against allotype **x** mechanism; `Selection.expected_yield` follows whatever partition the rule used, and `per_block()` reports it. `linearly_supported` is exact (LP), the sampled searches in the benchmark repo are not. SciPy is a **lazy** import — `linearly_supported` and `betabinom_rho` need it, nothing else does |
-| `mhcmatch.luksza` | `viral_r`, `r_term`, `counts_by_distance`, `shape` | the Łuksza `R = Z/(1+Z)` term (v0.17.0). `viral_R` was a term of the retired `BOECRT` aggregate and used to be computable only in the benchmark repo; `EPIC` does not score with it. `k`/`a0` are **read from the artifact**, never hardcoded. The neighbour search is 98.6% of the runtime — do not micro-optimise the rest |
+| `mhcmatch.luksza` | `viral_r`, `r_term`, `counts_by_distance`, `shape` | the Łuksza `R = Z/(1+Z)` term. `EPIC` does not score with it; it ships so the published quantity is computable without the benchmark repo. `k`/`a0` are **read from the artifact**, never hardcoded. The neighbour search is 98.6% of the runtime — do not micro-optimise the rest |
 | `mhcmatch.recognition` | `score`, `default_head`, `lowest_bic_head`, `roles_for`, `score_mhc2` | the head dispatcher over the recognition axis: `complement` (the **default**), `posbayes`, `physchem_glm`, `esm64_glm`. `default_head` and `lowest_bic_head` answer different questions and do not agree — see [docs/complementarity.rst](../../docs/complementarity.rst) |
 | `mhcmatch.immuno` | `features`, `ANCHOR_SCHEMES`, `contact_profile` | 141 physicochemical features per peptide over selectable TCR-facing position schemes ([docs/immunogenicity.rst](../../docs/immunogenicity.rst)); no store, no download |
 | `mhcmatch.posbayes` | `llr`, `posterior`, `roles`, `table` | naive Bayes over residue identity conditioned on face; two 20-cell tables, three parameters, no dependencies. A strict special case of `complement`'s `aa` block |
@@ -168,48 +168,6 @@ recognition coefficient is what it is worth *after* presentation and expression.
 - **`C_corpus_missing` is retired.** On IEDB_neoag the v2 cache reached 3.0 % of rows and those rows
   were 76.9 % positive against 46.0 % for the rest, so the flag with v2's largest coefficient
   magnitude (−0.3510) was a within-screen label proxy for our own index coverage.
-
-### The previous scorer, for comparison
-
-`BOECRT` — binder, **occupancy**, expression, complementarity, the refitted Łuksza `R`, and the
-three TCR-facing mimicry channels. Shipped 0.19.0–0.20.0 on the cleaned corpus: 355,052 rows /
-1,101 positive / 10 screens. Within-screen median AUROC **0.6504**.
-
-- **`O` replaced `D`.** Agretopicity does not resolve in any of seven parameterisations, and the one
-  that appears to is 0.9955 correlated with mutant affinity — it improves by deleting itself.
-  Occupancy is what the binding equilibrium supplies instead, and it needs no wild type, so it is
-  defined for frameshift and fusion products. `bench/results/neoag_dai_terms.md`,
-  `neoag_occupancy.md`, `neoag_aggregate_boecrt.md`.
-- **Not comparable to the `BECRT` record below.** Different corpus (cleaned, pathogen epitopes and
-  unmutated self windows removed, Gfeller held out), different screen count (10 vs 7), fewer
-  positives (1,101 vs 1,719, because a good part of the old ones were not neoantigens). Neither
-  number supersedes the other; they measure different populations.
-
-## Best recorded model (2026-08-17)
-
-`BECRT` — binder, expression, complementarity, the fitted Łuksza `R`, and the three TCR-facing
-mimicry channels. One partially-pooled Bayesian fit over all seven neoantigen screens, per-screen
-intercept, `tau = 0.25` by out-of-screen deviance.
-
-| | within-screen median AUROC |
-|---|--:|
-| `B` | 0.6473 |
-| `BE` | 0.6333 |
-| `BEC` | 0.6628 |
-| **`BECRT`** | **0.6707** |
-| held out, Sahin TNBC (`BECR`) | **0.6786** |
-
-- **`C` is the term that holds**: z +11.5, bootstrap [+0.288, +0.436]. `BE` is *below* `B`, so
-  complementarity — not expression — is what adds recognition signal.
-- **`R` beats the hard foreignness step**: z +3.85 vs −1.62 (the step carried the wrong sign).
-- **Anchor mimicry channels are excluded on measurement**: each correlates with `binder` (r ≤ +0.25)
-  and moves it up to −2.2 sd, because anchor similarity to a presented reference *is* presentation.
-- **Judge by parameter stability, not AUROC.** GBM has 14 positives, VACCIMEL 26, TESLA 37; the
-  read-out is whether coefficients survive deleting a cohort or resampling peptides.
-
-Numbers and generators: `neoag_hier.md`, `neoag_cohorts.md`, `luksza_r.md`, `mimicry_collinear.md`
-in the benchmark repo. **Open**: expression is GTEx cross-tissue median everywhere and wants a
-tumour-matched refit across all eight cohorts at once (ROADMAP §6).
 
 ## Traps
 

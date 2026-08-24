@@ -99,7 +99,6 @@ Capabilities
    cassette
    safety
    portfolio
-   models
    burial
    corpus
    property_basis
