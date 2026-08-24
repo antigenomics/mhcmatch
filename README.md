@@ -81,13 +81,16 @@ mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor 
 | What does this allele's motif look like? | `mhcmatch logo 'HLA-A*02:01'` | `logo.motif` |
 | Which peptides in this protein are presented? | `mhcmatch scan p.fasta --correction bh` | `store.scan_protein` |
 | What is the full MHC-II ligand around this core? | `mhcmatch span CORE --protein p.fasta` | `ligand.presented_span` |
-| Build a vaccine cassette from ranked candidates | `mhcmatch vector --candidates units.tsv --n0 8 --screen` | `vector.select` / `vector.order` |
+| **Which *k* of this donor's candidates go in the cassette?** | `mhcmatch cassette select --candidates pool.tsv -k 20 --tol 3` | `cassette.select` |
+| **What is this cassette worth, against one from another donor of another size?** | `mhcmatch cassette score --cassettes c.tsv --pool pool.tsv` | `cassette.score` / `cassette.lam` |
+| Build the cassette from ranked candidates | `mhcmatch cassette build --candidates units.tsv --n0 8 --screen` | `vector.select` / `vector.order` |
 | …spread over allotype **and** mechanism, not just allotype | — | `vector.select(block=…)` |
-| What is this cassette worth — how many *independent* shots? | — | `portfolio.p_at_least` / `n_effective` |
+| Order units I have already chosen, and pick the spacer | `mhcmatch cassette order --candidates chosen.tsv` | `vector.order` |
+| How many *independent* shots is it worth? | (a `cassette score` column) | `portfolio.p_at_least` / `n_effective` |
 | Are my own response counts over-dispersed? | — | `portfolio.betabinom_rho` |
 | Which candidates can no weighted score ever pick? | — | `portfolio.linearly_supported` |
-| …and a map of it a viewer can draw | `mhcmatch vector ... --map c.tsv --map-json c.json` | `vector.epitope_map` |
-| Strip frameshift-prone motifs from the CDS | `mhcmatch deslip cassette.fa` | `vector.slippery_sites` |
+| …and a map of it a viewer can draw | `mhcmatch cassette build ... --map c.tsv --map-json c.json` | `vector.epitope_map` |
+| Strip frameshift-prone motifs from the CDS | `mhcmatch cassette deslip cassette.fa` | `vector.slippery_sites` |
 | Split a peptide into anchor / TCR-facing parts | `mhcmatch decompose PEP` | `store.decompose` |
 | How viral-like is it, as a soft sum not a cutoff? | — | `luksza.viral_r` |
 
@@ -106,22 +109,60 @@ independently. They do not: on the adjuvant TNBC mRNA vaccine trial of Sahin et 
 (*Nature* 2026;651:1088–1096) the intra-patient correlation is ρ = 0.124 (p = 1.0×10⁻³), 3.45× the
 binomial variance.
 
-`vector.select` already saturates a budget per allotype, so diversification falls out of the
-arithmetic rather than a quota. `block=` generalises that to any partition — the intended one pairs
-the allotype with the mechanism a unit was picked on. `mhcmatch.portfolio` is the read-out: what a
-proposed set is worth, and which candidates no weighted score can reach.
+So `mhcmatch cassette select` maximises **mean minus variance** of the responding-unit count rather
+than the mean, and the objective is derived from that goal rather than fitted to an outcome cohort:
 
-```python
-from mhcmatch import portfolio, vector
-
-corner = portfolio.corner(Z)                       # Z: candidates x objectives, higher is better
-sel = vector.select(units, n0=20.0, block=lambda u: (u.allele, corner_of[u.peptide]))
-ge1 = portfolio.p_at_least(p, block, q=0.5, k=1)
-portfolio.n_effective(p, ge1)                      # this cassette in independent units
+```
+H(S) = sum_i [ p_i - (gamma/2) s_i^2 ]  -  gamma sum_{i<j} rho_ij s_i s_j,   s_i = sqrt(p_i(1-p_i))
 ```
 
+Three inputs, none of them an outcome cohort: `p_i` is the calibrated response probability, `rho` is
+one number measured on published per-unit assays, `gamma` is a stated preference (1.0 — one unit of
+variance traded for one expected unit). `rho_ij` spreads `rho` over pairs by how much two units
+share a way of failing: the same allotype, the same 3-mers, the same place on the dominance axis.
+
+```bash
+mhcmatch cassette select --candidates pool.tsv -k 20 --tol 3 --out cassette.tsv
+mhcmatch cassette score  --cassettes cassette.tsv --pool pool.tsv
+```
+
+```python
+from mhcmatch import cassette as CA
+
+c = CA.select(scores, peptides, alleles, k=20, tol=3)     # scores = rank.aggregate_score, WHOLE pool
+s = CA.score(scores, peptides, alleles, chosen=c.index,
+             pool_scores=scores, pool_peptides=peptides, offset=c.offset)
+s["yield"], s["p_at_least"], s["lam"], s["n_effective"]
+```
+
+Greedy plus a bounded swap pass, `O(kN)` — and it reaches the brute-force optimum on every pool small
+enough to enumerate, which is a test rather than a claim.
+
+**Give it the whole candidate pool, not a shortlist.** `expr_pct` and `pres` carry the two largest
+coefficients in the shipped model (+0.3007 and +0.2200), so a pool already cut on binding and
+expression has no range left along them. Measured: on the 46-patient half of the NCI gastrointestinal
+screen held out of the EPIC fit — an exhaustive exome screen responding at **0.0144** per mutation —
+selection lifts captured responses to **3.92× the base rate** at *k* = 5 (13 of 58 positives against
+3.3 expected). On TESLA's *nominated* list, which responds at **0.0612**, every rule sits at the base
+rate: the selection had already been done to it.
+
 Full treatment, including why a gradient-boosted score fixes the geometry but not the objective:
+[cassette design](https://antigenomics.github.io/mhcmatch/cassette.html) and
 [the composition page](https://antigenomics.github.io/mhcmatch/portfolio.html).
+
+### `lam` is what compares two cassettes
+
+`sum p` is a **level** and it is comparable only if every cassette was calibrated together —
+`rank.probability` anchors the mean of *the batch it is handed*, so calling it once per donor pins
+every donor's pool mean to the declared prevalence. Measured on 7,261 TCGA donors with pools of 1 to
+5,221 candidates: every per-donor-anchored mean lands on **0.060163**, sd **2.75 × 10⁻¹⁷**. Read as a
+probability, that number is not one.
+
+`lam` needs no shared calibration at all. It is `H(S)` minus the exact log partition function over
+every size-*k* subset of that donor's **own** pool, plus `log C(N, k)` — so zero is a uniformly random
+subset of the same pool, and both pool depth and *k* divide out. On 3,064 TCGA donors, a cassette
+built by sorting the candidate list scores a median **−0.539 nats** — below a random subset — against
+**+3.417** for the greedy argmax, a gain of **+4.083**.
 
 ## What `rank` costs, and why it did not before
 
@@ -355,7 +396,7 @@ leaves GC, structure and CpG to the manufacturer's tooling.
 
 ```zsh
 mhcmatch rank fasta windows.fasta --alleles "$HLA" --out ranked.tsv
-mhcmatch vector --candidates ranked.tsv --context windows.fasta --n0 8 --screen \
+mhcmatch cassette build --candidates ranked.tsv --context windows.fasta --n0 8 --screen \
     --fasta cassette.faa --fasta-nt cassette.fna
 ```
 

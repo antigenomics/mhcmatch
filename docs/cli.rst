@@ -1,7 +1,7 @@
 Command-line reference
 ======================
 
-Nineteen commands, one binary. This page groups them by **what you are trying to do**; every
+Twenty commands, one binary --- and one of them, ``cassette``, has sub-verbs. This page groups them by **what you are trying to do**; every
 command also has ``mhcmatch <command> --help``.
 
 .. important::
@@ -49,10 +49,14 @@ Routine tasks
      - ``mhcmatch source --peptides p.txt --proteome human --threads 0``
    * - Is the gene on in the tumour, and in normal tissue?
      - ``mhcmatch expression GENE --tumor SKCM``
+   * - Which *k* of this donor's candidates should the cassette carry?
+     - ``mhcmatch cassette select --candidates pool.tsv -k 20 --tol 3``
+   * - What is this cassette worth, against one from another donor of another size?
+     - ``mhcmatch cassette score --cassettes c.tsv --pool pool.tsv``
    * - Build a vaccine cassette from ranked candidates
-     - ``mhcmatch vector --candidates units.tsv --n0 8 --screen``
+     - ``mhcmatch cassette build --candidates units.tsv --n0 8 --screen``
    * - …and a map of it a viewer can draw
-     - ``mhcmatch vector ... --map cassette.tsv --map-json cassette.json``
+     - ``mhcmatch cassette build ... --map cassette.tsv --map-json cassette.json``
    * - What does this allele's motif look like?
      - ``mhcmatch logo 'HLA-A*02:01'``
    * - What is the full MHC-II ligand around this core?
@@ -147,11 +151,22 @@ The commands, by axis
 
    * - command
      - does
-   * - ``vector``
+   * - ``cassette select``
+     - choose *k* units (± ``--tol``) from a donor's **whole** candidate pool, maximising the
+       mean-variance objective rather than sorting on the score (:doc:`cassette`)
+   * - ``cassette score``
+     - score finished cassettes across donors and across sizes: expected responding units,
+       ``P(>= k)`` under the block model, and ``lam`` (:doc:`cassette`)
+   * - ``cassette build``
      - assemble a polyepitope cassette: withdraw on safety, choose how many units per allotype,
        order them, pick the spacer, and optionally emit the cassette map
-   * - ``deslip``
+   * - ``cassette order``
+     - the assembly half alone, on units already chosen — so ``--n0`` is not required
+   * - ``cassette deslip``
      - remove m1-pseudouridine +1-frameshift slippery motifs from a coding sequence, synonymously
+   * - ``vector`` · ``deslip``
+     - **deprecated** aliases for ``cassette build`` and ``cassette deslip``. They still work and
+       print a deprecation line; they will be removed after 1.x
 
 **Setup.**
 

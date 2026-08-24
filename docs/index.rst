@@ -23,7 +23,7 @@ The mathematical and statistical theory lives in the technical appendix,
      </a>
      <a class="proj-card" href="cli.html">
        <h3>Command line</h3>
-       <p>Nineteen commands grouped by what you are trying to do, and the two env vars a cluster needs.</p>
+       <p>Twenty commands grouped by what you are trying to do, and the two env vars a cluster needs.</p>
      </a>
      <a class="proj-card" href="complementarity.html">
        <h3>Complementarity</h3>
@@ -34,8 +34,13 @@ The mathematical and statistical theory lives in the technical appendix,
        <h3>Ranking neoantigens</h3>
        <p>The shipped scorer end to end: the seven terms, what each was fitted on, what it does not do.</p>
      </a>
+     <a class="proj-card" href="cassette.html">
+       <h3>Cassette design</h3>
+       <p>Choose the k units to manufacture, and score a finished cassette on an axis that survives
+       changing donor and changing size.</p>
+     </a>
      <a class="proj-card" href="safety.html">
-       <h3>Safety &amp; cassettes</h3>
+       <h3>Safety &amp; assembly</h3>
        <p>The self-origin screen before a cassette is built, and the map of the one you built.</p>
      </a>
      <a class="proj-card" href="api.html">
@@ -67,14 +72,19 @@ Capabilities
   :doc:`complementarity`.
 - **Mimicry as risk** — viral / self / thymus resemblance split by anchor and TCR-facing channel,
   as signed log-odds rather than a single distance.
-- **Neoantigen ranking** — the fitted ``EPIC`` aggregate: binder, equilibrium occupancy,
-  expression and its missing flag, and Complementarity as ``C_phys`` + ``C_corpus_thymus`` with its
-  missing flag, with agretopicity and near-exact matches to already-tested neoantigens reported
-  beside the score (:doc:`neoantigen`).
+- **Neoantigen ranking** — the fitted ``EPIC`` aggregate, **eight terms in the shipped v4**:
+  presentation rank and equilibrium occupancy, the within-batch expression percentile ``expr_pct``
+  (one term, no missingness flag), the two chemistry axes ``C_phys_buried`` and ``C_phys_charge``,
+  and all three corpus channels ``C_corpus_thymus`` / ``_self`` / ``_viral``. Agretopicity and
+  near-exact matches to already-tested neoantigens are reported beside the score rather than in it
+  (:doc:`neoantigen`).
+- **Cassette design** — choose the *k* units to manufacture by maximising a mean-variance objective
+  derived from the design goal, and score a finished cassette on ``lam``, the one axis that survives
+  changing donor *and* changing cassette size (:doc:`cassette`).
 - **Cassette assembly** — withdraw unsafe units, size each allotype, order them, choose the spacer,
   back-translate, and emit a map of the result (:doc:`safety`).
-- **Cassette composition** — which units to put in one cassette, read as a portfolio rather than a
-  ranking: coverage, redundancy and the scalarizer that reaches a given trade-off
+- **Cassette composition** — the geometry underneath: the block response model, the measured
+  over-dispersion, coverage, redundancy, and what no weighted score can ever select
   (:doc:`portfolio`).
 
 .. toctree::
@@ -86,6 +96,7 @@ Capabilities
    neoantigen
    immunogenicity
    complementarity
+   cassette
    safety
    portfolio
    models

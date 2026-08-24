@@ -167,7 +167,7 @@ mhcmatch build corpus -v    # one target, with per-step wall clock
   `** MOVED **` for any cell that changed, and the anchor rebuild is checked against the previous
   file. Bump-only rebuilds have measured max |new − old| = 0.
 - **Two version vocabularies, told apart by the shape of the value, not by the file extension.**
-  A **model** version is an `int` — EPIC is `3`, the recognition heads are `2`, mimicry is `1`; a
+  A **model** version is an `int` — EPIC is `4`, the recognition heads are `2`, mimicry is `1`; a
   **package** version is dotted (`0.26.0`). `--check` compares the dotted ones to `__version__` and
   presence-checks the rest. Comparing a model version to a package version is a category error that
   reports every head stale at every release, which is why `.json` was once blanket-exempted — and
