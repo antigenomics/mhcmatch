@@ -292,7 +292,7 @@ def test_rank_pairs_keeps_a_row_with_no_wild_type(monkeypatch):
         return [1.0] * n, [1.0] * n, [1.0] * n, [100.0] * n
 
     monkeypatch.setattr("mhcmatch.predict.binder_ranks", fake_binder_ranks)
-    monkeypatch.setattr(R, "_recognition", lambda p, cls="mhc1": 0.0)
+    monkeypatch.setattr(R, "_recognition_map", lambda ps, *a, **k: {p: 0.0 for p in ps})
     monkeypatch.setattr(R, "_fill_channels", lambda rows, ch: None)
     rows = R.rank_pairs(None, [{"peptide": "GILGFVFTL", "allele": "A", "wt_peptide": ""},
                                {"peptide": "NLVPMVATV", "allele": "A", "wt_peptide": "NLVPMVATL"}],
@@ -334,7 +334,7 @@ def test_rank_pairs_calibrates_once_per_allele_not_once_per_genotype_string(monk
         return pr, [1.0] * n, [1.0] * n, [100.0] * n
 
     monkeypatch.setattr("mhcmatch.predict.binder_ranks", fake_binder_ranks)
-    monkeypatch.setattr(R, "_recognition", lambda p, cls="mhc1": 0.0)
+    monkeypatch.setattr(R, "_recognition_map", lambda ps, *a, **k: {p: 0.0 for p in ps})
     monkeypatch.setattr(R, "_fill_channels", lambda rows, ch: None)
 
     genotype = "HLA-A*01:01,HLA-B*07:02"
@@ -361,7 +361,7 @@ def test_rank_pairs_emits_a_row_whose_allele_resolves_to_nothing(monkeypatch):
         return [1.0] * n, [1.0] * n, [1.0] * n, [100.0] * n
 
     monkeypatch.setattr("mhcmatch.predict.binder_ranks", fake_binder_ranks)
-    monkeypatch.setattr(R, "_recognition", lambda p, cls="mhc1": 0.25)
+    monkeypatch.setattr(R, "_recognition_map", lambda ps, *a, **k: {p: 0.25 for p in ps})
     monkeypatch.setattr(R, "_fill_channels", lambda rows, ch: None)
 
     rows = R.rank_pairs(None, [{"peptide": "GILGFVFTL", "allele": "NOT-AN-ALLELE", "wt_peptide": ""}],

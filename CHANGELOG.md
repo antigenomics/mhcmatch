@@ -36,6 +36,12 @@ A restriction cell holding a whole genotype is now read as the alleles it names.
 
 - **`resolve_allele` is memoised.** It was called once per background peptide and never cached.
 
+- **`rank pairs` scores the recognition axis once for the whole candidate list.** `_recognition`
+  takes one peptide because `Ranked` is per-candidate, and its docstring already said to batch for a
+  corpus; `rank_pairs` called it in exactly that loop. Measured 0.121 ms/peptide against 0.0022 ms
+  batched. Keyed by peptide, so a candidate entering several allele groups is scored once. NCI
+  90 s -> 63 s, output byte-identical.
+
 ### Added
 
 - **`mhcmatch.rank.split_alleles(cell, cls)`** --- the alleles one restriction cell names, in input
