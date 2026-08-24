@@ -128,6 +128,24 @@ def _store(a):
         return Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species)
 
 
+@contextlib.contextmanager
+def _open_text(path):
+    """Read ``path`` as text --- gzipped if it ends ``.gz``, stdin if it is ``-``.
+
+    Four readers below opened their input with the same five lines and the same ``try``/``finally``
+    that must not close stdin. Only the opening is shared: the parsing and the error messages stay
+    in each reader, because those are the part that differs and the part a caller reads when their
+    table is wrong.
+    """
+    fh = sys.stdin if path == "-" else (
+        gzip.open if str(path).endswith(".gz") else open)(path, "rt")
+    try:
+        yield fh
+    finally:
+        if path != "-":
+            fh.close()
+
+
 def _read_seq(arg):
     """A raw sequence, or the concatenated sequences of a FASTA file path."""
     if os.path.exists(arg):
@@ -174,9 +192,7 @@ def _read_pairs(path, second="wt_peptide"):
     Exists so agretopicity comes out of the same pass as affinity: the mutant and its wild-type
     counterpart are one row of the caller's table, and splitting them across two runs means joining
     them back on a peptide string that is not a key."""
-    op = gzip.open if str(path).endswith(".gz") else open
-    fh = sys.stdin if path == "-" else op(path, "rt")
-    try:
+    with _open_text(path) as fh:
         cols = fh.readline().rstrip("\n").split("\t")
         if "peptide" in cols:
             i, j = cols.index("peptide"), (cols.index(second) if second in cols else None)
@@ -190,9 +206,6 @@ def _read_pairs(path, second="wt_peptide"):
                 rows.append((f[i].strip().upper(),
                              f[j].strip().upper() if j is not None and len(f) > j else ""))
         return rows
-    finally:
-        if path != "-":
-            fh.close()
 
 
 def _batch(a, positional=None):
@@ -733,9 +746,7 @@ def cmd_complement(a):
 
 def _read_table(path):
     """Every row of a TSV with a ``peptide`` column, as dicts, preserving column order."""
-    fh = sys.stdin if path == "-" else (
-        gzip.open if str(path).endswith(".gz") else open)(path, "rt")
-    try:
+    with _open_text(path) as fh:
         cols = fh.readline().rstrip("\n").split("\t")
         if "peptide" not in cols:
             raise SystemExit(f"{path}: no `peptide` column (found {cols})")
@@ -747,9 +758,6 @@ def _read_table(path):
                 d["peptide"] = (d.get("peptide") or "").strip().upper()
                 out.append(d)
         return out
-    finally:
-        if path != "-":
-            fh.close()
 
 
 def cmd_neoag(a):
@@ -958,9 +966,7 @@ def _read_units(path):
     """
     from .vector import Unit
 
-    op = gzip.open if str(path).endswith(".gz") else open
-    fh = sys.stdin if path == "-" else op(path, "rt")
-    try:
+    with _open_text(path) as fh:
         cols = fh.readline().rstrip("\n").split("\t")
         need = ("peptide", "gene", "allele", "p")
         missing = [c for c in need if c not in cols]
@@ -986,9 +992,6 @@ def _read_units(path):
                               kind=(f[ix["kind"]].strip() or "missense"
                                     if "kind" in ix and len(f) > ix["kind"] else "missense")))
         return units
-    finally:
-        if path != "-":
-            fh.close()
 
 
 def _read_unit_rows(path):
@@ -998,9 +1001,7 @@ def _read_unit_rows(path):
     window is rebuilt from the FASTA instead -- so the check that belongs here is that the columns
     exist, not that the peptide is long.
     """
-    op = gzip.open if str(path).endswith(".gz") else open
-    fh = sys.stdin if path == "-" else op(path, "rt")
-    try:
+    with _open_text(path) as fh:
         cols = fh.readline().rstrip("\n").split("\t")
         need = ("peptide", "gene", "allele", "p")
         missing = [c for c in need if c not in cols]
@@ -1015,9 +1016,6 @@ def _read_unit_rows(path):
                 continue
             rows.append(dict(zip(cols, f)))
         return rows
-    finally:
-        if path != "-":
-            fh.close()
 
 
 def cmd_vector(a):

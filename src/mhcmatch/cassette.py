@@ -96,6 +96,17 @@ MAX_POOL = 2000
 
 
 # ------------------------------------------------------------------ calibration offsets
+def _p(scores, offset: float) -> np.ndarray:
+    """``sigma(s + b)``, clipped so a score of -inf or +1e9 cannot overflow the exponential.
+
+    ``offset`` is a scalar or an array broadcastable against ``scores`` --- the second is what
+    :func:`group_offsets` needs, since it carries one offset per group. Five call sites wrote this
+    expression out; the clip bound is the same 60 :func:`prob_offset` bisects between, and having it
+    in one place is what keeps the two from drifting apart.
+    """
+    return 1.0 / (1.0 + np.exp(-np.clip(np.asarray(scores, dtype=float) + offset, -60, 60)))
+
+
 def prob_offset(scores, prevalence: float) -> float:
     r"""The additive offset putting the **whole batch's** mean response probability at ``prevalence``.
 
@@ -123,7 +134,7 @@ def prob_offset(scores, prevalence: float) -> float:
     lo, hi = -60.0, 60.0
     for _ in range(200):
         mid = 0.5 * (lo + hi)
-        if float((1 / (1 + np.exp(-np.clip(v + mid, -60, 60)))).mean()) < prevalence:
+        if float(_p(v, mid).mean()) < prevalence:
             lo = mid
         else:
             hi = mid
@@ -159,7 +170,7 @@ def group_offsets(scores, group, prevalence: float) -> np.ndarray:
     hi = np.full(n, 60.0)
     for _ in range(200):
         mid = 0.5 * (lo + hi)
-        pr = 1.0 / (1.0 + np.exp(-np.clip(s + mid[g], -60, 60)))
+        pr = _p(s, mid[g])
         m = np.bincount(g, weights=pr, minlength=n) / np.maximum(cnt, 1)
         under = m < prevalence
         lo = np.where(under, mid, lo)
@@ -497,7 +508,7 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
     ss = s[keep]
     peps = [peptides[i] for i in keep]
     alle = None if alleles is None else [list(alleles)[i] for i in keep]
-    p = 1.0 / (1.0 + np.exp(-np.clip(ss + b, -60, 60)))
+    p = _p(ss, b)
 
     chans = ("sequence",) + (("allotype",) if alle is not None else ()) + ("dominance",)
     if keep.size <= k:
@@ -577,7 +588,7 @@ def score(scores, peptides, alleles=None, chosen=None, *, pool_scores=None, pool
 
     if offset is None:
         offset = prob_offset(pool_scores if pool_scores is not None else s, prevalence)
-    p = 1.0 / (1.0 + np.exp(-np.clip(s + offset, -60, 60)))
+    p = _p(s, offset)
 
     blk = list(alleles) if block is None and alleles is not None else block
     blk = np.zeros(k, dtype=int) if blk is None else np.asarray(blk)
@@ -600,7 +611,7 @@ def score(scores, peptides, alleles=None, chosen=None, *, pool_scores=None, pool
         pp = list(pool_peptides) if pool_peptides is not None else None
         if pp is not None and len(pp) != ps.size:
             raise ValueError(f"score: {ps.size} pool scores against {len(pp)} pool peptides")
-        pool_p = 1.0 / (1.0 + np.exp(-np.clip(ps + offset, -60, 60)))
+        pool_p = _p(ps, offset)
         h_pool = pool_p - 0.5 * gamma * pool_p * (1.0 - pool_p)
         # The cassette's own units must be findable in the pool for lam to mean anything. Matching
         # on the score is enough and needs no shared index: a unit absent from the pool it was

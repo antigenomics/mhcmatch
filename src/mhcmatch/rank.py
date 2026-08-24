@@ -295,17 +295,15 @@ def probability(scores, prevalence: float = POOL_PREVALENCE) -> list:
     if not 0.0 < prevalence < 1.0:
         raise ValueError(f"prevalence must be a probability strictly between 0 and 1, "
                          f"got {prevalence!r}")
+    from .cassette import prob_offset
+
     ok = np.isfinite(s)
     if not ok.any():
         return [float("nan")] * s.size
-    lo, hi = -60.0, 60.0
-    for _ in range(200):
-        mid = 0.5 * (lo + hi)
-        if float((1 / (1 + np.exp(-np.clip(s[ok] + mid, -60, 60)))).mean()) < prevalence:
-            lo = mid
-        else:
-            hi = mid
-    b = 0.5 * (lo + hi)
+    # One bisection, in one place. :func:`mhcmatch.cassette.prob_offset` is the same root-find on
+    # the same anchor; the difference between the two functions is which batch you hand it, not the
+    # arithmetic, and keeping two copies of the arithmetic is how that distinction gets blurred.
+    b = prob_offset(s[ok], prevalence)
     out = np.full(s.size, np.nan)
     out[ok] = 1 / (1 + np.exp(-np.clip(s[ok] + b, -60, 60)))
     return out.tolist()
