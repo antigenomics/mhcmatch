@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 from dataclasses import dataclass, field
 from importlib import resources
 
@@ -46,7 +47,7 @@ __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
            "aggregate", "aggregate_score", "probability", "POOL_PREVALENCE",
            "AGGREGATE_FEATURES", "AGGREGATE_COLUMNS",
            "AGGREGATE_BLOCKS", "CHANNEL_COLUMNS", "PHYS_COLUMNS", "expr_percentile",
-           "rank_pairs"]
+           "rank_pairs", "split_alleles"]
 
 #: The `mhcmatch rank` output schema, one source of truth. It lives here rather than inline in the
 #: CLI because a *consumer* -- a pipeline module's stub, a downstream join -- has to be able to name
@@ -801,6 +802,65 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
     return _finish(rows, gate, score, prevalence)
 
 
+def _presents_better(a: "Ranked", b: "Ranked") -> bool:
+    """Does ``a`` present the peptide better than ``b``? Higher ``presentation`` is a lower %rank."""
+    pa, pb = a.presentation, b.presentation
+    if pa != pa:                              # NaN never wins
+        return False
+    return pb != pb or pa > pb
+
+
+def _unscored(r: dict, cls: str, tissue, tumor, refs, binding_core) -> "Ranked":
+    """A row whose restriction cell named no allele we know, with everything allele-free still filled.
+
+    Expression, chemistry and the corpus channels do not depend on the allele, so they are real here;
+    presentation, binding and occupancy are ``NaN`` because there is nothing to compute them against.
+    Emitting the row keeps the output one-for-one with the input, and :func:`aggregate_score` records
+    the substituted terms in the ``imputed`` column rather than letting a short model look confident.
+    """
+    gene = str(r.get("gene") or "").strip()
+    try:
+        tpm = float(r["tpm"]) if r.get("tpm") not in (None, "") else None
+    except (TypeError, ValueError):
+        tpm = None
+    expr, imputed = _expression_for(gene, tpm, tissue, tumor, r["peptide"])
+    nan = float("nan")
+    rk = Ranked(peptide=r["peptide"], allele=r["allele"], gene=gene,
+                source=str(r.get("source") or ""),
+                variant_type=str(r.get("variant_type") or "").strip(),
+                presentation=nan, binder=nan, occupancy=nan, d_occupancy=nan,
+                wt_absent=0.0 if r["wt_peptide"] else 1.0, agretopicity=nan,
+                physchem=_recognition(r["peptide"], cls=cls),
+                expression=expr, expression_imputed=imputed,
+                wt_peptide=r["wt_peptide"], known_epitope=_known(r["peptide"], refs))
+    rk.core, rk.core_offset = binding_core(r["peptide"], cls)
+    rk.core_source = ("footprint" if cls != "mhc2" else "heuristic") if rk.core else ""
+    return rk
+
+
+def split_alleles(cell, cls: str = "mhc1") -> list[str]:
+    """Alleles named by one restriction cell, in input order, without repeats.
+
+    A screen that did not resolve which of a donor's alleles restricts a candidate writes the whole
+    genotype into the cell (``'HLA-A*01:01,HLA-B*07:02,HLA-C*07:02'``). That string is not an allele
+    name: it resolves to nothing, the calibrator then builds a background that does not depend on any
+    allele, and the row comes back ``NaN``. Splitting it is the difference between 1,076 keys and the
+    79 alleles they actually name. Names the pseudosequence tables do not know are dropped, so the
+    caller can tell "no allele resolved" from "scored badly".
+    """
+    from .pseudoseq import resolve_allele
+    seen: set[str] = set()
+    out: list[str] = []
+    for part in re.split(r"[,;/|]", str(cell or "")):
+        a = part.strip()
+        if not a or a in seen:
+            continue
+        seen.add(a)
+        if resolve_allele(a, cls)[0] is not None:
+            out.append(a)
+    return out
+
+
 def rank_pairs(store, rows, cls: str = "mhc1", *, tissue: str | None = None,
                tumor: str | None = None, refs: dict | None = None, gate: dict | None = None,
                score: str = "aggregate", channels=None,
@@ -832,11 +892,16 @@ def rank_pairs(store, rows, cls: str = "mhc1", *, tissue: str | None = None,
         r["peptide"] = str(r.get("peptide") or "").strip().upper()
         r["wt_peptide"] = str(r.get("wt_peptide") or "").strip().upper()
         r["allele"] = str(r.get("allele") or "").strip()
+        r["_alleles"] = split_alleles(r["allele"], cls)
     recs = [r for r in recs if r["peptide"] and r["peptide"].isalpha() and r["allele"]]
 
+    # One row can name several alleles, so it enters several groups and the best presenter stands
+    # for it. Rows naming none are held out of the scoring loop entirely: building two 10,000-peptide
+    # backgrounds to rediscover that the name is unknown is the whole cost of a screen like NCI.
     by_allele: dict[str, list] = {}
     for r in recs:
-        by_allele.setdefault(r["allele"], []).append(r)
+        for a in r["_alleles"]:
+            by_allele.setdefault(a, []).append(r)
 
     out = {}
     for allele, group in by_allele.items():
@@ -874,7 +939,13 @@ def rank_pairs(store, rows, cls: str = "mhc1", *, tissue: str | None = None,
                         wt_peptide=r["wt_peptide"], known_epitope=_known(r["peptide"], refs))
             rk.core, rk.core_offset = binding_core(r["peptide"], cls)
             rk.core_source = ("footprint" if cls != "mhc2" else "heuristic") if rk.core else ""
-            out[r["_i"]] = rk
+            prev = out.get(r["_i"])
+            if prev is None or _presents_better(rk, prev):
+                out[r["_i"]] = rk
+
+    for r in recs:                          # named no allele we know: emit, do not calibrate
+        if r["_i"] not in out:
+            out[r["_i"]] = _unscored(r, cls, tissue, tumor, refs, binding_core)
     rows_out = [out[i] for i in sorted(out)]
     _fill_channels(rows_out, channels)
     return _finish(rows_out, gate, score, prevalence)

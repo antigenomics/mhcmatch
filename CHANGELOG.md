@@ -6,6 +6,41 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [1.0.5] --- 2026-08-25
+
+A restriction cell holding a whole genotype is now read as the alleles it names.
+
+### Fixed
+
+- **`rank pairs` grouped on the raw allele cell, so a genotype string became one "allele".** Screens
+  that never resolved which of a donor's alleles restricts a candidate write the whole genotype into
+  the column (`HLA-A*01:01,HLA-B*07:02,HLA-C*07:02`). That string resolves to no pseudosequence, so
+  `Pseudoseq._lookup` returned `None`, the anchor kernel collapsed to an allele-independent
+  composition-only score, and the row came back `NaN` in `presentation`, `binder` and `occupancy`.
+  Two failures followed from one cause.
+
+  *Correctness.* `aggregate_score` substitutes a missing term at the training mean, so a row missing
+  three terms did not merely score badly --- it scored **above** the rows that resolved. On the NCI
+  exome scan the 15,023 affected rows had a median EPIC score of $-0.0038$ against $-0.0470$ for the
+  405,763 that scored properly, so they floated to the top of any ranking or top-*K* selection.
+
+  *Cost.* `resolve_allele` walks every key and sorts the prefix hits on a miss: 673 us against 0.3 us
+  for a hit, and it is reached once per background peptide inside a calibration build. At 10,000
+  background peptides that is ~6.7 s per unresolvable name. The NCI table holds 1,076 distinct
+  cells --- **997 of them genotype strings** --- which name **79 alleles** between them.
+
+  `rank_pairs` now splits the cell on `,;/|`, groups on the alleles it names, and lets the best
+  presenter stand for the row (the rule `bench/neoag/allele_resolve.py` already applies when building
+  the fitting corpus). A cell naming nothing known is emitted with its allele-free terms intact and
+  is never calibrated. **The NCI screen went from 1 h 40 m to 90 s, with 15,023 fewer `NaN` rows.**
+
+- **`resolve_allele` is memoised.** It was called once per background peptide and never cached.
+
+### Added
+
+- **`mhcmatch.rank.split_alleles(cell, cls)`** --- the alleles one restriction cell names, in input
+  order, without repeats, dropping what the pseudosequence tables do not know.
+
 ## [1.0.4] --- 2026-08-24
 
 The command line can now emit every table a figure needs.

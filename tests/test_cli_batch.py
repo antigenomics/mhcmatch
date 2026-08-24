@@ -303,3 +303,72 @@ def test_rank_pairs_keeps_a_row_with_no_wild_type(monkeypatch):
     assert by_pep["NLVPMVATV"].wt_absent == 0.0
     # one call for the mutants and one for the wild types, not one call per row
     assert len(seen["A"]) == 2 and seen["A"][0] == ["GILGFVFTL", "NLVPMVATV"]
+
+
+def test_split_alleles_reads_a_genotype_cell_and_drops_what_it_cannot_resolve():
+    """A screen that never resolved which allele restricts a candidate writes the whole genotype into
+    one cell. That string is not an allele name, so scoring it whole produced NaN for every row."""
+    from mhcmatch.rank import split_alleles
+
+    assert split_alleles("HLA-A*01:01,HLA-B*07:02") == ["HLA-A*01:01", "HLA-B*07:02"]
+    for sep in ";/|":                                    # every separator seen in the wild
+        assert split_alleles(f"HLA-A*01:01{sep}HLA-B*07:02") == ["HLA-A*01:01", "HLA-B*07:02"]
+    assert split_alleles(" HLA-A*01:01 , HLA-A*01:01 ") == ["HLA-A*01:01"]   # order-preserving dedupe
+    assert split_alleles("NOT-AN-ALLELE") == []
+    assert split_alleles("") == [] and split_alleles(None) == []
+
+
+def test_rank_pairs_calibrates_once_per_allele_not_once_per_genotype_string(monkeypatch):
+    """The cost of a screen is the number of distinct alleles it calibrates. Grouping on the raw cell
+    made that the number of distinct *genotypes*, which on the NCI exome scan is 1,076 keys naming 79
+    alleles -- and 997 of those keys resolve to nothing, at 6.7 s each."""
+    from mhcmatch import rank as R
+
+    calls = []
+
+    def fake_binder_ranks(store, peptides, allele, cls=None, **kw):
+        calls.append(allele)
+        n = len(peptides)
+        # HLA-B*07:02 presents better (lower %rank) so it should win every shared row
+        pr = [0.1 if allele == "HLA-B*07:02" else 5.0] * n
+        return pr, [1.0] * n, [1.0] * n, [100.0] * n
+
+    monkeypatch.setattr("mhcmatch.predict.binder_ranks", fake_binder_ranks)
+    monkeypatch.setattr(R, "_recognition", lambda p, cls="mhc1": 0.0)
+    monkeypatch.setattr(R, "_fill_channels", lambda rows, ch: None)
+
+    genotype = "HLA-A*01:01,HLA-B*07:02"
+    rows = R.rank_pairs(None, [{"peptide": "GILGFVFTL", "allele": genotype, "wt_peptide": ""},
+                               {"peptide": "NLVPMVATV", "allele": genotype, "wt_peptide": ""}],
+                        score="gate")
+    assert sorted(set(calls)) == ["HLA-A*01:01", "HLA-B*07:02"]   # two alleles, not one genotype
+    assert len(calls) == 2                                        # and one call each, not per row
+    assert {r.allele for r in rows} == {"HLA-B*07:02"}            # the better presenter stands
+    assert all(r.presentation == r.presentation for r in rows)    # not NaN
+
+
+def test_rank_pairs_emits_a_row_whose_allele_resolves_to_nothing(monkeypatch):
+    """Such a row used to come back NaN in presentation, binder and occupancy -- and because three
+    missing terms are substituted at the training mean, it then scored ABOVE the rows that did
+    resolve. It is emitted, it is not calibrated, and `imputed` names what was substituted."""
+    from mhcmatch import rank as R
+
+    calls = []
+
+    def fake_binder_ranks(store, peptides, allele, cls=None, **kw):
+        calls.append(allele)
+        n = len(peptides)
+        return [1.0] * n, [1.0] * n, [1.0] * n, [100.0] * n
+
+    monkeypatch.setattr("mhcmatch.predict.binder_ranks", fake_binder_ranks)
+    monkeypatch.setattr(R, "_recognition", lambda p, cls="mhc1": 0.25)
+    monkeypatch.setattr(R, "_fill_channels", lambda rows, ch: None)
+
+    rows = R.rank_pairs(None, [{"peptide": "GILGFVFTL", "allele": "NOT-AN-ALLELE", "wt_peptide": ""}],
+                        score="gate")
+    assert calls == []                          # no 10,000-peptide background built to learn this
+    assert len(rows) == 1                       # output stays one-for-one with input
+    r = rows[0]
+    assert r.presentation != r.presentation     # nan
+    assert r.binder != r.binder and r.occupancy != r.occupancy
+    assert r.physchem == 0.25                   # allele-free terms are still real
