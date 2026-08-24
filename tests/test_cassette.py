@@ -349,10 +349,31 @@ def test_score_reports_lam_only_when_it_was_given_a_pool():
 
 def test_score_says_so_when_a_unit_is_not_in_the_pool_it_was_handed():
     """A silent zero here would report a cassette as average when the caller passed the wrong pool
-    --- and every donor-level number downstream would inherit it."""
+    --- and every donor-level number downstream would inherit it.
+
+    The unit's identity is its **peptide**, so that is what "not in the pool" is tested on."""
     s, peps, alle = pool(n=20)
     with pytest.raises(ValueError, match="not present in the pool"):
-        CA.score(s[:4] + 99.0, peps[:4], alle[:4], pool_scores=s, pool_peptides=peps)
+        CA.score(s[:4], ["WWWWWWWWW"] + peps[1:4], alle[:4],
+                 pool_scores=s, pool_peptides=peps)
+    # and with no peptides to key on, the score is still the fallback
+    with pytest.raises(ValueError, match="not present in the pool"):
+        CA.score(s[:4] + 99.0, peps[:4], alle[:4], pool_scores=s)
+
+
+def test_score_finds_its_units_when_the_pool_scores_were_written_at_lower_precision():
+    """The one chain the docs recommend --- ``cassette select`` then ``cassette score --pool`` on
+    the pool it was selected from --- used to fail whenever the two files rounded differently.
+    ``select`` writes six decimal places; a pool written at six significant figures does not
+    survive an exact float comparison, and the unit was reported missing from the pool it came
+    from."""
+    s, peps, alle = pool(n=25)
+    c = CA.select(s, peps, alle, k=6)
+    rounded = [float(f"{v:.6g}") for v in s]                    # what a %g-formatted pool carries
+    chosen = [s[i] for i in c.index]
+    out = CA.score(chosen, [peps[i] for i in c.index], [alle[i] for i in c.index],
+                   pool_scores=rounded, pool_peptides=peps)
+    assert out["lam"] is not None and out["pool_n"] == 25
 
 
 def test_score_refuses_an_empty_cassette():

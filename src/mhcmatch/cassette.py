@@ -613,13 +613,28 @@ def score(scores, peptides, alleles=None, chosen=None, *, pool_scores=None, pool
             raise ValueError(f"score: {ps.size} pool scores against {len(pp)} pool peptides")
         pool_p = _p(ps, offset)
         h_pool = pool_p - 0.5 * gamma * pool_p * (1.0 - pool_p)
-        # The cassette's own units must be findable in the pool for lam to mean anything. Matching
-        # on the score is enough and needs no shared index: a unit absent from the pool it was
-        # supposedly chosen from is a caller error worth naming, not a silent zero.
+        # The cassette's own units must be findable in the pool for lam to mean anything. Match on
+        # the PEPTIDE where both sides carry one -- `select` writes its score at six decimal places
+        # and a pool written at six significant figures does not survive an exact float comparison,
+        # so keying on the score alone broke the one chain the docs recommend (`select` then
+        # `score --pool` on the pool it was selected from). The score is the fallback, for a caller
+        # who passes bare score vectors. Either way, a unit absent from the pool it was supposedly
+        # chosen from is a caller error worth naming, not a silent zero.
         idx = []
         used = np.zeros(ps.size, dtype=bool)
-        for v in s:
-            hit = np.flatnonzero((~used) & (np.abs(ps - v) <= 1e-9))
+        pos = {}
+        if pp is not None:
+            for i, q in enumerate(pp):
+                pos.setdefault(q, []).append(i)
+        for j, v in enumerate(s):
+            if pp is not None:
+                # Peptides on both sides: the peptide IS the unit's identity, so it is the whole
+                # key. Falling back to the score here would let a unit that is not in the pool
+                # match some other unit that happens to share its score.
+                cand = [i for i in pos.get(peptides[j], ()) if not used[i]]
+                hit = np.array(cand[:1], dtype=int)
+            else:
+                hit = np.flatnonzero((~used) & (np.abs(ps - v) <= 1e-6 * max(1.0, abs(v))))
             if hit.size == 0:
                 raise ValueError("score: a cassette unit is not present in the pool it was given; "
                                  "pass the pool the cassette was selected from, or omit it")

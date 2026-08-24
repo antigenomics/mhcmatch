@@ -41,6 +41,13 @@ The command line can now emit every table a figure needs.
 
 ### Changed
 
+- **`cassette score --pool` could not read the pool `cassette select` had just written.** It
+  matched each unit to a pool row by comparing scores to 1e-9, and `select` writes six decimal
+  places where a pool written at six significant figures does not survive an exact float
+  comparison --- so the one chain `docs/cassette.rst` recommends reported the cassette's own units
+  as absent from the pool they came from. Where both sides carry peptides the peptide is now the
+  key, which is what a unit's identity actually is; the score stays the fallback for a caller
+  passing bare vectors.
 - `expression --safety` no longer requires `--tissue`/`--tumor`. `lookup()` demands exactly one of
   them, and `cmd_expression` called it before reaching the safety block, so asking only for the
   cross-tissue profile raised instead of answering.
