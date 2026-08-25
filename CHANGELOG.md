@@ -6,6 +6,27 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [Unreleased]
+
+### Documented
+
+- **`agretopicity` names two different quantities on two code paths, and now says so.**
+  `rank.Ranked.agretopicity` is the differential agretopicity index `log10(Kd_WT/Kd_MT)`;
+  `predict.Prediction.agretopicity` is the raw ratio `Kd_MT/Kd_WT`, the pipeline convention, which
+  runs the other way. A figure sourced from one path and labelled like the other has its sign
+  flipped, and nothing in the type system said so. Both field docstrings now carry the warning, and
+  **`Ranked.dai`** is added as a read-only property naming the same quantity as `Prediction.dai` on
+  both paths. Deliberately not a column: emitting the same number twice would widen every user's
+  table to document an API wart. Pinned by `tests/test_aggregate_terms.py`.
+- **`Ranked.occupancy` documents its own range.** The Kd it reads is a predicted *competition
+  IC50* used as a dissociation constant in a Langmuir expression -- standard in this literature,
+  an approximation rather than an identity, and previously flagged nowhere in the source. And its
+  low tail is one tied mass point rather than biology: `affinity.y_to_ic50` clamps the predicted Kd
+  to `[1, 50000]` nM first, so at the shipped `[P] = 10` nM occupancy is confined to
+  `[1.9996e-4, 0.909091]` and cannot reach either bound. Measured over 669,974 scored rows, 23.6 %
+  sit at exactly Kd = 50,000 nM and share occupancy 1.9996e-4 exactly. Ranking within that tail is
+  ranking within a tie.
+
 ## [1.0.6] --- 2026-08-25
 
 **⚠ The shipped neoantigen scorer is refitted.** Every coefficient moves.

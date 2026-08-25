@@ -57,6 +57,11 @@ __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
 BASE_COLUMNS: tuple = ("rank", "peptide", "allele", "allele_scored", "gene", "score", "p_response",
                        "presentation", "binder",
                        "occupancy", "d_occupancy", "wt_absent",
+                       # `agretopicity` here is the DAI, `log10(Kd_WT/Kd_MT)`. `predict.Prediction`
+                       # uses the same name for the raw ratio in the other direction, so the
+                       # unambiguous accessor is `Ranked.dai` -- a property, deliberately not a
+                       # column: emitting the same number twice widens every user's table to
+                       # document an API wart.
                        "agretopicity", "physchem", "expression", "expr_pct", "expr_imputed",
                        "n_alleles_presenting", "alleles_presenting",
                        "imputed", "wt_peptide", "known_epitope", "variant_type")
@@ -423,11 +428,36 @@ class Ranked:
     #: -log10(calibrated combined binder %rank) -- the aggregate's ``B``. Distinct from
     #: ``presentation``, which is the presentation head alone.
     binder: float = float("nan")
-    #: log10(Kd_WT / Kd_MT) against the recovered wild type; larger = more differential.
+    #: The **differential agretopicity index**, ``log10(Kd_WT / Kd_MT)`` against the recovered wild
+    #: type; larger = more differential. This is the same quantity and the same orientation as
+    #: :attr:`mhcmatch.predict.Prediction.dai`.
+    #:
+    #: .. warning::
+    #:    :attr:`mhcmatch.predict.Prediction.agretopicity` is a **different quantity under the same
+    #:    name**: the raw ratio ``Kd_MT / Kd_WT``, which is the pipeline convention and runs in the
+    #:    opposite direction (there, ``< 1`` means the mutant binds better). A figure sourced from
+    #:    one path and labelled like the other has its sign flipped. Prefer :attr:`dai`, which names
+    #:    one quantity on both paths, and read :attr:`agretopicity` only where an existing consumer
+    #:    requires the name.
     agretopicity: float = float("nan")
+
+    @property
+    def dai(self) -> float:
+        """:attr:`agretopicity` under the name that means the same thing on both code paths."""
+        return self.agretopicity
     #: Fraction of MHC this peptide occupies at equilibrium, ``a/(1+a)`` with ``a = [P]/Kd``
     #: (:data:`PEPTIDE_NM`). Unlike a %rank this is an absolute quantity, and unlike agretopicity it
     #: needs no wild type -- so it is defined for a frameshift or fusion product that has none.
+    #:
+    #: Two properties of the range are worth knowing before it is read as a physical occupancy.
+    #: **The Kd is a predicted competition IC50 used as a dissociation constant** in a Langmuir
+    #: expression, which is standard practice in this literature and is an approximation rather
+    #: than an identity. And **the low tail is one tied mass point, not biology**:
+    #: :func:`mhcmatch.affinity.y_to_ic50` clamps the predicted Kd to ``[1, 50000]`` nM first, so
+    #: at the shipped ``[P] = 10`` nM occupancy is confined to ``[1.9996e-4, 0.909091]`` and cannot
+    #: reach either bound. Measured over 669,974 scored rows, 23.6 % sit at exactly Kd = 50,000 nM
+    #: and therefore share occupancy 1.9996e-4 exactly. The term is a compressed high-affinity
+    #: detector; ranking within its low tail is ranking within a tie.
     occupancy: float = float("nan")
     #: ``occupancy(Kd_MT) - occupancy(Kd_WT)`` -- agretopicity in Michaelis-Menten form, bounded in
     #: ``[-1, +1]`` and defined with or without a wild type (:func:`d_occupancy`). Emitted and

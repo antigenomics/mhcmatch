@@ -189,3 +189,21 @@ def test_a_non_finite_feature_takes_the_training_mean_and_says_so():
     R._finish(rows, gate=None)
     assert np.isfinite(rows[0].score)
     assert "C_phys_buried" in rows[0].imputed
+
+
+def test_dai_names_one_quantity_on_both_paths():
+    """`Ranked.agretopicity` and `Prediction.agretopicity` are different quantities under one name.
+
+    `Ranked.agretopicity` is ``log10(Kd_WT/Kd_MT)``; `Prediction.agretopicity` is the raw ratio
+    ``Kd_MT/Kd_WT``, which runs the other way. A figure sourced from one path and labelled like the
+    other has its sign flipped, and nothing in the type system says so. `Ranked.dai` is the
+    unambiguous accessor -- it must agree with `Prediction.dai`, which is already the log form.
+    """
+    from mhcmatch.predict import Prediction
+
+    r = Ranked(peptide="SIINFEKL", allele="H2-Kb", agretopicity=+1.5)
+    assert r.dai == r.agretopicity == +1.5
+
+    # `Prediction` carries both, and `dai` is the log form -- the one `Ranked.dai` must match
+    assert "dai" in Prediction.__dataclass_fields__
+    assert "agretopicity" in Prediction.__dataclass_fields__
