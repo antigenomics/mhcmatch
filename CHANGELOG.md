@@ -289,8 +289,6 @@ The command line can now emit every table a figure needs.
 
 ### Documented in the same release
 
-### Added
-
 - **The charge column is named where it is used.** `C_phys_charge` is half of EPIC v4's chemistry
   block and the README described that block as if burial were alone in it --- it said
   `C_phys_buried` was "the chemistry block's only fitted term", which the shipped artifact
