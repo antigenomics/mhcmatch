@@ -5,12 +5,12 @@
 - `../../manuscripts/2026-mhcmatch/appendix/mhcmatch.tex` — the method/statistics spec (manuscript repo).
 - `../../manuscripts/2026-mhcmatch/results/CURRENT.md` — every published number and which artifact
   it belongs to; `issues_major.md` beside it holds the decisions that are the author's, and
-  `issues_minor.md` the repairs already applied. Two of those, `F3` and `F4`, are library work.
+  `issues_minor.md` the repairs already applied.
 
-**The shipped scorer is artifact version 5 in library 1.0.6.** A deduplicated candidate exists in
-the benchmark repo and is deliberately not installed — see `issues_major.md` M1. Do not copy it over
-`src/mhcmatch/data/aggregate_mhc1.json` without the author's word: it moves every number in the
-manuscript.
+**The shipped scorer is artifact version 6 in library 1.1.0** — the deduplicated corpus with
+`binder` as the fitted presentation term (`issues_major.md` M1 and M12, both taken by the author on
+2026-08-25). Do not replace `src/mhcmatch/data/aggregate_mhc1.json` without the author's word: it
+moves every number in the manuscript, and `build --check` cannot see that it changed.
 
 This file captures only *how we work in the repo*.
 
@@ -151,10 +151,9 @@ mhcmatch build corpus -v    # one target, with per-step wall clock
 - Inputs bootstrap from HuggingFace (`isalgo/pmhc_data`), never a local `~/hf/...` or
   `~/vcs/projects/...` path.
 - **`aggregate_mhc1.json` (the EPIC scorer) has a real generator, and it still does not ship itself.**
-  `bench/immuno/epic_v4_fit.py --physchem rose_af5` writes a **candidate** to
-  `bench/immuno/aggregate_mhc1_v4.json` and deliberately does *not* copy it over
-  `src/mhcmatch/data/aggregate_mhc1.json` -- v4 carries one explained regression, and what ships is
-  the author's call, not the run's. `bench/run_epic.sh` is the whole chain that leads to the
+  `bench/epic/fit.py --physchem rose_af5 --presentation binder` writes a **candidate** to
+  `bench/epic/aggregate_mhc1.json` and deliberately does *not* copy it over
+  `src/mhcmatch/data/aggregate_mhc1.json` -- what ships is the author's call, not the run's. `bench/run_epic.sh` is the whole chain that leads to the
   candidate -- deposits, features, Kd, Chowell, kernel grid, fit, corpus ladder, chemistry arms,
   selection, then the manuscript tables. Stage 0 gates on `mhcmatch --version` matching the
   checkout's `pyproject.toml`; that flag did not exist until 0.27.0, so the chain had never run
@@ -175,7 +174,7 @@ mhcmatch build corpus -v    # one target, with per-step wall clock
   `** MOVED **` for any cell that changed, and the anchor rebuild is checked against the previous
   file. Bump-only rebuilds have measured max |new − old| = 0.
 - **Two version vocabularies, told apart by the shape of the value, not by the file extension.**
-  A **model** version is an `int` — EPIC is `4`, the recognition heads are `2`, mimicry is `1`; a
+  A **model** version is an `int` — EPIC is `6`, the recognition heads are `2`, mimicry is `1`; a
   **package** version is dotted (`0.26.0`). `--check` compares the dotted ones to `__version__` and
   presence-checks the rest. Comparing a model version to a package version is a category error that
   reports every head stale at every release, which is why `.json` was once blanket-exempted — and

@@ -14,21 +14,34 @@ the build plan. Phase sections marked _(TBD)_ await detail.
 > tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
 > below resolve there, not here.
 
-## Where this stands, 2026-08-25 — released 1.0.6
+## Where this stands, 2026-08-25 — 1.1.0
 
-**Shipped at 1.0.5:** a restriction cell holding a whole genotype is read as the alleles it names.
-One cause, two failures — rows returning `NaN` for `presentation`, `binder` and `occupancy` *scored
+**Released to PyPI: 1.0.3.** 1.0.4, 1.0.5 and 1.0.6 were versioned in the repo and never tagged or
+published, so 1.1.0 is the first artifact on PyPI since 1.0.3 and carries all four bumps' work.
+"Shipped" below means "landed in the repo" unless a tag says otherwise.
+
+**Landed at 1.0.4:** the command line can emit the model, not only its scores -- `rank
+--coefficients`, `rank --holdout`, `rank pairs FILE`, TSV output for `scan`/`logo`/`expression`.
+
+**Landed at 1.0.5:** a restriction cell holding a whole genotype is read as the alleles it names.
+One cause, two failures -- rows returning `NaN` for `presentation`, `binder` and `occupancy` *scored
 above* rows that resolved, because `aggregate_score` substitutes a missing term at the training
 mean; and an uncached `resolve_allele` miss cost ~6.7 s per unresolvable name inside a calibration
-build. **NCI: 1 h 40 m → 63 s, 15,023 `NaN` rows → 0.** Also landed: `allele_scored` as a distinct
+build. **NCI: 1 h 40 m -> 63 s, 15,023 `NaN` rows -> 0.** Also landed: `allele_scored` as a distinct
 column, the recognition axis batched once per candidate list, `pseudo_matrix` on `AnchorModel` over
-seqtree's five log-odds matrices, and a **Karlin–Altschul λ fix** — the substitution conditional had
-hardcoded half-bits for every matrix, which inverted the conservatism ordering a matrix sweep exists
-to test.
+seqtree's five log-odds matrices, and a **Karlin-Altschul lambda fix** -- the substitution conditional
+had hardcoded half-bits for every matrix, which inverted the conservatism ordering a matrix sweep
+exists to test.
 
-**Shipped at 1.0.6:** `data/aggregate_mhc1.json` refitted on the rebuilt corpus as artifact
-version 5 — 681,605 rows and 1,256 validated-immunogenic peptides over 9 screens, against
-354,909 / 958 before. The specification is unchanged; the data under it moved.
+**Landed at 1.0.6:** `data/aggregate_mhc1.json` refitted on the rebuilt corpus as artifact
+version 5. The specification was unchanged; the data under it moved.
+
+**Landed at 1.1.0 -- the shipped scorer's specification moves.** Artifact **version 6**: the
+deduplicated corpus (Neopep dropped as a relabelling of NCI + TESLA + HiTIDE, mouse held out) with
+**`binder` in place of `pres`** as the fitted presentation term. Both were author decisions --
+manuscript `issues_major.md` M1 and M12. `bench/epic/fit.py` gained `--presentation {pres,binder}`
+so either arm reproduces, and `ship_artifact` now stamps the model version instead of leaving it to
+a hand patch.
 
 **Nothing about an allele name is decided outside this library any more.** `rank.split_alleles`,
 `pseudoseq.resolve_allele` and `rank.species_of` are the whole surface, which is what lets the
@@ -36,30 +49,36 @@ benchmark repo rebuild its corpus from `pip install mhcmatch` with no helper of 
 that way: a repair that lands in an analysis repo is a repair every other consumer misses.
 
 **The mouse corpus preset already ships and needs no work.** `data/corpus_tables.npz` vendors all
-six tables — thymus, self and viral, human and mouse — `mimics.SPECIES_REFS[("thymus", "mouse")]`
-routes the mouse thymic deposit, `corpus_counts` branches `self` → `self_mouse`, and `self_species`
+six tables -- thymus, self and viral, human and mouse -- `mimics.SPECIES_REFS[("thymus", "mouse")]`
+routes the mouse thymic deposit, `corpus_counts` branches `self` -> `self_mouse`, and `self_species`
 is in the memo key so a human and a mouse run cannot collide. A benchmark defect that passed
 `human` for a mouse row looked like a missing preset and was not one.
 
-### Coverage added this pass
+### The narrow fitted set is deliberate, and it is tested
 
-`tests/test_aggregate_terms.py` — nine tests pinning every fitted term to the column it reads, so
-the wiring cannot drift from the artifact: the feature list matches the artifact; `pres` moves the
-score and `binder` provably does not; occupancy's direction matches its coefficient; `expr_pct` is
-invariant to monotone rescaling and takes 0.5 when absent; `PHYS_COLUMNS` matches the artifact's own
-scales; the corpus geometry travels with the coefficients; a missing corpus channel raises; and the
-intercept is per-screen and null. One trap worth knowing: `rank._finish` **sorts the list in place**,
-so indexing by original position after it reads whichever row scored highest.
+`pres`, `dai`, `agretopicity`, `d_occupancy`, `wt_absent`, the Luksza amplitude and every vendored
+residue scale that is not Rose or Atchley AF5 -- Kidera KF4 among them, via
+`complement.burial(..., scale="KIDERA:KF4")` -- stay **computed, emitted and comparable**, and none
+is a fitted term. That is a feature, not leftovers: the comparisons the manuscript makes need them
+runnable. `tests/test_rank.py` asserts that nothing in that list appears in `AGGREGATE_FEATURES`,
+so the separation cannot erode by accident.
 
-### Two open loops, neither blocking
+### Coverage
 
-| id | what | where it lands |
-|---|---|---|
-| **F3** | `agretopicity` names two quantities under one attribute: `Prediction.agretopicity` is $K_d^{MT}/K_d^{WT}$ and `Ranked.agretopicity` is $\log_{10}(K_d^{WT}/K_d^{MT})$ — a raw ratio one way against a log ratio the other, both reaching user-facing tables. The clean fix is to make `Ranked` use the name it already computes, `dai`, matching `Prediction.dai` exactly, with `agretopicity` kept as an alias | §6c, here. An API change: next minor bump |
-| **F4** | `occupancy` reads a predicted competition IC50 as a true $K_d$ in a Langmuir expression, flagged nowhere. And its low tail is one tied mass point: `y_to_ic50` clamps to [1, 50000] nM, so 23.6 % of rows share occupancy $1.9996\times10^{-4}$ exactly | a docstring, same bump |
+`tests/test_aggregate_terms.py` pins every fitted term to the column it reads, so the wiring cannot
+drift from the artifact: the feature list matches the artifact; the fitted presentation term moves
+the score and the unfitted one provably does not; occupancy's direction matches its coefficient;
+`expr_pct` is invariant to monotone rescaling and takes 0.5 when absent; `PHYS_COLUMNS` matches the
+artifact's own scales; the corpus geometry travels with the coefficients; a missing corpus channel
+raises; and the intercept is per-screen and null. One trap worth knowing: `rank._finish` **sorts the
+list in place**, so indexing by original position after it reads whichever row scored highest.
 
-Both are tracked in the manuscript repo's `issues_minor.md`. The corpus refit that used to sit here
-as `F2` is closed.
+### Closed
+
+`F2` (the corpus refit), `F3` (`agretopicity` naming two quantities -- both field docstrings carry
+the warning and `Ranked.dai` names the quantity `Prediction.dai` does) and `F4` (occupancy's
+IC50-as-Kd approximation and its clamped, tied low tail, both documented). All three are recorded
+closed in the manuscript's `issues_minor.md`.
 
 ## 0. What mhcmatch is
 
@@ -453,320 +472,37 @@ vs 0.473, Neopep 0.802 vs 0.662, Gfeller 0.782 vs 0.702.
    under-weights presentation for screens where presentation is strong. Presentation alone still
    leads the LODO mean (0.707 vs 0.698).
 
-## 5b-2. GRAND v3 — the corpus term becomes exact (v0.24.0, 2026-08-20)
+## Landed and superseded — the findings worth keeping (v0.24.0–v0.27.0)
 
-Analysis in `2026-mhcmatch-benchmark`: `bench/results/corpus_exact.md` (shapes, coverage,
-exactness), `epic_recognition_terms.md` (the hierarchical fit), `epic_versions.md` (**v2 against v3 on the
-same rows**), `kmer_spectrum.md` (what the tables carry), `corpus_selection.md` (why Chowell is
-excluded), `physchem_cv.md` (the two chemistry scales on the selection corpora).
+Seven sections of shipped-release narrative were cut from this file on 2026-08-25; git records what
+changed and when. What does not survive in the code is kept here.
 
-**`C_corpus` is the exact Łuksza sum, evaluated as a k-mer table contraction.** With an ungapped
-position-additive score the weight factorises over positions, so the sum over the *whole* reference
-set is one 20×20 matrix applied along each axis of a sliding-k-mer frequency table. Every query is
-then one array index. Exact to 5.5e-16 against a literal all-vs-all; the radius-2 search it replaced
-recovered a median 0.4999 of the same quantity. 340,876 queries: ~46,000 ms → **2.3 ms**. The
-~7.5 GB proteome trie became a 64 KB table, which is why `self` and `viral` are back in the model —
-they were dropped in 0.21.0 for what they cost, not for what they were worth.
-
-**Nine terms in four hierarchical blocks.** Both recognition blocks are significant on entry after
-presentation and expression (physchem LR χ²(2) = 11.0, p = 4.0e-3; corpus LR χ²(3) = 15.7,
-p = 1.3e-3), and held-out mean AUROC over nine screens rises 0.6892 → 0.6927, median 0.6391 → 0.6500,
-better on 7 of 9 screens.
-
-**Two defects found and fixed along the way, both the same defect:**
-
-1. **`C_phys` was a length detector.** The Rose scale is strictly positive and the face is `L − 5`
-   wide, so summing gave Pearson **+0.954** with peptide length. `burial` now averages; the column's
-   marginal AUROC rises 0.5098 → 0.5646 and the two chemistry scales become comparable for the first
-   time (their correlation moves −0.20 → −0.836, which is what they always were underneath it).
-2. **`C_corpus_missing` was a label proxy.** On IEDB_neoag the v2 cache reached 3.0 % of rows, and
-   those rows were 76.9 % positive against 46.0 % for the rest. The flag carried the largest
-   coefficient magnitude in v2 (−0.3510) and was reading the coverage of our own index. It is gone
-   with the cache.
-
-**Open in the library:**
-
-1. **`thymus` and `viral` are human-only deposits.** `self` honours `self_species`, so mouse self
-   for mouse; the other two score a mouse row against human references. The fix is now cheap — a
-   mouse thymic deposit is one `bincount` and a 64 KB table, where under the old design it was a
-   second multi-gigabyte index.
-2. **Locus weighting is measured and not shipped.** `corpus_counts(weights="locus")` builds the
-   tables per locus rather than per peptide, which is the right correction for an assayed deposit's
-   over-representation (it is what removes the KRAS G12 family from `kmer_spectrum.md`'s
-   distinctive k-mers). On the fit it takes held-out **mean** AUROC to 0.6938, the best of any arm,
-   while lowering the **median** to 0.6463. Marginal both ways; shipped off, reported in
-   `epic_versions.md`.
-3. **HiTIDE loses 0.0128 against v2** on 234 rows / 37 positives, and that one is not explained by
-   coverage (77.8 %, every positive present). Recorded as measured.
-4. **The class-II `self` table was ~192 M register searches; fixed in 0.24.1.** A proteome window
-   has no register, so `self` at class II is now the window's own k-mers rather than a projected
-   face: >25 min and ~10.7 GB to **14.0 s**, class-I tables bit-identical by hash. The remaining
-   question is whether the *class-I* `self` face should be reconsidered on the same argument --
-   there it is a fixed positional anchor mask, which is a presentation claim about something that is
-   not presented. That one is a **model** change: `C_corpus_self` is a fitted term, so it needs an
-   arm-vs-arm before it can move.
-5. **Mouse `viral` is one parameter away.** `mimicry.corpus_counts` calls `mimics.load_peptides`
-   without a `species=`, so the viral channel is always human — but the deposit carries **3,639
-   `MusMusculus` rows** of 82,368 (`~/hf/pmhc_data/ligandome/viral_foreign_iedb.tsv.gz`), so a mouse
-   arm is a keyword argument, not new data. It is *not* a free change: it moves a fitted feature's
-   scale, so it ships only behind an arm-vs-arm on the mouse screens, like any refit. The thymic
-   deposit is 53,878 rows and **100 % human**, so item 1 above genuinely needs data.
-
-## 5b-3. EPIC — renaming the shipped scorer (v0.25.0, 2026-08-21)
-
-The author's name for the model, decided 2026-08-21: **EPIC** — **E**xpression, **P**resentation,
-**I**mmunogenic **C**omplementarity. It names the fitted block structure rather than one letter per
-term, which is what `GRAND`'s successive letters stopped doing once the blocks became the unit of
-inference:
-
-**One letter per block, and `I` and `C` are one each** -- `I`mmunogenic is the physchem block,
-`C`omplementarity is the corpus block. Grouped as a single `IC` until 2026-08-23, which read as if
-the two blocks were one term. Columns below are v4, as shipped in 0.27.0; the v3 columns each letter
-carried are in §5b-7 and §5b-12.
-
-| EPIC letter | block | columns (v4) |
-|---|---|---|
-| `E` | `expression` | `expr_pct` |
-| `P` | `presentation` | `pres`, `occupancy` |
-| `I` | `physchem` | `C_phys_buried`, `C_phys_charge` |
-| `C` | `corpus` | `C_corpus_thymus`, `C_corpus_self`, `C_corpus_viral` |
-
-The letters are a mnemonic for the blocks, **not** their entry order — the fit enters presentation
-first, then expression, and that order is what every conditional coefficient in `epic_recognition_terms.md`
-is reported against. Renaming must not quietly reorder it.
-
-**A pure rename: no coefficient, feature or number moves.** Scope, measured 2026-08-21: ~70
-occurrences in the library (`rank.py`, `cli.py`, `complement.py`, `luksza.py`, `data/aggregate_mhc1.json`,
-seven `docs/*.rst`, `SKILL.md`, `README.md`, the nextflow module, two test files), ~60 in
-`2026-mhcmatch-benchmark` (`MODELS.md`, `ROADMAP.md`, `SOURCES.md`, `bench/immuno/grand_*.py`,
-`bench/results/grand_*.md`), ~88 in `2026-mhcmatch` (`appendix/grand_*.tex`, `chapters/07a-grand.tex`,
-`eq:grand`, `tab:grand-*`). File and label renames on top.
-
-**`MODELS.md` keeps `GRAND` as the former name**, exactly as `V` survived the `ipred` removal: a
-result recorded against 0.21.0–0.24.x cites a model this package used to call something else, and a
-registry that deletes the old name cannot say what those numbers were produced by. The
-artifact's version number moves with the fit — it is `4` since 0.27.0 — and the old feature names
-stay computed and emitted for the same reason the old model name does.
-
-**Landed, and narrower than scoped.** The artifact's `"model"` field is `EPIC` and it carries
-`"former_name": "GRAND"`; `rank`'s header line, the docstrings, seven `docs/*.rst`, `SKILL.md`,
-`README.md` and the nextflow module say `EPIC`. **No file and no LaTeX label was renamed.**
-`bench/immuno/grand_*.py`, `bench/results/grand_*.md`, `appendix/grand_*.tex`, `eq:grand`,
-`tab:grand-*` and the artifact's own `generator` field keep their names: a filename is the link
-between a number and the run that produced it, and a label is a cross-reference. Renaming ~150 of
-them would break every citation the manuscript and the slides make, to buy nothing a reader sees.
-`docs/models.rst` keeps `GRAND` against the v2 row, which is the name that version shipped under.
-
-The `all_epitopes_210826_ms` hand-off therefore carries one name throughout, which is what deferring
-the rename out of 0.24.1 was for.
-
-## 5b-11. Three generated appendix tables were never `\input` (LANDED 2026-08-23)
-
-`appendix/chapters/07a-grand.tex` hand-typed the equivalents of three generated fragments, which is
-the one-way rule broken in the place it is easiest to break: a number that changed in the benchmark
-did not change in the manuscript, and nothing said so.
-
-Both halves landed together, which is why it took a chapter rewrite rather than three `\input`
-lines. `bench/immuno/epic_v4_appendix.py` now generates `appendix/epic_ladder.tex`,
-`epic_terms_appendix.tex` and `epic_worked.tex`; the chapter `\input`s all three (lines 37, 44,
-193) and is v4 throughout. The worked decomposition of `VYCEEYYLF` is re-scored under the shipped
-artifact rather than transcribed, so it moves when the artifact moves. The v3 generator
-(`make_grand_tables.py`) and its three `grand_*.tex` outputs are deleted.
-
-## 5b-7. EPIC v4 -- four terms respecified, and the BLOSUM verdict reversed (v0.27.0, SHIPPED)
-
-Analysis in `2026-mhcmatch-benchmark`: `bench/results/epic_corpus_kernel.md` (the 11-cell kernel x
-mask x k grid), `epic_v4_ladder.md` (the presentation block, one change at a time),
-`epic_v4_fit.md` (the combined fit, cluster bootstrap, leave-one-screen-out and whole-database CV),
-`epic_physchem_arms.md` (the chemistry selection).
-
-**Shipped in 0.27.0.** `epic_v4_fit.py --physchem rose_af5` writes
-`src/mhcmatch/data/aggregate_mhc1.json` directly, so there is no hand-copy step left and no way for
-the artifact and its generator to drift apart. `rank.py` supplies `pres`, `d_occupancy`,
-`wt_absent`, `C_phys_buried` and `C_phys_charge` alongside the v3 names, and `aggregate_score`
-reads only what the artifact's `features` list asks for, so one library scores either version with
-no branch and every recorded v3 number keeps its meaning.
-
-**The hierarchical Bayesian arm is dropped from the release.** `epic_bayes.py` and
-`bench/results/epic_bayes.md` stay as the record -- both v3 and v4 converged under the fixed
-design-correlation prior (max Rhat 1.0059 / 1.0065) and the LKJ variant did not -- but it is not in
-`run_epic.sh`, not in the manuscript, and not what ships.
-
-**The corpus kernel is BLOSUM62, and the recorded verdict against it was not a verdict on the
-kernel.** `bench/results/repertoire_blosum.md` reported grading as buying nothing (within-screen
-median AUROC 0.6487 against 0.6541, BIC 4201.8 against 4178.6, rate running to zero). That arm
-scored the graded form with a **radius-capped neighbour search** (`max_subs = 4`,
-`max_penalty = 30`) against the exact contraction; 18.5 % / 16.0 % of queries returned no hit at
-all; the "rate running to zero" was the first point of its own grid; and it carried two channels of
-three, because a proteome index was unaffordable under a search. Its own best design, both families
-together, reached 0.6592 -- above the Hamming-only 0.6541 -- and was rejected on a BIC that charges
-`log n = 12.78` per parameter against 354,909 candidates while the information lives in 958
-positives.
-
-Re-run as a contraction, `K[u,x] = exp(kappa*(S[u,x] - S[u,u]))`, the graded kernel wins on the
-sliced face: LOO mean **0.6452**, median **0.6275**, against 0.6440 and 0.6197 for Hamming under an
-identical kappa-refit protocol.
-
-**Two variants do not pay, and both are informative.** Wildcarding the anchors *in place* costs at
-least 0.014 of LOO mean under **both** kernels and is not recovered at k = 4 or k = 5 -- the anchors
-carry nothing this term can use, so `k = 3` was never the problem. And the unnormalised kernel, in
-which `S(X,a) = S(a,a)` is taken literally, pins kappa at the grid floor in all three channels,
-because BLOSUM62's diagonal spans 4..11 half-bits and that is the only way to neutralise a wildcard
-row of `exp(kappa*S(a,a))`.
-
-**`d_occupancy` is measured out, and a gate does not rescue it.** Its coefficient flips sign on
-whether `occupancy` is also present -- +0.0284 (z +1.95) without, -0.0184 (z -1.17) with -- which is
-a column with no axis of its own. Gating on whether the substitution sits at an anchor makes it
-**weaker** (-0.0098, z -0.61), and entering both halves separately gives the TCR-face half the same
-sign and nearly the same size as the anchor half (-0.0069 against -0.0107) on 163,839 and 186,553
-rows. **The gate is the wrong shape for the quantity**: occupancy is a whole-peptide statistic, the
-Potts affinity reads every position to predict one Kd, so there is no per-position decomposition for
-an anchor mask to isolate. The anchor reading of agretopicity is real for the log-ratio form on
-individually measured epitopes and does not transfer to the Michaelis-Menten form here. `wt_absent`
-likewise does not earn its parameter. Both stay emitted columns; neither is fitted.
-
-**So v4 is nine terms, the same count as v3, with four of them respecified.** On 354,909 rows and
-958 immunogenic peptides over nine screens: BIC **4172.4**, LOO mean **0.6602**, LOO median
-**0.6385**, 5-fold CV over the whole database **0.6386** grouped on peptide and **0.6385** on twin
-group. Seven of the nine screens rank higher held out than under v3, by +0.0018 (IEDB-neoag) to
-+0.0539 (VACCIMEL). Per-term **p-values** are recorded for the first time; v3 carries a z and no p
-anywhere.
-
-**Every remaining term is a function of the mutant alone, so v4 is wild-type-free.** v3 and the
-ten-term variant both carried a term undefined on the 6,516 rows with no germline counterpart. On
-that stratum (4,517 rows in the fit population, 144 immunogenic, 3.19 % prevalence against 0.23 %
-elsewhere) `pres` reaches marginal AUROC 0.7797 and `occupancy` 0.8298, and fitting on the
-wild-type-recoverable rows alone and scoring it **held out** gives 0.7262. Expression does not
-transfer there (0.4757 on 11.3 % coverage -- a frameshift or fusion often has no mapped source gene)
-and neither do the corpus channels, all below chance on novel sequence. `bench/results/epic_v4_nowt.md`.
-
-**Among the seven deciding screens it is 3 improvements, 3 ties, 1 regression.** ITSNdb falls
-0.6500 -> 0.6309 on 149 rows / 89 positives, and it is the **corpus** change rather than the
-presentation block -- 0.6500 under the shipped kappa, 0.6380 once kappa is re-profiled under the
-*same* Hamming kernel, 0.6275 under the graded one, so two thirds of the drop is the re-profiling.
-ITSNdb is the smallest and highest-prevalence screen (59.7 %) and its cell resolution is
-1/89 = 0.0112, so the move is under two resolution units. Reported, not absorbed.
-
-**The hierarchical prior needed fixing, and the failed arm is the evidence.** `beta_b ~
-MvNormal(0, Sigma_b)` with an LKJ prior on `Sigma_b` is not hierarchical when there is one global
-`beta_b` per block -- `Sigma_b` is then estimated from a single draw. Run anyway it behaves exactly
-so: on v3 it mixes but every estimated correlation's 94 % interval is 1.48-1.66 wide, the prior
-unmoved by 354,909 rows; on v4 the extra unidentified parameters make the geometry unsamplable (max
-Rhat 1.6122, min ESS 7). Fixing the block correlation to the **measured predictor correlation** --
-which is where the -0.84 actually lives -- leaves one scale free per block and both designs converge
-in a third of the time. The posterior confirms the point estimates and, on the ten-term arm,
-`d_occupancy` at -0.0173, 94 % HDI [-0.0469, +0.0121], P(sign) 0.863.
-
-**Open, in order.**
-
-1. **Ship or hold. CLOSED 2026-08-23 -- it ships.** `data/aggregate_mhc1.json` carries
-   `"version": 4`, `AGGREGATE_FEATURES`/`AGGREGATE_BLOCKS` are v4, and every recorded EPIC number
-   in the manuscript and the docs is re-baselined against it.
-2. **A `build` target for the aggregate. CLOSED 2026-08-23.** `bench/immuno/epic_v4_fit.py` writes
-   the artifact into the library checkout directly, so nothing is hand-copied; `mhcmatch build`
-   prints the command and `bench/run_epic.sh` is the chain that leads to it.
-
-   **The cost was never the peptide loop, and the fix is the cache.** `binder_score` on a warm
-   allele runs at **82,201 pair/s**, so all 363,324 pairs are **4.4 s** of scoring; batching them
-   (`predict.binder_ranks`, shipped) measures **1.13x** and is not a speed fix. The cost was
-   per-*allele*: **~0.95 s** of `RankCalibrator` background construction on first touch, paid again
-   in every worker that touches the allele, across **2,093** distinct alleles -- with a tail of
-   ~1,500 alleles carrying one peptide each, so alleles 1,100 -> 1,600 add 1,193 pairs and a third
-   of elapsed time.
-
-   The disk cache for exactly this already existed, atomic and correctly fingerprinted, and
-   `cache_dir()` returned `None` because `MHCMATCH_CALIBRATION_CACHE` was unset and nothing set it.
-   Defaulting it on (`d4bc3e5`) takes the binder pass **1,788 s -> 15 s** (119x) and the whole
-   features stage **2,061 s -> 271 s**, with the two frames **identical**: 0 of 40 columns differ
-   over all 363,324 rows. Footprint 4,331 files / 498 MB. Nothing remains to batch here.
-3. **ITSNdb.** One screen preferring the shipped kappa to any refit is worth a look at 149 rows,
-   not an argument.
-4. **`SHIPPED_CORPUS`.** `_build.py` names the `(k, mask)` a release commits to. It is `[(3,
-   "slice")]`; if v4 ships it stays `(3, "slice")` -- the kernel is not part of the table.
-
-## 5b-12. The expression block is one term, a within-batch percentile (v0.27.0, SHIPPED)
-
-Analysis in `2026-mhcmatch-benchmark`: `bench/immuno/epic_expr_arms.py` -> `bench/results/`, a
-15-arm sweep with the other seven terms held identical.
-
-**`expr_missing` was a screen label, not a covariate.** `expr_source` is very nearly constant within
-a screen -- Neopep (87 % of the corpus) is 95.5 % GTEx `matched_tissue`, NCI and HiTIDE are 100 %
-`measured`, four small screens are 93-99 % `reference`, and only `IEDB_neoag` genuinely splits
-(49.8 % `none`). The fit already gives every screen its own unpenalised intercept, so in eight
-screens of nine the indicator was a constant that intercept already held. Drop-one priced it at
-**Delta BIC +36.6** (second largest of nine terms) against **0.0030** of held-out LOSO mean (the
-smallest of four). It was buying fit by re-encoding the screen.
-
-**What replaced it: `expr_pct`, the expression percentile within the scored batch.** `(rank+0.5)/n`
-over the non-NaN rows of one `rank` invocation; a NaN, a single-valued batch and an
-entirely-NaN batch all take 0.5, which is the middle of the batch's own ordering rather than a
-constant nobody chose. Against the previously shipped fit, on the same 354,909 rows / 958 positives
-/ 9 screens and with **one fewer parameter**:
-
-| | previous (`expr` + `expr_missing`) | shipped (`expr_pct`) |
-|---|--:|--:|
-| LOSO mean | 0.6654 | **0.6688** |
-| LOSO median | 0.6399 | **0.6497** |
-| CV, twin-grouped | 0.6399 | **0.6497** |
-| CV, peptide-grouped | 0.6455 | **0.6566** |
-| verdict | 2 improvements / 4 ties / **1 regression** | **2 / 5 / 0 -- ship bar met** |
-
-**Three alternatives were measured and are not what ships.** A constant TPM fill at 0.5 gives LOSO
-mean 0.6599 with two regressions, *below* the previous fit, and a GTEx typical-gene constant gives
-0.6602: a constant is not screen-neutral, because `expr` has a different scale in each screen and
-one number lands at a different quantile in each. A `noncanonical` indicator in place of the flag is
-a better column on its own terms -- present in nine screens of ten, 3.19 % positive against 0.23 %,
-a 14x enrichment -- but 4,517 of 354,909 rows cannot move a corpus-level ranking: 0.6633 against
-0.6654. TPM versus FPKM versus raw counts is solved by construction, since a rank is invariant to
-any monotone rescaling.
-
-**The price, stated where a reader meets it.** `score` is now cohort-relative: a peptide's
-`expr_pct` depends on what else was submitted with it. `rank` and `p_response` were already
-per-cohort; `score` has joined them. Recorded in the docstring, `CHANGELOG.md` and `docs/`.
-
-**Upstream, the deposits already knew the gene and the pipeline was asking the peptide.**
-`neoag_tested_hsa` carries `uniprot_id` on 99.7 % of rows and `_mmu` on 97.6 %, `nci_gartner_*`
-carries `gene_name` on 100 %, and `features_grand.py` read none of them. Reading them as cascade
-step 0 takes `IEDB_neoag`'s missing-expression share 49.8 % -> 43.9 %. **Measured and deliberately
-not taken:** raising the proteome gene search to `max_subs=3` resolves 84.6 % of the remaining
-`absent` group in 19 s using our own masked Hamming -- no BLAST -- but a 3-substitution gene
-assignment on an 8-11mer needs a uniqueness guard that was not worth writing against a release.
-
-## 5b-13. Release 0.27.0 and what deployment found (2026-08-23)
-
-**Reproducibility, measured against the published wheel rather than asserted.** CI regenerates every
-vendored artifact before cutting the wheel, and four of them came back byte-different from the
-checkout. Unpacking both and comparing values: **1,234,106 numbers across the four, max
-|wheel - local| = 1.82e-12** -- BLAS reassociation on a different host. `corpus_tables.npz` differed
-*only* in its `meta` blob and only in the `seconds` field: every `n`, `dense`, `k` and `mask`
-matches and all twelve tables are bit-identical. **A build records its own wall clock, so it is
-byte-nonreproducible by construction.** Dropping `seconds` from the artifact would make byte
-equality a usable check; it is not worth doing inside a release.
-
-**A version is not a cache key** (`bench/immuno/epic_optimize.py::_key`, benchmark repo).
-`epic_optimize_frame.parquet` was stamped `mhcmatch <version>` alone, and the cache-hit path returns
-before `_fresh` ever validates the two parquets it JOINs -- so an upstream rebuild under an unchanged
-library was invisible. On 2026-08-23 `features_grand.parquet` gained two gene columns at 0.27.0, the
-frame hit, and a 15-arm sweep reported the previous frame's numbers *to four decimals*, which is how
-it was caught. The key now folds in each input's mtime and size (two `stat` calls), and returns
-"never cache" for a `.dev` version, since an editable checkout moves `burial` and the corpus kernel
-without moving `__version__`. `bench/immuno/test_cache_stamp.py` holds the four assertions.
-
-**Not taken: `X.Y.Z.devN` in `pyproject.toml` between releases.** `mhcmatch build --check` compares
-artifact stamps to `__version__`, so a dev version would report all 27 stale on every commit and CI
-would sit red until release day. It needs `--check` to compare the release part first.
-
-**Three things a cluster gets wrong first**, measured on Aldan-3 and now written into
-`integrations/nextflow/mhcmatch/{README.md,slurm.config}`: `mhcmatch_slurm_queue` falls back to
-`normal`, which is a common partition name and not a universal one (Aldan-3 has
-`short`/`medium`/`long`/`infinite`, so every task would be rejected at submit, and the time limit
-matters because `MHCMATCH_VECTOR` asks for 8 h); the wheel needs Python >= 3.10 where a cluster's
-system `python3` is often older (Aldan-3's is 3.8, with no module system, so conda is the only
-source of a newer one); and `bootstrap --reference` was documented as a head-node step when it
-downloads and unpacks ~115 MB. The same audit found the module README hand-typing `native.tsv`'s
-column list at 27 names against the library's 28 -- `variant_type` landed in 0.24.0 and the
-paragraph did not notice -- in the one file that had opted out of the module's own "no stub types a
-header" rule. It prints the query now.
+- **`C_corpus` is the exact Łuksza sum, not an approximation of it.** The weight factorises over
+  positions, so the sum over a whole reference set is a k-mer table contraction rather than a
+  search — agreeing with a literal all-vs-all to 5.5e-16, where the radius-2 search it replaced
+  recovered a median 0.4999. That is why `self` and `viral` are affordable: 64 kB tables, not a
+  7.5 GB trie.
+- **The corpus kernel is BLOSUM62, and the recorded verdict against it was not a verdict on the
+  matrix.** It was a verdict on the un-normalised kernel: `K[u,u] != 1` made a peptide's
+  self-similarity vary by composition. Identity-normalised, the graded kernel wins.
+- **`expr_missing` was a screen label, not a covariate.** `expr_source` is very nearly constant
+  within a screen, so the per-screen intercept already carried it: dropping it cost dBIC +36.6 and
+  bought 0.0030 of held-out mean. What replaced it is `expr_pct`, the expression percentile within
+  the scored batch — unit-free, so TPM, FPKM and raw counts give the same column, and needing no
+  imputation constant, because 0.5 is what "no information" means on a percentile scale. The
+  consequence a user must know: the term is **cohort-relative**.
+- **`EPIC` is one letter per fitted block**, not per feature — Expression, Presentation, Immunogenic
+  Complementarity, entered in that order. The rename from `GRAND` moved no coefficient and no
+  number.
+- **A version is not a cache key.** An analysis cache keyed on the library version cannot see that
+  its *input* was rebuilt, so a hit serves the previous frame's numbers. The benchmark's
+  `bench/epic/optimize.py` now refuses any parquet not stamped with the `mhcmatch` that wrote it,
+  which is a staleness *check*, not a cache.
+- **`X.Y.Z.devN` between releases was considered and rejected**: `build --check` compares dotted
+  stamps to `__version__`, so a dev suffix would report every artifact stale on every commit.
+- **The staleness check covered 11 of 27 artifacts until 2026-08-23.** Sixteen files were shipped
+  unchecked. The rule that closed it is in `CLAUDE.md`: a model version is an int, a package
+  version is dotted, and they are told apart by shape rather than by filename.
 
 ## 5b-10. `C_corpus_self` is the corpus block's intercept, not a tolerance term (2026-08-23)
 
@@ -882,29 +618,6 @@ hold, so nothing may be deleted before someone looks.** `bench/precursor/` and
 `bench/bicluster/` and `bench/neoag/paratope*.py` → `2026-tcren2-code` (`bicluster` is **absent
 there entirely** — this is the only copy); `bench/vdjtools/vdjdb_pgen.py`. `bench/contacts/` is
 ambiguous: it is TCR-pMHC geometry *and* it produced the shipped `contact_profile.py`.
-
-## 5b-9. The staleness check covered 11 of 27 shipped artifacts (v0.27.0-dev, LANDED)
-
-`mhcmatch build --check` is the guard against shipping a stale asset and CI runs it. It read eleven
-files; the other sixteen in `src/mhcmatch/data/` — including `aggregate_mhc1.json` and
-`affinity_potts_mhc{1,2}.npz`, the source of `occupancy` — were shipped and unchecked. `TARGETS`
-names all 27 now (`0 stale of 27`). Entries whose generator lives in the benchmark repo carry a
-`None` builder and an `EXTERNAL` command taken from the artifact's own `generator` field or from
-`PROVENANCE.md`; three static tables have no generator on record and `build` says so rather than
-printing an invented one.
-
-Two stamp bugs fell out. `affinity_potts_*.npz` stores five int32 shape parameters under the key
-`meta`; `_stamp` parsed that as JSON and the bare `except` reported a **corrupt artifact**. And the
-rule "a `.json` version is a model version, so exempt every `.json`" cost the check all of them —
-the two vocabularies differ by the *shape of the value*, ints for model versions (EPIC 3,
-recognition 2) and dotted for package versions. Checking the dotted ones found one file:
-`mimicry_mhc1.json` at `"0.12.0"` across fifteen releases, which turned out to be a model version in
-package-version clothing. Re-stamped to `1`; **the version field is the only thing that moved.**
-
-Checked and **not** changed: `affinity_potts_mhc1.npz` was fit against a 4,143-name pseudosequence
-table that became 20,082 names the next day. `bench/results/affinity_potts_stale_table_mhc1.md`
-already answered it — refitting on the larger table is **worse** (Δρ −0.005 orphan, −0.002 rare,
-−0.001 common, over 100 / 132 / 118 seed × allele units). The shipped weights are the better arm.
 
 ## 5b-4. The safety screen, re-derived (v0.26.0, LANDED — benchmark gate outstanding)
 
@@ -1141,9 +854,12 @@ within-screen.
    open benchmark question; the columns exist so that question can be answered on real candidate
    tables without having pre-committed to an answer.
 
-## 5e. NEXT — cassette design, shipping as **1.0.1** (opened 2026-08-23)
+## 5e. Cassette design (opened 2026-08-23, shipped from 1.0.1)
 
-**This is the next thing we build.** The author has a design idea for it and will state it; nothing
+**This was the next thing we built, and it shipped.** Kept for the state it records rather than the
+plan it once was.
+
+**Original framing.** The author has a design idea for it and will state it; nothing
 below pre-empts that. What this section is for is the state a reader needs before hearing it, so the
 idea is judged against what is already measured rather than re-derived.
 

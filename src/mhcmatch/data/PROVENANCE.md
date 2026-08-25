@@ -385,3 +385,44 @@ so a rebuild that moves a number is visible at build time rather than in a downs
 `tests/test_mimicry.py::test_the_vendored_corpus_tables_are_current_and_rebuild_bit_identically`
 checks the version stamp, that every combination the builder declares is present, and bit-identity
 against a live rebuild of the four deposit channels.
+
+## `aggregate_mhc1.json` — the shipped neoantigen scorer (`EPIC`)
+
+**Derived, not experimental.** A fitted model: eight standardised slopes in four hierarchical
+blocks, one unpenalised intercept per screen and no global intercept, ridge `tau = 0.25`. The file
+carries its own standardiser (`mu`, `sigma`) alongside the coefficients, because coefficients on
+z-scores applied to raw axes move the *ranking* and not merely the calibration — the two travel as
+one unit or not at all.
+
+Read by `rank.aggregate()` and applied by `rank.aggregate_score()`. `mhcmatch rank --coefficients`
+prints the terms and `--holdout` the per-screen held-out AUROCs; those two commands, not any
+document, are the record of what a given install actually scores with.
+
+**Two version vocabularies, told apart by shape.** `version` here is a *model* version and is an
+**integer** — 3, 4, 5, 6 — where a package version is dotted. `_build._stamp` therefore returns
+`None` for this file and `mhcmatch build --check` **presence-checks it only**. It cannot tell a
+current artifact from a stale one, which is deliberate (a model version does not move at every
+release) and is why the copy below has to be checked by hand.
+
+**Fitted in the benchmark repo, copied in by hand.** There is no in-process builder and no install
+script; `_build.EXTERNAL["aggregate"]` prints the command and stops.
+
+    # in ~/vcs/projects/2026-mhcmatch-benchmark, and only after `corpus` and `features`:
+    python bench/epic/fit.py --physchem rose_af5 --presentation binder
+    # then, deliberately:
+    cp bench/epic/aggregate_mhc1.json ~/vcs/code/mhcmatch/src/mhcmatch/data/aggregate_mhc1.json
+
+`fit.py` writes the candidate and logs that it was **not** copied. Diff the two files before and
+after the copy: nothing else will catch a bad one.
+
+**Corpus.** `bench/epic/neoantigens.parquet` + `bench/epic/features.parquet`, both built from the
+`isalgo/pmhc_data` deposit and both stamped with the `mhcmatch` version that wrote them —
+`bench/epic/optimize.py` refuses any other, so a fit cannot silently read a frame built by a
+different library. The screens the fit spans, its row and positive counts and its BIC are all
+recorded in the artifact's own `fit` block.
+
+**History.** v3 fitted `binder`; v4 respecified it to `pres` on the argument that `occupancy` is a
+monotone function of the same predicted Kd; v5 refitted v4's specification on a rebuilt corpus; v6
+returns to `binder`, because that argument conflated a within-allele `%rank` with an absolute Kd —
+measured, `pres` is *more* collinear with `binder` (Spearman +0.8797) than `occupancy` is (+0.7431).
+`bench/results/epic_binder_vs_pres.md`.
