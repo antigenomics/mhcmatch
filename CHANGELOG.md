@@ -70,6 +70,39 @@ A restriction cell holding a whole genotype is now read as the alleles it names.
   $\sum_{ab} p_a p_b e^{\lambda s_{ab}} = 1$ per matrix. Nothing shipped moves: the blend returns
   immediately at the shipped $\beta = 0$.
 
+- **`resolve_allele` reads the separator-free class-I spellings the screens are deposited in, and
+  returns one key per molecule.** `A0201`, `Cw0401`, `HLA A0201`, `A*02:01`, `HLA-A0201` and
+  `HLA-A02:01` all resolve to `HLA-A02:01`. Two things made that necessary at once. Every deposited
+  neoantigen screen writes the allele its own way, and a benchmark that repairs those spellings in
+  its own helper is a second convention nobody else can run --- so the repair is here, and an
+  analysis reproduces from `pip install mhcmatch` plus `mhcmatch bootstrap` with no helper of the
+  caller's. And **the bundled pseudosequence table carries both spellings on the same 34-mer**:
+  17,472 HLA keys with the field colon and 1,471 without, `HLA-A02:01` and `HLA-A0201` among them.
+  Without a fixed preference the same allele resolved to two names, which is two calibrators and
+  two groups that never merge. The colon form now leads.
+
+  `normalize_allele` is unchanged and still takes one name. The new spellings are offered as
+  additional resolution candidates by **`hla_spellings(name)`**, anchored and locus-restricted, so
+  `DRB1*01:01`, `DLA-88*501:01` and `BoLA-1:00101` are untouched and a colon-free key with no
+  colon-form twin (`HLA-A0115`) still resolves to itself, exactly.
+
+  This closes a corpus defect on the other side of the same boundary: normalising a genotype cell
+  **as** an allele ran two names together --- `B0801,C0701` came out `HLA-B*08:010701`, comma
+  dropped --- which resolves to nothing, so the row scored `NaN` in presentation, binder and
+  occupancy and `aggregate_score` then substituted all three at the training mean.
+
+- **`mhcmatch.rank.species_of(cell)`** --- `'human'` / `'mouse'` / `None`, from a restriction cell
+  alone, read off the first name it carries. `None` means an MHC this package does not model, which
+  is a different statement from an unresolvable allele: `'HLA class I'` is human and unresolvable,
+  `'DLA-88*501:01'` is neither.
+
+- **`Proteome.window_genes(peptides)`** --- `{peptide: gene_symbol}` for those peptides that are
+  proteome windows. The question a neoantigen table must answer before it can look up expression: a
+  candidate carries a somatic substitution so it is not itself a window, but its wild type is, and
+  that window names the gene GTEx and TCGA are keyed on. Streams `seqs` once and keeps only
+  matching windows --- the query set is ~350k against ~68M windows per length, so indexing the
+  proteome and querying it is the wrong direction.
+
 - **`mhcmatch.rank.split_alleles(cell, cls)`** --- the alleles one restriction cell names, in input
   order, without repeats, dropping what the pseudosequence tables do not know.
 

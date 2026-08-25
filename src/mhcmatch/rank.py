@@ -47,7 +47,7 @@ __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
            "aggregate", "aggregate_score", "probability", "POOL_PREVALENCE",
            "AGGREGATE_FEATURES", "AGGREGATE_COLUMNS",
            "AGGREGATE_BLOCKS", "CHANNEL_COLUMNS", "PHYS_COLUMNS", "expr_percentile",
-           "rank_pairs", "split_alleles"]
+           "rank_pairs", "split_alleles", "species_of"]
 
 #: The `mhcmatch rank` output schema, one source of truth. It lives here rather than inline in the
 #: CLI because a *consumer* -- a pipeline module's stub, a downstream join -- has to be able to name
@@ -882,6 +882,33 @@ def split_alleles(cell, cls: str = "mhc1") -> list[str]:
         if resolve_allele(a, cls)[0] is not None:
             out.append(a)
     return out
+
+
+#: MHC genus -> species. A dog allele on a row a deposit annotates ``human`` is a curation error,
+#: not a missing value, so a genus we do not model is a verdict (``None``) and not a fallback.
+_GENUS = (("H-2", "mouse"), ("H2-", "mouse"), ("H2 ", "mouse"),
+          ("HLA", "human"), ("A*", "human"), ("B*", "human"), ("C*", "human"))
+
+
+def species_of(cell) -> str | None:
+    """``'human'`` / ``'mouse'`` / ``None``, from a restriction cell alone.
+
+    Read off the first name the cell carries -- a genotype names one donor, so its parts do not
+    disagree about the genus. ``None`` means the MHC is not one this package models, which is a
+    different statement from "the allele is unknown": ``'HLA class I'`` is human and unresolvable,
+    ``'DLA-88*501:01'`` is resolvable in principle and not human.
+    """
+    first = re.split(r"[,;/|]", str(cell or ""))[0].strip()
+    if not first:
+        return None
+    up = first.upper()
+    for pre, sp in _GENUS:
+        if up.startswith(pre):
+            return sp
+    if len(first) >= 4 and first[0] in "ABC" and first[1:].replace("w", "").replace("*", "")\
+                                                     .replace(":", "").isdigit():
+        return "human"
+    return None
 
 
 def rank_pairs(store, rows, cls: str = "mhc1", *, tissue: str | None = None,

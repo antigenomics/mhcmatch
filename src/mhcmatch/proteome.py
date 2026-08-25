@@ -127,7 +127,9 @@ class Proteome:
 
     @classmethod
     def from_fasta(cls, path):
-        return cls(read_fasta(path))
+        pm = cls(read_fasta(path))
+        pm._path = path            # so `window_genes` can re-read the headers for GN=
+        return pm
 
     @classmethod
     def from_hf(cls, name="human"):
@@ -380,6 +382,37 @@ class Proteome:
                         s.add(w)
             self._cache[key] = s
         return self._cache[key]
+
+    def window_genes(self, peptides, path=None):
+        """``{peptide: gene_symbol}`` for those of ``peptides`` that are proteome windows.
+
+        The question a neoantigen table has to answer before it can look up expression: a candidate
+        carries a somatic substitution, so it is not itself a window, but **its wild type is** --
+        and that window names the gene. :meth:`wildtype` supplies the germline counterpart and this
+        supplies the symbol, which is what GTEx and TCGA are keyed on.
+
+        Streams :attr:`seqs` once and keeps only matching windows, rather than indexing the whole
+        proteome and querying it: the query set is known in advance and small (~350k) where the
+        index is ~68M windows per length. ``path`` is the FASTA the symbols are read from with
+        :func:`gene_symbols`; it defaults to the one this proteome was loaded from.
+        """
+        path = path or getattr(self, "_path", None)
+        if path is None:
+            raise ValueError("window_genes needs the FASTA the symbols are read from")
+        gene_of = gene_symbols(path, key="name")
+        keys, lens = set(peptides), sorted({len(p) for p in peptides})
+        out = {}
+        for name, seq in self.seqs.items():
+            g = gene_of.get(name)
+            if not g:
+                continue
+            seq = seq.upper()
+            for L in lens:
+                for i in range(len(seq) - L + 1):
+                    w = seq[i:i + L]
+                    if w in keys:
+                        out.setdefault(w, g)
+        return out
 
     def wildtype(self, peptide, max_subs=1):
         """The wild-type self peptide a mutated ``peptide`` derives from, or ``None``.

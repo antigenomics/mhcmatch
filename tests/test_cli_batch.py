@@ -318,6 +318,38 @@ def test_split_alleles_reads_a_genotype_cell_and_drops_what_it_cannot_resolve():
     assert split_alleles("") == [] and split_alleles(None) == []
 
 
+def test_resolve_allele_reads_the_spellings_the_screens_are_deposited_in():
+    """Every deposited screen writes the allele its own way, and the bundled table carries two
+    spellings of the same 34-mer. Repairing that in a benchmark's own helper is a second convention
+    nobody else can run, so it is repaired here -- and it resolves to ONE key per molecule."""
+    from mhcmatch.pseudoseq import hla_spellings, load_pseudo, resolve_allele
+    from mhcmatch.rank import species_of, split_alleles
+
+    seqs = load_pseudo("mhc1")
+    assert seqs["HLA-A02:01"] == seqs["HLA-A0201"]        # the same molecule, two keys
+
+    for name in ("A0201", "A*02:01", "HLA-A*02:01", "HLA A0201", "HLA-A0201", "HLA-A02:01"):
+        assert resolve_allele(name, "mhc1") == ("HLA-A02:01", True), name
+    assert resolve_allele("Cw0401", "mhc1") == ("HLA-C04:01", True)   # serotype spelling
+    assert resolve_allele("H-2Kb", "mhc1") == ("H-2-Kb", True)        # the mouse dash
+    # a colon-free key with no colon-form twin still resolves to itself, exactly
+    assert resolve_allele("HLA-A0115", "mhc1") == ("HLA-A0115", True)
+
+    # anchored and locus-restricted: a class-II name and a non-human genus must not match
+    for name in ("DRB1*01:01", "DLA-88*501:01", "BoLA-1:00101", "HLA class I"):
+        assert resolve_allele(name, "mhc1")[0] is None, name
+        assert hla_spellings(name) == [], name
+
+    # the corpus bug this closes: normalising a genotype cell AS an allele ran two names together
+    assert [resolve_allele(a, "mhc1")[0] for a in split_alleles("B0801,C0701")] == \
+        ["HLA-B08:01", "HLA-C07:01"]
+    assert resolve_allele("B0801,C0701", "mhc1")[0] != "HLA-B08:010701"
+
+    assert species_of("B0801,C0701") == "human" and species_of("H-2Kb") == "mouse"
+    assert species_of("HLA class I") == "human"            # genus known, allele not
+    assert species_of("DLA-88*501:01") is None and species_of("") is None
+
+
 def test_rank_pairs_calibrates_once_per_allele_not_once_per_genotype_string(monkeypatch):
     """The cost of a screen is the number of distinct alleles it calibrates. Grouping on the raw cell
     made that the number of distinct *genotypes*, which on the NCI exome scan is 1,076 keys naming 79

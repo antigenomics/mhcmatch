@@ -23,16 +23,44 @@ _FA = {"mhc1": "mhci_pseudo.fa", "mhc2": "mhcii_pseudo.fa"}
 _LEN = 34
 
 
+#: A class-I HLA name written without separators, as the deposited screens write it: ``A0201``,
+#: ``Cw0401``, ``A*02:01``, ``HLA A0201``. Anchored and locus-restricted so a class-II name
+#: (``DRB1*01:01``) and a non-human genus (``BoLA-1:00101``, ``DLA-88*501:01``) cannot match.
+_BARE_I = re.compile(r"^(?:HLA[- ])?([ABC])w?\*?(\d{2,3}):?(\d{2,3})[A-Z]?$")
+
+
 def normalize_allele(a: str) -> str:
     """pmhc allele name -> pseudosequence-FASTA key.
 
     Drops the ``*`` (``'HLA-A*02:01'`` -> ``'HLA-A02:01'``) and repairs the mouse H-2 dash
     (pmhc ``'H-2Kb'`` -> FASTA ``'H-2-Kb'``).
+
+    Takes one allele name. A cell naming several (``'B0801,C0701'``) is a genotype, not an allele;
+    :func:`mhcmatch.rank.split_alleles` is what splits it, and normalising the cell whole is the
+    defect that produced ``'HLA-B08:010701'`` -- two names run together into a spelling no table
+    has, which then resolves to nothing.
     """
     a = a.replace("*", "")
     if a.startswith("H-2") and len(a) > 3 and a[3] != "-":  # mouse: 'H-2Kb' -> 'H-2-Kb'
         a = "H-2-" + a[3:]
     return a
+
+
+def hla_spellings(name: str) -> list:
+    """Both spellings of a class-I HLA name -- with the field colon and without it.
+
+    The bundled pseudosequence table carries **both**: ``HLA-A02:01`` and ``HLA-A0115`` are each
+    keys, because the source tables it was built from disagreed. So does every deposited screen,
+    which writes ``A0201``, ``Cw0401``, ``HLA A0201`` or ``A*02:01`` for the same molecule.
+    Offering both spellings is what lets :func:`resolve_allele` accept all of them without a
+    caller normalising first -- and a benchmark that normalises in its own helper is a second
+    convention nobody else can run. Returns ``[]`` for anything that is not a class-I HLA name.
+    """
+    m = _BARE_I.match((name or "").strip())
+    if not m:
+        return []
+    loc, f1, f2 = m.groups()
+    return [f"HLA-{loc}{f1}:{f2}", f"HLA-{loc}{f1}{f2}"]
 
 
 @lru_cache(maxsize=1)
@@ -186,7 +214,11 @@ def resolve_allele(name: str, cls: str):
     """
     seqs = load_pseudo(cls)
     cand = normalize_allele(name.strip())
-    variants = ([class2_from_name(name)] if cls == "mhc2" else []) \
+    # class-I HLA spellings come first, colon form leading, so one molecule always resolves to one
+    # key. The table carries both (17,472 keys with the field colon, 1,471 without) on the SAME
+    # 34-mer, so without a fixed order `A0201` and `A*02:01` return different names for the same
+    # allele -- two calibrators, and two groups that never merge.
+    variants = ([class2_from_name(name)] if cls == "mhc2" else hla_spellings(name)) \
         + [cand] + ([] if cand.upper().startswith(("HLA-", "H-2")) else ["HLA-" + cand])
     for v in variants:
         if v in seqs:
