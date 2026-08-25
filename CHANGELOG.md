@@ -8,7 +8,76 @@ versioning is [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+## [1.1.0] --- 2026-08-25
+
+**⚠ The shipped neoantigen scorer changes its feature set, and the composition objective changes
+its risk term.** Every user's scores and every built cassette move.
+
+### Changed
+
+- **`data/aggregate_mhc1.json` is version 7**: **342,432 rows / 741 validated-immunogenic peptides
+  over 8 screens**, fitted on the deduplicated, genotype-scored corpus. Neopep was a relabelling of
+  NCI + TESLA + HiTIDE --- 419,851 of its 422,132 keys shared with NCI at zero label disagreements
+  --- so under the 9-screen v5 fit those three screens' "held-out" numbers had been trained on their
+  own rows. It is dropped, and the allele a row is scored against is now the best presenter over the
+  reconstructed genotype rather than the deposited restriction.
+- **The presentation term is `binder`, not `pres`.** The reason v5 gave for `pres` --- that `binder`
+  would fit the affinity axis twice beside the density term --- is refuted by measurement:
+  rho(occupancy, binder) = +0.7431 against rho(pres, binder) = +0.8797, so the redundancy is larger
+  in the pair the model already carried. `pres` stays computed and emitted; it is not scored.
+- **The density term is `log10a`, occupancy on its log-odds scale.** Occupancy is a probability, and
+  entering one linearly in a logistic model asserts a copy-number difference is worth the same
+  log-odds everywhere in (0,1). Its logit is exactly `log10([P]/Kd)`, since `occ/(1-occ) == a`
+  identically. Fitted raw the term reached +0.0222 at z = +0.83; on its logit it reaches +0.2945 at
+  z = +3.53, BIC falls 14.8, and **all eight terms hold their sign in 400 of 400 cluster resamples
+  at P < 0.007** --- true of no earlier fit.
+- **`cassette.select` and `cassette.score` state `gamma` per unit.** A cassette-wide risk aversion
+  cannot mean the same thing at two sizes: for *k* units of mean response `pbar` and mean pair
+  correlation `rho`, `H = k pbar {1 - (gamma/2) qbar [1 + rho(k-1)]}`, and the brace --- the worth
+  of the average unit --- falls with *k* and turns negative at
+  `k* = 1 + (2/(gamma qbar) - 1)/rho`. Past `k*` every unit is a net cost and the optimiser prefers
+  a **worse** unit to a better one. At the shipped `gamma = 1` and the measured `rho = 0.091` that
+  threshold is 16 to 17 units, inside the twenty a trial ships: on two labelled donor pools the
+  objective was taking 13 responding units where a plain sort took 20, and 8 where it took 15.
+  New **`cassette.risk_aversion(k, rho, gamma)`** divides `gamma` by the design effect
+  `1 + rho(k-1)`, which holds the brace constant at every size; `select` and `score` default to it
+  and `Cassette.gamma` records which value was used. Nothing in the correction is estimated from an
+  outcome --- `rho` is measured, *k* is given by the design, `gamma` is the same stated 1.0 --- and
+  passing `gamma=` / `--gamma` uses the number given, so the cassette-wide arm stays reproducible.
+  Restored: within one responding unit of the sort at all six (pool, size) cells, ahead at one and
+  level at another, while reaching more allotypes than the sort at every one of the six.
+- **`-k K --tol T` now returns a per-donor size.** Under the undivided `gamma` it returned the floor
+  of the window for every donor of both pools --- `-k 20 --tol 5` gave 15 every time, which is what
+  a `k*` below the requested size looks like from outside. It now returns 19--25 on TESLA and
+  20--23 on HiTIDE.
+
+### Added
+
+- **`cassette.size_for` sizes the cassette to the donor.** The smallest number of units reaching
+  `P(>= target responses) >= confidence` for that donor's own pool, with `k` as a manufacturing
+  ceiling and an explicit `reached = False` when the confidence is out of reach --- a donor whose
+  head of list is not actually that good needs *more* units, and rounding that down to the requested
+  `k` is how it goes unsaid. Reachable from the command line as
+  `mhcmatch cassette select --confidence C [--target M]`, where `-k` becomes the ceiling. Whether
+  the rule can see a weak pool at all is the **level**: `prob_offset` fits one additive offset to a
+  stated `POOL_PREVALENCE`, and the *slope* it assumes is now measured --- `alpha = 1.0195 +/-
+  0.0447` over all 342,372 labelled rows, likelihood ratio 0.2 against 1, so the shape is right ---
+  while the level is one number applied to every pool. TESLA responds at 0.0462 of its candidates
+  and HiTIDE at 0.0263 against the stated 0.0602, which over-states predicted yield by 1.3x and
+  2.9x respectively. **Pass `--prevalence` at the pool's own expected base rate.** Measured in
+  `bench/results/cassette_calibration.md`.
+- **`rank` emits `binder` and `log10a`** in the feature dict `aggregate_score` reads, so a fitted
+  term can no longer be silently substituted at the training mean for want of a name.
+- **`tests/test_scoring_regression.py`** --- the real `rank_pairs` path on 60 labelled TESLA and
+  HiTIDE triples vendored from the fitting corpus, asserting no fitted term is imputed, every allele
+  resolves, scoring is deterministic, and the unfitted comparison columns are still emitted. The
+  synthetic tests could not see the failure that actually happened: a column computed correctly,
+  supplied under the wrong name, and imputed at the mean, which yields finite, plausible, wrong
+  scores.
+- **`data/PROVENANCE.md` has an `aggregate_mhc1.json` entry**, which it never had.
+
 ### Documented
+
 
 - **`agretopicity` names two different quantities on two code paths, and now says so.**
   `rank.Ranked.agretopicity` is the differential agretopicity index `log10(Kd_WT/Kd_MT)`;

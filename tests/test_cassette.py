@@ -203,6 +203,34 @@ def test_the_field_is_the_mean_minus_half_the_variance():
     assert h == pytest.approx(p - 1.0 * p * (1 - p), abs=1e-12)
 
 
+def test_risk_aversion_holds_the_average_unit_worth_constant_across_cassette_sizes():
+    """The defect this exists to fix: a cassette-wide ``gamma`` inverts the objective past ``k*``.
+
+    ``H = k pbar {1 - (gamma/2) qbar [1 + rho (k-1)]}``. With ``gamma`` undivided the brace falls
+    with ``k`` and crosses zero, and past that size every unit is a net cost --- so the optimiser
+    prefers a *worse* unit to a better one and capture collapses. Dividing by the design effect
+    leaves the brace at ``1 - (gamma/2) qbar`` at every size, which is what is pinned here.
+    """
+    pbar, rho = 0.16, 0.091
+    q = 1 - pbar
+    flat = {k: 1 - 0.5 * CA.risk_aversion(k, rho) * q * (1 + rho * (k - 1)) for k in (1, 5, 20, 100)}
+    assert max(flat.values()) - min(flat.values()) < 1e-12
+    assert flat[20] == pytest.approx(1 - 0.5 * q, abs=1e-12)
+    # and the undivided form does invert, inside a size a trial ships
+    kstar = 1 + (2 / q - 1) / rho
+    assert 10 < kstar < 20
+    assert 1 - 0.5 * q * (1 + rho * (20 - 1)) < 0
+
+
+def test_select_uses_the_per_unit_gamma_and_an_explicit_one_verbatim():
+    """``Cassette.gamma`` is the arm's own record of which trade it made."""
+    s, peps, alle = pool(n=40)
+    auto = CA.select(s, peps, alleles=alle, k=20)
+    assert auto.gamma == pytest.approx(CA.risk_aversion(20, CA.RHO_ASSAYED), abs=1e-12)
+    assert auto.gamma < CA.GAMMA
+    assert CA.select(s, peps, alleles=alle, k=20, gamma=1.0).gamma == 1.0
+
+
 def test_overlap_reports_only_the_channels_it_was_given():
     """A trial that published no per-patient genotype has two channels, not three. Silently filling
     the allotype one with zeros would report a diverse cassette wherever the data is missing."""
@@ -313,6 +341,30 @@ def test_select_refuses_mismatched_inputs():
 
 
 # --------------------------------------------------------------------- score
+def test_size_for_asks_for_more_units_when_the_pool_is_weaker():
+    """The rule this exists for: a donor whose head of list is not that good needs a bigger cassette.
+
+    The prevalence is what tells it. Two identical pools at two levels must not return the same
+    size, and the weaker one must return the larger --- silently returning the same `k` is how a
+    pool responding at half the rate gets half the cassette it needs.
+    """
+    s, peps, alle = pool(n=60)
+    weak = CA.size_for(s, peps, alleles=alle, confidence=0.9, prevalence=0.02, k_max=50)
+    strong = CA.size_for(s, peps, alleles=alle, confidence=0.9, prevalence=0.20, k_max=50)
+    assert weak["k"] > strong["k"]
+    assert strong["reached"] and strong["p_at_least"] >= 0.9
+    for r in (weak, strong):
+        assert len(r["curve"]) == r["k"]
+        assert r["curve"] == sorted(r["curve"])          # every extra unit can only help
+
+
+def test_size_for_reports_a_ceiling_it_could_not_reach_rather_than_rounding_down():
+    """An unreachable confidence is a fact about the donor and must survive as one."""
+    s, peps, alle = pool(n=60)
+    r = CA.size_for(s, peps, alleles=alle, confidence=0.999999, prevalence=1e-4, k_max=8)
+    assert r["k"] == 8 and not r["reached"] and r["p_at_least"] < 0.999999
+
+
 def test_score_yield_is_the_sum_of_the_calibrated_probabilities():
     """``yield`` is an expected count of responding units. Naming it a probability, or reporting a
     mean instead, is the misreading the block model exists to prevent."""

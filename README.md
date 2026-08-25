@@ -118,8 +118,10 @@ H(S) = sum_i [ p_i - (gamma/2) s_i^2 ]  -  gamma sum_{i<j} rho_ij s_i s_j,   s_i
 
 Three inputs, none of them an outcome cohort: `p_i` is the calibrated response probability, `rho` is
 one number measured on published per-unit assays, `gamma` is a stated preference (1.0 — one unit of
-variance traded for one expected unit). `rho_ij` spreads `rho` over pairs by how much two units
-share a way of failing: the same allotype, the same 3-mers, the same place on the dominance axis.
+variance traded for one expected unit, **per unit of the cassette**: a correlated count's mean is
+linear in `k` and its variance quadratic, so `gamma` is divided by the design effect `1 + rho(k-1)`
+to mean the same trade at every size). `rho_ij` spreads `rho` over pairs by how much two units share
+a way of failing: the same allotype, the same 3-mers, the same place on the dominance axis.
 
 ```bash
 mhcmatch cassette select --candidates pool.tsv -k 20 --tol 3 --out cassette.tsv

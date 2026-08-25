@@ -1493,8 +1493,21 @@ def cmd_cassette_select(a):
         if not g:
             continue
         alleles = None if a.no_allele or "allele" not in g[0] else [r["allele"] for r in g]
+        size, tol = a.size, a.tol
+        if a.confidence is not None:
+            # `-k` becomes the manufacturing ceiling and the donor's own pool sets the size. A
+            # donor whose head of list is weak needs more units to reach the same confidence, and
+            # the ceiling is where that answer gets reported rather than silently rounded down.
+            probe = CA.size_for([r["_score"] for r in g], [r["peptide"] for r in g], alleles,
+                                target=a.target, confidence=a.confidence, k_max=a.size,
+                                **{k: v for k, v in kw.items() if k != "gamma"})
+            size, tol = probe["k"], 0
+            say(f"{donor}: {size} unit(s) for P(>= {a.target}) >= {a.confidence:.2f}"
+                + ("" if probe["reached"] else
+                   f" -- NOT REACHED, capped at k = {a.size}, best {probe['p_at_least']:.3f}"),
+                level=1)
         c = CA.select([r["_score"] for r in g], [r["peptide"] for r in g], alleles,
-                      k=a.size, tol=a.tol, **kw)
+                      k=size, tol=tol, **kw)
         if c.trimmed:
             say(f"{donor}: pool of {c.pool_n} trimmed to {c.pool_n - c.trimmed} before the "
                 f"coupling matrix (see mhcmatch.cassette.MAX_POOL)", level=1)
@@ -1511,8 +1524,8 @@ def cmd_cassette_select(a):
         # A tolerance that is spent is a result, not a detail: the objective has an internal
         # optimum size, and it moves with the prevalence and with rho. Saying so is cheaper than
         # letting somebody discover that `-k 20 --tol 5` returned 15 and wonder whether it broke.
-        if c.k != a.size:
-            say(f"{donor}: {c.k} units, not {a.size} -- the objective peaks there inside the "
+        if c.k != size:
+            say(f"{donor}: {c.k} units, not {size} -- the objective peaks there inside the "
                 f"tolerance (adding the next unit costs more variance than it buys in mean)",
                 level=1)
         say(f"{donor}: {c.k} of {c.pool_n}, yield {c.yield_:.3f} unit(s), lam {c.lam:+.3f} nats",
@@ -2047,7 +2060,18 @@ def main(argv=None):
                          "Measure your own with mhcmatch.portfolio.betabinom_rho")
     cs.add_argument("--gamma", type=float, metavar="G",
                     help="risk aversion: one unit of variance in the responding-unit count is worth "
-                         "this many expected units (default: 1.0). A stated design preference")
+                         "this many expected units, PER UNIT of the cassette. A stated design "
+                         "preference; the default 1.0 is divided by the design effect 1+rho(k-1) "
+                         "so it means the same trade at every k, and passing this uses the number "
+                         "given instead")
+    cs.add_argument("--confidence", type=float, metavar="C",
+                    help="size each cassette to the donor instead of using -k: the smallest number "
+                         "of units reaching P(>= --target responses) >= C for that donor's own "
+                         "pool, with -k as the manufacturing ceiling. A donor whose best "
+                         "candidates are weak needs more units to reach the same C, and is "
+                         "reported at the ceiling when C is out of reach")
+    cs.add_argument("--target", type=int, default=1, metavar="M",
+                    help="how many responding units --confidence is about (default: 1)")
     cs.add_argument("--score-column", default="score", metavar="COL",
                     help="which column holds the aggregate log-odds (default: score; `rank` writes "
                          "`aggregate`)")

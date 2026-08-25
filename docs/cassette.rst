@@ -66,7 +66,17 @@ Three inputs, and not one of them is an outcome cohort:
 
 ``gamma``
     a **stated design preference**, 1.0: one unit of variance in the responding-unit count is worth
-    one expected unit. Not fitted, not swept.
+    one expected unit. Not fitted, not swept — but stated **per unit**, so it is divided by the
+    design effect before use. For *k* units of mean response :math:`\bar p` and mean pair
+    correlation :math:`\rho`,
+    :math:`H = k\bar p\,\{1 - \tfrac{\gamma}{2}\bar q\,[1 + \rho(k-1)]\}`; the brace is the
+    worth of the average unit, and because a correlated count's mean is linear in *k* while its
+    variance is quadratic, an undivided ``gamma`` makes it fall with *k* and turn negative at
+    :math:`k^\star = 1 + (2/\gamma\bar q - 1)/\rho` — past which the optimiser prefers a *worse*
+    unit to a better one. :func:`~mhcmatch.cassette.risk_aversion` divides by
+    :math:`1 + \rho(k-1)`, which holds the brace at :math:`1 - \tfrac{\gamma}{2}\bar q` at every
+    size. ``rho`` is measured and *k* is given by the design, so no outcome enters the correction;
+    passing ``gamma=`` uses the number given instead.
 
 :math:`\rho_{ij}` spreads ``rho`` over pairs in proportion to :func:`~mhcmatch.cassette.overlap` —
 the mechanistic similarity of the pair — then renormalises so the pool's mean pair correlation is
@@ -123,11 +133,37 @@ enumerate; that is the only warrant the :math:`O(kN)` rule has and it is a test 
    put forward, responding at 0.0612, **4.25×** the NCI rate — every rule sits at the base rate,
    because the selection had already been done. Full table in ``bench/results/cassette_select.md``.
 
-**``--tol`` is spent on the objective, not on the largest size that fits.** A mean–variance objective
-has an internal optimum size, and where it falls moves with the prevalence and with ``rho``: at
-``gamma = 1`` and a 6 % pool prevalence it is around ten units, so ``-k 20 --tol 5`` will return 15
-and say so on stderr. With ``--tol 0`` the size is exactly *k*, which is what a fixed manufacturing
-budget wants.
+**``--tol`` is spent on the objective, not on the largest size that fits.** A mean–variance
+objective has an internal optimum size, and where it falls moves with the prevalence and with
+``rho``, so ``-k 20 --tol 5`` returns whichever size in 15–25 carries the largest *H* and says so on
+stderr. With the per-unit ``gamma`` this is a per-donor answer: on the eight TESLA pools ``-k 20
+--tol 5`` returns sizes 19 to 25 and on the eleven HiTIDE pools 20 to 23. With ``gamma`` passed
+undivided it returned 15 — the floor of the window — for every donor of both, which is what a
+:math:`k^\star` below the requested size looks like from the outside. With ``--tol 0`` the size is
+exactly *k*, which is what a fixed manufacturing budget wants.
+
+**When the budget is a confidence rather than a count, ask for the size.**
+:func:`~mhcmatch.cassette.size_for` returns the smallest cassette reaching
+:math:`\Pr(\ge m \text{ responses}) \ge C` for one donor's own pool, and ``--confidence C`` ---
+with ``-k`` as the manufacturing ceiling --- runs it before selecting:
+
+.. code-block:: bash
+
+   mhcmatch cassette select --candidates pool.tsv -k 40 --confidence 0.90 \
+       --prevalence 0.026 --out cassette.tsv
+
+A donor whose head of list is genuinely strong reaches 0.90 in ten units; a donor whose is not needs
+thirty, and one who cannot reach it inside the ceiling is reported at the ceiling with
+``reached = False`` rather than rounded down into a cassette that claims the target.
+
+**``--prevalence`` is what lets it see that, and the default is one pool's number.** The map from
+score to probability is :math:`\sigma(s + b)` with a single additive offset: the *slope* is measured
+and is right — :math:`\alpha = 1.0195 \pm 0.0447` over 342,372 labelled rows, likelihood ratio 0.2
+against 1 — and the *level* is stated, because EPIC carries one unpenalised intercept per screen and
+no global one, so it is not identifiable from the fit. :data:`~mhcmatch.rank.POOL_PREVALENCE` is
+0.0602; TESLA's own candidates respond at 0.0462 and HiTIDE's at 0.0263, so that one default
+over-states predicted yield by 1.3× on the first pool and 2.9× on the second. Pass the pool's own
+expected base rate.
 
 
 ``cassette score``

@@ -28,6 +28,26 @@ So the objective is mean-variance,
 which is exactly ``sum h_i - sum J_ij``. The Potts form is not imposed on the goal; it falls out of
 it. See :func:`goal_energy`.
 
+**``gamma`` is a statement about a unit, so it is divided by the design effect.** For a cassette of
+``k`` units with mean response ``pbar`` and mean pair correlation ``rho``, ``E[B] = k pbar`` and
+``Var[B] = k pbar qbar [1 + rho (k - 1)]``, so
+
+    H = k pbar { 1 - (gamma/2) qbar [1 + rho (k - 1)] }
+
+The brace is the certainty-equivalent worth of the *average* unit, and with ``gamma`` held fixed it
+falls as the cassette grows --- the mean of a correlated count is linear in ``k`` and its variance is
+quadratic, so one stated ``gamma`` is a stricter trade at every larger size. It reaches zero at
+
+    k* = 1 + (2 / (gamma qbar) - 1) / rho
+
+and past ``k*`` every unit is a net cost, so the objective prefers a *worse* unit to a better one and
+selection inverts. At ``gamma = 1`` and the measured ``rho = 0.091`` that is ``k* = 16.1`` on the
+TESLA pools and ``17.4`` on HiTIDE --- inside the twenty-unit cassette a trial ships.
+:func:`risk_aversion` divides ``gamma`` by the design effect ``1 + rho (k - 1)``, which leaves the
+brace at ``1 - (gamma/2) qbar`` for every ``k``. One stated preference then means one trade at every
+size, and no size inverts. It is arithmetic on ``rho`` and ``k``, both known before any unit is
+chosen; no outcome enters it.
+
 **Two things that make this different from sorting the candidate list.**
 
 *Top-m by any pointwise score maximises a modular set function*, and ``H`` is not modular whenever
@@ -55,9 +75,9 @@ import numpy as np
 
 __all__ = [
     "KMER", "KAPPA", "GAMMA", "RHO_ASSAYED", "MAX_POOL",
-    "prob_offset", "group_offsets", "overlap", "pair_stats",
+    "prob_offset", "group_offsets", "overlap", "pair_stats", "risk_aversion",
     "goal_energy", "greedy", "refine", "log_ek", "lam",
-    "Cassette", "select", "score",
+    "Cassette", "select", "size_for", "score",
 ]
 
 #: k-mer width for the sequence-overlap channel. 3 is what the corpus kernel uses.
@@ -72,6 +92,11 @@ KAPPA = 7.4635
 #: Risk aversion of the objective, in units of "one variance is worth one expected unit".
 #: ``gamma = 1`` says a designer trades one unit of variance in the responding-unit count for one
 #: unit of its mean. A **stated design preference**, not a fitted quantity, and not swept.
+#:
+#: It is stated **per unit**, so :func:`select` and :func:`score` pass it through
+#: :func:`risk_aversion` before use --- see the module docstring for why a cassette-wide ``gamma``
+#: cannot mean the same thing at two sizes. Passing ``gamma=`` explicitly bypasses that and uses the
+#: number given, which is how the cassette-wide arm stays reproducible.
 GAMMA = 1.0
 
 #: Default intra-cassette response correlation. **Measure your own with**
@@ -271,6 +296,23 @@ def pair_stats(peptides, alleles=None, strength=None, kmer: int = KMER) -> dict:
 
 
 # ------------------------------------------------------------------ the objective
+def risk_aversion(k: int, rho: float = RHO_ASSAYED, gamma: float = GAMMA) -> float:
+    """``gamma`` restated per unit: ``gamma / (1 + rho (k - 1))``.
+
+    The design effect ``1 + rho (k - 1)`` is how much a correlated cassette's count varies above an
+    independent one of the same size --- the beta-binomial factor :func:`mhcmatch.portfolio.
+    betabinom_rho` estimates ``rho`` from. Dividing by it is what makes ``gamma`` a preference about
+    a *unit* rather than about a cassette; the module docstring derives it and gives the size ``k*``
+    at which the undivided form inverts the objective.
+
+    >>> round(risk_aversion(1), 4)
+    1.0
+    >>> round(risk_aversion(20, rho=0.091), 4)
+    0.3664
+    """
+    return float(gamma) / (1.0 + float(rho) * max(int(k) - 1, 0))
+
+
 def goal_energy(p, sim, rho: float = RHO_ASSAYED, gamma: float = GAMMA):
     """The mean-variance objective as a field and a coupling: ``H(S) = sum h - sum_{i<j} J``.
 
@@ -453,7 +495,7 @@ class Cassette:
 
 
 def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
-           prevalence: float | None = None, rho: float = RHO_ASSAYED, gamma: float = GAMMA,
+           prevalence: float | None = None, rho: float = RHO_ASSAYED, gamma: float | None = None,
            rounds: int = 4, max_pool: int = MAX_POOL) -> Cassette:
     """Choose ``k`` units (within ``tol``) from one donor's candidate pool, maximising ``H``.
 
@@ -473,9 +515,12 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
        (:data:`RHO_ASSAYED`); fit your own by maximum likelihood with
        :func:`mhcmatch.portfolio.betabinom_rho` if you have per-patient counts, which is the one
        parameter here that any assayed readout can improve.
-    3. :func:`overlap` builds the mechanistic pair similarity, :func:`goal_energy` turns it into
+    3. ``gamma`` defaults to :func:`risk_aversion` at the requested ``k``, so the stated
+       preference is per unit and the objective does not invert at large ``k``. Pass ``gamma=`` to
+       use a number verbatim; :attr:`Cassette.gamma` records whichever was used.
+    4. :func:`overlap` builds the mechanistic pair similarity, :func:`goal_energy` turns it into
        ``(h, J)``.
-    4. :func:`greedy` takes ``k + tol`` units, :func:`refine` swaps until no single exchange raises
+    5. :func:`greedy` takes ``k + tol`` units, :func:`refine` swaps until no single exchange raises
        ``H``, and the reported size is the one in ``[k - tol, k + tol]`` with the largest ``H``.
 
     ``tol`` is the manufacturing tolerance: a budget of "twenty units, give or take three" is
@@ -493,6 +538,9 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
         raise ValueError(f"select: {s.size} scores against {len(peptides)} peptides")
     if k <= 0:
         raise ValueError(f"k must be a positive cassette size, got {k}")
+    # From the requested k, not from each trial size inside `tol`: the tol loop compares energies,
+    # and they are only comparable on one gamma.
+    gamma = risk_aversion(k, rho) if gamma is None else float(gamma)
     tol = int(max(tol, 0))
     pool_n = s.size
 
@@ -537,9 +585,74 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
                     trimmed=trimmed, swaps=best_sw, channels=chans)
 
 
+def size_for(scores, peptides, alleles=None, *, target: int = 1, confidence: float = 0.90,
+             k_max: int = 40, prevalence: float | None = None, rho: float = RHO_ASSAYED,
+             gamma: float | None = None, max_pool: int = MAX_POOL) -> dict:
+    """The smallest cassette that reaches ``P(>= target responses) >= confidence`` for **this donor**.
+
+    A fixed ``k`` asks every donor the same question and gets a different answer. A donor whose best
+    candidates are strong reaches a given confidence in five units; a donor whose pool is shallow, or
+    whose top of the list is not actually that good, does not reach it in twenty --- and the honest
+    response to that is a larger cassette, not the same one reported with the same number on it.
+
+    The probe walks the objective's own greedy order and evaluates
+    :func:`mhcmatch.portfolio.p_at_least` on each prefix under the block model, the block being the
+    allotype where one is given. It returns the **size**, not the cassette: hand ``k`` back to
+    :func:`select`, which re-runs greedy and :func:`refine` at that size under its own
+    :func:`risk_aversion`. The probe's own ``gamma`` is taken at ``k_max`` for the single pass.
+
+    ``k_max`` is a manufacturing ceiling, not a search bound: when the confidence is unreachable
+    inside it the ceiling is returned with ``reached = False`` and ``p_at_least`` says how far it
+    got. That is a real answer about the donor and it must not be silently rounded into a smaller
+    cassette that claims the target.
+
+    Returns ``k`` · ``reached`` · ``p_at_least`` at that ``k`` · ``target`` · ``confidence`` ·
+    ``curve``, the confidence at every size from 1 to the one returned.
+    """
+    from . import portfolio as PF
+    from .rank import POOL_PREVALENCE
+    if not 0.0 < confidence < 1.0:
+        raise ValueError(f"confidence must be strictly between 0 and 1, got {confidence!r}")
+    if target < 1:
+        raise ValueError(f"target must be at least one responding unit, got {target!r}")
+    prevalence = POOL_PREVALENCE if prevalence is None else prevalence
+    s = np.asarray(scores, dtype=float)
+    peptides = list(peptides)
+    if s.size != len(peptides):
+        raise ValueError(f"size_for: {s.size} scores against {len(peptides)} peptides")
+
+    b = prob_offset(s, prevalence)
+    keep = np.arange(s.size)
+    if s.size > max_pool:
+        keep = np.sort(np.argsort(-s, kind="stable")[:max_pool])
+    ss = s[keep]
+    peps = [peptides[i] for i in keep]
+    alle = None if alleles is None else [list(alleles)[i] for i in keep]
+    p = _p(ss, b)
+
+    upper = int(min(k_max, keep.size))
+    if upper < 1:
+        raise ValueError("size_for: an empty pool has no cassette size")
+    g = risk_aversion(upper, rho) if gamma is None else float(gamma)
+    h, J = goal_energy(p, overlap(peps, alleles=alle, strength=ss), rho=rho, gamma=g)
+    order = greedy(h, J, upper)
+
+    blk = np.zeros(upper, dtype=int) if alle is None else np.asarray([alle[i] for i in order])
+    curve = []
+    for k in range(1, upper + 1):
+        idx = order[:k]
+        c = PF.p_at_least(p[idx], blk[:k], 1.0, k=target)
+        curve.append(float(c))
+        if c >= confidence:
+            return dict(k=k, reached=True, p_at_least=float(c), target=target,
+                        confidence=confidence, curve=curve)
+    return dict(k=upper, reached=False, p_at_least=curve[-1], target=target,
+                confidence=confidence, curve=curve)
+
+
 def score(scores, peptides, alleles=None, chosen=None, *, pool_scores=None, pool_peptides=None,
           offset: float | None = None, prevalence: float | None = None, rho: float = RHO_ASSAYED,
-          gamma: float = GAMMA, block=None, block_live: float = 1.0, target: int = 1) -> dict:
+          gamma: float | None = None, block=None, block_live: float = 1.0, target: int = 1) -> dict:
     """Score a cassette that already exists, on axes that survive changing donor and changing ``k``.
 
     Two ways to call it. Pass the cassette alone (``scores``, ``peptides``) with an ``offset`` fitted
@@ -585,6 +698,7 @@ def score(scores, peptides, alleles=None, chosen=None, *, pool_scores=None, pool
     k = s.size
     if k == 0:
         raise ValueError("score: an empty cassette has nothing to score")
+    gamma = risk_aversion(k, rho) if gamma is None else float(gamma)
 
     if offset is None:
         offset = prob_offset(pool_scores if pool_scores is not None else s, prevalence)
