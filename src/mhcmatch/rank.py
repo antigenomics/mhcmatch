@@ -131,8 +131,9 @@ _AGG: dict | None = None
 
 #: The features the shipped aggregate expects, in order. Read it rather than typing the list --
 #: ``O`` replaced ``D`` in 0.19.0, the four recognition columns collapsed to two in 0.21.0,
-#: ``binder`` became ``pres`` at artifact v4 and ``pres`` became ``binder`` again at v6, and a
-#: hardcoded copy of this tuple would have gone stale silently every time. It is asserted equal to
+#: ``binder`` became ``pres`` at artifact v4, ``pres`` became ``binder`` again at v6, and the
+#: density term moved from ``occupancy`` to its log-odds ``log10a`` at v7 -- a hardcoded copy of
+#: this tuple would have gone stale silently every time. It is asserted equal to
 #: the artifact's own ``features`` by ``tests/test_aggregate_terms.py``, so the two cannot drift.
 AGGREGATE_FEATURES: tuple = ("binder", "log10a", "expr_pct",
                              "C_phys_buried", "C_phys_charge",
@@ -205,10 +206,11 @@ def aggregate() -> dict:
     not in competition with them.
 
     * ``presentation`` -- ``binder`` (the calibrated Fisher combination of the presentation
-      ``%rank`` with the Potts affinity ``%rank``) and ``occupancy``. A ``%rank`` is a
-      *within-allele* quantity where ``occupancy`` is absolute, so the two are not one axis
-      entered twice: measured, they share Spearman +0.7431, while ``binder`` and the bare
-      presentation rank ``pres`` share +0.8797. ``pres`` is emitted and not fitted.
+      ``%rank`` with the Potts affinity ``%rank``) and ``log10a`` (occupancy's log-odds, see
+      :func:`_logit10`). A ``%rank`` is a *within-allele* quantity where occupancy is absolute, so
+      the two are not one axis entered twice: measured, they share Spearman +0.7431, while
+      ``binder`` and the bare presentation rank ``pres`` share +0.8797. ``pres`` and ``occupancy``
+      are both emitted; neither is fitted.
     * ``expression`` -- ``expr_pct``, the expression percentile within the scored batch. One term:
       ``expr`` + ``expr_missing`` was two, and the indicator was very nearly a screen label that
       the per-screen intercept already carried.

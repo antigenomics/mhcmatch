@@ -109,6 +109,22 @@ def test_the_density_term_is_occupancy_on_the_log_odds_scale(art):
     assert R._logit10(1.0) != R._logit10(1.0)
 
 
+def test_the_density_term_is_the_same_number_the_fit_was_trained_on():
+    """The cross-repo invariant, and nothing else asserts it.
+
+    `bench/epic/fit.py` builds `log10a` from `kd_mt`; this library builds it from `occupancy`,
+    which is itself built from the same Kd. They are the same quantity only because
+    ``occ/(1-occ) == [P]/Kd`` identically -- if either side ever computed it a second way, the
+    model would be scored on a column it was not fitted on and nothing would say so. Checked over
+    the Kd range the clamp actually admits.
+    """
+    from mhcmatch.rank import PEPTIDE_NM, occupancy
+    for kd in (1.0, 3.7, 10.0, 250.0, 8_937.0, 49_999.0, 50_000.0):
+        via_library = R._logit10(occupancy(kd))
+        direct = math.log10(PEPTIDE_NM / kd)
+        assert abs(via_library - direct) < 1e-12, f"Kd={kd}: {via_library} != {direct}"
+
+
 def test_expr_pct_is_a_within_batch_percentile_and_a_missing_value_sits_at_one_half():
     """The fitted expression term is a rank inside the scored batch, not a level.
 

@@ -144,18 +144,23 @@ The four blocks and what each reads:
 
 | block | terms | what it is |
 |---|---|---|
-| `presentation` | `binder`, `occupancy` | a within-allele competition rank, and an absolute surface density |
+| `presentation` | `binder`, `log10a` | a within-allele competition rank, and an absolute surface density on its log-odds scale |
 | `expression` | `expr_pct` | the expression percentile *within the scored cohort* |
 | `physchem` | `C_phys_buried`, `C_phys_charge` | Rose burial and Atchley AF5 charge over the TCR face, per residue |
 | `corpus` | `C_corpus_thymus`, `C_corpus_self`, `C_corpus_viral` | density of each reference corpus around the TCR face |
 
 - **`binder`, not `pres`, since artifact v6.** `binder` is the calibrated Fisher combination of the
-  presentation %rank with the Potts affinity %rank. It sits beside `occupancy` rather than
+  presentation %rank with the Potts affinity %rank. It sits beside the density term rather than
   duplicating it: a %rank is a *within-allele* rank asking whether a peptide out-competes the self
   peptidome an allele loads, where occupancy is absolute — how many copies reach the surface at
   `PEPTIDE_NM`. Winning a groove does not imply reaching the copy number. Measured, rho(occupancy,
   binder) = +0.7431 where rho(pres, binder) = +0.8797.
-- **Computed but never scored.** `pres`, `dai`, `agretopicity`, `d_occupancy`, `wt_absent`, the
+- **`log10a`, not `occupancy`, since artifact v7.** The density term is occupancy's logit, which is
+  exactly `log10(a)` since `occ/(1-occ) == a`. A probability entered linearly in a log-odds model
+  asserts a copy-number difference is worth the same everywhere in (0,1); at `PEPTIDE_NM` against a
+  median Kd three orders above it, `a/(1+a)` collapses to `10/Kd`. Fitted raw the term reached
+  z = +0.83; on its logit, z = +3.53. Monotone, so nothing is reordered.
+- **Computed but never scored.** `pres`, `occupancy`, `dai`, `agretopicity`, `d_occupancy`, `wt_absent`, the
   Luksza amplitude and any Kidera scale (`burial(..., scale="KIDERA:KF4")`) are all reachable and
   emitted for comparison; none is a fitted term, and `tests/test_rank.py` asserts that none of them
   appears in `AGGREGATE_FEATURES`.

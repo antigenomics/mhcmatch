@@ -32,15 +32,18 @@ what that term is worth **after** presentation and expression rather than in com
      - term
      - what it is
    * - ``presentation``
-     - ``pres``
-     - ``-log10`` of the calibrated presentation %rank. **Allele-relative**: where this peptide sits
-       in its own allele's distribution. v3 used ``binder``, which Fisher-combined this with the
-       affinity head — and ``occupancy`` below already carries affinity, at Spearman −1.000000
-       against ``kd_mt``, so the affinity half was counted twice. Both keys are still computed.
+     - ``binder``
+     - ``-log10`` of the calibrated *combined* %rank — the Fisher statistic over the presentation
+       rank and the Potts affinity rank, read as a percentage. **Allele-relative**: where this
+       peptide sits in its own allele's distribution. The presentation rank alone is the separate
+       key ``pres``, which is still computed and is not fitted.
    * -
-     - ``occupancy``
-     - :func:`mhcmatch.rank.occupancy`, ``a/(1+a)`` with ``a = [P]/Kd``. **Absolute**: what fraction
-       of the groove the peptide actually holds. Needs no wild type.
+     - ``log10a``
+     - The density axis on its log-odds scale, ``log10(a)`` for ``a = [P]/Kd``. This is exactly the
+       logit of :func:`mhcmatch.rank.occupancy`, since ``occ/(1-occ) == a`` identically.
+       **Absolute**, where a %rank is allele-relative, and defined without a wild type. Occupancy
+       itself is still computed and emitted; a probability entered linearly in a log-odds model is
+       the mis-specification, not the axis.
    * - ``expression``
      - ``expr_pct``
      - The **percentile of ``log1p(TPM)`` within the scored cohort** — the cohort's own
@@ -132,9 +135,10 @@ form. What these docs carry instead is what each term *is*, which does not move 
      - presentation
      - the calibrated Fisher combination of presentation ``%rank`` with the Potts affinity
        ``%rank`` — a *within-allele* competition statement
-   * - ``occupancy``
+   * - ``log10a``
      - presentation
-     - groove occupancy at ``PEPTIDE_NM``, an *absolute* surface-density statement
+     - groove occupancy at ``PEPTIDE_NM`` on its log-odds scale, an *absolute* surface-density
+       statement
    * - ``C_corpus_thymus``
      - corpus
      - danger — density against the thymic immunopeptidome
@@ -151,7 +155,7 @@ form. What these docs carry instead is what each term *is*, which does not move 
      - physchem
      - Atchley AF5 charge over the TCR face — see :doc:`burial`
 
-``binder`` and ``occupancy`` are two necessary conditions, not one quantity measured twice. A
+``binder`` and ``log10a`` are two necessary conditions, not one quantity measured twice. A
 ``%rank`` asks whether a peptide out-competes the self peptidome its allele normally loads;
 occupancy asks how many copies reach the surface at a stated free-peptide concentration. Winning a
 groove does not imply reaching the copy number a T cell needs, and reaching it does not imply
@@ -176,8 +180,9 @@ whole corpus block gives the largest held-out gain of any recognition block.
 mechanism stays and gets a better basis, it does not get deleted for a *p*-value.
 ``C_corpus_viral`` stays because dropping it costs the other two channels their significance.
 
-**Terms that are computed and never scored.** ``pres``, ``dai``, ``agretopicity``, ``d_occupancy``,
-``wt_absent`` and any Kidera scale reachable through ``complement.burial(..., scale="KIDERA:KF4")``
+**Terms that are computed and never scored.** ``pres``, ``occupancy``, ``dai``, ``agretopicity``,
+``d_occupancy``, ``wt_absent`` and any Kidera scale reachable through
+``complement.burial(..., scale="KIDERA:KF4")``
 are all emitted for comparison and none is a fitted term. That separation is asserted in the test
 suite, not merely intended: nothing in that list may appear in ``rank.AGGREGATE_FEATURES``.
 
