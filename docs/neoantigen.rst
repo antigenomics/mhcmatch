@@ -15,8 +15,9 @@ The model
 ---------
 
 ``mhcmatch rank`` scores each candidate with the fitted aggregate vendored at
-``data/aggregate_mhc1.json``, which declares itself **EPIC**, version 4: nine terms in four
-**hierarchical blocks**, one unpenalised intercept per screen. Read the feature list from
+``data/aggregate_mhc1.json``, which declares itself **EPIC**: eight terms in four
+**hierarchical blocks**, one unpenalised intercept per screen. The artifact carries its own
+``version`` — a *model* version, an integer, distinct from the package version. Read the feature list from
 :data:`mhcmatch.rank.AGGREGATE_FEATURES` and the grouping from
 :data:`mhcmatch.rank.AGGREGATE_BLOCKS` rather than typing either out.
 
@@ -95,99 +96,90 @@ What the coefficients are
 -------------------------
 
 Standardised, so a coefficient is the log-odds shift per standard deviation of its own column and
-the sizes are directly comparable. **This is the vendored artifact**, EPIC v4
-(``data/aggregate_mhc1.json``), fitted on 354,909 rows / 958 immunogenic over 9 screens with one
-unpenalised intercept per screen and ridge :math:`\tau` = 0.25. ``z``, ``p`` and sign stability come
-from a cluster bootstrap over **(patient, screen)** — 4,022 clusters, 400 resamples — because rows
-from one patient share tumour, HLA and run.
+the sizes are directly comparable. One unpenalised intercept per screen, ridge :math:`\tau` = 0.25;
+``z``, ``p`` and sign stability come from a cluster bootstrap over **(patient, screen)** — 400
+resamples — because rows from one patient share tumour, HLA and run.
+
+**The values are not written down in these docs.** Six pages used to carry their own copy of this
+table and all six went stale together the first time the model was refitted, because nothing read
+them. The vendored artifact is the record, and the command line prints it:
+
+.. code-block:: bash
+
+   mhcmatch rank --coefficients    # every term, its block, its coefficient, z, p, sign stability
+   mhcmatch rank --holdout         # per-screen held-out AUROC, both grouped CVs, the fitted corpus
+
+.. code-block:: python
+
+   import json, importlib.resources as R
+   d = json.loads(R.files("mhcmatch.data").joinpath("aggregate_mhc1.json").read_text())
+   d["version"], d["features"], d["coef"], d["fit"]["rows"], d["fit"]["screens"]
+
+The manuscript's ``tables/epic_terms.tex`` is generated from that same artifact and is the citable
+form. What these docs carry instead is what each term *is*, which does not move when it is refitted.
 
 .. list-table::
    :header-rows: 1
-   :widths: 20 14 12 12 14 28
+   :widths: 22 16 62
 
    * - term
-     - coefficient
-     - *z*
-     - *p*
-     - sign stability
-     - reading
+     - block
+     - what it is
    * - ``expr_pct``
-     - **+0.3007**
-     - +5.46
-     - 4.6×10⁻⁸
-     - 100 %
-     - the largest term in the model — expression *rank* within the scored cohort
-   * - ``pres``
-     - +0.2200
-     - +6.23
-     - 4.6×10⁻¹⁰
-     - 100 %
-     - presentation ``%rank``, allele-relative
+     - expression
+     - expression *rank* within the scored cohort, 0.5 where there is no value
+   * - ``binder``
+     - presentation
+     - the calibrated Fisher combination of presentation ``%rank`` with the Potts affinity
+       ``%rank`` — a *within-allele* competition statement
    * - ``occupancy``
-     - +0.1206
-     - +6.84
-     - 8.2×10⁻¹²
-     - 100 %
-     - groove occupancy, absolute
+     - presentation
+     - groove occupancy at ``PEPTIDE_NM``, an *absolute* surface-density statement
    * - ``C_corpus_thymus``
-     - +0.1362
-     - +2.01
-     - 0.044
-     - 97 %
-     - danger
+     - corpus
+     - danger — density against the thymic immunopeptidome
    * - ``C_corpus_self``
-     - **−0.2636**
-     - −3.12
-     - 1.8×10⁻³
-     - 100 %
+     - corpus
      - the block's background — see :doc:`corpus`
    * - ``C_corpus_viral``
-     - +0.1474
-     - +1.78
-     - 0.075
-     - 97 %
-     - peripheral priming
+     - corpus
+     - peripheral priming — density against the foreign ligandome
    * - ``C_phys_buried``
-     - +0.1146
-     - +2.34
-     - 0.020
-     - 100 %
-     - burial over the TCR face
+     - physchem
+     - Rose burial over the TCR face, per residue
    * - ``C_phys_charge``
-     - −0.0634
-     - −1.21
-     - 0.225
-     - 90 %
-     - charge — see :doc:`burial`
+     - physchem
+     - Atchley AF5 charge over the TCR face — see :doc:`burial`
 
-Two entries are doing something other than what their row suggests, and both are documented rather
+``binder`` and ``occupancy`` are two necessary conditions, not one quantity measured twice. A
+``%rank`` asks whether a peptide out-competes the self peptidome its allele normally loads;
+occupancy asks how many copies reach the surface at a stated free-peptide concentration. Winning a
+groove does not imply reaching the copy number a T cell needs, and reaching it does not imply
+winning the groove — which is why they sit at Spearman :math:`\rho` = +0.7431 rather than 1.
+
+Two terms are doing something other than what their name suggests, and both are documented rather
 than tidied away:
 
-* ``C_phys_charge`` at *p* = 0.266 is **not** a failed term, and its own *p* is not the statistic
-  to read on it. It earns its place by what it does to its partner: burial beside Kidera KF4 was
-  not identified (one axis at r = −0.837, burial *p* = 0.064), and beside charge (r = +0.008)
-  burial's standard error halves and it resolves at *p* = 0.0202 on a smaller coefficient. Charge's
-  own sign stability rises to 87 % from KF4's 74 %. See :doc:`burial`.
+* ``C_phys_charge``'s own *p* is **not** the statistic to read on it. It earns its place by what it
+  does to its partner: burial beside Kidera KF4 was not identified (one axis at r = −0.837), and
+  beside charge (r = +0.008) burial's standard error halves and it resolves on a smaller
+  coefficient. See :doc:`burial`.
 * ``C_corpus_self``'s large negative coefficient is a **background subtraction**, not tolerance.
 
-Three things this table does not say, so read them here.
+Two more things no coefficient table says, so read them here.
 
 **A coefficient is conditional on its block being entered.** The blocks go in pipeline order, so a
 recognition coefficient is what the term is worth *after* presentation and expression. Adding the
-whole corpus block moves leave-one-screen-out mean AUROC from 0.6840 to **0.6927**, the largest gain
-of any recognition block.
+whole corpus block gives the largest held-out gain of any recognition block.
 
 **No term was dropped for being small.** The rule is replace-and-recalibrate: a term with a
-mechanism stays and gets a better basis, it does not get deleted for a *p*-value. ``C_corpus_viral``
-at *p* = 0.092 stays because dropping it costs the other two channels their significance.
+mechanism stays and gets a better basis, it does not get deleted for a *p*-value.
+``C_corpus_viral`` stays because dropping it costs the other two channels their significance.
 
-**What v4 changed, against the v3 it replaced.** Four terms respecified — ``binder`` → ``pres``,
-``C_phys_hydrop`` → ``C_phys_charge``, the corpus kernel Hamming → BLOSUM62, and ``C_phys_rose`` →
-``C_phys_buried`` (a rename). On identical rows at identical parameter count: BIC 4215.9 →
-**4172.4**, leave-one-screen-out mean 0.6432 → **0.6602**, median 0.6182 → **0.6385**. Seven of the
-nine screens rank higher held out. One regresses and is reported rather than absorbed: ITSNdb
-0.6500 → 0.6309 on 149 rows with 89 positives, under two units of that cell's own resolution
-(1/89 = 0.0112). ``bench/results/epic_v4_fit.md``.
+**Terms that are computed and never scored.** ``pres``, ``dai``, ``agretopicity``, ``d_occupancy``,
+``wt_absent`` and any Kidera scale reachable through ``complement.burial(..., scale="KIDERA:KF4")``
+are all emitted for comparison and none is a fitted term. That separation is asserted in the test
+suite, not merely intended: nothing in that list may appear in ``rank.AGGREGATE_FEATURES``.
 
 From a score to a probability
 -----------------------------

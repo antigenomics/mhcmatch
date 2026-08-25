@@ -321,9 +321,9 @@ def _(mo):
     mo.md(r"""
     ## What to take away
 
-    - **Give `select` the whole pool.** `expr_pct` (+0.3007) and `pres` (+0.2200) carry the two
-      largest coefficients in the shipped model, so a shortlist already cut on binding and expression
-      has no range left along them. Measured: on this exhaustive screen, responding at 0.0144,
+    - **Give `select` the whole pool.** Expression and presentation carry the largest coefficients
+      in the shipped model (`mhcmatch rank --coefficients`), so a shortlist already cut on binding
+      and expression has no range left along them. Measured: on this exhaustive screen, responding at 0.0144,
       selecting five units captures 3.92× the base rate. On TESLA's *nominated* list, responding at
       0.0612 — 4.25× the same rate — every rule sits at the base rate, because the selection had
       already been done to it.

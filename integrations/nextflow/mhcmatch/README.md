@@ -90,15 +90,21 @@ python -c "from mhcmatch import rank; print(' · '.join(rank.columns()))"
 features) is appended whenever the aggregate is what scored, because a model emits the features it
 used. **The schema changed in 0.24.0**: `rank` is now the rank *by score* rather than the row
 number, `p_response` and `variant_type` joined `BASE_COLUMNS`, and the aggregate's own columns went
-from three to five. **In 1.0.3 they are** `C_phys_buried`, `C_phys_charge`, `C_corpus_thymus`,
-`C_corpus_self`, `C_corpus_viral`, and `expr_pct` joined `BASE_COLUMNS`. Nothing downstream should
-be joining on position; ask the library — every stub in this module already does.
+from three to five. This file used to list them, and the list went stale the first time the model
+was refitted; ask the library instead, which is what every stub in this module already does:
+
+```bash
+python -c "from mhcmatch import rank; print(' · '.join(rank.AGGREGATE_COLUMNS))"
+mhcmatch rank --coefficients          # every fitted term, its block and its coefficient
+```
+
+Nothing downstream should be joining on position.
 
 `p_response` is `score` on a probability axis, anchored on `params.mhcmatch_prevalence` — the
 fraction of *this* candidate pool you expect to respond. It is a prior you own, not a model output:
 the fit gave every screen its own intercept precisely so base rate stayed out of the slopes, and the
-nine screens behind it span 0.0060 % to 59.7 % positive. It shifts every probability and moves no
-rank. Unset, the CLI uses TESLA's 37 of 615 (6.0 %).
+screens behind it span three orders of magnitude in prevalence. It shifts every probability and
+moves no rank. Unset, the CLI uses TESLA's 37 of 615 (6.0 %), which is `rank.POOL_PREVALENCE`.
 
 `params.mhcmatch_rank_extended` appends the fitted mimicry aggregate and its six signed channels;
 `params.mhcmatch_rank_annotate` appends what each channel's nearest reference peptide actually was,
@@ -230,10 +236,10 @@ From `slurm.config` only:
 ## Build the image (only for `-profile docker`)
 
 ```zsh
-docker build -t <ISPRAS_REGISTRY>/mhcmatch:1.0.3 \
-    --build-arg MHCMATCH_VERSION=1.0.3 \
+docker build -t <ISPRAS_REGISTRY>/mhcmatch:1.1.0 \
+    --build-arg MHCMATCH_VERSION=1.1.0 \
     integrations/nextflow/mhcmatch/
-docker push <ISPRAS_REGISTRY>/mhcmatch:1.0.3
+docker push <ISPRAS_REGISTRY>/mhcmatch:1.1.0
 ```
 
 No data staging: the build runs `mhcmatch bootstrap --reference`, which fetches the ligand panel
@@ -316,7 +322,7 @@ a conda interpreter is enough and is what `-profile conda` sidesteps entirely:
 
 ```bash
 /path/to/conda/envs/<env>/bin/python3 -m venv .venv && . .venv/bin/activate
-pip install mhcmatch==1.0.3
+pip install mhcmatch==1.1.0
 ```
 
 **Why the calibration directory is worth the trouble.** `mhcmatch` reports a %rank, which means each

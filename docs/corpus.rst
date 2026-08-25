@@ -28,22 +28,22 @@ fitted signs before anything is estimated.
    * - channel
      - what a T cell does with it
      - reads as
-     - shipped coefficient (EPIC v4)
+     - sign in the shipped fit
    * - ``thymus``
      - The thymic immunopeptidome --- self displayed on MHC in the thymus. **The only one of the
        three that enters selection.**
      - danger
-     - ``+0.1362`` (*z* +2.01)
+     - ``+``
    * - ``self``
      - The host proteome. Encoded, with no guarantee of presentation; the self a mature T cell meets
        in the periphery, where tolerance is maintained rather than established.
      - the block's background, not tolerance --- see below
-     - ``-0.2636`` (*z* -3.12)
+     - ``-``
    * - ``viral``
      - A foreign presented ligandome. **A thymocyte never sees this during selection.** A hit is
        about peripheral priming --- a different mechanism.
      - reference only
-     - ``+0.1474`` (*z* +1.78)
+     - ``+``
 
 Why the thymic channel is positive
 ----------------------------------
@@ -290,7 +290,7 @@ All three channels, and why all three are scored
 
 ``components=`` selects the channels, and since EPIC v3 the shipped aggregate has read **all
 three**;
-since v4 it reads them under the graded BLOSUM62 kernel.
+since artifact v4 it reads them under the graded BLOSUM62 kernel.
 
 .. code-block:: python
 
@@ -308,8 +308,8 @@ The three are **not independent**, and the next section is what that turns out t
 ``self`` is the block's background term, not a third measurement
 -----------------------------------------------------------------
 
-``C_corpus_self`` fits at **−0.2636** (*z* −3.12, *p* = 1.8×10⁻³) while its own marginal AUROC is
-**0.4662**, below chance. A large, highly significant coefficient on a column that predicts nothing
+``C_corpus_self`` fits with a large, highly significant negative coefficient while its own marginal
+AUROC is **0.4662**, below chance. A large, highly significant coefficient on a column that predicts nothing
 by itself has two readings, and they matter for how the score should be explained to a user:
 
 1. **tolerance** --- resembling the proteome genuinely lowers the odds of a response; or
@@ -319,7 +319,7 @@ by itself has two readings, and they matter for how the score should be explaine
 The three channels correlate **+0.70 to +0.79**, so both readings fit the full model equally well.
 What tells them apart is dropping partners: a tolerance measurement keeps its sign and its size
 alone, a background term does not. Every non-empty subset, entered on the same base block, at the
-shipped v4 :math:`\kappa` = (1.65, 0.65, 1.35), and read off the **same** 400 cluster resamples ---
+shipped :math:`\kappa` = (1.65, 0.65, 1.35), and read off the **same** 400 cluster resamples ---
 one bootstrap for all eight designs, so a coefficient that grows when a partner is added grew on the
 same resampled patients (``bench/results/epic_corpus_decor.md``):
 
@@ -540,10 +540,10 @@ channels of three because a proteome index was unaffordable under a search.
 
 Re-run as a contraction with an identity-normalised kernel,
 :math:`K[u,x] = e^{\kappa(\sigma(u,x) - \sigma(u,u))}` so :math:`K[u,u] = 1` exactly, the graded
-kernel **wins**: leave-one-screen-out mean 0.6452 and median 0.6275, against 0.6440 and 0.6197 for
-Hamming under an identical :math:`\kappa`-refit protocol. :func:`~mhcmatch.mimicry.blosum62_kernel`
-builds it and :func:`~mhcmatch.mimicry.contract` takes it. **The corpus channels are BLOSUM62 from
-v4 on**; Hamming is kept so pre-0.27 results reproduce.
+kernel **wins** on leave-one-screen-out mean and median alike, under an identical
+:math:`\kappa`-refit protocol on identical rows (``bench/results/epic_corpus_kernel.md``). :func:`~mhcmatch.mimicry.blosum62_kernel`
+builds it and :func:`~mhcmatch.mimicry.contract` takes it. **The corpus channels have been BLOSUM62 since
+artifact v4**; Hamming is kept so earlier results reproduce.
 
 Two variants do **not** pay, and both are informative. Wildcarding the anchors *in place* instead of
 slicing them out costs at least 0.014 of leave-one-screen-out mean under **both** kernels, and is

@@ -125,38 +125,53 @@ released; elsewhere it is absent rather than accepted and ignored.
 nothing left to cache. `$MHCMATCH_PMHC_DIR` and `$MHCMATCH_CALIBRATION_CACHE` are the two a cluster
 still wants; `integrations/nextflow/mhcmatch/slurm.config` exports both.
 
-## The shipped scorer (2026-08-21)
+## The shipped scorer
 
-`EPIC` **v4** — eight terms in four **hierarchical blocks**, entered in pipeline order so a
-recognition coefficient is what it is worth *after* presentation and expression. Vendored at
-`data/aggregate_mhc1.json`; `mhcmatch rank` scores with it by default. 354,909 rows / 958 positive /
-9 screens, per-screen intercept, `tau = 0.25`. **Leave-one-screen-out mean AUROC 0.6688, median
-0.6497** over the seven screens with at least 20 held-out positives; twin-grouped five-fold CV
-0.6497. Eight terms.
+`EPIC` — eight terms in four **hierarchical blocks**, entered in pipeline order so a recognition
+coefficient is what it is worth *after* presentation and expression. Vendored at
+`data/aggregate_mhc1.json`; `mhcmatch rank` scores with it by default. Per-screen intercept,
+`tau = 0.25`, leave-one-screen-out holdout.
 
-| block | term | coefficient | z | p | sign stability |
-|---|---|--:|--:|--:|--:|
-| `presentation` | `pres` | +0.2200 | +6.23 | 4.6e-10 | 100 % |
-| `presentation` | `occupancy` | +0.1206 | +6.84 | 8.2e-12 | 100 % |
-| `expression` | `expr_pct` | **+0.3007** | +5.46 | 4.6e-08 | 100 % |
-| `physchem` | `C_phys_buried` | +0.1146 | +2.34 | 0.020 | 100 % |
-| `physchem` | `C_phys_charge` | −0.0634 | −1.21 | 0.225 | 90 % |
-| `corpus` | `C_corpus_thymus` | +0.1362 | +2.01 | 0.044 | 97 % |
-| `corpus` | `C_corpus_self` | **−0.2636** | −3.12 | 0.002 | 100 % |
-| `corpus` | `C_corpus_viral` | +0.1474 | +1.78 | 0.075 | 97 % |
+**Do not copy the coefficients into this file.** They moved three times in two months and every
+transcription of them went stale; the artifact is the record and the CLI prints it:
 
+```bash
+mhcmatch rank --coefficients     # every term, its block, its coefficient
+mhcmatch rank --holdout          # per-screen AUROC, the two grouped CVs, the corpus it was fit on
+```
+
+The four blocks and what each reads:
+
+| block | terms | what it is |
+|---|---|---|
+| `presentation` | `binder`, `occupancy` | a within-allele competition rank, and an absolute surface density |
+| `expression` | `expr_pct` | the expression percentile *within the scored cohort* |
+| `physchem` | `C_phys_buried`, `C_phys_charge` | Rose burial and Atchley AF5 charge over the TCR face, per residue |
+| `corpus` | `C_corpus_thymus`, `C_corpus_self`, `C_corpus_viral` | density of each reference corpus around the TCR face |
+
+- **`binder`, not `pres`, since artifact v6.** `binder` is the calibrated Fisher combination of the
+  presentation %rank with the Potts affinity %rank. It sits beside `occupancy` rather than
+  duplicating it: a %rank is a *within-allele* rank asking whether a peptide out-competes the self
+  peptidome an allele loads, where occupancy is absolute — how many copies reach the surface at
+  `PEPTIDE_NM`. Winning a groove does not imply reaching the copy number. Measured, rho(occupancy,
+  binder) = +0.7431 where rho(pres, binder) = +0.8797.
+- **Computed but never scored.** `pres`, `dai`, `agretopicity`, `d_occupancy`, `wt_absent`, the
+  Luksza amplitude and any Kidera scale (`burial(..., scale="KIDERA:KF4")`) are all reachable and
+  emitted for comparison; none is a fitted term, and `tests/test_rank.py` asserts that none of them
+  appears in `AGGREGATE_FEATURES`.
 - **`expr_pct` is a rank, not a level.** The expression percentile *within the scored cohort*,
   0.5 where there is no value. It is unit-free — TPM, FPKM and raw counts give the same column —
   and it needs no missingness indicator, because 0.5 is what "no information" means on a
   percentile scale. The consequence to know: the term is **cohort-relative**, so a peptide's score
   depends on what else was submitted with it.
-- **Read the block test, not the per-term `z`.** The three corpus channels run +0.73 to +0.77, so a
-  conditional `z` splits one shared axis across several coefficients and understates all of them.
-  The block likelihood ratios are physchem χ²(2) = 14.2 (p = 8.1e-4) and corpus χ²(3) = 14.4
-  (p = 2.4e-3), both **after** presentation and expression. The chemistry block is *not* collinear
-  since v4 — burial against charge is r = +0.008, where the v3 burial/hydropathy pair was −0.837.
-  basis (same span, max |Δη| = 3.1e-3); reversing the order inside a block moves the significance
-  to the other member, which is what a shared axis looks like.
+- **Read the block test, not the per-term `z`.** The three corpus channels run +0.73 to +0.77
+  against each other, so a conditional `z` splits one shared axis across several coefficients and
+  understates all of them. Each block carries a likelihood-ratio test against the model without it,
+  taken **after** presentation and expression; the current values are in the manuscript's
+  `appendix/epic_ladder.tex`, which is generated, rather than transcribed here. Reversing the order
+  of two terms inside a block moves the significance to the other member, which is what a shared
+  axis looks like. The chemistry block itself is *not* collinear — burial against charge is
+  r = +0.008, where the burial/hydropathy pair it replaced was −0.837.
 - **`C_corpus` is exact and searches nothing.** The Łuksza weight factorises over positions, so the
   sum over the whole reference set is a k-mer table contraction: 2.3 ms for 340,876 queries against
   ~46,000 ms, agreeing with a literal all-vs-all to 5.5e-16 where the radius-2 search it replaced

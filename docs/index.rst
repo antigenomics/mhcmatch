@@ -72,8 +72,8 @@ Capabilities
   :doc:`complementarity`.
 - **Mimicry as risk** — viral / self / thymus resemblance split by anchor and TCR-facing channel,
   as signed log-odds rather than a single distance.
-- **Neoantigen ranking** — the fitted ``EPIC`` aggregate, **eight terms in the shipped v4**:
-  presentation rank and equilibrium occupancy, the within-batch expression percentile ``expr_pct``
+- **Neoantigen ranking** — the fitted ``EPIC`` aggregate, **eight terms in four blocks**: the
+  calibrated ``binder`` rank and equilibrium occupancy, the within-batch expression percentile ``expr_pct``
   (one term, no missingness flag), the two chemistry axes ``C_phys_buried`` and ``C_phys_charge``,
   and all three corpus channels ``C_corpus_thymus`` / ``_self`` / ``_viral``. Agretopicity and
   near-exact matches to already-tested neoantigens are reported beside the score rather than in it

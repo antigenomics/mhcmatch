@@ -307,9 +307,10 @@ all **576** candidate columns (every vendored residue vector × {anchor, TCR} ×
 *inside* the general model keeps exactly one: **the Rose burial propensity summed over the TCR
 face**, at z **+4.57** — the second-largest coefficient of the ten-term model it was selected in,
 behind expression alone — against the sixteen-column chemistry block's +0.18 in the same slot. In
-the shipped eight-term v4 it is `C_phys_buried` at **+0.1146 (z +2.34, p = 0.020)**: the larger of
-the block's two fitted terms, and smaller than at selection because the corpus block now carries
-three coefficients it previously shared one with. Rose's scale is not a hydrophobicity scale
+the shipped eight-term model it is `C_phys_buried`, the larger of the block's two fitted terms, and
+smaller than at selection because the corpus block now carries three coefficients it previously
+shared one with (`mhcmatch rank --coefficients` prints the current value; this file no longer
+transcribes it, having carried a superseded one across two refits). Rose's scale is not a hydrophobicity scale
 — it is the mean fraction of solvent-accessible area a residue loses on folding ([Rose et al.,
 *Science* 1985](https://doi.org/10.1126/science.4023714)) — so summed over the exposed face it
 scores the area a receptor *could* bury. Because its basis is imported rather than fitted it cannot
@@ -326,12 +327,11 @@ hydropathy scale is burial measured a second way and the two are not identified.
 with Kidera KF4 at *r* = **−0.837** per peptide; AF5 sits at **+0.008**. Swapping the partner
 leaves burial's coefficient *smaller* and its evidence *stronger*, which is what dropping a
 collinear term does: bootstrap sd **0.0874 → 0.0487**, *z* **+1.71 → +2.34**, *p* **0.088 →
-0.020**, sign stability **96.5% → 100%**, over 400 cluster bootstraps on the same 354,909 rows and
-958 immunogenic peptides. AF5 also carries the **lowest cysteine loading of the 141 complete
+0.020**, sign stability **96.5% → 100%**, over 400 cluster bootstraps on the 354,909 rows and 958
+immunogenic peptides the corpus held when the swap was measured. AF5 also carries the **lowest cysteine loading of the 141 complete
 residue scales swept, −0.0028**, which matters because the Chowell family runs a 12.5×
-mass-spectrometry cysteine enrichment a fitted basis can learn. Its own coefficient is small and
-not individually significant (**−0.0634, z −1.21, p = 0.225**) — the column being fixed here is
-burial, not the one swapped in. `mhcmatch.complement.PHYS_SCALE_CHARGE` names the scale;
+mass-spectrometry cysteine enrichment a fitted basis can learn. Its own coefficient is the smaller of the
+two — the column being fixed here is burial, not the one swapped in. `mhcmatch.complement.PHYS_SCALE_CHARGE` names the scale;
 [docs/burial.rst](docs/burial.rst) carries the arms table.
 
 Four opt-in parameters came out of that work, all defaulting to the shipped behaviour so no recorded
@@ -347,11 +347,14 @@ a statement about *passing thymic selection*, not about whether a T cell respond
 mutation. `mimicry.corpus_R` replaces it with a label-free neighbour density against three
 references, split by *when a T cell meets them*:
 
-| channel | what it is | reads as | fitted coefficient (EPIC v4) |
-|---|---|---|--:|
-| `thymus` | thymic immunopeptidome — **the only one that enters selection** | danger | +0.1362 (z +2.01) |
-| `self` | host proteome, met in the periphery | tolerance | −0.2636 (z −3.12) |
-| `viral` | foreign ligandome — **never seen during selection** | reference | +0.1474 (z +1.78) |
+| channel | what it is | reads as | sign in the shipped fit |
+|---|---|---|:--:|
+| `thymus` | thymic immunopeptidome — **the only one that enters selection** | danger | + |
+| `self` | host proteome, met in the periphery | tolerance | − |
+| `viral` | foreign ligandome — **never seen during selection** | reference | + |
+
+(`mhcmatch rank --coefficients` for the magnitudes. Signs are what the argument rests on, and all
+three have held at 100 % of 400 cluster bootstrap resamples across every refit.)
 
 The thymic channel is positive because the thymus is not a random sample of self: mTECs
 promiscuously express tissue-restricted antigens under *Aire* and *Fezf2* precisely to purge the
@@ -439,34 +442,34 @@ not recognition. Exclusion goes through `vector.self_origin_risk`
 
 **E**xpression, **P**resentation, **I**mmunogenic **C**omplementarity. Four letters, four blocks,
 entered in that pipeline order — so a later block's coefficient is what that term is worth *after*
-the earlier ones, not in competition with them. Shipped coefficients are **v4**, fitted on
-354,909 candidate rows / 958 positives across 9 screens, ridge with an unpenalised per-screen
-intercept at `tau = 0.25`; `sd`, `z`, `p` and the 95 % CI are a 400-resample cluster bootstrap over
-(patient, screen):
+the earlier ones, not in competition with them. Ridge with an unpenalised per-screen intercept at
+`tau = 0.25`; `sd`, `z`, `p` and the 95 % CI are a 400-resample cluster bootstrap over
+(patient, screen).
 
-| letter | block | column | coefficient | z | p |
-|---|---|---|--:|--:|--:|
-| `P` | presentation | `pres` | +0.2200 | +6.23 | 4.6×10⁻¹⁰ |
-| `P` | presentation | `occupancy` | +0.1206 | +6.84 | 8.2×10⁻¹² |
-| `E` | expression | `expr_pct` | **+0.3007** | +5.46 | 4.6×10⁻⁸ |
-| `I` | immunogenic — physchem | `C_phys_buried` | +0.1146 | +2.34 | 0.020 |
-| `I` | immunogenic — physchem | `C_phys_charge` | −0.0634 | −1.21 | 0.225 |
-| `C` | complementarity — corpus | `C_corpus_thymus` | +0.1362 | +2.01 | 0.044 |
-| `C` | complementarity — corpus | `C_corpus_self` | −0.2636 | −3.12 | 1.8×10⁻³ |
-| `C` | complementarity — corpus | `C_corpus_viral` | +0.1474 | +1.78 | 0.075 |
+| letter | block | columns |
+|---|---|---|
+| `P` | presentation | `binder`, `occupancy` |
+| `E` | expression | `expr_pct` |
+| `I` | immunogenic — physchem | `C_phys_buried`, `C_phys_charge` |
+| `C` | complementarity — corpus | `C_corpus_thymus`, `C_corpus_self`, `C_corpus_viral` |
 
-The artifact is the source of truth, not this table — `coef`, `sd`, `z`, `p`, `ci95` and the whole
-fit record are in it, and `rank.AGGREGATE_BLOCKS` is the same block structure at runtime:
+**The coefficients are not written down here.** They moved with every refit and this table went on
+quoting a superseded set for a full release each time. Ask the artifact, which is the record:
+
+```bash
+mhcmatch rank --coefficients     # every term, its block, its coefficient
+mhcmatch rank --holdout          # per-screen AUROC, the two grouped CVs, the fit's own corpus
+```
 
 ```python
 import json, importlib.resources as R
 d = json.loads(R.files("mhcmatch.data").joinpath("aggregate_mhc1.json").read_text())
-d["model"], d["version"], d["features"], d["coef"]      # 'EPIC', 4, [...], {...}
+d["model"], d["version"], d["features"], d["coef"], d["fit"]["rows"], d["fit"]["screens"]
 ```
 
-(`mhcmatch mimicry --coefficients` prints the *mimicry* model's; the aggregate has no CLI equivalent
-yet.) The letters are a mnemonic for the blocks, **not** the fitting order — presentation enters
-before expression, and every conditional coefficient is reported against that order.
+`rank.AGGREGATE_BLOCKS` is the same block structure at runtime. The letters are a mnemonic for the
+blocks, **not** the fitting order — presentation enters before expression, and every conditional
+coefficient is reported against that order.
 
 ### Presentation and affinity are not the same term
 
@@ -538,12 +541,14 @@ Pseudosequences (34-mer grooves) and the fitted model parameters are vendored in
 
 ## Deployment
 
-`integrations/nextflow/mhcmatch/` is a self-contained nf-core-style module — **five processes**
-(`MHCMATCH_PREDICT`, `_RANK`, `_NEOAG`, `_MIMICRY`, `_VECTOR`) plus a `subworkflows/mhcmatch.nf`
+`integrations/nextflow/mhcmatch/` is a self-contained nf-core-style module — **six processes**
+(`MHCMATCH_PREDICT`, `_RANK`, `_NEOAG`, `_MIMICRY`, `_CASSETTE`, `_CASSETTE_SCORE`) plus a
+`subworkflows/mhcmatch.nf`
 that chains them, with `nextflow.config`, a `slurm.config` executor profile, `environment.yml` and a
 `Dockerfile`. `PREDICT` drops in for MHCflurry class I and the class-II binding subworkflow,
 consuming the same `(meta, peptide.fasta, alleles)` channel and emitting a pipeline-compatible
-57-column `.scored.csv`; the other four cover ranking, prior evidence, safety and cassette assembly,
+57-column `.scored.csv`; the other five cover ranking, prior evidence, safety, cassette assembly
+and cassette scoring,
 which have no incumbent. No stub types a column header — each asks the installed library for its own
 schema, so `-stub-run` cannot drift from the real shape. The image bootstraps its panel at **build**
 time, so compute nodes need no network.

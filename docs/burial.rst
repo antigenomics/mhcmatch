@@ -334,9 +334,12 @@ Burial's coefficient gets *smaller* and its evidence gets *stronger*, which is w
 collinear partner does — the standard error halves, and the collinearity is gone. The pair is
 orthogonal without any rotation, so the two columns keep their physical names.
 
-**Rose + AF5 is what ships.** 354,909 rows / 958 positives over nine screens, 400 cluster
-bootstraps. KF4 stays in :data:`mhcmatch.rank.PHYS_COLUMNS` and is still computed and emitted, so
-every number recorded under the KF4 arm keeps its meaning.
+**Rose + AF5 is what ships.** The arm above was measured on the 354,909 rows / 958 positives over
+nine screens the corpus held at the time, 400 cluster bootstraps; the shipped fit has moved since
+and :data:`mhcmatch.rank.PHYS_COLUMNS` names the two scales it currently carries. KF4 itself is not
+retired — ``complement.burial(peptides, scale="KIDERA:KF4")`` computes it, as does any of the other
+vendored residue vectors, so every number recorded under the KF4 arm keeps its meaning and the
+comparison stays runnable. What changed is which two the model *fits*.
 
 Charge is also the axis a structure argues for. In the MART-1 decamer ELAGIGILTV the P1 glutamate
 contacts germline TCR α CDR1 in **eight of nine** native complexes — a positive Arg partner in three
@@ -355,10 +358,10 @@ next to the major one. Recorded as measured.
 Which ships
 ~~~~~~~~~~~
 
-**The vendored artifact is EPIC v4 and carries Rose + AF5** (``C_phys_buried`` and
-``C_phys_charge``). It was selected on BIC 4173.3 → 4172.4, leave-one-screen-out mean
+**The vendored artifact carries Rose + AF5** (``C_phys_buried`` and
+``C_phys_charge``). The pair was selected on BIC 4173.3 → 4172.4, leave-one-screen-out mean
 0.6583 → 0.6602 and median 0.6309 → 0.6385, and CV 0.6307 → 0.6386 grouped on peptide and
-0.6309 → 0.6385 on twin group, against the KF4 arm on identical rows at nine terms either way ---
+0.6309 → 0.6385 on twin group, against the KF4 arm on identical rows at equal parameter count ---
 and, the reason for the swap, on **burial** going from *p* = 0.064 at 98 % sign stability to
 *p* = 0.0202 at 100 %.
 

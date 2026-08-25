@@ -392,7 +392,8 @@ Where it sits in the ranker
 
 ``EPIC`` does not carry the thirty-column score directly. It carries the **two factors that score
 reduces to**: ``C_phys`` (:doc:`burial`) and the ``C_corpus`` channels (:doc:`corpus`), measured
-over 354,909 rows and 958 positives (``bench/results/epic_recognition_terms.md``, and
+over the 354,909 rows and 958 positives the corpus held when it was measured
+(``bench/results/epic_recognition_terms.md``, and
 :doc:`neoantigen` for the shipped model end to end). The thirty-column score is what
 :func:`mhcmatch.recognition.score` computes when no head is named, and it is the axis this page
 documents — it is not itself a term of the ranker.
