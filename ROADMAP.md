@@ -14,29 +14,52 @@ the build plan. Phase sections marked _(TBD)_ await detail.
 > tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
 > below resolve there, not here.
 
-## Where this stands, 2026-08-25 — released 1.0.5, and what the manuscript is waiting on
+## Where this stands, 2026-08-25 — released 1.0.6
 
-**Shipped at 1.0.5** (see `CHANGELOG.md`): a restriction cell holding a whole genotype is read as
-the alleles it names. This was one cause with two failures — rows returning `NaN` for `presentation`,
-`binder` and `occupancy` *scored above* rows that resolved, because `aggregate_score` substitutes a
-missing term at the training mean; and an uncached `resolve_allele` miss cost ~6.7 s per
-unresolvable name inside a calibration build. **NCI: 1 h 40 m -> 63 s, 15,023 `NaN` rows -> 0.**
-Also landed: `allele_scored` as a distinct column, the recognition axis batched once per candidate
-list, `pseudo_matrix` on `AnchorModel` over seqtree's five log-odds matrices, and a
-**Karlin-Altschul lambda fix** — the substitution conditional had hardcoded half-bits for every
-matrix, which inverted the conservatism ordering a matrix sweep exists to test.
+**Shipped at 1.0.5:** a restriction cell holding a whole genotype is read as the alleles it names.
+One cause, two failures — rows returning `NaN` for `presentation`, `binder` and `occupancy` *scored
+above* rows that resolved, because `aggregate_score` substitutes a missing term at the training
+mean; and an uncached `resolve_allele` miss cost ~6.7 s per unresolvable name inside a calibration
+build. **NCI: 1 h 40 m → 63 s, 15,023 `NaN` rows → 0.** Also landed: `allele_scored` as a distinct
+column, the recognition axis batched once per candidate list, `pseudo_matrix` on `AnchorModel` over
+seqtree's five log-odds matrices, and a **Karlin–Altschul λ fix** — the substitution conditional had
+hardcoded half-bits for every matrix, which inverted the conservatism ordering a matrix sweep exists
+to test.
 
-**Three open loops the manuscript is tracking**, recorded in
-`../../manuscripts/2026-mhcmatch/caveats.md` with stable IDs:
+**Shipped at 1.0.6:** `data/aggregate_mhc1.json` refitted on the rebuilt corpus as artifact
+version 5 — 681,605 rows and 1,256 validated-immunogenic peptides over 9 screens, against
+354,909 / 958 before. The specification is unchanged; the data under it moved.
+
+**Nothing about an allele name is decided outside this library any more.** `rank.split_alleles`,
+`pseudoseq.resolve_allele` and `rank.species_of` are the whole surface, which is what lets the
+benchmark repo rebuild its corpus from `pip install mhcmatch` with no helper of its own. Keep it
+that way: a repair that lands in an analysis repo is a repair every other consumer misses.
+
+**The mouse corpus preset already ships and needs no work.** `data/corpus_tables.npz` vendors all
+six tables — thymus, self and viral, human and mouse — `mimics.SPECIES_REFS[("thymus", "mouse")]`
+routes the mouse thymic deposit, `corpus_counts` branches `self` → `self_mouse`, and `self_species`
+is in the memo key so a human and a mouse run cannot collide. A benchmark defect that passed
+`human` for a mouse row looked like a missing preset and was not one.
+
+### Coverage added this pass
+
+`tests/test_aggregate_terms.py` — nine tests pinning every fitted term to the column it reads, so
+the wiring cannot drift from the artifact: the feature list matches the artifact; `pres` moves the
+score and `binder` provably does not; occupancy's direction matches its coefficient; `expr_pct` is
+invariant to monotone rescaling and takes 0.5 when absent; `PHYS_COLUMNS` matches the artifact's own
+scales; the corpus geometry travels with the coefficients; a missing corpus channel raises; and the
+intercept is per-screen and null. One trap worth knowing: `rank._finish` **sorts the list in place**,
+so indexing by original position after it reads whichever row scored highest.
+
+### Two open loops, neither blocking
 
 | id | what | where it lands |
 |---|---|---|
-| **F2** | the shipped EPIC fit rests on a corpus built *before* the allele repair — 3.34 % of rows still hold a multi-allele string and 6.88 % have no `pres`. Refitting is an author decision, not a library one; the scoring path that made it expensive is now fixed, so the rebuild is cheap | benchmark repo |
-| **F3** | `agretopicity` names two quantities with opposite sign under one attribute | §6c, here |
-| **F4** | `occupancy` reads a predicted IC50 as a Kd, undocumented | §6c, here |
+| **F3** | `agretopicity` names two quantities under one attribute: `Prediction.agretopicity` is $K_d^{MT}/K_d^{WT}$ and `Ranked.agretopicity` is $\log_{10}(K_d^{WT}/K_d^{MT})$ — a raw ratio one way against a log ratio the other, both reaching user-facing tables. The clean fix is to make `Ranked` use the name it already computes, `dai`, matching `Prediction.dai` exactly, with `agretopicity` kept as an alias | §6c, here. An API change: next minor bump |
+| **F4** | `occupancy` reads a predicted competition IC50 as a true $K_d$ in a Langmuir expression, flagged nowhere. And its low tail is one tied mass point: `y_to_ic50` clamps to [1, 50000] nM, so 23.6 % of rows share occupancy $1.9996\times10^{-4}$ exactly | a docstring, same bump |
 
-**The library is not blocked on any of these.** F3 is a naming fix, F4 a docstring, F2 belongs to the
-benchmark repo's corpus build.
+Both are tracked in the manuscript repo's `issues_minor.md`. The corpus refit that used to sit here
+as `F2` is closed.
 
 ## 0. What mhcmatch is
 

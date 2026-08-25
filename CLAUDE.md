@@ -3,6 +3,14 @@
 **Authoritative context lives elsewhere — read it first:**
 - [`ROADMAP.md`](ROADMAP.md) — the agent contract: what mhcmatch is, phase status, open loops.
 - `../../manuscripts/2026-mhcmatch/appendix/mhcmatch.tex` — the method/statistics spec (manuscript repo).
+- `../../manuscripts/2026-mhcmatch/results/CURRENT.md` — every published number and which artifact
+  it belongs to; `issues_major.md` beside it holds the decisions that are the author's, and
+  `issues_minor.md` the repairs already applied. Two of those, `F3` and `F4`, are library work.
+
+**The shipped scorer is artifact version 5 in library 1.0.6.** A deduplicated candidate exists in
+the benchmark repo and is deliberately not installed — see `issues_major.md` M1. Do not copy it over
+`src/mhcmatch/data/aggregate_mhc1.json` without the author's word: it moves every number in the
+manuscript.
 
 This file captures only *how we work in the repo*.
 
