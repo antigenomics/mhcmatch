@@ -710,10 +710,14 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
     """
     if score == "aggregate":
         a = aggregate()
-        # `aggregate_score` takes only the names the artifact's `features` list asks for.
-        # `d_occupancy` and `wt_absent` are emitted and measured but not fitted -- neither earned
-        # its parameter -- so they are supplied here and simply not read.
+        # `aggregate_score` takes only the names the artifact's `features` list asks for, so this
+        # dict is deliberately a superset: it carries every name any shipped generation has asked
+        # for, and one library scores them all. `pres` and `binder` are both here because the
+        # fitted presentation term moved from the first to the second at artifact version 6, and
+        # `d_occupancy` and `wt_absent` are emitted and measured but have never earned a parameter.
+        # A name in here that the artifact does not declare is simply not read.
         cols = {"pres": [r.presentation for r in rows],
+                "binder": [r.binder for r in rows],
                 "occupancy": [r.occupancy for r in rows],
                 "d_occupancy": [r.d_occupancy for r in rows],
                 "wt_absent": [float(r.wt_absent) for r in rows],
