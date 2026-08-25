@@ -147,7 +147,11 @@ The commands, by axis
        ``--coefficients`` prints the fitted model itself as TSV --- block, term, coefficient,
        Laplace and bootstrap sd, *z*, *p*, the 95 % cluster-bootstrap interval and sign
        stability --- and ``--holdout`` prints its leave-one-screen-out and cross-validated
-       AUROCs. Both read ``data/aggregate_mhc1.json``, the artifact the benchmark fitted and
+       AUROCs. The fitted density term is ``log10a``, occupancy's log-odds, which the table does
+       not carry as its own column because it is a deterministic transform of one that is there:
+       ``log10a = log10(occupancy / (1 - occupancy))``. Emitting both would widen every table to
+       print one quantity twice.
+       Both read ``data/aggregate_mhc1.json``, the artifact the benchmark fitted and
        this package ships, so a figure built on them and a run of ``rank`` are the same model
        by construction. Neither scores anything, and neither needs a *mode* or an *input*.
        **The aggregate computes every one of its features before scoring** — a model emits the
