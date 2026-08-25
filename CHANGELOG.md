@@ -6,6 +6,49 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [1.0.6] --- 2026-08-25
+
+**⚠ The shipped neoantigen scorer is refitted.** Every coefficient moves.
+
+### Changed
+
+- **`data/aggregate_mhc1.json` is version 5, refitted on a rebuilt corpus**:
+  **681,605 rows / 1,256 validated-immunogenic peptides over
+  9 screens**, against 354,909 / 958 before. The specification is
+  unchanged --- the same eight terms in the same four blocks --- and what moved is the data under
+  it. Two defects in the corpus build did it:
+
+  A restriction cell naming a whole genotype was normalised **as an allele**, so `B0801,C0701`
+  became `HLA-B*08:010701`, resolved to nothing, and the row came back `NaN` in `presentation`,
+  `binder` and `occupancy`. `aggregate_score` substitutes a missing term at the training mean, so
+  25,005 of 363,324 rows did not merely score badly --- they scored *above* the rows that resolved.
+  And the dedup key had no cohort in it, so a peptide tested by two screens collapsed into one row
+  whose screen label came from deposit order.
+
+  | term | 1.0.5 | 1.0.6 |
+  |---|--:|--:|
+  | `pres` | +0.2200 | **+0.4733** |
+  | `occupancy` | +0.1206 | **+0.1728** |
+  | `expr_pct` | +0.3007 | **+0.3724** |
+  | `C_phys_buried` | +0.1146 | **+0.1057** |
+  | `C_phys_charge` | -0.0634 | **-0.1237** |
+  | `C_corpus_thymus` | +0.1362 | **+0.2505** |
+  | `C_corpus_self` | -0.2636 | **-0.4693** |
+  | `C_corpus_viral` | +0.1474 | **+0.1845** |
+
+  Every sign holds and every interval excludes zero except `C_phys_buried`, whose sign is stable at
+  97 %. Held out one screen at a time the mean AUROC is 0.6971 against 0.6688, and
+  **all nine screens now decide**: NCI and Neopep carried 6 and 19 held-out positives and now carry
+  100 and 159, because rows that used to score `NaN` are scored and a peptide tested by two screens
+  is two observations again. Rescored through `rank pairs`, the composite beats its own
+  presentation head on **all nine** (median 0.6615 against 0.5992, gains +0.0070 to +0.1224).
+
+  `former_name: GRAND` is dropped. There is one name.
+
+- **The four vendored artifacts still stamped 1.0.5 are rebuilt, not re-stamped.** `resolve_allele`
+  changed in this release and the anchor models are keyed per allele, so "nothing moved" was an
+  assumption rather than a fact.
+
 ## [1.0.5] --- 2026-08-25
 
 A restriction cell holding a whole genotype is now read as the alleles it names.

@@ -182,15 +182,15 @@ def aggregate() -> dict:
     """The fitted ``EPIC`` artifact: features, coefficients, and the standardizer.
 
     **EPIC** -- Expression, Presentation, Immunogenic Complementarity --
-    names the four blocks the nine columns are fitted in, not the order they enter in; the pipeline
+    names the four blocks the eight columns are fitted in, not the order they enter in; the pipeline
     order is presentation, expression, physchem, corpus, and the two recognition blocks are the two
     halves of Complementarity.
 
-    Fitted by ``bench/immuno/epic_v4_fit.py`` over nine neoantigen screens (354,909 rows / 958
-    positive) as a ridge logistic regression with an unpenalised **per-screen intercept**, which
-    also writes this file; ``bench/run_epic.sh`` is the whole chain that leads to it.
+    Fitted by ``bench/epic/fit.py`` over nine neoantigen screens (681,605 rows / 1,256 positive)
+    as a ridge logistic regression with an unpenalised **per-screen intercept**, which also writes
+    this file; ``bench/run_epic.sh`` is the whole chain that leads to it.
 
-    **Version 4 is hierarchical and Complementarity is kept whole.** The nine columns enter in four
+    **EPIC is hierarchical and Complementarity is kept whole.** The eight columns enter in four
     blocks, in pipeline order, each on top of the last -- see :data:`AGGREGATE_BLOCKS`. A
     recognition coefficient is therefore what the term is worth *after* presentation and expression,
     not in competition with them.

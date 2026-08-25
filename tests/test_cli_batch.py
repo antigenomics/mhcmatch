@@ -235,8 +235,12 @@ def test_rank_holdout_dumps_every_screen_and_both_cross_validations(capsys):
     m = R.aggregate()
     assert [r[0] for r in rows[1:1 + len(m["loo"])]] == [r["level"] for r in m["loo"]]
     assert [r[0] for r in rows[-2:]] == ["cv_peptide", "cv_twin"]
-    # a screen below the positives floor must say so rather than being silently dropped
-    assert any(r[5] == "no" for r in rows[1:1 + len(m["loo"])])
+    # a screen below the positives floor must SAY so rather than being silently dropped, and the
+    # column must agree with the artifact rather than be a constant. Which screens clear the floor
+    # is a property of the corpus, not of the code: it was seven of nine while NCI and Neopep
+    # carried 6 and 19 held-out positives, and is nine of nine now they carry 100 and 159.
+    assert [r[5] for r in rows[1:1 + len(m["loo"])]] == \
+        ["yes" if r["decided"] else "no" for r in m["loo"]]
 
 
 def test_rank_without_a_mode_and_without_a_dump_flag_is_an_error():

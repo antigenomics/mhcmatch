@@ -312,9 +312,9 @@ def test_aggregate_carries_the_fit_provenance_a_reader_needs():
     a = R.aggregate()
     # the CLEANED corpus: pathogen epitopes and unmutated self windows removed, host keyed on the
     # MHC genus, CEDAR and Gfeller held out.
-    assert a["fit"]["rows"] == 354909 and a["fit"]["positives"] == 958
+    assert a["fit"]["rows"] == 681605 and a["fit"]["positives"] == 1256
     assert len(a["fit"]["screens"]) == 9
-    assert a["generator"].endswith("epic_v4_fit.py")
+    assert a["generator"].endswith("fit.py")
     # every screen is held out in turn and scored with the mean intercept -- what a new cohort gets
     assert a["fit"]["holdout"] == "leave-one-screen-out"
     assert len(a["fit"]["loo"]) == len(a["fit"]["screens"])
