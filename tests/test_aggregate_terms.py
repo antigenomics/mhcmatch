@@ -54,31 +54,33 @@ def test_the_feature_list_the_library_declares_is_the_one_the_artifact_carries(a
     assert [c for _, cs in R.AGGREGATE_BLOCKS for c in cs] == list(art["features"])
 
 
-def test_pres_is_the_presentation_rank_and_not_the_binder_rank():
-    """The v3/v4 respecification, pinned.
+def test_binder_is_the_combined_rank_and_not_the_presentation_rank_alone():
+    """Which presentation column is fitted, pinned. It has changed twice.
 
-    ``binder`` Fisher-combines the presentation %rank with the affinity rank. ``occupancy`` is a
-    monotone function of the same affinity, so entering ``binder`` would put affinity in the model
-    twice; v4 entered ``pres`` instead. Two rows differing **only** in ``binder`` must therefore
-    score identically, and two differing only in ``presentation`` must not.
+    ``binder`` Fisher-combines the presentation %rank with the Potts affinity %rank; ``pres`` is
+    the presentation rank alone. v3 fitted ``binder``, v4 swapped to ``pres`` on the argument that
+    ``occupancy`` already carried affinity, and **v6 swapped back**, because a %rank is a
+    within-allele quantity where occupancy is absolute -- measured, ``pres`` is the more collinear
+    of the two with ``binder`` (+0.8797 against +0.7431). Both columns are always emitted, so
+    neither name failing is a `KeyError`; only this test says which one moves the score.
     """
-    lo = _rows(2, binder=[0.0, 0.0])
-    hi = _rows(2, binder=[0.0, 9.0])
+    lo = _rows(2, presentation=[0.0, 0.0])
+    hi = _rows(2, presentation=[0.0, 9.0])
     R._finish(lo, gate=None)
     R._finish(hi, gate=None)
     assert {r.peptide: r.score for r in lo} == pytest.approx({r.peptide: r.score for r in hi}), (
-        "score moved with `binder`: the fitted presentation term is `pres`, and `binder` is a "
-        "prediction API column that the aggregate does not read")
+        "score moved with `presentation`: the fitted presentation term is `binder`, and `pres` is "
+        "an emitted column the aggregate does not read")
 
-    diff = _rows(2, presentation=[0.0, 9.0])
-    by_pres = {r.peptide: r.presentation for r in diff}
+    diff = _rows(2, binder=[0.0, 9.0])
+    by_binder = {r.peptide: r.binder for r in diff}
     R._finish(diff, gate=None)
     got = {r.peptide: r.score for r in diff}
     assert len(set(got.values())) == 2
-    # and in the direction the coefficient declares: `pres` is positive in the shipped fit
-    i = list(R.AGGREGATE_FEATURES).index("pres")
+    # and in the direction the coefficient declares: `binder` is positive in the shipped fit
+    i = list(R.AGGREGATE_FEATURES).index("binder")
     assert R.aggregate()["coef"][i] > 0
-    assert max(got, key=got.get) == max(by_pres, key=by_pres.get)
+    assert max(got, key=got.get) == max(by_binder, key=by_binder.get)
 
 
 def test_occupancy_is_read_from_the_row_and_the_artifact_names_its_concentration(art):

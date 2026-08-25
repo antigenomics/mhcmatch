@@ -291,13 +291,13 @@ def test_aggregate_score_is_monotone_in_presentation_and_refuses_a_subset():
     import math
 
     full = {f: [0.0] * 3 for f in R.AGGREGATE_FEATURES}
-    full["pres"] = [2.0, 0.1, -1.0]
+    full["binder"] = [2.0, 0.1, -1.0]
     s = R.aggregate_score(full)
     assert all(math.isfinite(v) for v in s)
     assert s[0] > s[1] > s[2]
 
     with pytest.raises(ValueError, match="were not supplied"):
-        R.aggregate_score({"pres": [2.0, 0.1, -1.0]})
+        R.aggregate_score({"binder": [2.0, 0.1, -1.0]})
 
     # a non-finite value in a SUPPLIED column is one candidate with incomplete data, not a
     # different model: it takes the training mean and the row is required to say so.
@@ -312,8 +312,13 @@ def test_aggregate_carries_the_fit_provenance_a_reader_needs():
     a = R.aggregate()
     # the CLEANED corpus: pathogen epitopes and unmutated self windows removed, host keyed on the
     # MHC genus, CEDAR and Gfeller held out.
-    assert a["fit"]["rows"] == 681605 and a["fit"]["positives"] == 1256
-    assert len(a["fit"]["screens"]) == 9
+    assert a["fit"]["rows"] == 342432 and a["fit"]["positives"] == 741
+    assert len(a["fit"]["screens"]) == 8
+    # v6. Neopep was dropped as a relabelling of NCI + TESLA + HiTIDE -- it shared 419,851 of its
+    # 422,132 keys with NCI at zero label disagreements, so leave-one-screen-out on any of those
+    # three still trained on their own rows -- and the mouse arm is held out rather than fitted.
+    assert a["version"] == 6 and "former_name" not in a
+    assert "Neopep" not in a["fit"]["screens"]
     assert a["generator"].endswith("fit.py")
     # every screen is held out in turn and scored with the mean intercept -- what a new cohort gets
     assert a["fit"]["holdout"] == "leave-one-screen-out"
@@ -450,7 +455,7 @@ def test_default_score_is_the_fitted_aggregate_not_the_gate():
                    physchem=-1.0, expression=0.5, components=dict(chan))]
     out = _finish([Ranked(**vars(r)) for r in rows], None)
     # `expr_pct` is the within-batch percentile of `expression`: 3.0 and 0.5 over two rows.
-    want = aggregate_score({"pres": [2.0, 0.1], "occupancy": [0.9, 0.01],
+    want = aggregate_score({"binder": [2.0, 0.1], "occupancy": [0.9, 0.01],
                             "expr_pct": [0.75, 0.25],
                             **{c: complement.burial(["SIINFEKL", "SIINFEKV"], scale=sc)
                                for c, sc in R.PHYS_COLUMNS.items()},
@@ -599,7 +604,7 @@ def test_finish_supplies_every_feature_the_artifact_declares():
     for r in rows:
         r.components.update({c: 1e-3 for c in R.CHANNEL_COLUMNS})
     done = R._finish(list(rows), None, score="aggregate")
-    have = set(done[0].components) | {"pres", "occupancy", "d_occupancy", "wt_absent",
+    have = set(done[0].components) | {"pres", "binder", "occupancy", "d_occupancy", "wt_absent",
                                       "expr", "expr_pct", "expr_missing"}
     want = set(R.AGGREGATE_FEATURES) | {"d_occupancy", "wt_absent"}
     assert want <= have, sorted(want - have)

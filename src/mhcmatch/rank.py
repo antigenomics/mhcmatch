@@ -130,9 +130,11 @@ def columns(extended: bool = False, annotate: bool = False, score: str = "aggreg
 _AGG: dict | None = None
 
 #: The features the shipped aggregate expects, in order. Read it rather than typing the list --
-#: ``O`` replaced ``D`` in 0.19.0, the four recognition columns collapsed to two in 0.21.0, and a
-#: hardcoded copy of this tuple would have gone stale silently either time.
-AGGREGATE_FEATURES: tuple = ("pres", "occupancy", "expr_pct",
+#: ``O`` replaced ``D`` in 0.19.0, the four recognition columns collapsed to two in 0.21.0,
+#: ``binder`` became ``pres`` at artifact v4 and ``pres`` became ``binder`` again at v6, and a
+#: hardcoded copy of this tuple would have gone stale silently every time. It is asserted equal to
+#: the artifact's own ``features`` by ``tests/test_aggregate_terms.py``, so the two cannot drift.
+AGGREGATE_FEATURES: tuple = ("binder", "occupancy", "expr_pct",
                              "C_phys_buried", "C_phys_charge",
                              "C_corpus_thymus", "C_corpus_self", "C_corpus_viral")
 #: The hierarchy the aggregate was fitted as, in pipeline order. Blocks are entered one on top of
@@ -140,7 +142,7 @@ AGGREGATE_FEATURES: tuple = ("pres", "occupancy", "expr_pct",
 #: rather than in competition with them. Reported by ``bench/results/epic_recognition_terms.md``; carried here
 #: because a consumer grouping the emitted columns should not have to re-derive the grouping.
 AGGREGATE_BLOCKS: tuple = (
-    ("presentation", ("pres", "occupancy")),
+    ("presentation", ("binder", "occupancy")),
     ("expression", ("expr_pct",)),
     ("physchem", ("C_phys_buried", "C_phys_charge")),
     ("corpus", ("C_corpus_thymus", "C_corpus_self", "C_corpus_viral")),
@@ -191,19 +193,25 @@ def aggregate() -> dict:
     order is presentation, expression, physchem, corpus, and the two recognition blocks are the two
     halves of Complementarity.
 
-    Fitted by ``bench/epic/fit.py`` over nine neoantigen screens (681,605 rows / 1,256 positive)
-    as a ridge logistic regression with an unpenalised **per-screen intercept**, which also writes
-    this file; ``bench/run_epic.sh`` is the whole chain that leads to it.
+    Fitted by ``bench/epic/fit.py`` over the neoantigen screens as a ridge logistic regression with
+    an unpenalised **per-screen intercept**, which also writes this file; ``bench/run_epic.sh`` is
+    the whole chain that leads to it. **The corpus it was fitted on is in the artifact**, under
+    ``fit`` -- ``rows``, ``positives``, ``screens`` and ``bic`` -- rather than in this docstring,
+    which quoted a superseded corpus for two refits running.
 
     **EPIC is hierarchical and Complementarity is kept whole.** The eight columns enter in four
     blocks, in pipeline order, each on top of the last -- see :data:`AGGREGATE_BLOCKS`. A
     recognition coefficient is therefore what the term is worth *after* presentation and expression,
     not in competition with them.
 
-    * ``presentation`` -- ``pres`` (the presentation ``%rank`` alone) and ``occupancy``. The two
-      are separate axes: ``occupancy`` carries affinity at Spearman -1.000000 against ``kd_mt``,
-      so a presentation term that folded the affinity rank in as well would enter it twice.
-    * ``expression`` -- ``expr`` (``log1p`` of TPM), ``expr_missing``.
+    * ``presentation`` -- ``binder`` (the calibrated Fisher combination of the presentation
+      ``%rank`` with the Potts affinity ``%rank``) and ``occupancy``. A ``%rank`` is a
+      *within-allele* quantity where ``occupancy`` is absolute, so the two are not one axis
+      entered twice: measured, they share Spearman +0.7431, while ``binder`` and the bare
+      presentation rank ``pres`` share +0.8797. ``pres`` is emitted and not fitted.
+    * ``expression`` -- ``expr_pct``, the expression percentile within the scored batch. One term:
+      ``expr`` + ``expr_missing`` was two, and the indicator was very nearly a screen label that
+      the per-screen intercept already carried.
     * ``physchem`` -- ``C_phys_buried`` and ``C_phys_charge``, :func:`mhcmatch.complement.burial`
       over the TCR face on the Rose burial propensity and on Atchley AF5 electrostatic charge.
       Imported scales, so **zero fitted residue parameters**; burial carries a cysteine loading of
@@ -222,8 +230,8 @@ def aggregate() -> dict:
     table contraction rather than the radius-2 trie walk that captured a median 0.4999 of it, and
     computed for every row rather than read from a peptide-keyed cache whose query set never
     contained three of the nine screens. Since v4 the kernel is identity-normalised BLOSUM62,
-    ``K[u,x] = exp(kappa (S[u,x] - S[u,u]))``, at k = 3 over the sliced face -- held-out mean 0.6452
-    against 0.6440 for Hamming under an identical kappa-refit. ``C_corpus_missing`` went with the
+    ``K[u,x] = exp(kappa (S[u,x] - S[u,u]))``, at k = 3 over the sliced face, which beats Hamming
+    on held-out mean and median under an identical kappa-refit protocol. ``C_corpus_missing`` went with the
     cache -- there is no gap left to flag, so the column would be identically zero.
     ``bench/results/corpus_exact.md`` and ``epic_corpus_kernel.md``.
 
@@ -325,7 +333,9 @@ def aggregate_score(features, imputed_out: list | None = None) -> "np.ndarray":
     Two things the caller owns, because getting them wrong is silent:
 
     * **Compute each feature the way the fit did.** ``binder`` is ``-log10`` of the calibrated
-      presentation %rank, ``occupancy`` is ``a/(1+a)`` for ``a = 10 nM / Kd``, ``expr_pct`` is
+      *combined* %rank -- the Fisher statistic over the presentation rank and the Potts affinity
+      rank, not the presentation rank alone, which is the separate column ``pres`` --
+      ``occupancy`` is ``a/(1+a)`` for ``a = 10 nM / Kd``, ``expr_pct`` is
       :func:`expr_percentile` over the scored batch, the ``C_phys`` pair is
       :func:`mhcmatch.complement.burial` on the two scales of :data:`PHYS_COLUMNS`, and the three
       ``C_corpus`` channels are :func:`mhcmatch.mimicry.corpus_R`.
