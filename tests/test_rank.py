@@ -302,10 +302,10 @@ def test_aggregate_score_is_monotone_in_presentation_and_refuses_a_subset():
     # a non-finite value in a SUPPLIED column is one candidate with incomplete data, not a
     # different model: it takes the training mean and the row is required to say so.
     one_row_short = dict(full)
-    one_row_short["occupancy"] = [0.5, float("nan"), 0.5]
+    one_row_short["log10a"] = [0.5, float("nan"), 0.5]
     imputed = [[], [], []]
     R.aggregate_score(one_row_short, imputed_out=imputed)
-    assert imputed == [[], ["occupancy"], []]
+    assert imputed == [[], ["log10a"], []]
 
 def test_aggregate_carries_the_fit_provenance_a_reader_needs():
     """A shipped scorer that cannot say what it was fitted on is not reproducible."""
@@ -317,7 +317,7 @@ def test_aggregate_carries_the_fit_provenance_a_reader_needs():
     # v6. Neopep was dropped as a relabelling of NCI + TESLA + HiTIDE -- it shared 419,851 of its
     # 422,132 keys with NCI at zero label disagreements, so leave-one-screen-out on any of those
     # three still trained on their own rows -- and the mouse arm is held out rather than fitted.
-    assert a["version"] == 6 and "former_name" not in a
+    assert a["version"] == 7 and "former_name" not in a
     assert "Neopep" not in a["fit"]["screens"]
     assert a["generator"].endswith("fit.py")
     # every screen is held out in turn and scored with the mean intercept -- what a new cohort gets
@@ -455,7 +455,7 @@ def test_default_score_is_the_fitted_aggregate_not_the_gate():
                    physchem=-1.0, expression=0.5, components=dict(chan))]
     out = _finish([Ranked(**vars(r)) for r in rows], None)
     # `expr_pct` is the within-batch percentile of `expression`: 3.0 and 0.5 over two rows.
-    want = aggregate_score({"binder": [2.0, 0.1], "occupancy": [0.9, 0.01],
+    want = aggregate_score({"binder": [2.0, 0.1], "log10a": [R._logit10(0.9), R._logit10(0.01)],
                             "expr_pct": [0.75, 0.25],
                             **{c: complement.burial(["SIINFEKL", "SIINFEKV"], scale=sc)
                                for c, sc in R.PHYS_COLUMNS.items()},
@@ -547,7 +547,7 @@ def test_artifact_and_library_agree_on_the_concentration():
     from mhcmatch.rank import aggregate, PEPTIDE_NM
     a = aggregate()
     assert a["model"] == "EPIC"
-    assert "occupancy" in a["features"]
+    assert "log10a" in a["features"]
     assert "dai" not in a["features"]
     assert abs(a["peptide_nm"] - PEPTIDE_NM) < 1e-12
 
@@ -604,7 +604,7 @@ def test_finish_supplies_every_feature_the_artifact_declares():
     for r in rows:
         r.components.update({c: 1e-3 for c in R.CHANNEL_COLUMNS})
     done = R._finish(list(rows), None, score="aggregate")
-    have = set(done[0].components) | {"pres", "binder", "occupancy", "d_occupancy", "wt_absent",
+    have = set(done[0].components) | {"pres", "binder", "occupancy", "log10a", "d_occupancy", "wt_absent",
                                       "expr", "expr_pct", "expr_missing"}
     want = set(R.AGGREGATE_FEATURES) | {"d_occupancy", "wt_absent"}
     assert want <= have, sorted(want - have)

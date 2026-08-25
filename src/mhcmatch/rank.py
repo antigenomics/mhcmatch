@@ -134,7 +134,7 @@ _AGG: dict | None = None
 #: ``binder`` became ``pres`` at artifact v4 and ``pres`` became ``binder`` again at v6, and a
 #: hardcoded copy of this tuple would have gone stale silently every time. It is asserted equal to
 #: the artifact's own ``features`` by ``tests/test_aggregate_terms.py``, so the two cannot drift.
-AGGREGATE_FEATURES: tuple = ("binder", "occupancy", "expr_pct",
+AGGREGATE_FEATURES: tuple = ("binder", "log10a", "expr_pct",
                              "C_phys_buried", "C_phys_charge",
                              "C_corpus_thymus", "C_corpus_self", "C_corpus_viral")
 #: The hierarchy the aggregate was fitted as, in pipeline order. Blocks are entered one on top of
@@ -142,7 +142,7 @@ AGGREGATE_FEATURES: tuple = ("binder", "occupancy", "expr_pct",
 #: rather than in competition with them. Reported by ``bench/results/epic_recognition_terms.md``; carried here
 #: because a consumer grouping the emitted columns should not have to re-derive the grouping.
 AGGREGATE_BLOCKS: tuple = (
-    ("presentation", ("binder", "occupancy")),
+    ("presentation", ("binder", "log10a")),
     ("expression", ("expr_pct",)),
     ("physchem", ("C_phys_buried", "C_phys_charge")),
     ("corpus", ("C_corpus_thymus", "C_corpus_self", "C_corpus_viral")),
@@ -599,6 +599,21 @@ def _ic50_of(rec: dict):
     return None
 
 
+def _logit10(occ: float) -> float:
+    """``occupancy`` on the log-odds scale, which is exactly ``log10(a)``.
+
+    ``occupancy`` is ``a/(1+a)`` for ``a = [P]/Kd``, so ``occ/(1-occ) == a`` identically and this
+    is ``log10`` of it -- verified against ``log10(PEPTIDE_NM/Kd)`` on the fitting corpus to
+    4.4e-16. Computing it here rather than carrying a second column keeps one source for the
+    density axis: a caller who changes :data:`PEPTIDE_NM` moves both together or neither.
+    """
+    try:
+        o = float(occ)
+        return math.log10(o / (1.0 - o)) if 0.0 < o < 1.0 else float("nan")
+    except (TypeError, ValueError, ZeroDivisionError):
+        return float("nan")
+
+
 def _neglog10(rank: float) -> float:
     """%rank -> -log10, floored at 1e-4 so a zero rank does not become infinite."""
     try:
@@ -729,6 +744,13 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
         cols = {"pres": [r.presentation for r in rows],
                 "binder": [r.binder for r in rows],
                 "occupancy": [r.occupancy for r in rows],
+                # The density axis on its natural scale, and it needs no new input: `occupancy` is
+                # `a/(1+a)`, so `occupancy/(1-occupancy)` is `a` identically and `log10a` is its
+                # logit in base 10. A probability entered linearly in a log-odds model is
+                # mis-specified -- at `PEPTIDE_NM` against a median Kd three orders above it,
+                # `a/(1+a)` collapses to `10/Kd`, a reciprocal a handful of tight binders dominate.
+                # On the log scale every decade of Kd weighs the same. Fitted from artifact v7.
+                "log10a": [_logit10(r.occupancy) for r in rows],
                 "d_occupancy": [r.d_occupancy for r in rows],
                 "wt_absent": [float(r.wt_absent) for r in rows],
                 "expr": [r.expression for r in rows],

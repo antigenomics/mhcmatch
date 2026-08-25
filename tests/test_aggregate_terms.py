@@ -16,6 +16,8 @@ moves without the artifact moving with it.
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 
@@ -83,16 +85,28 @@ def test_binder_is_the_combined_rank_and_not_the_presentation_rank_alone():
     assert max(got, key=got.get) == max(by_binder, key=by_binder.get)
 
 
-def test_occupancy_is_read_from_the_row_and_the_artifact_names_its_concentration(art):
-    """``occ = a/(1+a)``, ``a = [P]/Kd``, at the artifact's own ``peptide_nm``."""
+def test_the_density_term_is_occupancy_on_the_log_odds_scale(art):
+    """The fitted density term is ``log10a``, and it is derived from ``occupancy``, not beside it.
+
+    ``occ = a/(1+a)`` for ``a = [P]/Kd`` at the artifact's own ``peptide_nm``, so
+    ``occ/(1-occ) == a`` identically and ``log10a`` is its base-10 logit. Two things are pinned:
+    the score still moves with the row's ``occupancy`` -- the axis is unchanged -- and it moves
+    through ``log10a``, which is what a log-odds model can use linearly. v6 fitted ``occupancy``
+    raw and the term collapsed to z = +0.83; on the logit scale it is z = +3.53.
+    """
     assert art["peptide_nm"] == 10.0
     rows = _rows(2, occupancy=[0.1, 0.9])
     by_occ = {r.peptide: r.occupancy for r in rows}
     R._finish(rows, gate=None)
     got = {r.peptide: r.score for r in rows}
-    i = list(R.AGGREGATE_FEATURES).index("occupancy")
+    i = list(R.AGGREGATE_FEATURES).index("log10a")
     assert art["coef"][i] > 0
     assert max(got, key=got.get) == max(by_occ, key=by_occ.get)
+    # the identity the derivation rests on, not merely the ordering it produces
+    for o in (0.1, 0.5, 0.9, 1.9996e-4, 0.909091):
+        assert abs(R._logit10(o) - math.log10(o / (1 - o))) < 1e-12
+    assert R._logit10(0.0) != R._logit10(0.0)        # NaN outside (0, 1), not an exception
+    assert R._logit10(1.0) != R._logit10(1.0)
 
 
 def test_expr_pct_is_a_within_batch_percentile_and_a_missing_value_sits_at_one_half():
