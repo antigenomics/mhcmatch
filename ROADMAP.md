@@ -14,6 +14,30 @@ the build plan. Phase sections marked _(TBD)_ await detail.
 > tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
 > below resolve there, not here.
 
+## Where this stands, 2026-08-25 — released 1.0.5, and what the manuscript is waiting on
+
+**Shipped at 1.0.5** (see `CHANGELOG.md`): a restriction cell holding a whole genotype is read as
+the alleles it names. This was one cause with two failures — rows returning `NaN` for `presentation`,
+`binder` and `occupancy` *scored above* rows that resolved, because `aggregate_score` substitutes a
+missing term at the training mean; and an uncached `resolve_allele` miss cost ~6.7 s per
+unresolvable name inside a calibration build. **NCI: 1 h 40 m -> 63 s, 15,023 `NaN` rows -> 0.**
+Also landed: `allele_scored` as a distinct column, the recognition axis batched once per candidate
+list, `pseudo_matrix` on `AnchorModel` over seqtree's five log-odds matrices, and a
+**Karlin-Altschul lambda fix** — the substitution conditional had hardcoded half-bits for every
+matrix, which inverted the conservatism ordering a matrix sweep exists to test.
+
+**Three open loops the manuscript is tracking**, recorded in
+`../../manuscripts/2026-mhcmatch/caveats.md` with stable IDs:
+
+| id | what | where it lands |
+|---|---|---|
+| **F2** | the shipped EPIC fit rests on a corpus built *before* the allele repair — 3.34 % of rows still hold a multi-allele string and 6.88 % have no `pres`. Refitting is an author decision, not a library one; the scoring path that made it expensive is now fixed, so the rebuild is cheap | benchmark repo |
+| **F3** | `agretopicity` names two quantities with opposite sign under one attribute | §6c, here |
+| **F4** | `occupancy` reads a predicted IC50 as a Kd, undocumented | §6c, here |
+
+**The library is not blocked on any of these.** F3 is a naming fix, F4 a docstring, F2 belongs to the
+benchmark repo's corpus build.
+
 ## 0. What mhcmatch is
 
 `mhcmatch` is the **applied peptide–MHC tool**. It sits on two upstream libraries and stays focused
@@ -1427,6 +1451,26 @@ groove positions). Worth evaluating against:
 NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2).
 
 ## 6c. Known issues
+
+- **`agretopicity` names two different quantities, and the sign is flipped between them.**
+  `predict.py:86` defines `Prediction.agretopicity` as `Kd_MT / Kd_WT` ("pipeline convention;
+  < 1 = mutant binds better"), written at `predict.py:634` and emitted at `:680-682`. `rank.py:422`
+  defines `Ranked.agretopicity` as `log10(Kd_WT / Kd_MT)`, written at `:782-784` and `:861-863` and
+  carried in `BASE_COLUMNS`. **A raw ratio in one direction against a log ratio in the other, under
+  one attribute name, both reaching user-facing tables.** Each docstring states its own convention
+  and nothing reconciles them, so a figure sourced from `predict` and labelled like `rank` has the
+  sign inverted. No published number currently comes from the `predict` path; nothing prevents one.
+  Fix: one name per quantity, or one convention. Manuscript ledger F3.
+
+- **`occupancy` uses a predicted competition-assay IC50 as if it were a true Kd**, in a Langmuir
+  expression `[P]/([P] + Kd)` at `[P] = 10` nM. Standard in the field and defensible, but it is
+  flagged nowhere in the code or the docstring, so a reader takes the output for a dissociation
+  occupancy. Related and measured: `y_to_ic50` (`affinity.py:38-40`) clamps predicted Kd to
+  [1, 50000] nM *before* the Langmuir step, confining occupancy to [1.9996e-4, 0.909091] — a
+  3.66-decade reachable span at every `[P]` tried, so the clamp is the lever and the concentration
+  is not. 23.59 % of 669,974 scored rows sit at exactly the ceiling Kd, sharing one occupancy value.
+  The audit found this costs nothing on the ranking task (breaking the tie moves AUROC by 0.0000),
+  so this is a **documentation** fix, not a model fix. Manuscript ledger F4.
 
 - **`mimics.scan` is 4,300× slower than it needs to be, measured.** It routes every binder through
   `seqtree.pmhc.find_mimics`, i.e. `KmerIndex.seed_and_gather` one query at a time in a Python loop:
