@@ -287,9 +287,7 @@ The command line can now emit every table a figure needs.
 - Shipped artifacts re-stamped to 1.0.4 (`mhcmatch build`): three anchor models and
   `corpus_tables.npz`. Contents unchanged; `mhcmatch build --check` reports 0 stale of 27.
 
-## [Unreleased]
-
-Documentation only.
+### Documented in the same release
 
 ### Added
 
