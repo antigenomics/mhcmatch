@@ -55,10 +55,12 @@ REFERENCE_FILE = "expression/reference_expression.tsv.gz"
 #: scale from one to divide into the other, reads this one instead. Gene-keyed throughout: 53 GTEx
 #: tissues under ``source="toil_gtex"`` and 33 TCGA study codes under ``source="toil_tcga"``.
 #:
-#: Pass it where a ``path`` is taken::
-#:
-#:     floor = tissue_floor(tissue="Lung", path=fetch_reference(file=REFERENCE_TOIL_FILE))
-REFERENCE_TOIL_FILE = "expression/reference_expression_toil.tsv.gz"
+#: **Nothing here parses it, and it is not in the bootstrap set.** It is 38.6 MB and the record; the
+#: scoring path reads :data:`MATRIX_FILE`, :data:`FLOORS_FILE` and :data:`SYNONYMS_FILE`, which are
+#: 6.6 MB between them and carry the same numbers. Fetch it with
+#: ``fetch_reference(file=REFERENCE_TOIL_FILE)`` and read it with polars when an analysis wants the
+#: rows themselves.
+REFERENCE_TOIL_FILE = "expression/reference_expression_toil.parquet"
 
 #: Columns of the reference table, in file order.
 COLUMNS = ("key", "key_type", "source", "context", "median_tpm", "q25_tpm", "q75_tpm", "n")
@@ -334,9 +336,10 @@ def safety_profile(gene: str, top: int = 10, path: str | None = None) -> list[tu
 # ------------------------------------------------------------------ the single-pipeline reference
 
 #: The whole single-pipeline table as a dense **gene x context float32 matrix**, which is what every
-#: lookup on the scoring path reads. 58,581 genes x 86 contexts is 20 MB in memory and 6.5 MB on
-#: disk; the equivalent question against :data:`REFERENCE_TOIL_FILE` builds a five-million-entry
-#: dictionary and does not finish in twenty minutes.
+#: lookup on the scoring path reads. Measured against the same question asked of
+#: :data:`REFERENCE_TOIL_FILE`, which builds a five-million-entry dictionary of dictionaries:
+#: **0.05 s against 5.20 s to load, and 29 MB resident against 3,168 MB** -- 100x the speed on 1/109
+#: of the memory. Both return the same floor to four decimals, which is how the matrix is checked.
 MATRIX_FILE = "expression/toil_matrix.npz"
 
 #: The same contexts' abundance floors at three quantiles, human-readable, 88 rows. Nothing on the
@@ -418,7 +421,9 @@ def _matrix(path: str | None = None) -> tuple:
     be confused for one another by a caller holding a bare name."""
     import numpy as np
 
-    z = np.load(fetch_matrix(path), allow_pickle=True)
+    # `allow_pickle` stays off. The deposit stores its label arrays as fixed-width unicode for
+    # exactly this reason: a pickled array in a file fetched over the network executes on load.
+    z = np.load(fetch_matrix(path))
     gi = {str(g): i for i, g in enumerate(z["genes"])}
     ci = {str(c): i for i, c in enumerate(z["contexts"])}
     return gi, ci, z["values"], z["n_samples"]
@@ -435,7 +440,8 @@ def _gtex_contexts(path: str | None = None) -> dict:
             for c in ci if c.startswith("toil_gtex|")}
 
 
-def resolve_context(text: str, path: str | None = None) -> tuple:
+def resolve_context(text: str, path: str | None = None, approximate: bool = True,
+                    detail: bool = False):
     """``(TCGA study codes, GTEx tissue names)`` for a free-text origin.
 
     Accepts what a submission actually carries: a study code (``SKCM``), an organ
@@ -457,14 +463,56 @@ def resolve_context(text: str, path: str | None = None) -> tuple:
     if not s:
         raise ValueError("resolve_context: empty origin. Pass None to mean 'unknown' -- an empty "
                          "string is a missing value that looks like a request.")
-    hit = _synonyms(path).get(s.lower())
+    syn = _synonyms(path)
+    hit = syn.get(s.lower())
+    exact = hit is not None
+    if hit is None and approximate:
+        hit, matched = _by_organ(s, syn)
+        if hit is not None:
+            _log_approximate(s, matched)
     if hit is None:
         raise ValueError(
             f"resolve_context: {s!r} is not a TCGA study code, an organ, a disease name or a GTEx "
-            "tissue. Check it against `mhcmatch expression --list-contexts`; resolving it to the "
-            "pooled reference would return a number from the wrong distribution with no way to "
-            "tell it had happened.")
+            "tissue, and no organ name occurs inside it. Check it against "
+            "`mhcmatch expression --list-contexts`; resolving it to the pooled reference would "
+            "return a number from the wrong distribution with no way to tell it had happened.")
+    if detail:
+        return {"tcga_codes": hit["tcga_code"], "gtex_contexts": hit["gtex_context"],
+                "exact": exact}
     return hit["tcga_code"], hit["gtex_context"]
+
+
+def _by_organ(text: str, syn: dict) -> tuple:
+    """The longest organ name occurring inside ``text``, and what it resolves to.
+
+    A registry writes its own study names and they are not the ones any deposit here happens to
+    carry: ``Kidney Renal Clear Cell Carcinoma`` is not Xena's ``Kidney Clear Cell Carcinoma`` and
+    matches no alias exactly. The organ is still named in it, so it is read out rather than the row
+    being lost -- the longest alias wins, so ``Colon`` does not pre-empt a longer phrase containing
+    it, and the result is logged as approximate.
+
+    This never invents a context. It only fires on an alias already in the table, and a string with
+    no organ in it -- ``TIL``, ``PBMC``, ``healthy`` -- still raises, which is correct: those are not
+    tumour types and resolving them to one would be worse than failing."""
+    low = " " + " ".join(str(text).lower().replace("-", " ").split()) + " "
+    best = None
+    for alias in syn:
+        if len(alias) < 4 or f" {alias} " not in low:
+            continue
+        if best is None or len(alias) > len(best):
+            best = alias
+    return (syn[best], best) if best else (None, None)
+
+
+_APPROX_SEEN: set = set()
+
+
+def _log_approximate(text: str, alias: str) -> None:
+    """An origin resolved by organ rather than exactly says so once, not once per candidate."""
+    if text not in _APPROX_SEEN:
+        _APPROX_SEEN.add(text)
+        _LOG.info("expression: %r matched no context exactly; resolved on the organ %r. "
+                  "The floor and the matched normal are that organ's.", text, alias)
 
 
 def _matched_toil(code: str, gt: dict) -> tuple:
@@ -592,6 +640,14 @@ def gene_level(gene: str, tumor: str | None = None, tissue: str | None = None,
     return out
 
 
+def _f(x) -> float:
+    """``float(x)`` or ``nan`` -- a submitted column may carry an empty string or ``None``."""
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return float("nan")
+
+
 def batch_scale(values, genes, tumor: str | None = None, path: str | None = None,
                 detail: bool = False):
     """``(scale, n shared genes, fell back)`` -- what to divide a submitted column by to reach TPM.
@@ -643,27 +699,26 @@ def batch_scale(values, genes, tumor: str | None = None, path: str | None = None
     if not cols:
         return 1.0, 0, True
 
-    num, den = [], []
-    for g, x in zip(genes, values):
-        i = gi.get(str(g).strip())
-        if i is None:
-            continue
-        try:
-            xv = float(x)
-        except (TypeError, ValueError):
-            continue
-        if not (xv > 0):
-            continue
-        r = float(np.median(V[i, cols]))
-        if r > 0:
-            num.append(xv)
-            den.append(r)
-    n = len(num)
+    # Vectorised deliberately. A whole-transcriptome profile is 20,000-30,000 genes, and the
+    # readable version -- a Python loop with `np.median(V[i, cols])` inside it -- is one numpy call
+    # per gene on a handful of values, which is all dispatch and no arithmetic. One gather and one
+    # median along an axis does the same work in a single pass.
+    idx = np.fromiter((gi.get(str(g).strip(), -1) for g in genes), dtype=np.int64,
+                      count=len(genes))
+    xv = np.asarray([_f(x) for x in values], dtype=float)
+    ok = (idx >= 0) & np.isfinite(xv) & (xv > 0)
+    if not ok.any():
+        return (1.0, 0, True, float("nan"), 0.0) if detail else (1.0, 0, True)
+    ref = np.median(V[np.ix_(idx[ok], cols)], axis=1)
+    good = ref > 0
+    num = xv[ok][good]
+    den = ref[good]
+    n = int(num.size)
     on = int((V[:, cols] > 0).any(axis=1).sum())
     cover = n / on if on else 0.0
     if n < MIN_SHARED or cover < MIN_COVERAGE:
         return (1.0, n, True, float("nan"), cover) if detail else (1.0, n, True)
-    r = np.asarray(num) / np.asarray(den)
+    r = num / den
     s = float(np.median(r))
     spread = float((np.quantile(r, 0.75) - np.quantile(r, 0.25)) / s) if s else float("nan")
     if not np.isfinite(s) or not (GAMMA_MIN <= s <= GAMMA_MAX):

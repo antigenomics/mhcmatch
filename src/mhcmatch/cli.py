@@ -1019,10 +1019,13 @@ REFERENCE_FILES = (
     "thymus/thymus_immunopeptidome.tsv.gz",       # tolerance reference for mimicry
     "ligandome/viral_foreign_iedb.tsv.gz",        # foreign reference for mimicry
     "expression/reference_expression.tsv.gz",     # GTEx tissue + TCGA tumour medians (~105 MB)
-    "expression/reference_expression_toil.tsv.gz",  # the same two, one pipeline, TPM (~71 MB)
-    "expression/toil_matrix.npz",                 # the same table dense, and what scoring reads
+    # The single-pipeline GTEx/TCGA reference, as the three files scoring actually reads -- 6.6 MB
+    # between them. The table they are derived from is 38.6 MB and is deliberately NOT staged here:
+    # nothing on a scoring path parses it, and on a slow link it is minutes of download for numbers
+    # already in the matrix. `expression.REFERENCE_TOIL_FILE` fetches it when an analysis wants rows.
+    "expression/toil_matrix.npz",                 # 58,581 genes x 86 contexts, dense float32
     "expression/toil_floors.tsv",                 # per-context abundance floors, 88 rows
-    "expression/context_synonyms.tsv",            # free-text origin -> context, 232 rows
+    "expression/context_synonyms.tsv",            # free-text origin -> context, 448 rows
 )
 
 
