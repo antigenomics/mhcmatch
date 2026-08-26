@@ -211,6 +211,55 @@ def _by_gene(resolved: str) -> dict:
     return out
 
 
+@functools.lru_cache(maxsize=32)
+def _tissue_quantile(path: str | None, tissues: tuple, q: float) -> float:
+    """The ``q``-th percentile of non-zero median TPM over every gene in ``tissues``.
+
+    ``load`` is itself cached on ``path``, so this walks the table once per distinct
+    ``(path, tissues, q)`` and is a dict lookup after that."""
+    vals = []
+    for (kt, _key, ctx), row in load(path).items():
+        if kt == "gene" and (not tissues or ctx in tissues):
+            v = row.get("median_tpm")
+            if v is not None and v > 0:
+                vals.append(v)
+    if len(vals) < 30:
+        return float("nan")
+    vals.sort()
+    i = min(len(vals) - 1, max(0, int(round(q * (len(vals) - 1)))))
+    return float(vals[i])
+
+
+def tissue_floor(tumor: str | None = None, tissue: str | None = None, q: float = 0.25,
+                 path: str | None = None) -> float:
+    """The abundance floor ``c`` for :func:`mhcmatch.rank.expr_level`, in TPM.
+
+    The ``q``-th percentile of non-zero median TPM over every gene in the tumour's matched normal
+    tissue(s), or in ``tissue`` directly. With neither, the whole reference pooled.
+
+    **Why a reference floor and not the batch's own.** A floor taken from the candidates in front of
+    you tracks that donor's mutational burden rather than the assay: across 32 donors of one
+    independent cohort the 5th percentile of candidate abundance spanned 164-fold. The
+    matched-tissue value moves far less -- 0.14 to 0.25 TPM at ``q = 0.25`` across the tissue sets
+    the fitting corpus touches -- and it needs nothing from the submission, so two batches scored a
+    week apart are on one scale.
+
+    >>> import math
+    >>> c = tissue_floor(tumor="SKCM")            # doctest: +SKIP
+    >>> math.isfinite(c)                          # doctest: +SKIP
+    True
+    """
+    ts: tuple = ()
+    if tissue:
+        ts = (tissue,)
+    elif tumor:
+        ts = tuple(matched_tissues(tumor))
+    v = _tissue_quantile(path, ts, q)
+    if not (v == v) and ts:                       # NaN-safe: no gene rows for those tissues
+        v = _tissue_quantile(path, (), q)
+    return v
+
+
 def safety_profile(gene: str, top: int = 10, path: str | None = None) -> list[tuple[str, float]]:
     """``[(tissue, median_tpm)]`` for a gene across normal tissues, highest first.
 

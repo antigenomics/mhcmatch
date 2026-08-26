@@ -150,6 +150,65 @@ AGGREGATE_BLOCKS: tuple = (
 )
 
 
+#: Expression pre-filters the field applies, in TPM, for :func:`expr_level`'s ``prefilter``.
+#: ``pvacseq`` is pVACtools' ``--expn-val`` default and the most common cut in use; ``tesla`` is the
+#: abundance leg of the consortium triple in Wells et al., Cell 2020 (affinity < 34 nM, abundance
+#: > 33 TPM, stability > 1.4 h), which is stricter by a factor of 33 and filters out 93 % of
+#: non-immunogenic peptides while keeping 55 % of immunogenic ones.
+EXPR_FILTERS: dict = {"none": 0.0, "detectable": 0.0, "improve": 0.01,
+                      "pvacseq": 1.0, "tesla": 33.0}
+#: Donors below which a submission cannot support an absolute abundance scale and
+#: :func:`expr_percentile` is what it can support. Measured, paired on identical draws: the tissue
+#: floor is worse than the percentile at one donor and at three, and better from five.
+EXPR_SWITCH_DONORS: int = 5
+
+
+def expr_level(rows, floor: float, prefilter: float = 0.0) -> list:
+    """``log2(1 + TPM/c)`` per row, ``c`` the abundance floor in TPM. ``nan`` where absent.
+
+    The scaled-abundance term artifact v8 fits as ``expr_lvl``, and the alternative to
+    :func:`expr_percentile`. It keeps what a rank discards -- the *spacing* between candidates --
+    and spends its resolution where the candidates are: ``log1p`` compresses the whole 0-2 TPM
+    band into 1.10 units while 100 to 1000 gets 2.30, and ``s_c`` gives every doubling one unit at
+    either end.
+
+    ``floor`` should come from :func:`mhcmatch.expression.tissue_floor`, not from the batch. A floor
+    taken from the candidates in front of you tracks that donor's mutational burden rather than the
+    assay: across 32 donors of one independent cohort the 5th percentile of candidate abundance
+    spanned 164-fold, where the matched-tissue value moves between 0.14 and 0.25 TPM.
+
+    ``prefilter`` is the expression cut the candidates already passed, in TPM -- ``1.0`` for a
+    pVACseq default, ``33.0`` for the TESLA consortium's, and see
+    :data:`mhcmatch.rank.EXPR_FILTERS`. A filter truncates the abundance distribution from below,
+    which is the range this term resolves, so the floor is raised to meet it; leaving it unset on a
+    filtered batch spends the term's resolution on a range that is not there.
+
+    **Unit note.** ``s_c`` with a floor anchored to a quantile of the same measurement is invariant
+    to multiplicative rescaling, so TPM against FPKM against a normalised count give the same
+    column. A ``prefilter`` is a stated TPM value and is the one place the unit must be right.
+
+    >>> R = lambda v: type("R", (), {"expression": v})()      # `expression` is log1p(TPM)
+    >>> [round(v, 4) for v in expr_level([R(0.0), R(0.6931471805599453)], 0.25)]
+    [0.0, 2.3219]
+    >>> [round(v, 4) for v in expr_level([R(0.6931471805599453)], 0.25, prefilter=1.0)]
+    [1.0]
+    """
+    import math
+
+    c = max(float(floor), float(prefilter or 0.0))
+    if not (c > 0):
+        raise ValueError(f"expr_level: floor must be positive TPM, got {floor!r}")
+    out = []
+    for r in rows:
+        v = getattr(r, "expression", None)
+        if v is None or v != v:                                   # NaN-safe
+            out.append(float("nan"))
+            continue
+        tpm = math.expm1(float(v))                                # `expression` is log1p(TPM)
+        out.append(math.log2(1.0 + max(tpm, 0.0) / c))
+    return out
+
+
 def expr_percentile(rows) -> list:
     """:attr:`Ranked.expression`'s percentile within ``rows``, in (0, 1); ``0.5`` where absent.
 
@@ -716,7 +775,9 @@ def _known(peptide: str, refs: dict | None) -> str:
 
 
 def _finish(rows: list, gate: dict | None, score: str = "aggregate",
-            prevalence: float = POOL_PREVALENCE) -> list:
+            prevalence: float = POOL_PREVALENCE,
+            expr_floor: float | None = None, expr_prefilter: float = 0.0,
+            n_donors: int | None = None) -> list:
     """Score, then order: known epitopes first, then by score descending.
 
     ``score="aggregate"`` (the default since 0.19.0) uses the **fitted** model in
@@ -760,6 +821,31 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
                 "expr_missing": [1.0 if r.expression_imputed else 0.0 for r in rows]}
         for r, v in zip(rows, cols["expr_pct"]):
             r.expr_pct = float(v)
+        # `expr_lvl` -- the scaled-abundance term from artifact v8. The floor is the artifact's
+        # own recorded reference value unless the caller passes a tumour-matched one from
+        # `mhcmatch.expression.tissue_floor`; it is never taken from the batch, because a batch
+        # floor tracks the donor's mutational burden rather than the assay (164-fold across 32
+        # donors of one cohort).
+        if "expr_lvl" in a["features"]:
+            ex = a.get("expression", {})
+            c = expr_floor if expr_floor is not None else ex.get("floor_pooled")
+            if not c:
+                raise ValueError(
+                    "rank: this artifact fits `expr_lvl` but records no abundance floor and none "
+                    "was passed. Supply `expr_floor=mhcmatch.expression.tissue_floor(tumor=...)`; "
+                    "a scaled abundance with no floor is not a defined quantity.")
+            cols["expr_lvl"] = expr_level(rows, c, expr_prefilter or ex.get("prefilter_tpm", 0.0))
+            for r, v in zip(rows, cols["expr_lvl"]):
+                r.components["expr_lvl"] = float(v)
+            need = ex.get("switch_donors", EXPR_SWITCH_DONORS)
+            if n_donors is not None and n_donors < need:
+                import warnings
+                warnings.warn(
+                    f"rank: this artifact scores abundance on an absolute scale (`expr_lvl`) and "
+                    f"the submission names {n_donors} donor(s). Measured on identical draws, that "
+                    f"term is worse than the within-batch percentile below {need} donors and "
+                    f"better at or above it; a submission this small is better scored with an "
+                    f"`expr_pct` artifact. Ranking proceeds.", RuntimeWarning, stacklevel=2)
         # Each C_phys column is a matrix product against a published residue vector -- free, and
         # needing no reference deposit, so the library computes them rather than making the caller
         # pass them. See PHYS_COLUMNS.
