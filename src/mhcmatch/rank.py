@@ -129,13 +129,11 @@ def columns(extended: bool = False, annotate: bool = False, score: str = "aggreg
 #: Cached ``aggregate_mhc1.json``. Loaded once, on first use.
 _AGG: dict | None = None
 
-#: The features the shipped aggregate expects, in order. Read it rather than typing the list --
-#: ``O`` replaced ``D`` in 0.19.0, the four recognition columns collapsed to two in 0.21.0,
-#: ``binder`` became ``pres`` at artifact v4, ``pres`` became ``binder`` again at v6, and the
-#: density term moved from ``occupancy`` to its log-odds ``log10a`` at v7 -- a hardcoded copy of
-#: this tuple would have gone stale silently every time. It is asserted equal to
-#: the artifact's own ``features`` by ``tests/test_aggregate_terms.py``, so the two cannot drift.
-AGGREGATE_FEATURES: tuple = ("binder", "log10a", "expr_pct",
+#: The features the shipped aggregate expects, in order. **Read it rather than typing the list.**
+#: The fitted term set moves whenever the model is refitted, and a hardcoded copy would go stale
+#: silently; ``tests/test_aggregate_terms.py`` asserts this tuple equals the artifact's own
+#: ``features``, so the two cannot drift.
+AGGREGATE_FEATURES: tuple = ("binder", "log10a", "expr_lvl",
                              "C_phys_buried", "C_phys_charge",
                              "C_corpus_thymus", "C_corpus_self", "C_corpus_viral")
 #: The hierarchy the aggregate was fitted as, in pipeline order. Blocks are entered one on top of
@@ -144,48 +142,61 @@ AGGREGATE_FEATURES: tuple = ("binder", "log10a", "expr_pct",
 #: because a consumer grouping the emitted columns should not have to re-derive the grouping.
 AGGREGATE_BLOCKS: tuple = (
     ("presentation", ("binder", "log10a")),
-    ("expression", ("expr_pct",)),
+    ("expression", ("expr_lvl",)),
     ("physchem", ("C_phys_buried", "C_phys_charge")),
     ("corpus", ("C_corpus_thymus", "C_corpus_self", "C_corpus_viral")),
 )
 
 
-#: Expression pre-filters the field applies, in TPM, for :func:`expr_level`'s ``prefilter``.
-#: ``pvacseq`` is pVACtools' ``--expn-val`` default and the most common cut in use; ``tesla`` is the
-#: abundance leg of the consortium triple in Wells et al., Cell 2020 (affinity < 34 nM, abundance
-#: > 33 TPM, stability > 1.4 h), which is stricter by a factor of 33 and filters out 93 % of
-#: non-immunogenic peptides while keeping 55 % of immunogenic ones.
-EXPR_FILTERS: dict = {"none": 0.0, "detectable": 0.0, "improve": 0.01,
-                      "pvacseq": 1.0, "tesla": 33.0}
-#: Donors below which a submission cannot support an absolute abundance scale and
-#: :func:`expr_percentile` is what it can support. Measured, paired on identical draws: the tissue
-#: floor is worse than the percentile at one donor and at three, and better from five.
-EXPR_SWITCH_DONORS: int = 5
-
-
+#: The expression pre-filter assumed when a caller declares none, in TPM. Zero: raising the floor
+#: to a cut the candidates did not pass costs accuracy, so the default is to assume none.
+#:
+#: Values in use elsewhere, for orientation and cross-checking rather than as a menu -- any TPM
+#: value is accepted: **0.01** IMPROVE, **1.0** pVACtools' ``--expn-val`` and the commonest cut in
+#: the field, **33.0** the abundance leg of the consortium triple in Wells et al., Cell 2020
+#: (affinity < 34 nM, abundance > 33 TPM, stability > 1.4 h).
+EXPR_PREFILTER_DEFAULT: float = 0.0
 def expr_level(rows, floor: float, prefilter: float = 0.0) -> list:
-    """``log2(1 + TPM/c)`` per row, ``c`` the abundance floor in TPM. ``nan`` where absent.
+    """The fitted expression term: abundance on a log scale with a reference floor.
 
-    The scaled-abundance term artifact v8 fits as ``expr_lvl``, and the alternative to
-    :func:`expr_percentile`. It keeps what a rank discards -- the *spacing* between candidates --
-    and spends its resolution where the candidates are: ``log1p`` compresses the whole 0-2 TPM
-    band into 1.10 units while 100 to 1000 gets 2.30, and ``s_c`` gives every doubling one unit at
-    either end.
+    For a candidate whose source gene is transcribed at ``TPM``::
 
-    ``floor`` should come from :func:`mhcmatch.expression.tissue_floor`, not from the batch. A floor
-    taken from the candidates in front of you tracks that donor's mutational burden rather than the
-    assay: across 32 donors of one independent cohort the 5th percentile of candidate abundance
-    spanned 164-fold, where the matched-tissue value moves between 0.14 and 0.25 TPM.
+        expr_lvl = log2(1 + TPM / c)
 
-    ``prefilter`` is the expression cut the candidates already passed, in TPM -- ``1.0`` for a
-    pVACseq default, ``33.0`` for the TESLA consortium's, and see
-    :data:`mhcmatch.rank.EXPR_FILTERS`. A filter truncates the abundance distribution from below,
-    which is the range this term resolves, so the floor is raised to meet it; leaving it unset on a
-    filtered batch spends the term's resolution on a range that is not there.
+    ``nan`` where a row has no abundance at all.
 
-    **Unit note.** ``s_c`` with a floor anchored to a quantile of the same measurement is invariant
-    to multiplicative rescaling, so TPM against FPKM against a normalised count give the same
-    column. A ``prefilter`` is a stated TPM value and is the one place the unit must be right.
+    **The two halves come from different places and must not be crossed.**
+
+    ``TPM`` is *this candidate's* source-gene abundance, resolved by the first of these that
+    answers: the submitted cohort's own RNA-seq; the TCGA peptide-keyed value for the tumour type;
+    the gene in the tumour's matched normal tissue; the gene's cross-tissue reference.
+
+    ``c`` is a property of a *transcriptome*, not of a candidate, and comes only from
+    :func:`mhcmatch.expression.tissue_floor` -- the 25th percentile of non-zero median abundance
+    over every gene in the tumour's matched normal tissue(s). 0.1491 for BLCA, 0.1498 for SKCM,
+    0.1833 for LUAD, 0.2482 for the pooled reference when the tumour type is unknown. The
+    reference's gene rows (GTEx and HPA consensus, 104 normal tissues) can supply this; its
+    peptide rows (TCGA, 19 tumour types) cannot, because one peptide's abundance is not a
+    distribution to take a percentile of.
+
+    **Why a log scale with a floor, rather than a rank or a plain ``log1p``.** ``log1p`` compresses
+    the whole 0-2 TPM band -- a third of the candidates in the fitting corpus -- into 1.10 units
+    while 100 to 1000 gets 2.30. ``log2(1 + TPM/c)`` gives every doubling one unit at either end,
+    so the difference between 0.2 and 0.4 TPM weighs what the difference between 200 and 400 does.
+    A rank discards the spacing entirely.
+
+    **Why the floor comes from a reference and never from the batch.** A floor taken from the
+    candidates in front of you tracks that donor's mutational burden rather than the assay: across
+    32 donors of one independent cohort the 5th percentile of candidate abundance spanned
+    164-fold, where the matched-tissue value moves between 0.14 and 0.25 TPM. A reference floor
+    also means two batches scored a week apart are on one scale.
+
+    **Units.** With ``c`` anchored to a quantile of the same measurement, multiplying the column by
+    any constant multiplies ``c`` with it and leaves ``expr_lvl`` identical -- so TPM, FPKM and a
+    normalised count give the same answer. ``prefilter`` is the one place a unit must be right: it
+    is the expression cut the candidates already passed, in TPM, and it raises the floor to meet
+    it, because a filter removes the range this term resolves. Leave it at 0 unless a filter was
+    actually applied; declaring one that was not costs accuracy.
 
     >>> R = lambda v: type("R", (), {"expression": v})()      # `expression` is log1p(TPM)
     >>> [round(v, 4) for v in expr_level([R(0.0), R(0.6931471805599453)], 0.25)]
@@ -212,23 +223,22 @@ def expr_level(rows, floor: float, prefilter: float = 0.0) -> list:
 def expr_percentile(rows) -> list:
     """:attr:`Ranked.expression`'s percentile within ``rows``, in (0, 1); ``0.5`` where absent.
 
-    **The fitted expression term is a rank, not a level, and that is deliberate.** ``expression`` is
-    ``log1p(TPM)``, and TPM is not comparable across the cohorts the model was fitted on -- a GTEx
-    normal-tissue value and a tumour RNA-seq value are different measurements. The fit already
-    grants each screen its own intercept; ranking inside the cohort is the matching move for the one
-    column whose units vary by cohort. Two consequences worth knowing:
+    **Emitted beside the model's own expression term, not read by it.** The fitted term is
+    :func:`expr_level`, which keeps the spacing between candidates that a rank discards. This
+    column is kept because it is useful in its own right -- it says where a candidate stands in the
+    list it was submitted with, which is the question a shortlist actually poses, and it is
+    unit-free and needs no floor.
+
+    Two properties worth knowing:
 
     * **The unit stops mattering.** TPM, FPKM and raw counts give the same column, because a
-      percentile is invariant to any monotone rescaling of abundance. A caller does not have to
-      convert, and cannot convert wrongly.
-    * **Missing needs no imputation constant and no indicator.** A row with no expression value sits
-      at ``0.5``, which is what "no information" means on a percentile scale. The retired
-      ``expr_missing`` flag was metadata -- its source was very nearly a screen label, so the
-      per-screen intercept already carried it (``bench/results/epic_expr_arms.md``).
+      percentile is invariant to any monotone rescaling of abundance.
+    * **Missing needs no imputation constant.** A row with no expression value sits at ``0.5``,
+      which is what "no information" means on a percentile scale.
 
-    The cost, stated: **the term is cohort-relative.** One peptide's ``expr_pct`` depends on what
-    else was scored with it, so a row's score is a statement about its standing in the submitted
-    list. Rank and ``p_response`` were already per-cohort quantities; this makes ``score`` one too.
+    The cost, stated: **the column is batch-relative.** One peptide's percentile depends on what
+    else was scored with it, so it is a statement about standing in the submitted list rather than
+    about the peptide.
 
     A batch with fewer than two finite values -- including one that is entirely absent -- is all
     ``0.5``: one point has no percentile.
@@ -776,15 +786,13 @@ def _known(peptide: str, refs: dict | None) -> str:
 
 def _finish(rows: list, gate: dict | None, score: str = "aggregate",
             prevalence: float = POOL_PREVALENCE,
-            expr_floor: float | None = None, expr_prefilter: float = 0.0,
-            n_donors: int | None = None) -> list:
+            expr_floor: float | None = None, expr_prefilter: float = 0.0) -> list:
     """Score, then order: known epitopes first, then by score descending.
 
-    ``score="aggregate"`` (the default since 0.19.0) uses the **fitted** model in
-    ``data/aggregate_mhc1.json`` -- the one the benchmark actually fitted. Until 0.19.0 this
-    function scored with the two-term noisy-AND :func:`gate_probability` while the fitted aggregate
-    sat vendored with no internal caller, so ``mhcmatch rank`` and the published coefficients were
-    two different models. ``score="gate"`` keeps the old path for comparability.
+    ``score="aggregate"``, the default, uses the **fitted** model in
+    ``data/aggregate_mhc1.json`` -- the one the benchmark fitted, so ``mhcmatch rank`` and the
+    published coefficients are one model. ``score="gate"`` scores with the two-term noisy-AND
+    :func:`gate_probability` instead, and is kept for comparability.
 
     A feature the caller cannot supply is an **error**, not a substituted mean. The three corpus
     channels have to be filled into ``Ranked.components`` before this runs -- :func:`rank_fasta` and
@@ -821,31 +829,23 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
                 "expr_missing": [1.0 if r.expression_imputed else 0.0 for r in rows]}
         for r, v in zip(rows, cols["expr_pct"]):
             r.expr_pct = float(v)
-        # `expr_lvl` -- the scaled-abundance term from artifact v8. The floor is the artifact's
-        # own recorded reference value unless the caller passes a tumour-matched one from
-        # `mhcmatch.expression.tissue_floor`; it is never taken from the batch, because a batch
-        # floor tracks the donor's mutational burden rather than the assay (164-fold across 32
-        # donors of one cohort).
+        # `expr_lvl` is the fitted expression term; `expr_pct` above is emitted beside it and is
+        # not read by the model. The floor is the artifact's own recorded reference value unless
+        # the caller passes a tumour-matched one from `mhcmatch.expression.tissue_floor`; it is
+        # never taken from the batch, because a batch floor tracks the donor's mutational burden
+        # rather than the assay.
         if "expr_lvl" in a["features"]:
             ex = a.get("expression", {})
             c = expr_floor if expr_floor is not None else ex.get("floor_pooled")
             if not c:
                 raise ValueError(
-                    "rank: this artifact fits `expr_lvl` but records no abundance floor and none "
-                    "was passed. Supply `expr_floor=mhcmatch.expression.tissue_floor(tumor=...)`; "
-                    "a scaled abundance with no floor is not a defined quantity.")
+                    "rank: this model fits `expr_lvl` but the artifact records no abundance floor "
+                    "and none was passed. Supply "
+                    "`expr_floor=mhcmatch.expression.tissue_floor(tumor=...)`; a scaled abundance "
+                    "with no floor is not a defined quantity.")
             cols["expr_lvl"] = expr_level(rows, c, expr_prefilter or ex.get("prefilter_tpm", 0.0))
             for r, v in zip(rows, cols["expr_lvl"]):
                 r.components["expr_lvl"] = float(v)
-            need = ex.get("switch_donors", EXPR_SWITCH_DONORS)
-            if n_donors is not None and n_donors < need:
-                import warnings
-                warnings.warn(
-                    f"rank: this artifact scores abundance on an absolute scale (`expr_lvl`) and "
-                    f"the submission names {n_donors} donor(s). Measured on identical draws, that "
-                    f"term is worse than the within-batch percentile below {need} donors and "
-                    f"better at or above it; a submission this small is better scored with an "
-                    f"`expr_pct` artifact. Ranking proceeds.", RuntimeWarning, stacklevel=2)
         # Each C_phys column is a matrix product against a published residue vector -- free, and
         # needing no reference deposit, so the library computes them rather than making the caller
         # pass them. See PHYS_COLUMNS.

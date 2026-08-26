@@ -33,6 +33,7 @@ discarding the candidate -- which is the standing rule for every partially-cover
 from __future__ import annotations
 
 import functools
+import logging
 import gzip
 import os
 
@@ -211,53 +212,95 @@ def _by_gene(resolved: str) -> dict:
     return out
 
 
-@functools.lru_cache(maxsize=32)
-def _tissue_quantile(path: str | None, tissues: tuple, q: float) -> float:
-    """The ``q``-th percentile of non-zero median TPM over every gene in ``tissues``.
+#: A context with fewer gene rows than this does not estimate a percentile of its transcriptome.
+_MIN_GENES = 30
+_POOLED_SEEN: set = set()
+_LOG = logging.getLogger(__name__)
 
-    ``load`` is itself cached on ``path``, so this walks the table once per distinct
-    ``(path, tissues, q)`` and is a dict lookup after that."""
+
+@functools.lru_cache(maxsize=32)
+def _tissue_quantile(path: str | None, tissues: tuple, q: float) -> tuple:
+    """``(q-th percentile of non-zero gene medians in ``tissues``, n genes)``; ``nan`` if too few.
+
+    Nearest-rank on the sorted values, so the result is exactly one observed abundance and two
+    runs cannot disagree in the last bit. ``load`` is itself cached on ``path``, so this walks the
+    table once per distinct ``(path, tissues, q)`` and is a dict lookup after that."""
     vals = []
     for (kt, _key, ctx), row in load(path).items():
         if kt == "gene" and (not tissues or ctx in tissues):
             v = row.get("median_tpm")
             if v is not None and v > 0:
                 vals.append(v)
-    if len(vals) < 30:
-        return float("nan")
+    if len(vals) < _MIN_GENES:
+        return float("nan"), len(vals)
     vals.sort()
     i = min(len(vals) - 1, max(0, int(round(q * (len(vals) - 1)))))
-    return float(vals[i])
+    return float(vals[i]), len(vals)
 
 
 def tissue_floor(tumor: str | None = None, tissue: str | None = None, q: float = 0.25,
-                 path: str | None = None) -> float:
+                 path: str | None = None, detail: bool = False):
     """The abundance floor ``c`` for :func:`mhcmatch.rank.expr_level`, in TPM.
 
-    The ``q``-th percentile of non-zero median TPM over every gene in the tumour's matched normal
-    tissue(s), or in ``tissue`` directly. With neither, the whole reference pooled.
+    The ``q``-th percentile of non-zero median abundance over **every gene** in a set of normal
+    tissues -- the tumour's matched normal(s), or ``tissue`` named directly, or the whole reference
+    pooled when neither is given.
 
-    **Why a reference floor and not the batch's own.** A floor taken from the candidates in front of
-    you tracks that donor's mutational burden rather than the assay: across 32 donors of one
-    independent cohort the 5th percentile of candidate abundance spanned 164-fold. The
-    matched-tissue value moves far less -- 0.14 to 0.25 TPM at ``q = 0.25`` across the tissue sets
-    the fitting corpus touches -- and it needs nothing from the submission, so two batches scored a
-    week apart are on one scale.
+    **This reads the gene half of the reference and never the peptide half.** The table holds two
+    kinds of row and they answer different questions::
 
-    >>> import math
-    >>> c = tissue_floor(tumor="SKCM")            # doctest: +SKIP
-    >>> math.isfinite(c)                          # doctest: +SKIP
-    True
+        gene rows      4,911,764   GTEx + HPA consensus, 104 normal tissues
+                                   -> a whole transcriptome, so a percentile over it means something
+        peptide rows   1,700,779   TCGA, 19 tumour types
+                                   -> one peptide's abundance in one tumour type
+
+    A floor is a statement about where a *transcriptome* stops resolving, so only the gene half can
+    supply it. The peptide half supplies the numerator instead -- what a given candidate is
+    transcribed at -- and the two must not be crossed.
+
+    ``tumor`` is a TCGA code (``SKCM``, ``BLCA``, ``LUAD``); :func:`matched_tissues` maps it to its
+    normal tissue(s). A code with no mapping falls back to the pooled reference, which is the honest
+    answer when the origin is unknown. A ``tissue`` **named explicitly and not found is an error**,
+    not a silent fallback: a typo would otherwise return a plausible number from the wrong
+    distribution.
+
+    With ``detail=True`` returns ``{"floor", "contexts", "n_genes", "pooled"}`` instead of the bare
+    value, so a caller can see which tissues were used and whether it fell back.
+
+    >>> round(tissue_floor(tumor="SKCM"), 4)                     # doctest: +SKIP
+    0.1498
+    >>> tissue_floor(tumor="SKCM", detail=True)["contexts"]      # doctest: +SKIP
+    ('Skin - Sun Exposed (Lower leg)', 'Skin - Not Sun Exposed (Suprapubic)')
     """
+    if not 0.0 < q < 1.0:
+        raise ValueError(f"tissue_floor: q must be in (0, 1), got {q!r}")
     ts: tuple = ()
     if tissue:
         ts = (tissue,)
     elif tumor:
         ts = tuple(matched_tissues(tumor))
-    v = _tissue_quantile(path, ts, q)
-    if not (v == v) and ts:                       # NaN-safe: no gene rows for those tissues
-        v = _tissue_quantile(path, (), q)
-    return v
+        if not ts:
+            _log_pooled(tumor)
+    v, n = _tissue_quantile(path, ts, q)
+    if v != v and tissue:                                        # NaN-safe: named, and not found
+        raise ValueError(
+            f"tissue_floor: tissue {tissue!r} has fewer than {_MIN_GENES} gene rows in the "
+            f"reference. Check the spelling against `mhcmatch expression --list-contexts`; "
+            "falling back silently would return a number from the wrong distribution.")
+    pooled = not ts or v != v
+    if v != v:
+        v, n = _tissue_quantile(path, (), q)
+    if not detail:
+        return v
+    return {"floor": v, "contexts": ts, "n_genes": n, "pooled": pooled}
+
+
+def _log_pooled(tumor: str) -> None:
+    """A tumour code with no matched normal gets the pooled floor, and says so once."""
+    if tumor not in _POOLED_SEEN:
+        _POOLED_SEEN.add(tumor)
+        _LOG.info("tissue_floor: %r has no matched normal tissue; using the pooled reference. "
+                  "`mhcmatch expression --list-contexts` prints the tumour vocabulary.", tumor)
 
 
 def safety_profile(gene: str, top: int = 10, path: str | None = None) -> list[tuple[str, float]]:
