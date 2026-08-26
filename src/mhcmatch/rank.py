@@ -47,6 +47,7 @@ __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
            "aggregate", "aggregate_score", "probability", "POOL_PREVALENCE",
            "AGGREGATE_FEATURES", "AGGREGATE_COLUMNS",
            "AGGREGATE_BLOCKS", "CHANNEL_COLUMNS", "PHYS_COLUMNS", "expr_percentile",
+           "expr_norm_level",
            "rank_pairs", "split_alleles", "species_of"]
 
 #: The `mhcmatch rank` output schema, one source of truth. It lives here rather than inline in the
@@ -133,7 +134,7 @@ _AGG: dict | None = None
 #: The fitted term set moves whenever the model is refitted, and a hardcoded copy would go stale
 #: silently; ``tests/test_aggregate_terms.py`` asserts this tuple equals the artifact's own
 #: ``features``, so the two cannot drift.
-AGGREGATE_FEATURES: tuple = ("binder", "log10a", "expr_lvl",
+AGGREGATE_FEATURES: tuple = ("binder", "log10a", "expr_lvl", "expr_norm",
                              "C_phys_buried", "C_phys_charge",
                              "C_corpus_thymus", "C_corpus_self", "C_corpus_viral")
 #: The hierarchy the aggregate was fitted as, in pipeline order. Blocks are entered one on top of
@@ -142,7 +143,7 @@ AGGREGATE_FEATURES: tuple = ("binder", "log10a", "expr_lvl",
 #: because a consumer grouping the emitted columns should not have to re-derive the grouping.
 AGGREGATE_BLOCKS: tuple = (
     ("presentation", ("binder", "log10a")),
-    ("expression", ("expr_lvl",)),
+    ("expression", ("expr_lvl", "expr_norm")),
     ("physchem", ("C_phys_buried", "C_phys_charge")),
     ("corpus", ("C_corpus_thymus", "C_corpus_self", "C_corpus_viral")),
 )
@@ -217,6 +218,48 @@ def expr_level(rows, floor: float, prefilter: float = 0.0) -> list:
             continue
         tpm = math.expm1(float(v))                                # `expression` is log1p(TPM)
         out.append(math.log2(1.0 + max(tpm, 0.0) / c))
+    return out
+
+
+def expr_norm_level(rows, floor: float, tumor: str | None = None, tissue: str | None = None,
+                    path: str | None = None) -> list:
+    """The second expression term: the same gene's level in normal tissue, on the same floor.
+
+    For a candidate whose source gene sits at ``r_N`` TPM in the tumour's matched normal tissue::
+
+        expr_norm = log2(1 + r_N / c)
+
+    **Two free terms, not a ratio.** ``expr_lvl`` is what this candidate is transcribed at and
+    ``expr_norm`` is what its gene runs at in healthy tissue, both on one floor, so the model can
+    represent a tumour-versus-normal contrast as equal-and-opposite coefficients if that is what the
+    data supports. It does not: fitted, both are positive, so the normal-tissue level carries signal
+    of its own rather than acting as a denominator. Imposing the ratio would have asserted the
+    result instead of measuring it.
+
+    ``r_N`` is the gene's median over the tumour's matched normal tissue(s), and **where no tissue
+    resolves it is the gene's own pan-tissue median** -- never missing. A missing value here becomes
+    a batch constant, a constant cannot reorder anything, and a model that still spends weight on it
+    has taken that weight from the abundance term. That is not hypothetical: it is what put the term
+    below its own baseline on the one deposit in the fitting corpus carrying neither a gene name nor
+    a tumour type.
+
+    A candidate whose gene is not in the reference at all gets ``nan``, which is a different fact
+    from a gene that is silent, and the two must not be collapsed.
+    """
+    from . import expression as EX
+
+    out, seen = [], {}
+    for r in rows:
+        g = (getattr(r, "gene", "") or "").strip()
+        if not g:
+            out.append(float("nan"))
+            continue
+        if g not in seen:
+            d = EX.gene_level(g, tumor=tumor, tissue=tissue, path=path)
+            v = d["normal"] if d.get("normal") is not None else d.get("pan")
+            seen[g] = float("nan") if not d["found"] or v is None else float(v)
+        x = seen[g]
+        out.append(float("nan") if x != x else math.log2(1.0 + max(x, 0.0) / float(floor)))
     return out
 
 
@@ -786,7 +829,8 @@ def _known(peptide: str, refs: dict | None) -> str:
 
 def _finish(rows: list, gate: dict | None, score: str = "aggregate",
             prevalence: float = POOL_PREVALENCE,
-            expr_floor: float | None = None, expr_prefilter: float = 0.0) -> list:
+            expr_floor: float | None = None, expr_prefilter: float = 0.0,
+            tumor: str | None = None, tissue: str | None = None) -> list:
     """Score, then order: known epitopes first, then by score descending.
 
     ``score="aggregate"``, the default, uses the **fitted** model in
@@ -846,6 +890,17 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
             cols["expr_lvl"] = expr_level(rows, c, expr_prefilter or ex.get("prefilter_tpm", 0.0))
             for r, v in zip(rows, cols["expr_lvl"]):
                 r.components["expr_lvl"] = float(v)
+        if "expr_norm" in a["features"]:
+            ex = a.get("expression", {})
+            c = expr_floor if expr_floor is not None else ex.get("floor_pooled")
+            if not c:
+                raise ValueError(
+                    "rank: this model fits `expr_norm` but the artifact records no abundance floor "
+                    "and none was passed. Supply "
+                    "`expr_floor=mhcmatch.expression.context_floor(tumor=...)`.")
+            cols["expr_norm"] = expr_norm_level(rows, c, tumor=tumor, tissue=tissue)
+            for r, v in zip(rows, cols["expr_norm"]):
+                r.components["expr_norm"] = float(v)
         # Each C_phys column is a matrix product against a published residue vector -- free, and
         # needing no reference deposit, so the library computes them rather than making the caller
         # pass them. See PHYS_COLUMNS.
@@ -976,7 +1031,7 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
                            alleles_presenting=p.alleles_presenting,
                            core=p.core, core_offset=p.core_offset, core_source=p.core_source))
     _fill_channels(rows, channels)
-    return _finish(rows, gate, score, prevalence)
+    return _finish(rows, gate, score, prevalence, tumor=tumor, tissue=tissue)
 
 
 def _presents_better(a: "Ranked", b: "Ranked") -> bool:
@@ -1159,7 +1214,7 @@ def rank_pairs(store, rows, cls: str = "mhc1", *, tissue: str | None = None,
             out[r["_i"]] = _unscored(r, cls, tissue, tumor, refs, binding_core, phys)
     rows_out = [out[i] for i in sorted(out)]
     _fill_channels(rows_out, channels)
-    return _finish(rows_out, gate, score, prevalence)
+    return _finish(rows_out, gate, score, prevalence, tumor=tumor, tissue=tissue)
 
 
 def rank_table(path: str, *, channels=None,
@@ -1226,4 +1281,4 @@ def rank_table(path: str, *, channels=None,
                 r.components["score_builtin"] = None
             rows.append(r)
     _fill_channels(rows, channels)
-    return _finish(rows, gate, score, prevalence)
+    return _finish(rows, gate, score, prevalence, tumor=tumor, tissue=tissue)
