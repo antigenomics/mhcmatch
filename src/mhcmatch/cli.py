@@ -1019,6 +1019,10 @@ REFERENCE_FILES = (
     "thymus/thymus_immunopeptidome.tsv.gz",       # tolerance reference for mimicry
     "ligandome/viral_foreign_iedb.tsv.gz",        # foreign reference for mimicry
     "expression/reference_expression.tsv.gz",     # GTEx tissue + TCGA tumour medians (~105 MB)
+    "expression/reference_expression_toil.tsv.gz",  # the same two, one pipeline, TPM (~71 MB)
+    "expression/toil_matrix.npz",                 # the same table dense, and what scoring reads
+    "expression/toil_floors.tsv",                 # per-context abundance floors, 88 rows
+    "expression/context_synonyms.tsv",            # free-text origin -> context, 232 rows
 )
 
 
