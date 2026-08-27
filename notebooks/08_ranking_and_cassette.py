@@ -94,8 +94,12 @@ def _(mo):
     ordering is ours and not a re-sort of someone else's column. The upstream number is kept in
     `components["score_builtin"]` precisely so the two can be compared rather than conflated.
 
-    `tumor=` is worth passing. Without it, expression falls back to the cross-tissue median, which
-    answers *"is this gene expressed anywhere"* — not *"is it expressed in this tumour"*.
+    `tumor=` is worth passing, and it now does two things. It picks the matched normal tissue
+    `expr_norm` reads, and it sets the abundance floor `c` that **both** expression terms divide by.
+    A tumour's floor sits at roughly half its matched normal's — SKCM 0.1600 against skin 0.3050 TPM
+    — so leaving it out is not a neutral choice: the pooled floor puts `expr_lvl` about a unit low.
+    Where the origin arrives as free text, `expression.resolve_context` maps it, and an
+    unrecognised string raises rather than quietly returning a number from the wrong distribution.
     """)
     return
 

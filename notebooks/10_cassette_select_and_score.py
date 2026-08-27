@@ -123,17 +123,44 @@ def _(CA, RK, held, np, pl):
     _cols = [c for c in _ch.columns if c != "w"]
     _agg = (_wins.join(_ch, on="w", how="left").group_by("mutation_id")
                  .agg(*[pl.col(c).max().alias(c) for c in _cols]))
-    # `expr_pct` is a WITHIN-DONOR percentile -- the definition it has in the fit and in
-    # `bench/cassette/select.py`, so the numbers below line up with `cassette_select.md`. The source
-    # column is an RNA quartile 1-4; ranking it inside the donor spreads the ties onto (0, 1].
+    # The model fits two expression terms and this table can supply one of them.
+    #
+    #   `expr_lvl`  is log2(1 + TPM/c) against a floor taken from the reference transcriptome, so
+    #               its numerator has to be in reference TPM. This table publishes `rna_exp_qrt`,
+    #               an RNA quartile 1-4. A quartile divided by 0.18 TPM is not a quantity, so the
+    #               term is left missing and takes `aggregate_score`'s training-mean path.
+    #   `expr_norm` is the gene's median in the tumour's matched normal tissue. It needs no
+    #               abundance at all -- only the gene symbol and cancer type this table carries on
+    #               every row -- so the abundance block is halved rather than lost.
+    from mhcmatch import expression as EX
+
+    def _norm(gene, cancer):
+        """The gene's matched-normal TPM, falling back to its pan-tissue median, NaN if unknown."""
+        try:
+            g = EX.gene_level(gene, tumor=cancer)
+        except ValueError:              # an unrecognised cancer name raises rather than guessing
+            g = EX.gene_level(gene)
+        v = g["normal"] if g.get("normal") is not None else g.get("pan")
+        return float("nan") if not g["found"] or v is None else float(v)
+
+    _pairs = held.select("refgene_name", "cancer").unique().rows()
+    _c = {}
+    for _, _cn in _pairs:
+        if _cn not in _c:
+            try:
+                _c[_cn] = EX.context_floor(tumor=_cn)
+            except ValueError:
+                _c[_cn] = EX.context_floor()                      # pooled; the name did not resolve
+    _rn = {(g, cn): _norm(g, cn) for g, cn in _pairs}
     scored = held.join(_agg, on="mutation_id", how="left").with_columns(
-        pl.col("rna_exp_qrt").cast(pl.Float64, strict=False).alias("_ab")).with_columns(
-        pl.when(pl.col("_ab").is_not_null())
-          .then((pl.col("_ab").rank("average").over("patient") - 0.5)
-                / pl.col("_ab").is_not_null().sum().over("patient"))
-          .otherwise(0.5).alias("expr_pct"))
+        pl.Series("expr_norm", [
+            np.log2(1 + _rn[(g, cn)] / _c[cn]) if _rn[(g, cn)] == _rn[(g, cn)] else np.nan
+            for g, cn in held.select("refgene_name", "cancer").iter_rows()]))
     feats = {f: (scored[f].to_numpy().astype(float) if f in scored.columns
                  else np.full(scored.height, np.nan)) for f in RK.AGGREGATE_FEATURES}
+    _missing = [f for f in RK.AGGREGATE_FEATURES if not np.isfinite(feats[f]).any()]
+    print(f"{len(_missing)} of {len(RK.AGGREGATE_FEATURES)} terms take the training mean: "
+          f"{', '.join(_missing)}")
     scored = scored.with_columns(pl.Series("epic", RK.aggregate_score(feats))) \
                    .filter(pl.col("epic").is_finite()).sort(["patient", "mutation_id"])
     print(f"EPIC over {scored.height:,} units: "
@@ -321,9 +348,10 @@ def _(mo):
     mo.md(r"""
     ## What to take away
 
-    - **Give `select` the whole pool.** Expression and presentation carry the largest coefficients
-      in the shipped model (`mhcmatch rank --coefficients`), so a shortlist already cut on binding
-      and expression has no range left along them. Measured: on this exhaustive screen, responding at 0.0144,
+    - **Give `select` the whole pool.** Presentation and the two expression terms carry the largest
+      positive coefficients in the shipped model (`mhcmatch rank --coefficients`), so a shortlist
+      already cut on binding and expression has no range left along them. Measured: on this
+      exhaustive screen, responding at 0.0144,
       selecting five units captures 3.92× the base rate. On TESLA's *nominated* list, responding at
       0.0612 — 4.25× the same rate — every rule sits at the base rate, because the selection had
       already been done to it.
