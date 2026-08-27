@@ -162,14 +162,46 @@
   "floor_source": "q of non-zero gene medians over the TUMOUR TYPE's own transcriptome, from mhcmatch.expression's single-pipeline reference (UCSC Xena/Toil, one RSEM pipeline over GENCODE v23, TPM for both cohorts: 33 TCGA studies and 53 GTEx tissues). A tumour's floor is about half its matched normal's, so the two are not interchangeable",
   "norm_source": "the gene's median in the tumour's matched normal tissue(s), falling back to its own pan-tissue median where no tissue resolves -- never to missing, which would become a cohort constant and could not rank",
   "floor_per_screen": {
-   "ITSNdb": 0.18000482022762299,
-   "IEDB_neoag": 0.23999914526939392,
-   "HiTIDE": 0.14000321924686432,
-   "NCI": 0.18999409675598145,
-   "GBM": 0.18000482022762299,
-   "TESLA": 0.15999634563922882,
-   "VACCIMEL": 0.18000482022762299,
-   "Gfeller_GBM": 0.18000482022762299
+   "GBM": {
+    "n_floors": 1,
+    "min": 0.18000482022762299,
+    "max": 0.18000482022762299
+   },
+   "Gfeller_GBM": {
+    "n_floors": 1,
+    "min": 0.18000482022762299,
+    "max": 0.18000482022762299
+   },
+   "HiTIDE": {
+    "n_floors": 5,
+    "min": 0.14000321924686432,
+    "max": 0.20000454783439636
+   },
+   "IEDB_neoag": {
+    "n_floors": 7,
+    "min": 0.14000321924686432,
+    "max": 0.23999914526939392
+   },
+   "ITSNdb": {
+    "n_floors": 1,
+    "min": 0.18000482022762299,
+    "max": 0.18000482022762299
+   },
+   "NCI": {
+    "n_floors": 9,
+    "min": 0.14000321924686432,
+    "max": 0.21999718248844147
+   },
+   "TESLA": {
+    "n_floors": 3,
+    "min": 0.15999634563922882,
+    "max": 0.20000454783439636
+   },
+   "VACCIMEL": {
+    "n_floors": 1,
+    "min": 0.18000482022762299,
+    "max": 0.18000482022762299
+   }
   },
   "floor_pooled": 0.18000482022762299,
   "prefilter_tpm": 0.0,

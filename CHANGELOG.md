@@ -94,6 +94,15 @@ Every score moves.**
   3,168 MB resident** against the matrix's **0.05 s and 29 MB**. Both return the same floor to four
   decimals, which is how the matrix is checked against the table it came from.
 
+- **`expression.floor_per_screen` in the artifact is a range, and it is deterministic.** A screen
+  is not one cancer type -- IEDB_neoag spans 19, NCI 11, HiTIDE 6, TESLA 4 -- and the field recorded
+  a single floor per screen, taken from a `polars` `.unique()` that promises no order. Consecutive
+  fits wrote different floors for those four screens while the four single-type screens never
+  moved. It now records `{n_floors, min, max}` from a sorted pass. **No scored number was ever
+  affected**: `rank._finish` uses `floor_pooled`, or the floor the caller passes, and the fit joins
+  a floor per cancer type rather than per screen. Re-fitting after the change reproduces the
+  shipped artifact byte for byte on every coefficient, `mu`, `sigma`, `sd`, `boot_sd`, `z`, `p`,
+  intercept and BIC, and two consecutive fits are now byte-identical to each other.
 - **A negative abundance raises instead of being read as zero.** `rank._expression_for`,
   `rank.expr_level`, `expression.batch_scale` and the `prefilter` argument of `expr_level` and
   `context_floor` all reject a negative TPM naming the gene and the value. It was previously
