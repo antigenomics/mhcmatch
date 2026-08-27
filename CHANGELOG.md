@@ -8,6 +8,8 @@ versioning is [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+## [1.3.0] --- 2026-08-27
+
 ### Added
 - `vector.LINKERS` --- named linker presets with family, intended class and provenance, and
   `vector.resolve_linker` so a name, explicit residues or `none` all resolve to one thing. The table

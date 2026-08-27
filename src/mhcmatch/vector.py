@@ -11,6 +11,15 @@ Selection and assembly are kept apart because the assembly answer depends on the
 candidate: whether to carry a 12th epitope depends on what the first eleven already cover, and the
 cost of a junction depends on which two units sit either side of it.
 
+**Two selection rules ship, and they answer different questions.** :func:`mhcmatch.cassette.select`
+maximises the mean--variance energy ``H`` at a **size you fix**: you say twenty units, it returns the
+best twenty and a score comparable across donors. :func:`select` here fixes no size at all --- it
+grows each allotype while the next candidate beats that allotype's own expected yield per slot, so
+``k`` is an *output* and ``n0``, per-allotype capacity, is the input. Use the first when the platform
+has already decided how many units the construct carries, which is the usual case; use this one when
+the question is how many are worth carrying at all. The two are not competing estimates of one
+quantity and neither approximates the other.
+
 **What to refuse — an exclusion, and it runs first.** :func:`screen` withdraws a unit whose own
 target gene is transcribed in a tissue that must not be attacked, or one of whose registers coincides
 with a self peptide from an unrelated essential-tissue gene. It excludes rather than down-ranks: the
@@ -1602,7 +1611,10 @@ class MRNA:
     the same molecule in RNA letters.
 
     ``parts`` tiles ``sequence`` **exactly**: consecutive, non-overlapping, 0-based half-open, and
-    the concatenation of every part's slice is the whole molecule. That is the property that makes
+    the concatenation of every part's slice is the whole molecule. Every part carries the same
+    keys --- ``kind``, ``name``, ``start``, ``end``, ``aa_start``, ``aa_end`` --- with the two
+    amino-acid offsets ``None`` on a part that is not translated, so a reader never has to know
+    which kind it is holding before it can index one. That is the property that makes
     the record auditable — an element that silently went missing shows up as a gap, and one that was
     added twice shows up as an overlap, neither of which a length check would catch.
     """
@@ -1680,7 +1692,8 @@ def mrna(cassette, linker=None, *, leader: str = "", trailer: str = "",
 
     ``start`` prepends an initiator methionine unless the open reading frame already begins with
     one, so the codon is real and :attr:`MRNA.protein` shows the residue it encodes rather than
-    hiding it. ``stop`` is one codon and is checked to be one. ``poly_a`` is a count of adenosines;
+    hiding it. ``stop`` is one codon and is checked to be one; pass ``stop=""`` when the stop lives in the
+    vector rather than in the payload. ``poly_a`` is a count of adenosines;
     a template-encoded tail is a property of the vector and its length is the caller's to set.
 
     >>> m = mrna(["SIINFEKLA", "KVAELVHFL"], "GS10")
@@ -1740,19 +1753,27 @@ def mrna(cassette, linker=None, *, leader: str = "", trailer: str = "",
         raise ValueError("mrna: back-translation is not synonymous with the assembled payload")
 
     parts, at = [], 0
-    if u5:
-        parts.append({"kind": "utr5", "name": "utr5", "start": 0, "end": len(u5)})
-        at = len(u5)
-    for p in aa_parts:
-        parts.append({**p, "start": at + 3 * p["aa_start"], "end": at + 3 * p["aa_end"]})
-    at += len(cds)
-    for kind, seq in (("stop", stop_codon), ("utr3", u3), ("poly_a", "A" * poly_a)):
-        if seq:
-            parts.append({"kind": kind, "name": seq if kind == "stop" else kind,
-                          "start": at, "end": at + len(seq)})
-            at += len(seq)
+
+    def _part(kind: str, name: str, n: int, aa=(None, None)) -> None:
+        nonlocal at
+        if n:
+            parts.append({"kind": kind, "name": name, "start": at, "end": at + n,
+                          "aa_start": aa[0], "aa_end": aa[1]})
+            at += n
+
+    _part("utr5", "utr5", len(u5))
+    base = at
+    for q in aa_parts:
+        parts.append({**q, "start": base + 3 * q["aa_start"], "end": base + 3 * q["aa_end"]})
+    at = base + len(cds)
+    _part("stop", stop_codon, len(stop_codon))
+    _part("utr3", "utr3", len(u3))
+    _part("poly_a", "poly_a", poly_a)
+
     sequence = u5 + cds + stop_codon + u3 + "A" * poly_a
-    assert parts[-1]["end"] == len(sequence) if parts else True
+    if parts[-1]["end"] != len(sequence) or any(a["end"] != b["start"]
+                                                for a, b in zip(parts, parts[1:])):
+        raise ValueError("mrna: the parts map does not tile the construct")   # unreachable by test
     return MRNA(sequence=sequence, protein=orf, cds=cds, parts=parts, linker=sp)
 
 
