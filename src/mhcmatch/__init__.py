@@ -19,8 +19,7 @@ Theory: the theory appendix. Roadmap: ``ROADMAP.md``.
 """
 from importlib.metadata import PackageNotFoundError, version as _version
 
-from . import (cassette, logo, luksza, mimics, portfolio, predict, processing, search,
-               vector)
+from . import cassette, logo, luksza, mimics, portfolio, predict, search, vector
 from .affinity import AffinityModel, PottsAffinity
 from .structure import StructureScorer
 from .diffusion import AnchorModel
@@ -64,7 +63,6 @@ __all__ = [
     "luksza",
     "portfolio",
     "cassette",
-    "processing",
     "vector",
     "__version__",
 ]

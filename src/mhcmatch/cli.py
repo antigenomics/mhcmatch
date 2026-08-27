@@ -1250,15 +1250,18 @@ def cmd_vector(a):
                 say(f"layout panel: {len(alleles)} allotype(s), paid once for "
                     f"{len(plans)} plan(s)", 2)
             with step(f"laying out {name}: {len(us)} unit(s), "
-                      f"{len(us) * (len(us) - 1)} ordered pair(s) x {len(V.SPACERS)} spacer(s)"):
+                      f"{len(us) * (len(us) - 1)} ordered pair(s) x "
+                      f"{1 if a.linker else len(V.SPACERS)} spacer(s)"
+                      + (f", pinned to {a.linker}" if a.linker else "")):
                 built.append((name, V.order(us, binder=binder, lengths=lengths, alleles=alleles,
                                             objective=a.objective,
                                             binder_threshold=a.binder_threshold,
-                                            threshold=a.threshold)))
+                                            threshold=a.threshold,
+                                            linker=getattr(a, "linker", None))))
         elif us:
             # One unit has no junctions, so `order` returns before it ever calls `binder` -- building
             # the panel and its calibrators here would be ~10 s spent to lay out a cassette of one.
-            built.append((name, V.order(us, binder=None)))
+            built.append((name, V.order(us, binder=None, linker=getattr(a, "linker", None))))
     cas = built[0][1] if built else None
 
     o = _Out(a, "row")
@@ -1377,6 +1380,47 @@ def cmd_vector(a):
                 print(f"# {a.fasta_nt}: {name} {len(cds)} nt, "
                       f"{len(V.slippery_sites(cds))} slippery site(s) remaining", file=sys.stderr)
         print(f"# wrote {a.fasta_nt}", file=sys.stderr)
+
+    if built and a.mrna:
+        # The backbone elements are read the same way alleles are: a literal, or a file holding one.
+        parts = {k: _read_seq(v) if v and os.path.exists(v) else (v or "")
+                 for k, v in (("leader", a.leader), ("trailer", a.trailer),
+                              ("utr5", a.utr5), ("utr3", a.utr3))}
+        with open(a.mrna, "w") as fh:
+            for name, c in built:
+                m = V.mrna(c, leader=parts["leader"], trailer=parts["trailer"],
+                           utr5=parts["utr5"], utr3=parts["utr3"], poly_a=a.poly_a)
+                ck = m.checks
+                fh.write(f">{name}_mrna units={ck['n_units']} linker={m.linker} "
+                         f"nt={ck['length_nt']} cds={ck['cds_nt']} aa={ck['protein_aa']} "
+                         f"gc={ck['gc']:.3f} max_run={ck['longest_homopolymer']} "
+                         f"slippery={ck['slippery_sites']} translates={ck['translates']}\n"
+                         f";parts=" + ",".join(f"{q['kind']}:{q['name']}:"
+                                               f"{q['start'] + 1}-{q['end']}" for q in m.parts)
+                         + f"\n{m.sequence}\n")
+                print(f"# {a.mrna}: {name} {ck['length_nt']} nt over {len(m.parts)} part(s), "
+                      f"linker={m.linker}, GC {ck['gc']:.1%}, longest run "
+                      f"{ck['longest_homopolymer']}", file=sys.stderr)
+                if not ck["translates"]:
+                    print(f"# WARNING {name}: the coding sequence does not read back as the "
+                          f"assembled protein", file=sys.stderr)
+        print(f"# wrote {a.mrna}", file=sys.stderr)
+
+
+def cmd_linkers(a):
+    """Print the named linker presets, so a `--linker` name never has to be guessed."""
+    from . import vector as V
+
+    o = _Out(a, "linker")
+    try:
+        o.header("name", "sequence", "length", "family", "class", "note")
+        for name, L in V.LINKERS.items():
+            o.row(name, L.sequence or "-", len(L), L.family, L.cls, L.note)
+    finally:
+        o.close()
+    print(f"# {len(V.LINKERS)} preset(s). `class` is the class each is INTENDED for, which is "
+          f"provenance and not a measurement -- pass one to --linker to pin it, or omit --linker "
+          f"and let the junction scan choose", file=sys.stderr)
 
 
 def cmd_deslip(a):
@@ -1736,6 +1780,30 @@ def _add_vector_opts(p, require_n0: bool = True) -> None:
     p.add_argument("--threshold", type=float, metavar="F",
                     help="stop at the first spacer whose worst junction falls at or below this, "
                          "instead of trying them all and taking the cheapest")
+    p.add_argument("--linker", metavar="NAME",
+                    help="PIN one linker instead of sweeping: a preset name (`mhcmatch cassette "
+                         "linkers` lists them), explicit residues, or `none` for direct "
+                         "concatenation. Use this when the construct format is already decided "
+                         "and only the ordering is open; without it every spacer is tried and the "
+                         "cheapest wins")
+    p.add_argument("--mrna", metavar="FILE",
+                    help="also write the assembled mRNA as FASTA: 5' UTR, start codon, leader, the "
+                         "cassette CDS, trailer, stop, 3' UTR and poly(A), in that order, with a "
+                         "parts map on the header line. Every backbone element defaults to nothing "
+                         "and is supplied by the flags below -- this library does not invent a UTR")
+    p.add_argument("--leader", metavar="SEQ", default="",
+                    help="amino acids translated in frame BEFORE the cassette (a secretory signal "
+                         "peptide); a sequence or a FASTA/plain file")
+    p.add_argument("--trailer", metavar="SEQ", default="",
+                    help="amino acids translated in frame AFTER the cassette (an MHC class-I "
+                         "trafficking domain); a sequence or a FASTA/plain file")
+    p.add_argument("--utr5", metavar="SEQ", default="",
+                    help="5' untranslated region, NUCLEOTIDES; a sequence or a file")
+    p.add_argument("--utr3", metavar="SEQ", default="",
+                    help="3' untranslated region, NUCLEOTIDES; a sequence or a file")
+    p.add_argument("--poly-a", type=int, default=0, metavar="N",
+                    help="length of the template-encoded poly(A) tail in adenosines (default 0, "
+                         "i.e. none -- the tail is a property of the vector, not of the payload)")
     p.add_argument("--fasta", metavar="FILE", help="also write the cassette sequence as FASTA")
     p.add_argument("--fasta-nt", metavar="FILE",
                     help="also write the cassette CODING SEQUENCE as FASTA -- highest-usage human "
@@ -2131,6 +2199,10 @@ def main(argv=None):
                                "spacer, minimising junctional binding")
     _add_vector_opts(co, require_n0=False)
     co.set_defaults(fn=cmd_vector, order_only=True)
+
+    cl = casub.add_parser("linkers",
+                          help="list the named linker presets --linker accepts")
+    cl.set_defaults(fn=cmd_linkers)
 
     cd = casub.add_parser("deslip",
                           help="find (and repair) the m1-pseudouridine +1 frameshift motif in a "

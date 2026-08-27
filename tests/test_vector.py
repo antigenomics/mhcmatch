@@ -1290,3 +1290,135 @@ def test_registers_that_are_not_the_units_windows_raise_instead_of_screening_saf
     # and a legitimate non-spanning window of the unit's own peptide is still exempt, not an error
     own = vector.Unit("K" * 9 + TITIN + "K" * 9, 4, "MAGEA3", "HLA-A*01:01", 0.9)
     assert risk(own, [TITIN]) == []
+
+
+# --------------------------------------------------------------------------- linker presets
+
+def _lu(pep, gene="G"):
+    return vector.Unit(pep, len(pep) // 2, gene, "HLA-A*02:01", 0.2)
+
+
+def test_a_preset_name_and_its_residues_are_the_same_linker():
+    assert vector.resolve_linker("GS10") == "GGSGGGGSGG"
+    assert vector.resolve_linker("GGSGGGGSGG") == "GGSGGGGSGG"
+
+
+def test_no_linker_has_one_meaning_however_it_is_spelled():
+    """`None`, `"none"` and `""` are the same design choice, and `SPACERS` leads with it."""
+    assert vector.resolve_linker(None) is None
+    assert vector.resolve_linker("none") is None
+    assert vector.resolve_linker("") is None
+    assert vector.LINKERS["none"].sequence == ""
+
+
+def test_an_unknown_linker_that_is_not_a_peptide_raises_rather_than_reaching_the_construct():
+    """`O` is not one of the 20 residues, so `back_translate` would have raised much later."""
+    with pytest.raises(ValueError, match="neither a preset"):
+        vector.resolve_linker("NONE")
+    with pytest.raises(ValueError, match="neither a preset"):
+        vector.resolve_linker("GGS-GGS")
+
+
+def test_every_preset_is_translatable_and_its_length_is_its_sequence():
+    for name, L in vector.LINKERS.items():
+        assert name == L.name
+        assert len(L) == len(L.sequence)
+        assert set(L.sequence) <= set("ACDEFGHIKLMNPQRSTVWY"), name
+        assert vector.back_translate(L.sequence or "A")            # no residue without a codon
+
+
+def test_assemble_lays_units_out_in_the_order_given_with_the_linker_between_them():
+    us = [_lu("SIINFEKLAAAAAAAAAAAAAAAAAA", "G1"), _lu("KVAELVHFLAAAAAAAAAAAAAAAAA", "G2")]
+    cas = vector.assemble(us, "GS10")
+    assert cas.spacer == "GGSGGGGSGG"
+    assert cas.sequence == us[0].peptide + "GGSGGGGSGG" + us[1].peptide
+    assert [u.gene for u in cas.units] == ["G1", "G2"]
+    # boundaries tile the units, so the gaps between them are exactly the linkers
+    assert cas.sequence[cas.boundaries[0][1]:cas.boundaries[1][0]] == "GGSGGGGSGG"
+    # nothing was predicted, and the record says so rather than reading as a clean junction
+    assert cas.junctions == [] and cas.cost == 0.0
+
+
+def test_pinning_a_linker_stops_order_from_sweeping():
+    """`--linker` is the case where the construct format is decided and only the layout is open."""
+    us = [_lu("SIINFEKLAAAAAAAAAAAAAAAAAA", "G1"), _lu("KVAELVHFLAAAAAAAAAAAAAAAAA", "G2")]
+    seen = []
+
+    def binder(peptides, _alleles=None):
+        seen.append(len(peptides))
+        return [0.0] * len(peptides)
+
+    cas = vector.order(us, binder=binder, linker="AAY")
+    assert cas.spacer == "AAY"
+    assert "AAY" in cas.sequence
+    swept = len(seen)
+    seen.clear()
+    vector.order(us, binder=binder)
+    assert len(seen) > swept                                       # the sweep costs more calls
+
+
+# --------------------------------------------------------------------------- mRNA assembly
+
+def test_mrna_encodes_exactly_what_was_assembled():
+    m = vector.mrna(["SIINFEKLA", "KVAELVHFL"], "GS10")
+    assert m.protein == "M" + "SIINFEKLA" + "GGSGGGGSGG" + "KVAELVHFL"
+    assert m.checks["translates"]
+    assert vector.translate(m.cds) == m.protein
+    assert m.sequence == m.cds + "TGA"
+    assert m.as_rna() == m.sequence.replace("T", "U")
+
+
+def test_mrna_parts_tile_the_molecule_exactly():
+    """A gap means an element went missing; an overlap means one was placed twice. Both silent."""
+    m = vector.mrna(["SIINFEKLA", "KVAELVHFL"], "AAY", leader="MGWSCII", trailer="RRKSSGGKGGSY",
+                    utr5="GGGAAATAAGAGAGAAAAGAAGAGTAAGAAG", utr3="ACGTACGTAC", poly_a=30)
+    assert "".join(m.slice_of(p) for p in m.parts) == m.sequence
+    at = 0
+    for p in m.parts:
+        assert p["start"] == at, p
+        at = p["end"]
+    assert at == len(m.sequence)
+    assert m.checks["translates"]                                  # the 5' element kept the frame
+    assert [p["kind"] for p in m.parts] == [
+        "utr5", "leader", "unit", "linker", "unit", "trailer", "stop", "utr3", "poly_a"]
+    assert len(m.of_kind("unit")) == 2 and m.checks["n_units"] == 2
+
+
+def test_a_leader_that_already_starts_with_methionine_gets_no_second_one():
+    assert vector.mrna(["SIINFEKLA"], leader="MGWSCII").protein.startswith("MGWSCII")
+    assert vector.mrna(["MSIINFEKLA"]).protein == "MSIINFEKLA"
+    assert vector.mrna(["SIINFEKLA"], start=False).protein == "SIINFEKLA"
+
+
+def test_a_cassette_is_re_joined_when_a_different_linker_is_asked_for():
+    us = [_lu("SIINFEKLAAAAAAAAAAAAAAAAAA", "G1"), _lu("KVAELVHFLAAAAAAAAAAAAAAAAA", "G2")]
+    cas = vector.assemble(us, "GS10")
+    assert vector.mrna(cas).linker == "GGSGGGGSGG"                 # the cassette's own spacer kept
+    m = vector.mrna(cas, "AAY")
+    assert m.linker == "AAY" and "AAY" in m.protein and "GGSGGGGSGG" not in m.protein
+    assert [p["name"] for p in m.of_kind("unit")] == ["G1", "G2"]
+
+
+def test_the_backbone_is_checked_because_it_comes_from_outside_the_library():
+    with pytest.raises(ValueError, match="utr5 is not a nucleotide"):
+        vector.mrna(["SIINFEKLA"], utr5="GGGNNNAAA")
+    with pytest.raises(ValueError, match="leader is not an amino-acid"):
+        vector.mrna(["SIINFEKLA"], leader="MGWSC*II")
+    with pytest.raises(ValueError, match="not a stop codon"):
+        vector.mrna(["SIINFEKLA"], stop="ATG")
+    with pytest.raises(ValueError, match="nothing to encode"):
+        vector.mrna([])
+    # a U-alphabet UTR is the same molecule and is accepted as one
+    assert vector.mrna(["SIINFEKLA"], utr5="GGGAAAUAAG").sequence.startswith("GGGAAATAAG")
+
+
+def test_the_whole_orf_is_back_translated_at_once_so_the_seams_are_repaired_too():
+    """A run avoided inside a unit but created at its junction is the failure a per-unit pass has.
+
+    `AAA` back-translates to alanine codons that all begin `GC`, and a lysine either side of the
+    seam is `AAG`/`AAA` — the homopolymer is a property of the junction, not of either unit.
+    """
+    m = vector.mrna(["SIINFEKKK", "KKVAELVHF"], "AAA")
+    assert m.checks["translates"]
+    assert m.checks["longest_homopolymer"] <= 6                    # greedy: a target, not a bound
+    assert m.checks["slippery_sites"] == 0

@@ -86,6 +86,9 @@ mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor 
 | Build the cassette from ranked candidates | `mhcmatch cassette build --candidates units.tsv --n0 8 --screen` | `vector.select` / `vector.order` |
 | …spread over allotype **and** mechanism, not just allotype | — | `vector.select(block=…)` |
 | Order units I have already chosen, and pick the spacer | `mhcmatch cassette order --candidates chosen.tsv` | `vector.order` |
+| …with the linker already decided, not swept | `mhcmatch cassette order ... --linker GS10` | `vector.order(linker=)` / `vector.assemble` |
+| Which linkers are there, and what is each for? | `mhcmatch cassette linkers` | `vector.LINKERS` |
+| Turn the finished cassette into an mRNA | `mhcmatch cassette build ... --linker GS10 --mrna c.fa` | `vector.mrna` |
 | How many *independent* shots is it worth? | (a `cassette score` column) | `portfolio.p_at_least` / `n_effective` |
 | Are my own response counts over-dispersed? | — | `portfolio.betabinom_rho` |
 | Which candidates can no weighted score ever pick? | — | `portfolio.linearly_supported` |
@@ -429,13 +432,35 @@ expected yield per slot, so diversification falls out of the arithmetic instead 
 spanning each junction; `slippery_sites()`/`deslip()` remove the m1Ψ +1-frameshift motif, which
 matters more for a concatemer than for a natural ORF.
 
+**Choosing a linker, and building the mRNA.** `LINKERS` is a table of named presets — GS-rich
+flexible, class-I favouring, class-II oriented, minimal, protease-cleavable, rigid — each carrying
+its family, the class it is *intended* for and where it comes from. `mhcmatch cassette linkers`
+prints it and `--linker NAME` pins one instead of sweeping. **The table does not rank itself:** the
+two mechanisms that would settle a class-I ranking act at different positions — Gly and Pro are
+abundant in the C-terminal regions class-I ligands are cleaved from (PMID 30645615), yet the same
+residues immediately flanking a class-I epitope inhibit recognition of the epitope on their
+amino-terminal side and move the ratio of two responses from one construct up to fifty-fold
+(PMID 8871618) — so `order()` measures each candidate
+against the recipient's own allotypes and that is what selects. `GS10` is a **reconstruction**: the
+manufactured pentatope format is described as a "non-immunogenic 10-mer glycine/serine linker" and
+not published residue by residue.
+
+`mrna()` then assembles the molecule and returns a parts map that tiles it exactly, in nucleotides:
+5' UTR, start, leader, units, linkers, trailer, stop, 3' UTR, poly(A). The **coding sequence is
+generated for the whole reading frame in one pass**, so homopolymer avoidance and the m1Ψ
++1-frameshift repair act across the seams the designer created rather than inside each unit — which
+is where a concatemer's problems actually are. The **backbone is not supplied and defaults to
+nothing**: a UTR belongs to a particular vector and a plausible invented one is worse than none.
+`checks` reports numbers rather than a verdict, and `translates` — the coding sequence read back in
+the frame the construct sets it in — is the one that must hold.
+
 Both ends join to the rest of the library. `--context windows.fasta` takes `rank`'s **minimal
 epitopes** and rebuilds them as long units against the FASTA they were called on, one per variant
 rather than one per register — a minimal peptide loads onto any cell without costimulation and is
-the tolerising configuration, so the reader will not take one. `--fasta-nt` writes the coding
-sequence: highest-usage human codon per residue, backed off to shorten homopolymers, then deslipped.
-It is **not a codon optimiser** — it fixes the two things that break a concatemer specifically and
-leaves GC, structure and CpG to the manufacturer's tooling.
+the tolerising configuration, so the reader will not take one. `--fasta-nt` writes the epitope
+cassette's coding sequence alone: highest-usage human codon per residue, backed off to shorten
+homopolymers, then deslipped. It is **not a codon optimiser** — it fixes the two things that break a
+concatemer specifically and leaves GC, structure and CpG to the manufacturer's tooling.
 
 ```zsh
 mhcmatch rank fasta windows.fasta --alleles "$HLA" --out ranked.tsv

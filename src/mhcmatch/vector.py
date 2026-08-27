@@ -126,6 +126,139 @@ from .predict import NOVEL_PRODUCTS, TRACT_PRODUCTS
 #: trade-off rather than a default.
 SPACERS: tuple = (None, "GPGPG", "GGS", "AAA", "AAY", "GPGPGPG", "HHAA", "AAL")
 
+
+@dataclass(frozen=True)
+class Linker:
+    """One named linker preset: its residues, what family it belongs to, and where it comes from.
+
+    ``sequence`` is the empty string for ``"none"`` — direct head-to-tail concatenation — which is
+    a real design choice and not a missing value, so it is a member of the table rather than an
+    absence from it.
+    """
+
+    name: str
+    sequence: str
+    family: str
+    cls: str
+    note: str
+
+    def __len__(self) -> int:
+        return len(self.sequence)
+
+
+#: Named linker presets, grouped by design intent. Pass a key of this table anywhere a spacer is
+#: taken — :func:`order`, :func:`assemble`, :func:`mrna`, ``--linker`` on the command line — and it
+#: resolves through :func:`resolve_linker`.
+#:
+#: **The families, and what each is trying to buy:**
+#:
+#: ``GS-rich flexible``
+#:     Flexible separation with no secondary structure of its own and low intrinsic immunogenicity.
+#:     This is the family the manufactured pentatope format belongs to: the methodological
+#:     literature describes those constructs only as joined by "non-immunogenic 10-mer
+#:     glycine/serine linkers", and ``GS10`` is the explicit 10-residue sequence reported for
+#:     closely related RNA constructs in the patent literature. **It is a reconstruction, not a
+#:     sequence read off a published construct**, and the compositional variants are here because
+#:     the format is specified by description rather than by residue.
+#: ``class-I favouring``
+#:     Meant to place a preferred cleavage site at the seam so the flanking units are liberated
+#:     with the exact C-terminus class I needs. ``AAY`` ends in tyrosine, which suits ERAP1's
+#:     preference for hydrophobic C-termini (Chang et al., *PNAS* 2005, PMID 16286653) and also
+#:     supplies the C-terminal anchor for A\\*01:01, A\\*29:02 and B\\*35:01 — a trade-off whose
+#:     direction is donor-specific, which is why it is scored and not defaulted to.
+#: ``class-II oriented``
+#:     ``GPGPG`` is the one linker with causal evidence behind it, and the evidence is class II:
+#:     unspaced concatenation of four HLA-DR epitopes created a junctional epitope that suppressed
+#:     the response to all four, and inserting ``GPGPG`` restored all four (Livingston et al.,
+#:     *J Immunol* 2002, PMID 12023344).
+#: ``minimal``
+#:     The shortest construct and the fewest junctional residues able to form a novel binder.
+#:     ``none`` is a legitimate answer and :data:`SPACERS` leads with it for that reason.
+#: ``protease-cleavable``
+#:     A recognition site for a specific protease, so cleavage is placed rather than predicted.
+#: ``rigid``
+#:     An α-helical linker that enforces spatial separation. More usual for multi-domain antigens
+#:     than for epitope strings; included so a comparison is not confined to flexible linkers.
+#:
+#: **What this table does not do is rank itself.** ``cls`` records the class a linker is *intended*
+#: for, which is provenance and not a measurement, and the two mechanisms that would decide the
+#: ranking act at different positions: glycine and proline are abundant in the C-terminal regions
+#: from which class-I ligands are cleaved (Martin-Galiano & Lopez, *PLoS One* 2019, PMID 30645615),
+#: which is a processing argument for them, while the same residues immediately
+#: flanking a class-I epitope inhibit recognition of the epitope on their amino-terminal side
+#: (Bergmann et al., *J Immunol* 1996, PMID 8871618). Choosing between them on either citation alone
+#: would be picking a linker by reputation. :func:`order` measures each candidate against the
+#: recipient's own allotypes instead, and that measurement — not this table — is what selects.
+LINKERS: dict = {
+    l.name: l for l in (
+        Linker("none",  "",           "minimal",            "any",
+               "direct head-to-tail concatenation; every inserted residue is sequence that has to "
+               "be translated and could itself form a binder"),
+        Linker("G",     "G",          "minimal",            "any", "a single glycine"),
+        Linker("KK",    "KK",         "minimal",            "mhc1",
+               "lysine-rich and cleavage-prone; leaves charged residues at the seam, which is the "
+               "mirror image of AAY and poor for ERAP1"),
+        Linker("GS10",  "GGSGGGGSGG", "GS-rich flexible",   "any",
+               "the 10-mer GS linker reported for closely related RNA constructs in the patent "
+               "literature; the pentatope format's own linker is described, not published"),
+        Linker("GS10b", "GGSGGGSGGS", "GS-rich flexible",   "any",
+               "a compositional variant of the GS 10-mer"),
+        Linker("GS10c", "GGGSSGGGSG", "GS-rich flexible",   "any",
+               "a compositional variant of the GS 10-mer"),
+        Linker("G4S",   "GGGGS",      "GS-rich flexible",   "any",
+               "the canonical (G4S) flexible linker"),
+        Linker("G4S2",  "GGGGSGGGGS", "GS-rich flexible",   "any", "(G4S)2"),
+        Linker("AAY",   "AAY",        "class-I favouring",  "mhc1",
+               "the most frequently used proteasome-sensitive spacer; the terminal tyrosine both "
+               "suits ERAP1 and supplies a C-terminal anchor for three common allotypes"),
+        Linker("AAA",   "AAA",        "class-I favouring",  "mhc1",
+               "alanine-based, and back-translated it is the construct's main source of "
+               "synthesis-hostile homopolymer (see MAX_HOMOPOLYMER)"),
+        Linker("GPGPG", "GPGPG",      "class-II oriented",  "mhc2",
+               "restored all four responses that unspaced concatenation of HLA-DR epitopes had "
+               "suppressed (PMID 12023344)"),
+        Linker("GPGPGPG", "GPGPGPG",  "class-II oriented",  "mhc2", "the seven-residue variant"),
+        Linker("furin", "RAKR",       "protease-cleavable", "any", "a furin recognition site"),
+        Linker("RRRR",  "RRRR",       "protease-cleavable", "any", "a polybasic furin-type site"),
+        Linker("EAAAK", "EAAAK",      "rigid",              "any", "an alpha-helical rigid linker"),
+    )
+}
+
+
+def resolve_linker(linker) -> str | None:
+    """A preset name, an explicit residue string or ``None``, resolved to residues.
+
+    ``None`` and ``"none"`` both mean *no linker* and both come back as ``None``, so a caller can
+    write ``--linker none`` and get what :data:`SPACERS` leads with. Anything else is looked up in
+    :data:`LINKERS` first and taken as a literal sequence only if it is not a key, which is why an
+    unknown name that happens to be a valid peptide — ``GGS`` is both — cannot be silently mistaken
+    for a preset it is not. A string that is neither a key nor 20-letter amino acid raises, rather
+    than reaching the construct as an untranslatable residue.
+
+    >>> resolve_linker("GS10")
+    'GGSGGGGSGG'
+    >>> resolve_linker("none") is None and resolve_linker(None) is None
+    True
+    >>> resolve_linker("GGS")
+    'GGS'
+    """
+    if linker is None:
+        return None
+    if isinstance(linker, Linker):
+        return linker.sequence or None
+    s = str(linker).strip()
+    if s in LINKERS:
+        return LINKERS[s].sequence or None
+    if not s:
+        return None
+    up = s.upper()
+    bad = sorted(set(up) - set(_AA))
+    if bad:
+        raise ValueError(
+            f"linker {s!r} is neither a preset in LINKERS ({', '.join(LINKERS)}) nor a peptide: "
+            f"residue(s) {''.join(bad)} are not among the 20 standard amino acids")
+    return up
+
 #: MHC-I register lengths scanned across a junction. Class II cores are 9-mers read out of a longer
 #: span, so a class-II junction scan wants :data:`MHC2_JUNCTION_LENGTHS` instead.
 JUNCTION_LENGTHS: tuple = (8, 9, 10, 11)
@@ -1133,9 +1266,47 @@ def _greedy_2opt(cost, rounds: int = 4) -> list:
     return best
 
 
+def assemble(units, linker=None) -> Cassette:
+    """Lay ``units`` out in the order given, joined by ``linker``, with no prediction of any kind.
+
+    This is the assembly step on its own: the caller has already decided which units, in what
+    order, and what to put between them, and wants the construct. :func:`order` is the same
+    assembly with the ordering and the linker *chosen by measurement* against the recipient's
+    allotypes, and it needs a ``binder`` callable to do that; this needs nothing.
+
+    ``linker`` is a preset name from :data:`LINKERS`, an explicit residue string, or ``None``.
+    The returned :class:`Cassette` carries no junction evidence, because none was computed —
+    ``junctions`` is empty and ``cost`` is ``0.0``, which is *unknown* and not *clean*. Run
+    :func:`scan_junctions` on it if the junctions matter, or use :func:`order` from the start.
+
+    ``boundaries`` tiles the sequence exactly, so the linker spans are the gaps between them.
+
+    >>> us = [Unit("AAAAAAAAAKAAAAAAAAAAAAAAAAA", 9, "G1", "HLA-A*02:01", 0.3),
+    ...       Unit("CCCCCCCCCRCCCCCCCCCCCCCCCCC", 9, "G2", "HLA-A*02:01", 0.1)]
+    >>> cas = assemble(us, "GS10")
+    >>> cas.spacer
+    'GGSGGGGSGG'
+    >>> cas.sequence[cas.boundaries[0][1]:cas.boundaries[1][0]]
+    'GGSGGGGSGG'
+    """
+    sp = resolve_linker(linker)
+    laid = list(units)
+    sequence, boundaries, at = "", [], 0
+    for k, u in enumerate(laid):
+        if k:
+            sequence += sp or ""
+            at += len(sp or "")
+        boundaries.append((at, at + len(u.peptide)))
+        sequence += u.peptide
+        at += len(u.peptide)
+    return Cassette(units=laid, spacer=sp, sequence=sequence, boundaries=boundaries,
+                    junctions=[], cost=0.0)
+
+
 def order(units, binder, spacers=SPACERS, lengths=JUNCTION_LENGTHS,
           alleles=None, threshold: float | None = None,
-          objective: str = "sum", binder_threshold: float | None = None) -> Cassette:
+          objective: str = "sum", binder_threshold: float | None = None,
+          linker=None) -> Cassette:
     """Choose a spacer and an ordering that minimise predicted junctional binding.
 
     **``objective`` matters and the two choices disagree, so it is explicit.**
@@ -1160,9 +1331,18 @@ def order(units, binder, spacers=SPACERS, lengths=JUNCTION_LENGTHS,
     For each spacer the layout is an open path over a complete graph whose edge ``i -> j`` costs the
     strongest predicted binder spanning that junction, solved by :func:`_greedy_2opt`.
 
+    ``linker=`` **pins one linker instead of sweeping** — a preset name from :data:`LINKERS`, an
+    explicit residue string, or ``None``/``"none"`` for direct concatenation. Every entry of
+    ``spacers`` is resolved the same way, so ``spacers=("none", "AAY", "GS10")`` is a sweep over
+    three presets. Pinning is what a caller does when the construct format is already decided and
+    the question is only what order the units go in; sweeping is what a caller does when it is not.
+    Use :func:`assemble` when the order is decided too and no prediction is wanted at all.
+
     ``binder(peptides, alleles) -> [float]``, higher meaning a stronger binder. Use
     :func:`store_binder` to build one from a :class:`~mhcmatch.store.Store`.
     """
+    spacers = ((resolve_linker(linker),) if linker is not None
+               else tuple(resolve_linker(s) for s in spacers))
     units = list(units)
     if len(units) < 2:
         seq = units[0].peptide if units else ""
@@ -1201,16 +1381,7 @@ def order(units, binder, spacers=SPACERS, lengths=JUNCTION_LENGTHS,
             break
 
     total, _worst, sp, laid, js = best
-    sequence, boundaries, at = "", [], 0
-    for k, u in enumerate(laid):
-        if k:
-            sequence += sp or ""
-            at += len(sp or "")
-        boundaries.append((at, at + len(u.peptide)))
-        sequence += u.peptide
-        at += len(u.peptide)
-    return Cassette(units=laid, spacer=sp, sequence=sequence, boundaries=boundaries,
-                    junctions=js, cost=float(total))
+    return replace(assemble(laid, sp), junctions=js, cost=float(total))
 
 
 #: Codons synonymous with ``TTT`` (phenylalanine). ``TTC`` is the only alternative, which is what
@@ -1392,6 +1563,197 @@ def back_translate(peptide: str, usage: dict = None, *, avoid_slip: bool = True,
         seq += pick
     cds = "".join(out)
     return deslip(cds)[0] if avoid_slip else cds
+
+
+#: Nucleotides a backbone element may contain. ``U`` is read as ``T`` on the way in and written back
+#: out by :meth:`MRNA.as_rna`, so a caller may paste either alphabet.
+_NT: str = "ACGT"
+
+
+def _nt(seq: str, what: str) -> str:
+    """A backbone element, checked. Whitespace stripped, ``U`` read as ``T``, anything else raises.
+
+    A UTR reaches this function from outside the library — pasted from a plasmid map or a vendor
+    sheet — so it is checked rather than trusted. An ``N``, a lower-case run or a stray FASTA header
+    that silently entered a construct would translate into a frame nobody inspected.
+    """
+    s = "".join(str(seq or "").split()).upper().replace("U", "T")
+    bad = sorted(set(s) - set(_NT))
+    if bad:
+        raise ValueError(f"{what} is not a nucleotide sequence: {''.join(bad)} in {s[:40]!r}")
+    return s
+
+
+def _aa(seq: str, what: str) -> str:
+    """An amino-acid element, checked the same way and for the same reason."""
+    s = "".join(str(seq or "").split()).upper()
+    bad = sorted(set(s) - set(_AA))
+    if bad:
+        raise ValueError(f"{what} is not an amino-acid sequence: {''.join(bad)} in {s[:40]!r}")
+    return s
+
+
+@dataclass
+class MRNA:
+    """An assembled mRNA construct, its parts, and the checks that were actually run on it.
+
+    ``sequence`` is the whole molecule 5'→3' in DNA letters — every element the caller supplied,
+    in order, with the coding sequence this library generated in the middle. :meth:`as_rna` gives
+    the same molecule in RNA letters.
+
+    ``parts`` tiles ``sequence`` **exactly**: consecutive, non-overlapping, 0-based half-open, and
+    the concatenation of every part's slice is the whole molecule. That is the property that makes
+    the record auditable — an element that silently went missing shows up as a gap, and one that was
+    added twice shows up as an overlap, neither of which a length check would catch.
+    """
+
+    sequence: str
+    protein: str
+    cds: str
+    parts: list = field(default_factory=list)
+    linker: str | None = None
+
+    def as_rna(self) -> str:
+        """The construct in RNA letters. Nothing else changes — this is a transliteration."""
+        return self.sequence.replace("T", "U")
+
+    def of_kind(self, kind: str) -> list:
+        """Every part of one ``kind``, in order: ``utr5``, ``start``, ``leader``, ``unit``,
+        ``linker``, ``trailer``, ``stop``, ``utr3``, ``poly_a``."""
+        return [p for p in self.parts if p["kind"] == kind]
+
+    def slice_of(self, part: dict) -> str:
+        """The nucleotides one part occupies. Exists so a caller never re-derives an offset."""
+        return self.sequence[part["start"]:part["end"]]
+
+    @property
+    def checks(self) -> dict:
+        """What was verified about the construct, as numbers rather than as a pass/fail.
+
+        ``translates`` is the one that must hold: the coding sequence read back in the frame the
+        construct sets it in gives exactly :attr:`protein`. It is the check that catches a frame
+        broken by a supplied 5' element, which is otherwise invisible.
+
+        The sequence composition figures are over the **coding sequence only** — a poly(A) tail is a
+        homopolymer by construction and would swamp both. ``length_nt`` is the whole molecule.
+        """
+        return {
+            "translates": translate(self.cds) == self.protein,
+            "length_nt": len(self.sequence),
+            "cds_nt": len(self.cds),
+            "protein_aa": len(self.protein),
+            "n_units": len(self.of_kind("unit")),
+            "gc": (sum(self.cds.count(c) for c in "GC") / len(self.cds)) if self.cds else 0.0,
+            "longest_homopolymer": _longest_run(self.cds),
+            "slippery_sites": len(slippery_sites(self.cds)),
+        }
+
+
+def mrna(cassette, linker=None, *, leader: str = "", trailer: str = "",
+         utr5: str = "", utr3: str = "", poly_a: int = 0, start: bool = True,
+         stop: str = "TGA", usage: dict = None, avoid_slip: bool = True,
+         max_run: int = MAX_HOMOPOLYMER) -> MRNA:
+    """Build the mRNA for a cassette, joined by a chosen linker. **The assembly step, end to end.**
+
+    ``cassette`` is a :class:`Cassette`, an iterable of :class:`Unit`, an iterable of peptide
+    strings, or a single peptide string. ``linker`` is a preset name from :data:`LINKERS`, explicit
+    residues, or ``None``; given a :class:`Cassette` and no ``linker``, the cassette's own spacer is
+    kept, and given both, the units are **re-joined** by the linker asked for.
+
+    **What the library supplies and what it refuses to.** The coding sequence is generated here:
+    the whole open reading frame is back-translated in one pass, so homopolymer avoidance and the
+    m1Ψ frameshift repair (:func:`back_translate`, :func:`deslip`) work *across* the seams the
+    designer created rather than within each unit separately. The backbone — 5' and 3' UTRs, a
+    signal peptide or a trafficking domain, the tail — is **not** supplied and defaults to nothing,
+    because those sequences belong to a particular vector and inventing a plausible one is worse
+    than emitting none. Pass the ones your construct uses and they are placed, checked and mapped::
+
+        cas  = vector.order(units, binder=b, linker="GS10")
+        m    = vector.mrna(cas, leader=SEC, trailer=MITD, utr5=U5, utr3=U3, poly_a=100)
+        m.checks["translates"]                      # the frame survived every element
+        [p["name"] for p in m.of_kind("unit")]      # what is in it, in the order it is in
+
+    ``leader`` and ``trailer`` are **amino acids** and are translated in frame with the payload — a
+    secretory signal and an MHC trafficking domain are the two that matter for a class-I cassette,
+    and they are the reason ``translates`` is worth checking rather than assuming. ``utr5``/``utr3``
+    are **nucleotides** and are not translated.
+
+    ``start`` prepends an initiator methionine unless the open reading frame already begins with
+    one, so the codon is real and :attr:`MRNA.protein` shows the residue it encodes rather than
+    hiding it. ``stop`` is one codon and is checked to be one. ``poly_a`` is a count of adenosines;
+    a template-encoded tail is a property of the vector and its length is the caller's to set.
+
+    >>> m = mrna(["SIINFEKLA", "KVAELVHFL"], "GS10")
+    >>> m.protein
+    'MSIINFEKLAGGSGGGGSGGKVAELVHFL'
+    >>> m.checks["translates"], m.checks["n_units"]
+    (True, 2)
+    >>> [(p["kind"], p["name"]) for p in m.parts]
+    [('start', 'start'), ('unit', 'u1'), ('linker', 'GGSGGGGSGG'), ('unit', 'u2'), ('stop', 'TGA')]
+    """
+    if isinstance(cassette, Cassette):
+        sp = cassette.spacer if linker is None else resolve_linker(linker)
+        payload = [(u.gene or f"u{i + 1}", u.peptide) for i, u in enumerate(cassette.units)]
+    elif isinstance(cassette, str):
+        sp, payload = resolve_linker(linker), [("cassette", cassette)]
+    else:
+        sp = resolve_linker(linker)
+        payload = [(getattr(u, "gene", None) or f"u{i + 1}", getattr(u, "peptide", u))
+                   for i, u in enumerate(cassette)]
+    if not payload:
+        raise ValueError("mrna: nothing to encode — the cassette carries no units")
+    payload = [(n, _aa(p, f"unit {n}")) for n, p in payload]
+
+    lead, trail = _aa(leader, "leader"), _aa(trailer, "trailer")
+    u5, u3 = _nt(utr5, "utr5"), _nt(utr3, "utr3")
+    stop_codon = _nt(stop, "stop") if stop else ""
+    if stop_codon and CODON_USAGE_HUMAN.get(stop_codon, ("", 0.0))[0] != "*":
+        raise ValueError(f"stop={stop!r} is not a stop codon (TAA, TAG or TGA)")
+    if poly_a < 0:
+        raise ValueError(f"poly_a must be a count of adenosines, got {poly_a}")
+
+    # The open reading frame as amino acids, laid out once with its part names attached. Building
+    # the protein and the map in the same pass is what keeps `parts` tiling by construction.
+    aa_parts: list = []
+    orf = ""
+
+    def _add(kind: str, name: str, seq: str) -> None:
+        nonlocal orf
+        if seq:
+            aa_parts.append({"kind": kind, "name": name, "aa_start": len(orf),
+                             "aa_end": len(orf) + len(seq)})
+            orf += seq
+
+    if start and not (lead or payload[0][1]).startswith("M"):
+        _add("start", "start", "M")
+    _add("leader", "leader", lead)
+    for k, (name, pep) in enumerate(payload):
+        if k and sp:
+            _add("linker", sp, sp)
+        _add("unit", name, pep)
+    _add("trailer", "trailer", trail)
+
+    cds = back_translate(orf, usage, avoid_slip=avoid_slip, max_run=max_run)
+    # Not a belt-and-braces check: `deslip` rewrites codons inside `back_translate`, and the whole
+    # claim that it is synonymous is what makes the parts map mean anything.
+    if translate(cds) != orf:
+        raise ValueError("mrna: back-translation is not synonymous with the assembled payload")
+
+    parts, at = [], 0
+    if u5:
+        parts.append({"kind": "utr5", "name": "utr5", "start": 0, "end": len(u5)})
+        at = len(u5)
+    for p in aa_parts:
+        parts.append({**p, "start": at + 3 * p["aa_start"], "end": at + 3 * p["aa_end"]})
+    at += len(cds)
+    for kind, seq in (("stop", stop_codon), ("utr3", u3), ("poly_a", "A" * poly_a)):
+        if seq:
+            parts.append({"kind": kind, "name": seq if kind == "stop" else kind,
+                          "start": at, "end": at + len(seq)})
+            at += len(seq)
+    sequence = u5 + cds + stop_codon + u3 + "A" * poly_a
+    assert parts[-1]["end"] == len(sequence) if parts else True
+    return MRNA(sequence=sequence, protein=orf, cds=cds, parts=parts, linker=sp)
 
 
 def store_binder(store, alleles, cls: str = "mhc1"):

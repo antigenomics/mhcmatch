@@ -8,6 +8,28 @@ versioning is [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Added
+- `vector.LINKERS` --- named linker presets with family, intended class and provenance, and
+  `vector.resolve_linker` so a name, explicit residues or `none` all resolve to one thing. The table
+  records what each linker is *for*; it does not rank them, because the two mechanisms that would
+  settle a class-I ranking act at different positions (PMID 30645615 vs PMID 8871618).
+  `GS10 = GGSGGGGSGG` is a reconstruction of a format described rather than published, and says so.
+- `vector.assemble(units, linker)` --- lay units out in the order given with no prediction at all,
+  for when the format and the order are both already decided. `order()` is the same assembly with
+  both chosen by measurement, and now takes `linker=` to pin one instead of sweeping.
+- `vector.mrna(...)` and `vector.MRNA` --- the assembled molecule with a nucleotide parts map that
+  tiles it exactly, and `checks` reporting `translates`, GC, longest homopolymer and remaining
+  slippery sites. The whole reading frame is back-translated in one pass, so homopolymer avoidance
+  and the m1-psi frameshift repair act across the seams a concatemer creates. UTRs, signal peptide,
+  trafficking domain and tail are caller-supplied and default to nothing.
+- `mhcmatch cassette linkers`, and `--linker` / `--mrna` / `--leader` / `--trailer` / `--utr5` /
+  `--utr3` / `--poly-a` on `cassette build` and `cassette order`.
+
+### Removed
+- `mhcmatch.processing` (added earlier the same day, never released). Cleavage prediction is an
+  analysis, not a library guarantee: the evidence for a linker choice is thin, and the module has
+  moved to the benchmark repository where its numbers are computed.
+
 ## [1.2.0] --- 2026-08-27
 
 **⚠ The shipped neoantigen scorer gains a term and changes the scale it divides abundance by.

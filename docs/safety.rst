@@ -388,10 +388,169 @@ with no panel and no download.
 
 .. note::
 
-   Coordinates are over the **epitope cassette only** — no start codon, no stop, no leader, no
-   trafficking domain, because those belong to the vector backbone. An mRNA construct that adds them
-   must offset every coordinate in the map.
+   Map coordinates are over the **epitope cassette only** — no start codon, no stop, no leader, no
+   trafficking domain, because those belong to the vector backbone. The next section adds them, and
+   :func:`~mhcmatch.vector.mrna` returns its own parts map in nucleotides for exactly that reason.
 
+
+Choosing a linker
+-----------------
+
+:data:`~mhcmatch.vector.LINKERS` is a table of named presets, so a construct format is named rather
+than typed. ``mhcmatch cassette linkers`` prints it; ``--linker NAME`` pins one; any function taking
+a spacer takes a name, explicit residues, or ``none``.
+
+.. code-block:: bash
+
+   mhcmatch cassette linkers
+   mhcmatch cassette build --candidates units.tsv --n0 8 --linker GS10 --mrna cassette.mrna.fa
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 16 14 50
+
+   * - family
+     - example
+     - intended class
+     - what it is trying to buy
+   * - minimal
+     - ``none``, ``G``
+     - any
+     - the shortest construct and the fewest junctional residues able to form a binder
+   * - GS-rich flexible
+     - ``GS10``, ``G4S``
+     - any
+     - flexible separation, no secondary structure of its own, low intrinsic immunogenicity
+   * - class-I favouring
+     - ``AAY``, ``AAA``
+     - MHC-I
+     - a preferred cleavage site at the seam, so the flanking units are liberated with the exact
+       C-terminus class I needs
+   * - class-II oriented
+     - ``GPGPG``
+     - MHC-II
+     - independent processing of class-II epitopes
+   * - protease-cleavable
+     - ``furin``
+     - any
+     - cleavage placed rather than predicted
+   * - rigid
+     - ``EAAAK``
+     - any
+     - enforced spatial separation
+
+**The table does not rank itself, and that is deliberate.** ``GPGPG`` is the only linker with causal
+evidence behind it and the evidence is class II: unspaced concatenation of four HLA-DR epitopes
+created a junctional epitope that suppressed the response to all four, and inserting ``GPGPG``
+restored all four (Livingston *et al.*, *J Immunol* 2002, PMID 12023344). Against that, all six
+orderings of three Fel d I regions produced no detectable junctional response at all (Rogers *et
+al.*, *Mol Immunol* 1994, PMID 7521933). Both results are real.
+
+For class I the two mechanisms that would settle a ranking act **at different positions**. Glycine
+and proline are abundant in the C-terminal regions from which class-I ligands are cleaved
+(Martin-Galiano & Lopez, *PLoS One* 2019, PMID 30645615), which is a processing argument for
+them. The same residues immediately flanking a class-I epitope inhibit recognition of
+the epitope on their *amino-terminal* side, and flanking context moved the ratio of two responses
+from one construct by up to fifty-fold (Bergmann *et al.*, *J Immunol* 1996, PMID 8871618), which
+argues against. A preset chosen on either citation alone is a linker chosen by reputation.
+
+So the ``cls`` column records the class each linker is **intended** for, which is provenance, and
+nothing here is a measurement of which one wins. :func:`~mhcmatch.vector.order` measures each
+candidate against the recipient's own allotypes and that measurement is what selects — pinning with
+``--linker`` is for the case where the construct format is already decided and only the ordering is
+open.
+
+.. warning::
+
+   ``GS10`` is a **reconstruction**. The manufactured pentatope format is described in the
+   methodological literature only as joining units with "non-immunogenic 10-mer glycine/serine
+   linkers"; ``GGSGGGGSGG`` is the explicit 10-residue sequence reported for closely related RNA
+   constructs in the patent literature, and it is not read off a published construct residue by
+   residue. The compositional variants ``GS10b`` and ``GS10c`` are in the table because the format
+   is specified by description rather than by residue. Anything conditional on the exact linker is
+   conditional on that reconstruction.
+
+
+Building the mRNA
+-----------------
+
+:func:`~mhcmatch.vector.mrna` assembles the molecule and returns what it assembled:
+
+.. code-block:: python
+
+   from mhcmatch import vector as V
+
+   cas = V.order(units, binder=V.store_binder(store, alleles), linker="GS10")
+   m   = V.mrna(cas, leader=SIGNAL, trailer=TRAFFICKING, utr5=U5, utr3=U3, poly_a=100)
+
+   m.checks["translates"]                        # the frame survived every element
+   m.checks["gc"], m.checks["longest_homopolymer"], m.checks["slippery_sites"]
+   [p["name"] for p in m.of_kind("unit")]        # what is in it, in the order it is in
+   m.as_rna()                                    # the same molecule in RNA letters
+
+The construct is nine kinds of part, in this order, every one of them optional except the units:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 14 16 60
+
+   * - part
+     - alphabet
+     - supplied by
+   * - ``utr5``
+     - nucleotides
+     - the caller
+   * - ``start``
+     - —
+     - the library, unless the reading frame already begins with M
+   * - ``leader``
+     - amino acids
+     - the caller — a secretory signal peptide
+   * - ``unit``
+     - amino acids
+     - the cassette
+   * - ``linker``
+     - amino acids
+     - the chosen preset, between consecutive units
+   * - ``trailer``
+     - amino acids
+     - the caller — an MHC class-I trafficking domain
+   * - ``stop``
+     - nucleotides
+     - the library, one codon, default ``TGA``
+   * - ``utr3``
+     - nucleotides
+     - the caller
+   * - ``poly_a``
+     - nucleotides
+     - the caller, as a length
+
+**What the library supplies, and what it refuses to.** The coding sequence is generated here, and
+generated for the whole open reading frame **in one pass** — so homopolymer avoidance and the m1Ψ
++1-frameshift repair (:func:`~mhcmatch.vector.back_translate`, :func:`~mhcmatch.vector.deslip`) act
+across the seams the designer created rather than inside each unit separately. That is not a detail:
+a concatemer has far more codon-boundary junctions per kilobase than a natural ORF, the residues at
+those junctions are chosen by the designer, and ``AAA`` back-translated is where a synthesis-hostile
+run comes from. The backbone is **not** supplied and defaults to nothing, because a UTR belongs to a
+particular vector and a plausible invented one is worse than none.
+
+``parts`` **tiles the molecule exactly** — consecutive, non-overlapping, 0-based half-open, and the
+concatenation of every part's slice is the whole sequence. An element that silently went missing
+appears as a gap and one placed twice as an overlap, neither of which a length check would catch.
+
+``checks`` reports numbers rather than a verdict, and ``translates`` is the one that must hold: the
+coding sequence, read back in the frame the assembled construct sets it in, gives exactly
+``protein``. It is what catches a frame broken by a supplied 5' element. The composition figures —
+GC, longest homopolymer, slippery sites — are over the **coding sequence only**, since a poly(A)
+tail is a homopolymer by construction and would swamp both.
+
+.. note::
+
+   This is not a codon optimiser and does not claim to be one. It fixes the two things that make a
+   *polyepitope* construct fail where a natural ORF would not, and leaves GC content, secondary
+   structure, splice sites and CpG alone. Where a manufacturer's own optimiser is available it
+   should be preferred; this exists so a cassette ships with a usable coding sequence rather than
+   none.
 
 Running it
 ----------
