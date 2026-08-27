@@ -239,3 +239,23 @@ def test_a_candidate_with_no_gene_or_an_unknown_one_scores_nan_and_is_never_drop
     c = EX.context_floor(tumor="SKCM")
     v = expr_norm_level(_rows(gene=["", "NOT_A_REAL_GENE_SYMBOL", "PMEL"]), c, tumor="SKCM")
     assert len(v) == 3 and v[0] != v[0] and v[1] != v[1] and v[2] == v[2]
+
+
+# --------------------------------------------------------------------------- what a row reports
+
+def test_both_fitted_expression_terms_are_emitted_columns():
+    """`expression` is log1p(TPM) and says nothing about the floor, so neither is recoverable."""
+    from mhcmatch import rank as R
+
+    cols = R.columns(score="aggregate")
+    assert "expr_lvl" in cols and "expr_norm" in cols
+    for f in R.AGGREGATE_FEATURES:
+        assert f in cols or f in ("log10a",), f          # log10a == logit10 of emitted `occupancy`
+    assert "expr_lvl" not in R.columns(score="gate")     # gate does not fit them
+
+
+@pytest.mark.hfdata
+def test_passing_a_tumour_type_moves_the_floor_off_the_pooled_value():
+    """Both terms divide by one floor, and `--tumor` is what sets it."""
+    pooled = EX.context_floor()
+    assert EX.context_floor(tumor="SKCM") < pooled < EX.context_floor(tumor="LUAD")

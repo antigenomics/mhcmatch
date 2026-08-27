@@ -667,7 +667,7 @@ def cmd_rank(a):
     rows = rows[:a.top] if a.top else rows
     cols = list(R.BASE_COLUMNS)
     if a.score == "aggregate":
-        cols += list(R.AGGREGATE_COLUMNS)
+        cols += list(R.EXPR_COLUMNS) + list(R.AGGREGATE_COLUMNS)
         model = rows[0].components.get("model", "") if rows else ""
         print(f"# scored with {model or 'aggregate'}: "
               f"{', '.join(R.AGGREGATE_FEATURES)}", file=sys.stderr)
@@ -703,6 +703,10 @@ def cmd_rank(a):
                      r.imputed, r.wt_peptide,
                      r.known_epitope, r.variant_type]
             if a.score == "aggregate":
+                # `.get`: an artifact that does not declare an expression term never sets it, and
+                # an absent term is an empty cell rather than a KeyError or a fabricated 0.
+                cells += ["" if r.components.get(c) is None else f"{r.components[c]:.6g}"
+                          for c in R.EXPR_COLUMNS]
                 cells += [f"{r.components[c]:.6g}" for c in R.AGGREGATE_COLUMNS]
             if a.extended:
                 s = mim[i - 1]

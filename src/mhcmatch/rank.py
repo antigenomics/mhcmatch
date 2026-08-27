@@ -45,7 +45,7 @@ from importlib import resources
 __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
            "BASE_COLUMNS", "MIMICRY_PAIRS", "EXTENDED_COLUMNS", "ANNOTATE_COLUMNS", "columns",
            "aggregate", "aggregate_score", "probability", "POOL_PREVALENCE",
-           "AGGREGATE_FEATURES", "AGGREGATE_COLUMNS",
+           "AGGREGATE_FEATURES", "AGGREGATE_COLUMNS", "EXPR_COLUMNS",
            "AGGREGATE_BLOCKS", "CHANNEL_COLUMNS", "PHYS_COLUMNS", "expr_percentile",
            "expr_norm_level",
            "rank_pairs", "split_alleles", "species_of"]
@@ -74,6 +74,16 @@ BASE_COLUMNS: tuple = ("rank", "peptide", "allele", "allele_scored", "gene", "sc
 #: features a caller has to supply, because they need a reference deposit; see :func:`aggregate`.
 AGGREGATE_COLUMNS: tuple = ("C_phys_buried", "C_phys_charge",
                             "C_corpus_thymus", "C_corpus_self", "C_corpus_viral")
+#: The fitted expression terms, emitted beside ``expression``/``expr_pct`` so a row carries every
+#: feature that produced its score. They are **not** recoverable from what else is emitted --
+#: ``expression`` is ``log1p(TPM)`` and says nothing about the floor it was divided by, and
+#: ``expr_norm`` is a reference lookup the row does not otherwise report. ``log10a`` is not here for
+#: the opposite reason: it is exactly ``log10(occ/(1-occ))`` on the emitted ``occupancy``.
+#:
+#: Separate from :data:`AGGREGATE_COLUMNS`, which is also the *required-input* check for the
+#: recognition channels a caller must supply. These are computed inside the ranker, so a row that
+#: has not reached that point simply has no value and gets an empty cell.
+EXPR_COLUMNS: tuple = ("expr_lvl", "expr_norm")
 #: The subset of :data:`AGGREGATE_COLUMNS` that ``channels()`` has to return. The ``C_phys`` pair is
 #: not in it: the library can always compute them, so making the caller pass them would be ceremony.
 CHANNEL_COLUMNS: tuple = ("C_corpus_thymus", "C_corpus_self", "C_corpus_viral")
@@ -116,7 +126,7 @@ def columns(extended: bool = False, annotate: bool = False, score: str = "aggreg
     """
     out = list(BASE_COLUMNS)
     if score == "aggregate":
-        out += list(AGGREGATE_COLUMNS)
+        out += list(EXPR_COLUMNS) + list(AGGREGATE_COLUMNS)
     if extended:
         out += list(EXTENDED_COLUMNS)
     if annotate:
@@ -907,9 +917,35 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
         # the caller passes one for this tumour type from `mhcmatch.expression.context_floor`; it
         # is never taken from the batch, because a batch floor tracks the donor's mutational burden
         # rather than the assay.
+        _floor_cache: list = []
+
+        def _floor(ex):
+            """The floor both expression terms divide by, resolved once.
+
+            `expr_floor` wins; then the tumour type's own transcriptome, which is the whole point
+            of passing one -- a tumour sits at roughly half its matched normal, so scoring against
+            the pooled value puts the term about a unit low. Falls back to the artifact's recorded
+            pooled floor when the expression deposit is not staged, because a missing download is
+            not a reason to refuse to rank. Cached so `expr_lvl` and `expr_norm` cannot land on
+            two different floors."""
+            if _floor_cache:
+                return _floor_cache[0]
+            c = expr_floor
+            if c is None and (tumor or tissue):
+                try:
+                    from . import expression as EX
+                    c = float(EX.context_floor(tumor=tumor, tissue=tissue,
+                                               q=ex.get("floor_quantile", 0.25)))
+                except (ValueError, OSError, ImportError, KeyError):
+                    c = None                             # unresolvable or offline: pooled below
+            if c is None:
+                c = ex.get("floor_pooled")
+            _floor_cache.append(c)
+            return c
+
         if "expr_lvl" in a["features"]:
             ex = a.get("expression", {})
-            c = expr_floor if expr_floor is not None else ex.get("floor_pooled")
+            c = _floor(ex)
             if not c:
                 raise ValueError(
                     "rank: this model fits `expr_lvl` but the artifact records no abundance floor "
@@ -921,7 +957,7 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
                 r.components["expr_lvl"] = float(v)
         if "expr_norm" in a["features"]:
             ex = a.get("expression", {})
-            c = expr_floor if expr_floor is not None else ex.get("floor_pooled")
+            c = _floor(ex)
             if not c:
                 raise ValueError(
                     "rank: this model fits `expr_norm` but the artifact records no abundance floor "

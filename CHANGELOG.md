@@ -94,6 +94,20 @@ Every score moves.**
   3,168 MB resident** against the matrix's **0.05 s and 29 MB**. Both return the same floor to four
   decimals, which is how the matrix is checked against the table it came from.
 
+- **`--tumor` now sets the abundance floor, not only the matched normal.** `expr_norm` read the
+  tumour's matched normal while `expr_lvl` divided by the artifact's *pooled* floor, so one row's
+  two expression terms sat on two different scales. Both now resolve one floor through
+  `expression.context_floor`, falling back to the recorded pooled value when the expression deposit
+  is not staged -- a missing download is not a reason to refuse to rank. On `PMEL` at 120.5 TPM,
+  `expr_lvl` moves 9.3889 (pooled, `c` = 0.1800) to 9.5587 under `--tumor SKCM` (`c` = 0.1600) and
+  9.2372 under `--tumor LUAD` (`c` = 0.2000). **Passing a tumour type changes scores**, which is
+  what it was always documented to do.
+- **`rank` emits `expr_lvl` and `expr_norm`.** The output announced that it scored with them and
+  then printed neither, so two of nine fitted terms were invisible in a row that is supposed to
+  report what produced it. Neither is recoverable from the other columns: `expression` is
+  `log1p(TPM)` and carries no floor, and `expr_norm` is a reference lookup. `log10a` is still not
+  emitted, and that one is deliberate -- it is exactly `log10(occ/(1-occ))` on the emitted
+  `occupancy`. An artifact that does not declare a term writes an empty cell rather than a zero.
 - **`expression.floor_per_screen` in the artifact is a range, and it is deterministic.** A screen
   is not one cancer type -- IEDB_neoag spans 19, NCI 11, HiTIDE 6, TESLA 4 -- and the field recorded
   a single floor per screen, taken from a `polars` `.unique()` that promises no order. Consecutive
