@@ -317,7 +317,10 @@ def test_aggregate_carries_the_fit_provenance_a_reader_needs():
     # v6. Neopep was dropped as a relabelling of NCI + TESLA + HiTIDE -- it shared 419,851 of its
     # 422,132 keys with NCI at zero label disagreements, so leave-one-screen-out on any of those
     # three still trained on their own rows -- and the mouse arm is held out rather than fitted.
-    assert a["version"] == 8 and "former_name" not in a
+    assert a["version"] == 9 and "former_name" not in a
+    # v9 fits the expression block as two free terms -- the candidate's own abundance and the same
+    # gene's level in matched normal tissue -- rather than one, and rather than their ratio.
+    assert a["expression"]["terms"] == ["expr_lvl", "expr_norm"]
     assert "Neopep" not in a["fit"]["screens"]
     assert a["generator"].endswith("fit.py")
     # every screen is held out in turn and scored with the mean intercept -- what a new cohort gets
@@ -448,7 +451,7 @@ def test_default_score_is_the_fitted_aggregate_not_the_gate():
     different models. This pins the default and keeps `gate` reachable."""
     from mhcmatch import complement
     from mhcmatch.rank import (CHANNEL_COLUMNS, Ranked, _finish, aggregate, aggregate_score,
-                               expr_level)
+                               expr_level, expr_norm_level)
     chan = dict(CHANNELS)
     rows = [Ranked(peptide="SIINFEKL", allele="H2-Kb", presentation=2.0, binder=2.0, occupancy=0.9,
                    physchem=1.5, expression=3.0, components=dict(chan)),
@@ -460,6 +463,11 @@ def test_default_score_is_the_fitted_aggregate_not_the_gate():
     floor = aggregate()["expression"]["floor_pooled"]
     want = aggregate_score({"binder": [2.0, 0.1], "log10a": [R._logit10(0.9), R._logit10(0.01)],
                             "expr_lvl": expr_level(rows, floor),
+                            # These rows name no gene, so the normal-tissue level is unavailable
+                            # and comes back nan -- which `aggregate_score` maps to 0 on the z
+                            # scale, the training mean. Built through the same helper so the
+                            # expectation cannot drift from what `_finish` does.
+                            "expr_norm": expr_norm_level(rows, floor),
                             **{c: complement.burial(["SIINFEKL", "SIINFEKV"], scale=sc)
                                for c, sc in R.PHYS_COLUMNS.items()},
                             **{c: [chan[c], chan[c]] for c in CHANNEL_COLUMNS}})
@@ -616,6 +624,7 @@ def test_finish_supplies_every_feature_the_artifact_declares():
     # `expr_pct` is the fitted expression term and `expr` is not: a single row has no percentile
     # the fitted expression term is a level on a reference floor, not the raw column and not the
     # within-batch percentile -- `expr_pct` is still emitted, just not read by the model
-    assert R.AGGREGATE_FEATURES.count("expr") == 0 and "expr_lvl" in R.AGGREGATE_FEATURES
+    assert R.AGGREGATE_FEATURES.count("expr") == 0
+    assert "expr_lvl" in R.AGGREGATE_FEATURES and "expr_norm" in R.AGGREGATE_FEATURES
     assert "expr_pct" not in R.AGGREGATE_FEATURES and "expr_pct" in done[0].__dict__
     assert done[0].expr_pct == 0.5

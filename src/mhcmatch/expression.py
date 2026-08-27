@@ -73,14 +73,24 @@ def fetch_reference(path: str | None = None, file: str = REFERENCE_FILE) -> str:
     :data:`REFERENCE_TOIL_FILE` for the single-pipeline GTEx/TCGA table.
 
     ``$MHCMATCH_EXPRESSION`` overrides, for offline and cluster runs, matching how
-    ``$MHCMATCH_PMHC`` overrides the presentation panel. Pointed at a directory it resolves
-    ``file``'s basename inside it, so one setting serves both tables; pointed at a file it wins
-    outright."""
+    ``$MHCMATCH_PMHC`` overrides the presentation panel. Pointed at a **directory** it resolves
+    ``file``'s basename inside it, so one setting serves every deposit here.
+
+    Pointed at a **file** it overrides :data:`REFERENCE_FILE` and that alone -- whatever the file is
+    called, which is the long-standing contract. The other deposits resolve beside it and fall
+    through to the download when they are not there. One path cannot stand in for four different
+    files, and letting it try is how a caller ends up handing a gzipped TSV to ``np.load``."""
     if path:
         return path
     env = os.environ.get("MHCMATCH_EXPRESSION")
     if env:
-        return env if os.path.isfile(env) else os.path.join(env, os.path.basename(file))
+        if not os.path.isfile(env):
+            return os.path.join(env, os.path.basename(file))
+        if file == REFERENCE_FILE:
+            return env
+        beside = os.path.join(os.path.dirname(env), os.path.basename(file))
+        if os.path.isfile(beside):
+            return beside
     from huggingface_hub import hf_hub_download
 
     from .store import PMHC_REPO
