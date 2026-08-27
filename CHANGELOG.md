@@ -8,6 +8,129 @@ versioning is [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+## [1.2.0] --- 2026-08-27
+
+**⚠ The shipped neoantigen scorer gains a term and changes the scale it divides abundance by.
+Every score moves.**
+
+### Changed
+
+- **`data/aggregate_mhc1.json` is version 9, and the expression block is two free terms.** Fitted on
+  the same corpus as v7 --- **342,432 rows / 741 validated-immunogenic peptides over 8 screens** ---
+  it carries nine terms at BIC 4390.2, bootstrapped over **3,294 (patient, screen) clusters in 400
+  resamples**, every term holding its sign in at least 399 of 400 at `P <= 0.0072`. The two
+  expression terms are `expr_lvl` at **+0.3694 per standard deviation** (z = +4.43,
+  P = 9.3 x 10^-6) and `expr_norm` at **+0.4811** (z = +5.09, P = 3.6 x 10^-7).
+- **`expr_norm` is a term, not a ratio, and the fit is what settled that.** `expr_lvl` is what this
+  candidate is transcribed at; `expr_norm` is the same gene's median in the tumour's matched normal
+  tissue, on the same floor. Entering them separately rather than as `expr_lvl - expr_norm` was a
+  decision to let a ratio be *found* rather than imposed, and it was not found: a difference of logs
+  requires equal and opposite coefficients, and both come back **positive**. Against the v7 form on
+  identical rows (342,372 rows, 732 immunogenic, every arm asserted on the same intersection), the
+  pair reaches **held-out mean 0.6952 and median 0.6801 against 0.6920 and 0.6719**, at **BIC 4336.4
+  against 4345.4** --- `bench/results/epic_expr_terms.md`.
+- **The floor `c` is the tumour type's own, not its matched normal's.** Through 1.1.0 `c` came from
+  the matched normal tissue, because that was the only gene-keyed reference on disk. Measured
+  against a gene-keyed tumour reference on one pipeline, **a tumour sits at roughly half its matched
+  normal** --- SKCM 0.1600 against skin 0.3050 TPM (0.52x), BLCA 0.1700 against bladder 0.3600
+  (0.47x), LUAD 0.2000 against lung 0.3500 (0.57x), BRCA 0.1900 against breast 0.3000 (0.63x). The
+  shipped floors run **0.1400 to 0.2400 TPM over 35 cancer types, pooled 0.1800**, and are recorded
+  per screen in the artifact's `expression` block. `mhcmatch.expression.context_floor` supplies
+  them; `tissue_floor` is unchanged and still answers the matched-normal question it was written
+  for.
+- **`c = 0.1 TPM` is where the data put it, and it is measured rather than searched.** With binding
+  held fixed by stratification into 46 screen x binding-quintile strata, the log-odds of
+  immunogenicity against abundance flattens below **0.1 TPM**; fitting `log2(1 + x/c)` to that curve
+  gives weighted R^2 = 0.816 at c = 0.1, and the neighbouring steps are 0.812 (0.05), 0.815 (0.075),
+  0.816 (0.15) and 0.815 (0.2). The empirical knee and the BIC-chosen `c` agree, so the parametric
+  form is not doing the work --- `bench/results/epic_expr_shape.md`.
+- **The reference behind all of it is one pipeline in one unit.** `reference_expression.tsv.gz`
+  carries GTEx in TPM and TCGA in RSEM upper-quartile normalised counts, both written into a column
+  named `median_tpm`; a scale taken from one and divided into an abundance from the other is a units
+  error no caller can detect. `expression/reference_expression_toil.parquet` replaces it for any
+  question that spans the two --- **5,037,966 rows over 58,581 gene symbols, `unit = TPM` on every
+  row**, 33 TCGA studies and 53 GTEx tissues from the UCSC Xena / Toil recompute (one RSEM pipeline
+  over GENCODE v23). Both older tables stay: they are each correct for their own question.
+- **`expr_pct` is no longer fitted.** It is still computed and still on `Ranked.expr_pct`, and it is
+  still the right column for *where does this candidate stand in the list it arrived with*. It is
+  not in `AGGREGATE_FEATURES`.
+
+### Added
+
+- **`expression.context_floor(tumor=, tissue=)`** --- the abundance floor for a context, from the
+  single-pipeline reference, clamped to `[0.05, 2.0]` TPM. The clamp is far wider than anything
+  observed and exists so a pathological input cannot return `c = 0`.
+- **`expression.gene_level(gene, tumor=, tissue=)`** --- a gene's level in the tumour type, in its
+  matched normal and across tissues, in one call, with `found` saying whether the gene is in the
+  reference at all. **Absent from a context is `0.0`; absent from the reference is not.** Every gene
+  here was measured in every context that cleared the sample threshold, so silence in a context is a
+  measurement --- collapsing it into ignorance would make the two indistinguishable.
+- **`expression.resolve_context(text)`** --- a free-text origin (`"liver"`, `"LIHC"`,
+  `"hepatocellular"`, `"Uterine Corpus"`) to a TCGA study code and GTEx contexts, through the
+  deposited `context_synonyms.tsv` (448 rows, 184 aliases). **An unrecognised string raises.**
+  Falling back to the pooled reference would return a plausible number computed from the wrong
+  distribution with nothing downstream able to tell. An organ is more than one study more often than
+  not --- `Lung` is `LUAD` *and* `LUSC`, `Kidney` is three --- so the mapping is one-to-many by
+  construction.
+- **`expression.batch_scale(values, genes, tumor=)`** --- a median-of-ratios factor putting a
+  submitted abundance column onto the reference, for the case where it is not reference TPM.
+  **Gated on covering at least half the context's expressed genes**, and the gate is the point: on a
+  whole transcriptome it recovers a known factor exactly across `1e-3` to `1e6` (25,675 genes,
+  coverage 1.00), and on a candidate list it refuses. A mutation reaches such a list only if it was
+  called, and only where the gene was seen in RNA, so the ratio measures that conditioning rather
+  than the library --- on the three screens of four where a factor can be estimated at all, whose
+  columns are *all* deposited as TPM, the ungated estimator returns 1.78, 2.18 and 3.15, never
+  below 1. **Counting more candidates cannot fix it**,
+  which is why the guard is coverage and not count: the largest of them contributes the most shared
+  genes (4,772) and is still wrong by 2.18-fold --- `bench/results/epic_expr_scale.md`.
+- **`rank.expr_norm_level(rows, floor, tumor=, tissue=)`** --- the second term. Where the gene has no
+  matched normal it falls back to that gene's pan-tissue median, and **never to missing**: a
+  constant per cohort cannot rank.
+- **Three deposits beside the reference, and scoring reads these rather than the table.**
+  `toil_matrix.npz` (a dense 58,581 gene x 86 context float32 matrix), `toil_floors.tsv` (88 rows),
+  `context_synonyms.tsv`. **6.6 MB between them**, staged by `mhcmatch bootstrap --reference`; the
+  38.6 MB record is not in the bootstrap set. Answering *what is this gene in this tumour type* from
+  the table means building a five-million-entry dictionary of dictionaries: measured, **5.20 s and
+  3,168 MB resident** against the matrix's **0.05 s and 29 MB**. Both return the same floor to four
+  decimals, which is how the matrix is checked against the table it came from.
+
+- **A negative abundance raises instead of being read as zero.** `rank._expression_for`,
+  `rank.expr_level`, `expression.batch_scale` and the `prefilter` argument of `expr_level` and
+  `context_floor` all reject a negative TPM naming the gene and the value. It was previously
+  clamped to 0, which made a broken input indistinguishable from a silent gene. Nothing in the
+  fitting corpus is affected: the minimum abundance over all 342,432 rows is exactly 0.
+
+### Fixed
+
+- **A label array in a downloaded `.npz` no longer needs `allow_pickle`.** The deposit's gene and
+  context arrays are fixed-width unicode rather than `dtype=object`, so `np.load` reads them with
+  the flag off. An object array is pickled, and a pickled array in a file fetched over the network
+  executes on load.
+- **`$MHCMATCH_EXPRESSION` pointing at a file was winning for every deposit.** One path cannot stand
+  in for four files, and `np.load` was being handed a gzipped TSV. A file now overrides only the
+  table it names; a directory still overrides all of them.
+- **The two readers that dominate a `rank` invocation.** `known.load()` built roughly four million
+  dictionaries to read two columns, and `Store.from_pmhc` retained a million row dicts and re-read
+  each by key --- 8.7 M lookups for 5.7 M useful ones. Both stream now, at one row of peak memory.
+  Measured over 3,000 peptides: **`known.load` 14.0 s to 6.6 s, `from_pmhc` 10.2 s to 2.8 s,
+  end-to-end `rank pairs` 17.2 s to 10.9 s**, with byte-identical output.
+- **A quoted CSV field no longer silently shifts a column.** `known._read` indexes by header name
+  and falls back to `csv.reader` when the header carries a quote.
+
+### Documented
+
+- **Why ITSNdb is scored without the presentation block.** ITSNdb is a curated benchmark whose
+  authors state that binding affinity and peptide processing *were* the inclusion criteria, so
+  presentation does not vary there and ranking on it measures the curation rather than the model.
+  Switching the presentation block off moves ITSNdb by **+0.0579**, to 0.6195, while costing
+  **0.0607 on average across the other seven screens** --- the signature a benchmark selected on
+  binding should produce, and nothing a merely weak block would produce. **Expression stays on**:
+  removing it moves ITSNdb by -0.0300, the wrong way, and abundance was not among the inclusion
+  criteria --- `bench/results/epic_itsndb_ablation.md`.
+- The `expr_level` docstring said `c` came from the matched normal tissue. It comes from the tumour
+  type's own transcriptome, and the docstring moved with the code.
+
+
 ## [1.1.0] --- 2026-08-25
 
 **⚠ The shipped neoantigen scorer changes its feature set, and the composition objective changes

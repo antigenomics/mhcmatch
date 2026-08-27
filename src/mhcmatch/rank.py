@@ -173,12 +173,19 @@ def expr_level(rows, floor: float, prefilter: float = 0.0) -> list:
     the gene in the tumour's matched normal tissue; the gene's cross-tissue reference.
 
     ``c`` is a property of a *transcriptome*, not of a candidate, and comes only from
-    :func:`mhcmatch.expression.tissue_floor` -- the 25th percentile of non-zero median abundance
-    over every gene in the tumour's matched normal tissue(s). 0.1491 for BLCA, 0.1498 for SKCM,
-    0.1833 for LUAD, 0.2482 for the pooled reference when the tumour type is unknown. The
-    reference's gene rows (GTEx and HPA consensus, 104 normal tissues) can supply this; its
-    peptide rows (TCGA, 19 tumour types) cannot, because one peptide's abundance is not a
-    distribution to take a percentile of.
+    :func:`mhcmatch.expression.context_floor` -- the 25th percentile of non-zero median abundance
+    over every gene in **the tumour type's own** transcriptome. 0.1700 TPM for BLCA, 0.1600 for
+    SKCM, 0.2000 for LUAD, and 0.1800 for the pooled reference when the tumour type is unknown,
+    over 35 cancer types spanning 0.1400 to 0.2400 TPM.
+
+    **A tumour's floor is not its matched normal's.** Through 1.1.0 this term took ``c`` from the
+    matched normal tissue, because that was the only gene-keyed reference on disk. Measured against
+    a gene-keyed tumour reference on the same pipeline, a tumour sits at roughly half its matched
+    normal -- SKCM 0.1600 against skin 0.3050 TPM (0.52x), BLCA 0.1700 against bladder 0.3600
+    (0.47x), LUAD 0.2000 against lung 0.3500 (0.57x), BRCA 0.1900 against breast 0.3000 (0.63x) --
+    so the floor a candidate was divided by had been about twice the one its own transcriptome
+    supports. The normal tissue's level is not discarded: it has its own term,
+    :func:`expr_norm_level`.
 
     **Why a log scale with a floor, rather than a rank or a plain ``log1p``.** ``log1p`` compresses
     the whole 0-2 TPM band -- a third of the candidates in the fitting corpus -- into 1.10 units
@@ -196,7 +203,9 @@ def expr_level(rows, floor: float, prefilter: float = 0.0) -> list:
     any constant multiplies ``c`` with it and leaves ``expr_lvl`` identical -- so TPM, FPKM and a
     normalised count give the same answer. ``prefilter`` is the one place a unit must be right: it
     is the expression cut the candidates already passed, in TPM, and it raises the floor to meet
-    it, because a filter removes the range this term resolves. Leave it at 0 unless a filter was
+    it, because a filter removes the range this term resolves. **A negative abundance raises**
+    rather than clamping to zero: it is not a measurement, and reading it as one would hide
+    whatever produced it. Leave it at 0 unless a filter was
     actually applied; declaring one that was not costs accuracy.
 
     >>> R = lambda v: type("R", (), {"expression": v})()      # `expression` is log1p(TPM)
@@ -207,6 +216,8 @@ def expr_level(rows, floor: float, prefilter: float = 0.0) -> list:
     """
     import math
 
+    if prefilter is not None and float(prefilter) < 0:
+        raise ValueError(f"expr_level: prefilter must be >= 0 TPM, got {prefilter!r}")
     c = max(float(floor), float(prefilter or 0.0))
     if not (c > 0):
         raise ValueError(f"expr_level: floor must be positive TPM, got {floor!r}")
@@ -217,7 +228,12 @@ def expr_level(rows, floor: float, prefilter: float = 0.0) -> list:
             out.append(float("nan"))
             continue
         tpm = math.expm1(float(v))                                # `expression` is log1p(TPM)
-        out.append(math.log2(1.0 + max(tpm, 0.0) / c))
+        if tpm < 0:
+            raise ValueError(
+                f"expr_level: abundance must be >= 0 TPM, got {tpm:.6g}. A negative abundance is "
+                "not a measurement; clamping it to zero here would hide the input that produced "
+                "it.")
+        out.append(math.log2(1.0 + tpm / c))
     return out
 
 
@@ -323,9 +339,13 @@ def aggregate() -> dict:
       the two are not one axis entered twice: measured, they share Spearman +0.7431, while
       ``binder`` and the bare presentation rank ``pres`` share +0.8797. ``pres`` and ``occupancy``
       are both emitted; neither is fitted.
-    * ``expression`` -- ``expr_pct``, the expression percentile within the scored batch. One term:
-      ``expr`` + ``expr_missing`` was two, and the indicator was very nearly a screen label that
-      the per-screen intercept already carried.
+    * ``expression`` -- ``expr_lvl``, this candidate's own abundance, and ``expr_norm``, the same
+      gene in the tumour's matched normal tissue, both ``log2(1 + TPM/c)`` on the floor the tumour
+      type's own transcriptome sets. **Two free terms rather than an imposed ratio**, and the fit
+      says the ratio would have been the wrong constraint: a difference of logs requires equal and
+      opposite coefficients, where these come back +0.3694 and +0.4811 per standard deviation,
+      *both positive*. ``expr_pct``, the within-batch percentile, is still emitted and is not
+      fitted.
     * ``physchem`` -- ``C_phys_buried`` and ``C_phys_charge``, :func:`mhcmatch.complement.burial`
       over the TCR face on the Rose burial propensity and on Atchley AF5 electrostatic charge.
       Imported scales, so **zero fitted residue parameters**; burial carries a cysteine loading of
@@ -449,8 +469,9 @@ def aggregate_score(features, imputed_out: list | None = None) -> "np.ndarray":
     * **Compute each feature the way the fit did.** ``binder`` is ``-log10`` of the calibrated
       *combined* %rank -- the Fisher statistic over the presentation rank and the Potts affinity
       rank, not the presentation rank alone, which is the separate column ``pres`` --
-      ``occupancy`` is ``a/(1+a)`` for ``a = 10 nM / Kd``, ``expr_pct`` is
-      :func:`expr_percentile` over the scored batch, the ``C_phys`` pair is
+      ``occupancy`` is ``a/(1+a)`` for ``a = 10 nM / Kd``, the expression pair is
+      :func:`expr_level` and :func:`expr_norm_level` on the floor
+      :func:`mhcmatch.expression.context_floor` returns for the tumour type, the ``C_phys`` pair is
       :func:`mhcmatch.complement.burial` on the two scales of :data:`PHYS_COLUMNS`, and the three
       ``C_corpus`` channels are :func:`mhcmatch.mimicry.corpus_R`.
     * **The ``C_corpus`` channels are densities, not counts.** Each is a per-window mean over the
@@ -788,7 +809,15 @@ def _expression_for(gene: str, observed, tissue: str | None, tumor: str | None,
     A missing expression value never drops a candidate -- the reference median stands in and the
     flag travels with it, so a caller can carry a missing-indicator instead of losing the row."""
     if observed is not None and observed == observed:
-        return math.log1p(float(observed)), False
+        x = float(observed)
+        if x < 0:
+            raise ValueError(
+                f"expression: abundance must be >= 0 TPM, got {x!r}"
+                + (f" for gene {gene!r}" if gene else "")
+                + (f" (peptide {peptide!r})" if peptide else "")
+                + ". A negative abundance is not a measurement, and silently reading it as zero "
+                  "would hide whatever produced it. Fix it in the input.")
+        return math.log1p(x), False
     if tissue is None and tumor is None:
         return float("nan"), True
     try:
@@ -873,10 +902,10 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
                 "expr_missing": [1.0 if r.expression_imputed else 0.0 for r in rows]}
         for r, v in zip(rows, cols["expr_pct"]):
             r.expr_pct = float(v)
-        # `expr_lvl` is the fitted expression term; `expr_pct` above is emitted beside it and is
+        # `expr_lvl` is a fitted expression term; `expr_pct` above is emitted beside it and is
         # not read by the model. The floor is the artifact's own recorded reference value unless
-        # the caller passes a tumour-matched one from `mhcmatch.expression.tissue_floor`; it is
-        # never taken from the batch, because a batch floor tracks the donor's mutational burden
+        # the caller passes one for this tumour type from `mhcmatch.expression.context_floor`; it
+        # is never taken from the batch, because a batch floor tracks the donor's mutational burden
         # rather than the assay.
         if "expr_lvl" in a["features"]:
             ex = a.get("expression", {})
@@ -885,7 +914,7 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
                 raise ValueError(
                     "rank: this model fits `expr_lvl` but the artifact records no abundance floor "
                     "and none was passed. Supply "
-                    "`expr_floor=mhcmatch.expression.tissue_floor(tumor=...)`; a scaled abundance "
+                    "`expr_floor=mhcmatch.expression.context_floor(tumor=...)`; a scaled abundance "
                     "with no floor is not a defined quantity.")
             cols["expr_lvl"] = expr_level(rows, c, expr_prefilter or ex.get("prefilter_tpm", 0.0))
             for r, v in zip(rows, cols["expr_lvl"]):

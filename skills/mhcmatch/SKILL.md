@@ -79,7 +79,7 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 | `mhcmatch.complement` | `score`, `burial`, `design`, `feature_names`, `posterior` | the recognition axis: six blocks, per species, **never pooled across hosts**. Vectorised — pass a list. `posbayes` is a strict special case. **`burial` is `C_phys`** — the Rose burial propensity **averaged** over the TCR face, an imported basis with **no fitted residue parameters**; `C_phys_charge` is the same read on Atchley AF5 (electrostatic charge), orthogonal to burial at r = +0.008 where the v3 hydropathy partner sat at −0.837. The two are the shipped aggregate's whole chemistry block ([docs/burial.rst](../../docs/burial.rst)). `cls="mhc2"` selects the separately fitted class-II table , whose `aa` block is keyed on register zone **and** length; `recognition.score_mhc2` is a different, unfitted thing — do not confuse them |
 | `mhcmatch.rank` | `rank_fasta`, `rank_table`, `occupancy` | scores with the fitted `EPIC` aggregate; `--score gate` is the two-term product-of-sigmoids. Emits `occupancy` — equilibrium fraction of MHC held, `a/(1+a)` with `a = [P]/Kd` — which is **absolute** where the binder `%rank` is allele-relative, and is defined for a frameshift or fusion product that has no wild type. `agretopicity` is reported, not fitted: it does not resolve in any parameterisation tested. `rank --extended` appends the mimicry contributions and `--annotate` what each candidate resembles — **columns only, the ordering is unchanged** |
 | `mhcmatch.known` | five built-in reference sets | exact-match lookup. An exact match outranks any model output, so `rank` flags it and never folds it into the score |
-| `mhcmatch.expression` | `lookup`, `safety_profile`, `matched_tissues`, `tumor_types`, `TUMOR_TISSUE` | GTEx `SMTSD` tissues and TCGA study abbreviations — **two vocabularies, never merged, neither clinical**. **Always pass the caller's own tumour type**; the benchmark's cross-tissue median exists for fit/holdout comparability, not as a default |
+| `mhcmatch.expression` | `lookup`, `safety_profile`, `matched_tissues`, `tumor_types`, `TUMOR_TISSUE`, `context_floor`, `gene_level`, `resolve_context`, `batch_scale` | GTEx `SMTSD` tissues and TCGA study abbreviations — **two vocabularies, never merged, neither clinical**. **Always pass the caller's own tumour type**: since v9 it sets the floor `c` both expression terms divide by, and **a tumour's floor is roughly half its matched normal's** (SKCM 0.1600 against skin 0.3050 TPM), so the pooled fallback is not neutral. `context_floor`/`gene_level` read the single-pipeline reference (UCSC Xena/Toil, one RSEM pipeline over GENCODE v23, TPM for both cohorts) through a 58,581 × 86 matrix rather than the 5 M-row table — 0.05 s and 29 MB against 5.20 s and 3,168 MB. `resolve_context` turns a free-text origin into a study code plus matched normals and **raises** on an unrecognised string; one organ is more than one study more often than not, so the mapping is one-to-many. `batch_scale` rescales a non-TPM column by median-of-ratios and **refuses below half-transcriptome coverage** — a candidate list cannot clear it, because a mutation reaches one only where the gene was seen in RNA |
 | `mhcmatch.mimics` | `neighbours`, `KINDS`, `DEFAULT_REFS` | the raw scan, per category, **never summed** — each category argues something different |
 | `mhcmatch.mimicry` | `score`, `probability`, `annotate`, `safety`, `masks`, `corpus_R`, `features`, `load_references` | the *fitted* form: `viral`/`self`/`thymus` × `anchor`/`tcr` as signed log-odds. `probability` demands a **named** corpus. `annotate` (tested-neoantigen DB) is prior evidence and **never a fitted term**. **`corpus_R` is `C_corpus`** — the **exact** Luksza density over the TCR face, evaluated as a sliding-k-mer table contraction (`corpus_counts` + `contract`), not a search. All three components (`thymus`/`self`/`viral`) ship in EPIC, under a graded BLOSUM62 kernel since v4; `SHAPES` is one `kappa` each (`a0` retired). `self_species=` picks the proteome, so mouse self for mouse. Counts are memoised per `(cls, comp, k, species)` and **not** keyed on `kappa`, so a kappa sweep is free; there is **no disk cache** ([docs/corpus.rst](../../docs/corpus.rst)). `load_references` still builds the index `features`/`annotate`/`safety` need, because those report *which* reference was hit |
 | `mhcmatch.vector` | `screen`, `self_origin_risk`, `select`, `order`, `slippery_sites`, `epitope_map`, `write_map` | **cassette assembly**, the step after `rank`: withdraw on safety, then how many units per allotype, in what order, joined by what. `screen` **excludes**, never down-ranks. Scoring is injected (`binder`, `risk`), so the layout logic needs no panel. `epitope_map`/`write_map`  emit the TSV/JSON cassette map — unit, linker and epitope rows with 1-based coordinates, the class-II core, cross-class overlaps and per-unit `self_help`; **one row per (peptide, allele)**, so a heterozygote is duplicated by construction |
@@ -145,7 +145,7 @@ The four blocks and what each reads:
 | block | terms | what it is |
 |---|---|---|
 | `presentation` | `binder`, `log10a` | a within-allele competition rank, and an absolute surface density on its log-odds scale |
-| `expression` | `expr_pct` | the expression percentile *within the scored cohort* |
+| `expression` | `expr_lvl`, `expr_norm` | this candidate's own abundance, and the same gene in the tumour's matched normal — both `log2(1 + TPM/c)` on the tumour type's floor |
 | `physchem` | `C_phys_buried`, `C_phys_charge` | Rose burial and Atchley AF5 charge over the TCR face, per residue |
 | `corpus` | `C_corpus_thymus`, `C_corpus_self`, `C_corpus_viral` | density of each reference corpus around the TCR face |
 
@@ -164,11 +164,22 @@ The four blocks and what each reads:
   Luksza amplitude and any Kidera scale (`burial(..., scale="KIDERA:KF4")`) are all reachable and
   emitted for comparison; none is a fitted term, and `tests/test_rank.py` asserts that none of them
   appears in `AGGREGATE_FEATURES`.
-- **`expr_pct` is a rank, not a level.** The expression percentile *within the scored cohort*,
-  0.5 where there is no value. It is unit-free — TPM, FPKM and raw counts give the same column —
-  and it needs no missingness indicator, because 0.5 is what "no information" means on a
-  percentile scale. The consequence to know: the term is **cohort-relative**, so a peptide's score
-  depends on what else was submitted with it.
+- **Two expression terms, and not a ratio, since artifact v9.** `expr_lvl` is what this candidate
+  is transcribed at; `expr_norm` is the same gene's median in the tumour's matched normal, falling
+  back to that gene's pan-tissue median and **never to missing**, which would be a constant per
+  cohort and could not rank. Entering them free lets a tumour-versus-normal ratio be *found* rather
+  than imposed, and it is not found: a difference of logs needs equal and opposite coefficients,
+  and both come back positive (+0.3694 and +0.4811 per standard deviation). Held out one screen at
+  a time, the pair reaches mean 0.6952 / median 0.6801 against 0.6920 / 0.6719 for the single term
+  it replaced.
+- **`c` is a property of a transcriptome and never of the batch in front of you.** It is the 25th
+  percentile of the tumour type's non-zero gene medians — 0.1400 to 0.2400 TPM over 35 cancer
+  types, pooled 0.1800 — and the value the data put it at, 0.1 TPM, is where the response to
+  abundance flattens with binding held fixed by stratification, not where a grid search landed.
+  A floor taken from the candidates tracks the donor's mutational burden instead of the assay.
+- **`expr_pct` is still emitted and is no longer fitted.** The within-batch percentile is the right
+  column for *where does this candidate stand in the list it arrived with*, and it is unit-free.
+  It is not in `AGGREGATE_FEATURES`.
 - **Read the block test, not the per-term `z`.** The three corpus channels run +0.73 to +0.77
   against each other, so a conditional `z` splits one shared axis across several coefficients and
   understates all of them. Each block carries a likelihood-ratio test against the model without it,

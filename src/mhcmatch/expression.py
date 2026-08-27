@@ -56,8 +56,8 @@ REFERENCE_FILE = "expression/reference_expression.tsv.gz"
 #: tissues under ``source="toil_gtex"`` and 33 TCGA study codes under ``source="toil_tcga"``.
 #:
 #: **Nothing here parses it, and it is not in the bootstrap set.** It is 38.6 MB and the record; the
-#: scoring path reads :data:`MATRIX_FILE`, :data:`FLOORS_FILE` and :data:`SYNONYMS_FILE`, which are
-#: 6.6 MB between them and carry the same numbers. Fetch it with
+#: scoring path reads :data:`MATRIX_FILE` and :data:`SYNONYMS_FILE`, which with
+#: :data:`FLOORS_FILE` are 6.6 MB between them and carry the same numbers. Fetch it with
 #: ``fetch_reference(file=REFERENCE_TOIL_FILE)`` and read it with polars when an analysis wants the
 #: rows themselves.
 REFERENCE_TOIL_FILE = "expression/reference_expression_toil.parquet"
@@ -574,6 +574,8 @@ def context_floor(tumor: str | None = None, tissue: str | None = None, q: float 
     """
     if not 0.0 < q < 1.0:
         raise ValueError(f"context_floor: q must be in (0, 1), got {q!r}")
+    if prefilter is not None and float(prefilter) < 0:
+        raise ValueError(f"context_floor: prefilter must be >= 0 TPM, got {prefilter!r}")
     keys: tuple = ()
     if tumor:
         codes, tis = resolve_context(tumor, path)
@@ -674,7 +676,9 @@ def batch_scale(values, genes, tumor: str | None = None, path: str | None = None
 
     Only genes positive in both count. A candidate at zero is a measurement of silence, not of
     scale, and letting it in drags the median toward zero in proportion to how many genes the tumour
-    happens to have switched off.
+    happens to have switched off. **A negative value raises.** Zero is a measurement and is skipped
+    for a stated reason; a negative one is not a measurement at all, and skipping it too would
+    estimate the scale from whatever part of the column happened to be valid.
 
     **Pass a whole-transcriptome profile, not a candidate list**, and the guards enforce it: the
     shared genes must clear :data:`MIN_SHARED` *and* cover :data:`MIN_COVERAGE` of the genes the
@@ -716,6 +720,13 @@ def batch_scale(values, genes, tumor: str | None = None, path: str | None = None
     idx = np.fromiter((gi.get(str(g).strip(), -1) for g in genes), dtype=np.int64,
                       count=len(genes))
     xv = np.asarray([_f(x) for x in values], dtype=float)
+    neg = np.flatnonzero(xv < 0)
+    if neg.size:
+        i = int(neg[0])
+        raise ValueError(
+            f"batch_scale: abundance must be >= 0, got {xv[i]!r} for {str(genes[i])!r} and "
+            f"{neg.size} value(s) like it. A negative abundance is not a measurement; dropping "
+            "them here would estimate the scale from whatever survived.")
     ok = (idx >= 0) & np.isfinite(xv) & (xv > 0)
     if not ok.any():
         return (1.0, 0, True, float("nan"), 0.0) if detail else (1.0, 0, True)

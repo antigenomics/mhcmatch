@@ -140,9 +140,9 @@ s["yield"], s["p_at_least"], s["lam"], s["n_effective"]
 Greedy plus a bounded swap pass, `O(kN)` — and it reaches the brute-force optimum on every pool small
 enough to enumerate, which is a test rather than a claim.
 
-**Give it the whole candidate pool, not a shortlist.** `expr_pct` and `pres` carry the two largest
-coefficients in the shipped model (+0.3007 and +0.2200), so a pool already cut on binding and
-expression has no range left along them. Measured: on the 46-patient half of the NCI gastrointestinal
+**Give it the whole candidate pool, not a shortlist.** `binder` and the two expression terms carry
+the largest positive coefficients in the shipped model (+0.5481, +0.4811 and +0.3694 per standard
+deviation), so a pool already cut on binding and expression has no range left along them. Measured: on the 46-patient half of the NCI gastrointestinal
 screen held out of the EPIC fit — an exhaustive exome screen responding at **0.0144** per mutation —
 selection lifts captured responses to **3.92× the base rate** at *k* = 5 (13 of 58 positives against
 3.3 expected). On TESLA's *nominated* list, which responds at **0.0612**, every rule sits at the base
@@ -248,17 +248,26 @@ numpy product and a thread pool would buy nothing, so the flag is absent rather 
 
 Presentation is necessary and not sufficient: most presented peptides are ignored. mhcmatch keeps
 the two questions apart and scores them with the fitted **`EPIC`** aggregate, whose `C_phys_*` and
-`C_corpus_*` terms are the recognition axis and whose `pres` / `occupancy` terms are the presentation
-one. It is **hierarchical**: eight columns in four blocks — presentation, expression, physchem,
+`C_corpus_*` terms are the recognition axis and whose `binder` / `log10a` terms are the presentation
+one. It is **hierarchical**: nine columns in four blocks — presentation, expression, physchem,
 corpus — entered in pipeline order, so a recognition coefficient is what that term is worth *after*
 presentation and expression rather than in competition with them. None of the recognition terms is
 fitted on immunogenicity labels.
 
-**Expression enters as `expr_pct`, a percentile within the scored cohort.** That is why the model
-does not care whether you give it TPM or FPKM: a rank is invariant to any monotone rescaling of
-abundance, and a row with no expression value sits at 0.5, which is what "no information" means on a
-percentile scale. The price, stated: the term is cohort-relative, so a peptide's score depends on
-what else was submitted with it.
+**Expression enters as two free terms, not one and not a ratio.** `expr_lvl` is what this candidate
+is transcribed at and `expr_norm` is the same gene's median in the tumour's matched normal tissue,
+both `log2(1 + TPM/c)` on the floor `c` that the tumour type's own transcriptome sets — the 25th
+percentile of its non-zero gene medians, 0.1400 to 0.2400 TPM across 35 cancer types. Entering them
+separately lets a tumour-versus-normal ratio be *found* rather than imposed, and it is not found: a
+difference of logs requires equal and opposite coefficients, and both come back positive.
+
+The unit does not have to be TPM, because `c` is a quantile of the same column and the two cancel —
+but only while they are the same column. Where a submitted abundance is on some other scale,
+`expression.batch_scale` estimates the factor by median-of-ratios against the reference and
+**refuses** unless the input covers half the context's expressed genes. A candidate list cannot
+clear that gate, and should not: a mutation reaches one only where the gene was seen in RNA, so the
+ratio would measure that conditioning rather than the library. A candidate whose gene is unknown
+scores on the terms it does have, flagged, never dropped.
 
 A **gate** — a product of sigmoids rather than a sum, so a candidate failing either axis cannot be
 rescued by the other — is reachable as `mhcmatch rank --score gate`.
@@ -374,9 +383,11 @@ candidates into a tier of their own instead of folding it into the number.
 
 **Pick your tumour type.** `mhcmatch expression --list-contexts` prints all 19 TCGA↔GTEx pairings;
 `expression.matched_tissues('BRCA')` gives the matched normal and `expression.lookup(gene,
-tumor='BRCA')` the tumour value. The benchmark's own expression term is a GTEx **cross-tissue
-median** so that it is identical on fit and holdout — that is a comparability requirement, not a
-recommendation, and a real ranking run should pass its own tumour type.
+tumor='BRCA')` the tumour value. **Pass your own tumour type**: it sets the floor both expression
+terms are divided by, and a tumour's floor is roughly half its matched normal's, so the pooled
+fallback is not a neutral choice. If the origin arrives as free text, `expression.resolve_context`
+maps it — `"liver"`, `"LIHC"` and `"hepatocellular"` all resolve, and an unrecognised string raises
+rather than quietly returning a number from the wrong distribution.
 
 **Expression, and which normal tissue to compare against.** `--tumor` takes a **TCGA study
 abbreviation** (`SKCM`, `LUAD`, …; `CRC` merges TCGA's `COAD` and `READ`) and `--tissue` a **GTEx
@@ -450,8 +461,8 @@ the earlier ones, not in competition with them. Ridge with an unpenalised per-sc
 
 | letter | block | columns |
 |---|---|---|
-| `P` | presentation | `binder`, `occupancy` |
-| `E` | expression | `expr_pct` |
+| `P` | presentation | `binder`, `log10a` |
+| `E` | expression | `expr_lvl`, `expr_norm` |
 | `I` | immunogenic — physchem | `C_phys_buried`, `C_phys_charge` |
 | `C` | complementarity — corpus | `C_corpus_thymus`, `C_corpus_self`, `C_corpus_viral` |
 

@@ -45,11 +45,18 @@ what that term is worth **after** presentation and expression rather than in com
        itself is still computed and emitted; a probability entered linearly in a log-odds model is
        the mis-specification, not the axis.
    * - ``expression``
-     - ``expr_pct``
-     - The **percentile of ``log1p(TPM)`` within the scored cohort** — the cohort's own
-       measurement where it has one, else the tumour-matched reference, else the GTEx
-       cross-tissue median, and ``0.5`` where there is none. One term, not two: see
-       :func:`mhcmatch.rank.expr_percentile`.
+     - ``expr_lvl``
+     - ``log2(1 + TPM/c)`` for *this candidate's* source-gene abundance — the cohort's own
+       measurement where it has one, else the tumour type's reference value, else the gene's
+       matched-normal or cross-tissue level. ``c`` is the 25th percentile of the **tumour type's
+       own** non-zero gene medians, 0.1400 to 0.2400 TPM over 35 cancer types. See
+       :func:`mhcmatch.rank.expr_level`.
+   * - ``expression``
+     - ``expr_norm``
+     - The same gene's median in the tumour's **matched normal** tissue, on the same floor,
+       falling back to that gene's pan-tissue median and never to missing. Free rather than
+       subtracted: a ratio would need equal and opposite coefficients, and both are positive.
+       See :func:`mhcmatch.rank.expr_norm_level`.
    * - ``physchem``
      - ``C_phys_buried``
      - :func:`mhcmatch.complement.burial`, the Rose burial propensity **averaged** over the TCR
@@ -128,9 +135,12 @@ form. What these docs carry instead is what each term *is*, which does not move 
    * - term
      - block
      - what it is
-   * - ``expr_pct``
+   * - ``expr_lvl``
      - expression
-     - expression *rank* within the scored cohort, 0.5 where there is no value
+     - this candidate's own abundance as ``log2(1 + TPM/c)`` on the tumour type's floor
+   * - ``expr_norm``
+     - expression
+     - the same gene in the tumour's matched normal tissue, on the same floor
    * - ``binder``
      - presentation
      - the calibrated Fisher combination of presentation ``%rank`` with the Potts affinity
@@ -329,20 +339,38 @@ two reach the ranker: ``tpm`` and ``gene_name``. When ``tpm`` is in the header, 
 * ``--tumor SKCM`` --- TCGA, keyed on the **peptide**, so it is specific to the epitope;
 * ``--tissue pancreas`` --- GTEx, keyed on the **gene**;
 * neither --- ``expression`` is ``NaN``, ``expr_imputed`` is 1, and the row still ranks. A missing
-  covariate never drops a candidate: it takes ``expr_pct = 0.5``, which is what "no information"
-  means on a percentile scale, so the gap is expressed *in* the term rather than beside it in a
-  flag. The retired ``expr_missing`` indicator is why — its source was very nearly a screen label,
-  so the per-screen intercept already carried it (``bench/results/epic_expr_arms.md``).
+  covariate never drops a candidate: a non-finite term standardises to ``z = 0``, the fitting
+  corpus's own mean, which is what "no information" means on that scale. The gap is recorded twice
+  and in two senses --- ``expr_imputed`` says the *abundance* was not measured, and the ``imputed``
+  column names every *term* that fell back. The retired ``expr_missing`` *fitted* indicator is a different thing — its source was very
+  nearly a screen label, so the per-screen intercept already carried it
+  (``bench/results/epic_expr_arms.md``).
+
+``--tumor`` is worth passing even when the abundance column is present, because it sets ``c``.
+A tumour's floor is roughly half its matched normal's, so the pooled fallback is not a neutral
+choice. Where the origin arrives as free text, :func:`mhcmatch.expression.resolve_context` maps it
+--- ``"liver"``, ``"LIHC"`` and ``"hepatocellular"`` all resolve --- and **raises** on a string it
+does not recognise, rather than returning a plausible number computed from the wrong distribution.
 
 .. note::
 
-   **TPM or FPKM: the fitted term cannot tell them apart, by construction.**
+   **TPM or FPKM: the unit cancels, but only while the floor comes from the same column.**
 
-   ``expr_pct`` is a *rank* within the scored cohort, and a rank is invariant to any monotone
-   rescaling of abundance. TPM, FPKM and raw counts therefore give the identical column: a caller
-   does not have to convert, and cannot convert wrongly. The arithmetic below is why the two were
-   already interchangeable within one sample; the percentile makes it true by construction rather
-   than by argument.
+   ``log2(1 + x/c)`` is unit-free whenever ``c`` is a quantile of the *same* measurement as ``x``:
+   multiply the column by any constant and ``c`` moves with it. **The shipped ``c`` is a quantile
+   of the reference, in TPM**, so that condition holds for a submitted TPM column and fails for
+   one in FPKM or in counts --- silently, since nothing in the number says which it was.
+
+   The repair is :func:`mhcmatch.expression.batch_scale`, a median of ratios against the reference
+   for the tumour type, and it is **gated on covering at least half that context's expressed
+   genes**. Handed a whole transcriptome it recovers a known factor exactly across
+   :math:`10^{-3}` to :math:`10^{6}`; handed a candidate list it refuses, and should. A mutation
+   reaches such a list only where the gene was seen in RNA, so the ratio measures that conditioning
+   rather than the library: on screens whose columns are all deposited as TPM, the ungated
+   estimator returns 1.78, 2.18 and 3.15, never below 1. Counting more candidates cannot fix it,
+   which is why the guard is coverage and not count.
+
+   The arithmetic below is why the two metrics differ by one constant in the first place.
 
    The two differ by a single library-wide constant, identical for every transcript:
 
@@ -354,12 +382,12 @@ two reach the ranker: ``tpm`` and ``gene_name``. When ``tpm`` is in the header, 
    Checked on a 20,000-gene simulation: the per-gene ``TPM/FPKM`` ratio is constant to
    :math:`2.2\times10^{-15}` and uncorrelated with transcript length.
 
-   Two consequences. **Re-ranking one sample is safe either way** --- a constant factor is an offset
-   on the ``log1p`` scale and cannot reorder candidates. **Converting exactly needs the whole
-   table**, not the FASTA: renormalise the sample's FPKM column to sum to :math:`10^6`. If you only
-   hold per-candidate values, the offset is not recoverable, and it matters for cross-sample
-   comparison and for any absolute reading of the score --- ``expr`` is EPIC's largest coefficient
-   at +0.3250 --- but not for the order within a patient.
+   Two consequences. **Re-ranking one sample is safe either way** --- a constant factor shifts
+   every candidate by the same amount and cannot reorder them within a patient. **Converting
+   exactly needs the whole table**, not the FASTA: renormalise the sample's FPKM column to sum to
+   :math:`10^6`. If you hold only per-candidate values the constant is not recoverable, and it
+   matters for cross-sample comparison and for any absolute reading of the score, since ``expr_lvl``
+   and ``expr_norm`` are fitted at +0.3694 and +0.4811 per standard deviation.
 
 Reading the output
 ------------------
@@ -370,10 +398,11 @@ Reading the output
 
 ``score`` is the aggregate; higher is better. ``rank`` is that score as a dense 1-based integer and
 ``p_response`` is it on a probability axis at ``--prevalence`` (above). Every one of the model's
-eight features is a column, because a row should report what produced it: ``pres``, ``occupancy``,
-``expr_pct`` (with ``expression`` and ``expr_imputed`` beside it), the two chemistry scales
-``C_phys_buried`` and ``C_phys_charge``, and the three corpus channels ``C_corpus_thymus`` /
-``_self`` / ``_viral``.
+nine features is a column, because a row should report what produced it: ``binder`` and ``log10a``,
+``expr_lvl`` and ``expr_norm`` (with ``expression``, ``expr_pct`` and ``expr_imputed`` beside
+them), the two chemistry scales ``C_phys_buried`` and ``C_phys_charge``, and the three corpus
+channels ``C_corpus_thymus`` / ``_self`` / ``_viral``. ``pres`` and ``occupancy`` are emitted too
+and are not fitted.
 ``agretopicity``, ``physchem``, ``variant_type`` and
 ``n_alleles_presenting`` / ``alleles_presenting`` are reported beside them and are **not** in the
 model.
