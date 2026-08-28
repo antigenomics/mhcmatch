@@ -134,13 +134,19 @@ class AnchorModel:
     #: unpickle. ``None``/empty is "no gate", which is every model built before it existed.
     _bg_hold = None
     _nbg_hold = None
+    _prefs_hold = None
+    _tau_hold = None
     _mix_hold = frozenset()
+
+    #: Prior mass on the **reverse** (C-to-N) reading of a class-II peptide; 0.0 is off and
+    #: bit-identical. Class-level because ``score`` reads it and ``__init__`` does not run on unpickle.
+    reverse = 0.0
 
     def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0, anticore=0.0,
                  learn_weights=True, prune_dpi=False, weights="learned",
                  register_em=2, footprint="anchor", rare_max=30, background="ligand",
                  length_prior="score", length_motifs=True, register="marginal", n_motifs=3,
-                 families=None,
+                 families=None, reverse=0.0,
                  pseudocount=0.0, pseudo_matrix="blosum62"):
         """``weights``: ``"learned"`` (per-anchor MI over the panel, default) or ``"uniform"``.
         ``learn_weights=False`` forces uniform.
@@ -306,6 +312,7 @@ class AnchorModel:
         # be in the loop that produces them.
         self.anticore_w = float(anticore)
         self.anticore = None
+        self.reverse = float(reverse)
         # tau is fit on the *final* prefs below; the register EM bootstraps on the scalar.
         self._tau = None
         # lengths and core offsets are not residue distributions, so a per-residue-position tau is
@@ -324,6 +331,10 @@ class AnchorModel:
                 self._fit_offset_prior(store)
             self._smooth_offset_prior()
         self._tau = self._fit_tau() if prior_strength == "auto" else None
+        if self._tau and self._prefs_hold is not None:      # the gate's own tau, on the frozen panel
+            live, self.prefs = self.prefs, self._prefs_hold
+            self._tau_hold = self._fit_tau()
+            self.prefs = live
         if cls == "mhc2" and (n_motifs > 1 or self._mix_mask):  # E-step scores the register marginal
             self._refit_mixture(store, hold=self._mix_hold)
         self._add_pseudocounts(pseudocount, pseudo_matrix)  # last: all the above fits raw counts
@@ -379,6 +390,9 @@ class AnchorModel:
         for j in self.anchors:
             for a in list(self.prefs[j]):
                 self.prefs[j][a] = smooth(self.prefs[j][a])
+        for j in self.anchors if self._prefs_hold is not None else ():
+            for a in list(self._prefs_hold[j]):          # the frozen donor table, same treatment
+                self._prefs_hold[j][a] = smooth(self._prefs_hold[j][a])
         for d in (self.prefs_len or {}).values():
             for a in list(d):
                 d[a] = smooth(d[a])
@@ -429,9 +443,14 @@ class AnchorModel:
             return {r: c / total for r, c in own.items()} if total else {}
         key = (j, allele)
         if key not in self._cache:
-            self._cache[key] = self.ps.shrink(self.prefs[j], allele, anchor=j,
-                                              candidates=self._candidates(j),
-                                              prior_strength=self._tau_at(j))
+            # A held-out allele borrows from the panel as it stood at ``_EM_FLOOR`` passes. At the
+            # rare end tau carries 67-77% of the mass, so *what* an allele borrows from matters more
+            # there than its own counts do -- and convergence moves the donors, not the borrower.
+            src = (self._prefs_hold[j] if (self._prefs_hold is not None and allele in self._mix_hold)
+                   else self.prefs[j])
+            self._cache[key] = self.ps.shrink(src, allele, anchor=j,
+                                              candidates=list(src.keys()),
+                                              prior_strength=self._tau_at(j, allele))
         pooled = self._cache[key]
         if k is None or self.prefs_mix is None:
             return pooled
@@ -444,7 +463,7 @@ class AnchorModel:
         if n <= 0:                                   # backoff identity: the pooled single-PWM motif
             self._cache_mix[mkey] = pooled
             return pooled
-        tau = self._tau_at(j)
+        tau = self._tau_at(j, allele)
         out = {r: (own.get(r, 0.0) + tau * pooled.get(r, 0.0)) / (n + tau)
                for r in set(own) | set(pooled)}
         self._cache_mix[mkey] = out
@@ -539,8 +558,16 @@ class AnchorModel:
             taus[j] = min(_TAU_MAX, max(_TAU_MIN, num / var - 1)) if var > 0 else _TAU_MAX
         return taus
 
-    def _tau_at(self, j):
-        """``τ`` for anchor ``j`` -- per-position (``prior_strength="auto"``) or the global scalar."""
+    def _tau_at(self, j, allele=None):
+        """``τ`` for anchor ``j`` -- per-position (``prior_strength="auto"``) or the global scalar.
+
+        Under the frequency gate a held-out allele reads the ``τ`` fitted on the *pre-convergence*
+        panel, because ``_fit_tau`` is an empirical-Bayes read of how much alleles differ at ``j`` and
+        convergence sharpens exactly that. At the rare end ``τ`` carries 67-77% of the posterior mass,
+        so which panel it was fitted on is a first-order choice there and a 0.9% one at the frequent
+        end -- which is the whole reason a frequency gate is the right shape for it."""
+        if allele is not None and self._tau_hold and allele in self._mix_hold:
+            return self._tau_hold[j]
         return self._tau[j] if self._tau else self._tau_scalar
 
     def _converge_registers(self, store, cap=_EM_CAP, floor=0):
@@ -578,8 +605,9 @@ class AnchorModel:
         held = frozenset(a for a in alleles if counts[a] <= self._rare_max) if floor else frozenset()
         for passes in range(1, cap + 1):
             changed = self._refit_registers(store, frozen=frozen)
-            if passes == floor:                          # the null the held-out alleles keep
+            if passes == floor:                          # the state the held-out alleles keep
                 self._bg_hold, self._nbg_hold = dict(self.bg), dict(self._nbg)
+                self._prefs_hold = {j: dict(self.prefs[j]) for j in self.anchors}
             frozen = alleles - changed
             if passes >= floor:
                 frozen |= held
@@ -738,11 +766,24 @@ class AnchorModel:
 
     def _bg_prob(self, j, r, prev=None, allele=None):
         """Null probability of residue ``r`` at anchor ``j``: pooled-ligand marginal (specificity),
+        leaving that allele out (``"ligand"``) or including it (``"ligand-pooled"``),
         order-0 proteome marginal (presentation), or the order-1 Markov proteome conditional given the
         preceding residue ``prev`` (context-aware presentation; backs off to order-0 for an unseen or
         missing context). Kept out of ``self.bg`` so register-EM cannot clobber it.
 
-        ``allele`` is read only under ``background="ligand"`` and only when the frequency gate is on
+        **The ligand null leaves the queried allele out**, because pooling over every allele is
+        degenerate for a dominant one.
+        On the mouse class-II shortlist ``H-2-IAb`` is 6,483 of 6,705 ligands (96.7%), so its own null
+        is essentially its own motif and ``log(theta_A / p_bg)`` is ~0 at every position -- which is
+        why the committed allele-specificity table reports frequent AUROC **0.322**, below chance, on
+        that one allele. Subtracting the queried allele's own counts makes the null "the other
+        alleles' ligands", which is what the allele-specificity task actually asks -- its decoys are
+        drawn from exactly that pool. Measured over 24 cells on three panels, it never regresses by
+        more than 0.006 and repairs that one cell by +0.294 AUROC, so it is the default from 1.5.0.
+        ``"ligand-pooled"`` keeps the pre-1.5.0 self-inclusive null, for reproducing older numbers.
+        `bench/results/mhc2_ligand_loo.md`.
+
+        ``allele`` is otherwise read only under ``background="ligand"`` and only when the gate is on
         (``register_em="converge-frequent"``): a held-out rare allele keeps the pooled null as it
         stood at ``_EM_FLOOR`` passes. Measured on the class-II shortlist, **81% of a rare allele's
         score movement under convergence is this null**, not its own motif -- mean |delta score| over
@@ -755,9 +796,15 @@ class AnchorModel:
             return PROTEOME_AA_FREQ.get(r, 1e-4)
         if self.background == "proteome":
             return PROTEOME_AA_FREQ.get(r, 1e-4)
-        if self._bg_hold is not None and allele in self._mix_hold:
-            return self._bg_hold[j].get(r, 0) / self._nbg_hold[j]
-        return self.bg[j].get(r, 0) / self._nbg[j]
+        prefs, bg, nbg = self.prefs, self.bg[j], self._nbg[j]
+        if self._bg_hold is not None and allele in self._mix_hold:   # frequency gate: frozen panel
+            prefs, bg, nbg = self._prefs_hold, self._bg_hold[j], self._nbg_hold[j]
+        if self.background != "ligand-pooled" and allele is not None:
+            own = prefs[j].get(allele)
+            n = nbg - (sum(own.values()) if own else 0.0)
+            if n > 0:                       # an allele that IS the whole pool keeps the pooled null
+                return max(bg.get(r, 0) - (own.get(r, 0) if own else 0), 0.0) / n
+        return bg.get(r, 0) / nbg
 
     def _anchor_logodds(self, residues, allele, raw, eps, mask=None, contexts=None, length=None,
                         k=None):
@@ -1142,6 +1189,17 @@ class AnchorModel:
             return self.best_register(peptide, allele, raw, eps)[1]
         if len(peptide) < 9:
             return float("-inf")
+        fwd = self._orientation_term(peptide, allele, raw, eps)
+        if not self.reverse:
+            return fwd
+        rev = self._orientation_term(peptide[::-1], allele, raw, eps)
+        a = math.log1p(-self.reverse) + fwd
+        b = math.log(self.reverse) + rev
+        m = max(a, b)
+        return m + math.log(math.exp(a - m) + math.exp(b - m))
+
+    def _orientation_term(self, peptide, allele, raw=False, eps=1e-3):
+        """The register (and motif) marginal for one N-to-C reading of ``peptide``."""
         if self.prefs_mix is None:
             return self._mix_term(peptide, allele, None, raw, eps)
         K = self.n_motifs

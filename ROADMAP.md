@@ -14,7 +14,48 @@ the build plan. Phase sections marked _(TBD)_ await detail.
 > tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
 > below resolve there, not here.
 
-## Where this stands, 2026-08-25 — 1.1.0
+## Where this stands, 2026-08-28 — 1.4.1
+
+**Shipped scorer: EPIC artifact version 10, nine fitted terms, `binder` as the presentation term.**
+`mhcmatch build --check` reports 0 stale of 27 against 1.4.1.
+
+**Class II, this session — four levers measured, none shipped, and the reason is now structural.**
+`register_em="converge"` buys the frequent screening arm +0.042 AUPRC (0.625 → **0.667**) and costs
+the rare stratum; `prior_strength="auto"` buys the rare stratum +0.041 (0.648 → **0.689**, beating
+NetMHCIIpan on all three rare cells) and costs frequent. **They do not compose, and gating cannot make
+them:** a rare allele's motif is 67–77% borrowed from its groove neighbours, which are exactly the
+alleles convergence moves. `register_em="converge-frequent"` gates the borrower's register, mixture,
+pooled null, donor table and `τ` — it strictly dominates ungated `converge` and recovers about half
+the rare screening loss, no more. Taking both optima needs **routing by allele frequency at the model
+level** (two fitted models). That is the open product decision, not a parameter.
+`bench/results/mhc2_register_frequency_gate.md`.
+
+**MixMHC2pred is now a rival, and it paid immediately.** It is architecturally the same object we fit
+— per-allele PWM mixtures with an explicit core — and it reports *which component fired*. Two findings
+that no AUC could give: `SubSpec = -1` is **reverse-orientation binding**, a mode `AnchorModel` cannot
+represent at all and which is enriched in our misses; and mhcmatch covers **47 of 47** human class-II
+panel alleles against MixMHC2pred's **42**. `AnchorModel(reverse=p)` now marginalises the C-to-N
+reading; a blanket prior measures neutral, so the next step is a **per-allele** one, learned the way
+the register is. `bench/results/mhc2_mixmhc2pred.md`.
+
+**Three class-II parameters landed and all ship off**, each bit-identical at its default:
+`families=` (per-component gap placement), `register_em="converge-frequent"`, `reverse=`. Verified,
+not assumed: both screening arms re-run at 1.5.0 reproduce their committed values exactly.
+
+**One thing did ship, and it is the largest single-cell repair in the repo.** `background="ligand"`
+pooled the residue null over every allele's ligands *including the queried one*. `H-2-IAb` is 6,483
+of 6,705 mouse class-II ligands (96.7%), so its null was its own motif and the committed
+allele-specificity table read **frequent AUROC 0.322 — below chance on 6,483 ligands**. Leaving the
+allele out is what that task asks for anyway: its decoys are drawn from the other alleles' ligands.
+Over 42 recomputed cells on four panels exactly one regresses by more than 0.006, and both mouse
+panels still win all nine. `predict.SCORER_EPOCH` 3 → 4; the three vendored models are all
+`proteome`-background so no artifact changed content and no manuscript number moves
+(`../../manuscripts/2026-mhcmatch/results/CURRENT.md` §10).
+`bench/results/mhc2_ligand_loo.md`.
+
+---
+
+## Where this stood, 2026-08-25 — 1.1.0
 
 **Released to PyPI: 1.0.3.** 1.0.4, 1.0.5 and 1.0.6 were versioned in the repo and never tagged or
 published, so 1.1.0 is the first artifact on PyPI since 1.0.3 and carries all four bumps' work.
@@ -1029,7 +1070,8 @@ calibrated=True)` and the CLI `--calibrated`).
   presentation-background fix shipped and the three mechanisms above refuted, the residual MHC-II gap has
   no cheap training-free explanation left on the table — this moves up the queue by elimination.
 - Full-tier + temporal-split cluster sweep; affinity band on the measured-nM allowlist (TESLA/Gfeller
-  only); MixMHCpred/MixMHC2pred; the LaTeX paper (methodology = appendix §8).
+  only); ~~MixMHCpred/MixMHC2pred~~ — **MixMHC2pred done** (`bench/mixmhc2/`, v2.1-beta1, both human
+  arms; MixMHCpred 3.0 for class I is still open); the LaTeX paper (methodology = appendix §8).
 - ~~**Generalized binder score**~~ — **shipped** (`store.binder_score` / `mhcmatch binder`;
   `predict_windows` emits `binder_rank`/`binder_band`/`affinity_rank` into the native table, so the
   Nextflow module carries it). The presentation and affinity heads disagree along the binding-strength

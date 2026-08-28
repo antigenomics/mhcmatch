@@ -1931,7 +1931,7 @@ def main(argv=None):
     pr.add_argument("--scored-csv", dest="scored_csv", help="write the pipeline .scored.csv here")
     pr.add_argument("--rank-threshold", type=float, default=2.0, help="keep binders with %%rank <= this")
     pr.add_argument("--top", type=int, help="cap binders kept per window (strongest first)")
-    pr.add_argument("--background", default="proteome", choices=("ligand", "proteome", "markov"))
+    pr.add_argument("--background", default="proteome", choices=("ligand", "ligand-pooled", "proteome", "markov"))
     pr.add_argument("--footprint", default="adaptive", choices=("anchor", "core", "adaptive"))
     pr.add_argument("--seed", type=int, default=0)
     pr.add_argument("--core", action="store_true",

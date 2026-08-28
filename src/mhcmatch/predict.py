@@ -281,7 +281,7 @@ def tile(seq: str, lengths) -> list:
 #: stale one was served. Same discipline as the EPIC model version -- an int, moved deliberately.
 #:
 #: 1 = pre-1.3.0 heads. 2 = length-aware Potts + extrapolated %rank tail.
-SCORER_EPOCH = 3
+SCORER_EPOCH = 4
 
 
 def _fingerprint(store, cls, background, footprint, head):

@@ -6,7 +6,38 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
-## [Unreleased]
+## [1.5.0] - 2026-08-28
+
+### Changed
+
+- **`background="ligand"` now leaves the queried allele out of its own null.** The pooled residue
+  marginal was taken over every allele's ligands, the queried one included -- a rounding error on a
+  balanced panel and the entire score on a skewed one. On the mouse class-II shortlist `H-2-IAb` is
+  **6,483 of 6,705 ligands (96.7%)**, so its null *was* its motif, `log(theta_A / p_bg) ~ 0` at every
+  position, and the committed allele-specificity table reported **frequent AUROC 0.322 -- below
+  chance on 6,483 ligands**. Leaving the allele out makes the null "the other alleles' ligands",
+  which is what the allele-specificity task asks: its decoys are drawn from exactly that pool.
+
+  Measured over 24 cells on three panels (`bench/results/mhc2_ligand_loo.md`): mouse class-II
+  frequent AUROC **0.322 -> 0.616**, AUPRC **0.060 -> 0.147**, PPV@P **0.025 -> 0.225**; human
+  class-II five cells up and three down, none by more than 0.006; human class-I seven cells
+  unchanged and two up (frequent AUPRC 0.850 -> 0.852, PPV@P 0.798 -> 0.801). **No cell regresses by
+  more than 0.006.** `"ligand-pooled"` keeps the pre-1.5.0 behaviour so older numbers reproduce.
+
+  `predict.SCORER_EPOCH` 3 -> 4: the scoring code changed what a head returns and the calibration
+  cache is keyed on data alone. The three vendored models are all `proteome`-background, so no
+  artifact is rebuilt and no shipped scorer number moves.
+
+### Added
+
+- `AnchorModel(reverse=p)` -- marginalise the **reverse (C-to-N) reading** of a class-II peptide,
+  `log[(1-p)e^{s(x)} + p e^{s(rev x)}]`. **Ships off**; `p=0` is bit-identical. MixMHC2pred labels
+  reverse-bound ligands explicitly, and they are **4.0x enriched in our misses** on the
+  allele-specificity arm (18 of 136, against 16 of 489 in `both_found`) while *not* being enriched in
+  our wins -- a binding mode `AnchorModel` was structurally blind to. A blanket prior measures
+  neutral (`bench/results/mhc2_reverse_orientation.md`); the per-allele version, learned from the
+  corpus the way the register is, is the next build.
+
 
 ### Added
 - `AnchorModel(families=[(positions, k), ...])` / `Store.anchor_model(families=)` --- per-component

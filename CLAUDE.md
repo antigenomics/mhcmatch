@@ -17,6 +17,15 @@ manuscript, and `build --check` cannot see that it changed — but
 `test_the_shipped_artifact_is_pinned_to_the_fit_that_produced_it` now can, by digesting
 `(coef, mu, sigma)`.
 
+**A pooled null must leave the queried allele out.** `background="ligand"` pooled the residue
+marginal over *every* allele's ligands, the queried one included -- a rounding error on a balanced
+panel and the entire score on a skewed one. `H-2-IAb` is **6,483 of 6,705** mouse class-II ligands
+(96.7%), so its null was its own motif and the benchmark reported frequent AUROC **0.322**, below
+chance on 6,483 ligands. Fixed in 1.5.0; `"ligand-pooled"` reproduces the old behaviour. The general
+lesson is worth more than the fix: **before trusting any pooled statistic, check how skewed the pool
+is** -- `Counter(store._panel[cls].alleles).most_common(3)` is the whole check, and no test would
+ever have caught this because every value was individually correct.
+
 **A cache key of pure data cannot see a code change.** `predict.SCORER_EPOCH` is a hand-moved int in
 the calibration-cache fingerprint, because 1.3.0 changed two scoring heads inside one released
 version and the on-disk backgrounds cached before the change kept being served after it — which
@@ -228,6 +237,48 @@ names the `(k, mask)` a release commits to. A table is a pure function of
 `(cls, comp, species, k, mask)` and the vendored key encodes all five -- so a wildcard-masked query
 cannot silently index a sliced table. Hamming is kept only so pre-0.27 results reproduce; **the
 corpus channels are BLOSUM62 from v4 on.**
+
+## Class II — the levers, and the one that is not a lever
+
+Four class-II knobs are measured against the shipped `register_em=2, tau=10, K=3, footprint=adaptive`
+on both human arms (`bench/results/register_em_convergence_dp.md`,
+`mhc2_register_frequency_gate.md`). **None dominates the shipped default, and two of the four optima
+are mutually exclusive by construction** -- do not re-derive this:
+
+| config | screening rare AUPRC | screening frequent AUPRC | screening frequent PPV@P |
+|---|--:|--:|--:|
+| shipped `em=2`, `tau=10` | 0.648 | 0.625 | 0.579 |
+| `converge-frequent`, `tau=10` | 0.641 | **0.667** | 0.619 |
+| `converge-frequent`, `tau=auto` | 0.639 | **0.668** | **0.629** |
+| `em=2`, `tau=auto` | **0.689** | 0.616 | 0.575 |
+
+Rare wants `em=2`; frequent wants `converge`. They do not compose, and the reason is structural: a
+rare allele's motif is **67-77% borrowed** from its groove neighbours, and the neighbours are exactly
+the alleles convergence moves. Gating the *borrower* -- its register, its mixture, its null, its
+donor table, its `tau` -- was built (`register_em="converge-frequent"`) and recovers only about half
+the rare screening loss. Getting both optima needs **routing by allele frequency at the model level**
+(two fitted models), which is a product decision, not a parameter.
+
+**`footprint=anchor` is the one setting that is never right on the predict path.** `MHC2_ANCHORS =
+(1,4,6,9)` reaches only `Store._anchor_model` (`restriction`, `vote`); `build_scorer` ships
+`adaptive`, which maps to all nine core positions. A benchmark arm left at `anchor` understates
+mhcmatch -- `compare_mhc2_mouse_hard_ligandbg.md` did, on all nine cells. Reached from the other
+side, `families=` (per-component gap placement) can only *subtract* from a 9-mer core and loses
+monotonically in how many positions it masks.
+
+## MixMHC2pred is the third rival, and it is the informative one
+
+Installed at `~/work/academy/software/MixMHC2pred-2.1` (v2.1-beta1); adapter `bench/compare/mixmhc2.py`,
+analysis `bench/mixmhc2/discordance_mix.py`, provenance `bench/mixmhc2/SOURCES.md`. It is worth more
+than a second AUC because it is architecturally the same object we fit -- per-allele PWM mixtures with
+an explicit binding core -- and it **reports which component fired**. Two facts that came only from it:
+
+- **`SubSpec = -1` is reverse-orientation binding**, a mode `AnchorModel` cannot represent at all, and
+  it is enriched in our misses. `AnchorModel(reverse=p)` marginalises the C-to-N reading with prior
+  mass `p`; **ships off**, and `reverse=0.0` is bit-identical.
+- **Allele names drop silently.** An unresolved allele produces no `%Rank_<allele>` column and the
+  binary still exits 0, so `mix_allele` checks the shipped `PWMdef/` rather than trusting its own
+  conversion. mhcmatch covers 47 of 47 human class-II panel alleles; MixMHC2pred ships PWMs for 42.
 
 ## Git flow & commits
 

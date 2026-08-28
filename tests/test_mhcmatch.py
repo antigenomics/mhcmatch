@@ -970,6 +970,58 @@ def test_converge_frequent_holds_rare_alleles_at_the_pooled_motif():
     assert plain._bg_hold is None, "plain converge freezes no background"
 
 
+def test_ligand_null_leaves_the_queried_allele_out():
+    """The pooled ligand null is degenerate for an allele that dominates the pool.
+
+    Mutation-tested by the benchmark, not by taste: on the mouse class-II shortlist `H-2-IAb` is
+    6,483 of 6,705 ligands, its null was its own motif, and the committed allele-specificity table
+    reported frequent AUROC **0.322** -- below chance. Leaving the allele out lifts it to 0.616.
+    The contract is exactly that: `background="ligand"` must not read the queried allele's own
+    counts, and `"ligand-pooled"` must.
+    """
+    from collections import Counter
+    store, _ = _mhc2_bimodal_store()
+    loo = store.anchor_model("mhc2", background="ligand", n_motifs=1, register_em=0)
+    pooled = store.anchor_model("mhc2", background="ligand-pooled", n_motifs=1, register_em=0)
+    a, j = "DRB1_1501", loo.anchors[0]
+    own = loo.prefs[j].get(a, Counter())
+    n_out = loo._nbg[j] - sum(own.values())
+    assert n_out > 0, "the fixture must have a second allele for the leave-one-out null to exist"
+    for r in _AA:
+        assert loo._bg_prob(j, r, None, a) == pytest.approx(
+            max(loo.bg[j].get(r, 0) - own.get(r, 0), 0.0) / n_out), r
+        assert pooled._bg_prob(j, r, None, a) == pytest.approx(pooled.bg[j].get(r, 0) / pooled._nbg[j]), r
+    # An allele that IS the whole pool cannot be left out; it keeps the pooled null rather than
+    # dividing by zero.
+    solo = Store.from_records([{"epitope": p, "mhc_a": "DRA*01:01", "mhc_b": "DRB1*15:01",
+                                "mhc_class": "MHCII"} for p in ("AAKGVAAWSAGTFRQ", "PKYVKQNTLKLATGM")])
+    m = solo.anchor_model("mhc2", background="ligand", n_motifs=1, register_em=0)
+    jj = m.anchors[0]
+    assert m._bg_prob(jj, "A", None, "DRB1_1501") == pytest.approx(
+        m.bg[jj].get("A", 0) / m._nbg[jj]), "a sole allele keeps the pooled null"
+
+
+def test_reverse_orientation_is_bit_identical_when_off():
+    """`reverse=0.0` must leave every class-II score untouched, to the last bit.
+
+    Same contract as `anticore=0`: the parameter is measured neutral-to-negative as a blanket prior
+    (`bench/results/mhc2_reverse_orientation.md`), so it ships off, and off has to mean off. With mass
+    on it the score is a proper marginal over the two readings, so it can only move a peptide by at
+    most `log(1/(1-p))` when the reverse reading is worthless -- never inflate it the way a max would.
+    """
+    import math
+    store, _ = _mhc2_bimodal_store()
+    off = store.anchor_model("mhc2", n_motifs=2, register_em=0)
+    on = store.anchor_model("mhc2", n_motifs=2, register_em=0, reverse=0.1)
+    assert off.reverse == 0.0 and on.reverse == 0.1
+    peps = ["PKYVKQNTLKLATGM", "AAKGVAAWSAGTFRQ", "GELIGILNAAKVPAD"]
+    for p in peps:
+        base = off.score(p, "DRB1_1501")
+        assert store.anchor_model("mhc2", n_motifs=2, register_em=0).score(p, "DRB1_1501") == base
+        want = math.log(0.9 * math.exp(base) + 0.1 * math.exp(off.score(p[::-1], "DRB1_1501")))
+        assert on.score(p, "DRB1_1501") == pytest.approx(want), p
+
+
 def test_converge_frequent_freezes_the_pooled_null_for_held_out_alleles():
     # The other half of the gate, and the larger half on a ligand background: `self.bg` is re-pooled
     # over EVERY allele's frames on every EM pass, so converging the frequent alleles moves the null
@@ -982,10 +1034,13 @@ def test_converge_frequent_freezes_the_pooled_null_for_held_out_alleles():
                             background="ligand")
     assert am._bg_hold is not None and am._mix_hold == {"DRB1_1301"}
     j = am.anchors[0]
-    held = [am._bg_prob(j, r, None, "DRB1_1301") for r in _AA]
-    live = [am._bg_prob(j, r, None, "DRB1_1501") for r in _AA]
-    assert live == [am._bg_prob(j, r, None) for r in _AA], "an ungated allele reads the live null"
-    assert held != live, "the held-out allele must read the frozen null, not the converged one"
+    own = am._prefs_hold[j]["DRB1_1301"]
+    n = am._nbg_hold[j] - sum(own.values())
+    for r in _AA:                       # the held allele's null is leave-one-out on the FROZEN panel
+        assert am._bg_prob(j, r, None, "DRB1_1301") == pytest.approx(
+            max(am._bg_hold[j].get(r, 0) - own.get(r, 0), 0.0) / n), r
+    assert any(am._bg_prob(j, r, None, "DRB1_1301") != am._bg_prob(j, r, None, "DRB1_1501")
+               for r in _AA), "the frozen null must differ from the converged one"
 
 
 def test_footprint_adaptive_masks_rare_and_not_frequent():

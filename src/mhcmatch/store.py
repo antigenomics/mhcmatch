@@ -684,6 +684,7 @@ class Store:
     # -- diffusion-powered forward scorer -------------------------------------
     def anchor_model(self, cls="mhc1", h=2.0, prior_strength=10.0, anchors=None, learn_weights=True,
                      prune_dpi=False, weights="learned", register_em=2, footprint="anchor",
+                     reverse=0.0,
                      rare_max=30, background="ligand", length_prior="score", length_motifs=True,
                      register="marginal", n_motifs=3, pseudocount=0.0, anticore=0.0,
                      pseudo_matrix="blosum62", families=None,
@@ -716,6 +717,7 @@ class Store:
         from .diffusion import AnchorModel, load_vendored_anchor_model
         params = dict(anchors=anchors, h=h, prior_strength=prior_strength, learn_weights=learn_weights,
                       prune_dpi=prune_dpi, weights=weights, register_em=register_em,
+                      reverse=reverse,
                       footprint=footprint, rare_max=rare_max, background=background,
                       length_prior=length_prior, length_motifs=length_motifs, register=register,
                       n_motifs=n_motifs, pseudocount=pseudocount)
@@ -734,6 +736,8 @@ class Store:
         # tuples so an equal spec written as lists still hits the same cache entry.
         if families:
             params["families"] = tuple((tuple(sorted(pos)), int(k)) for pos, k in families)
+        if reverse:                       # same rule as families: absent when off, so the 27
+            params["reverse"] = float(reverse)   # vendored models keep matching their params key
         if _vendored:
             m = load_vendored_anchor_model(self, cls, params)
             if m is not None:
