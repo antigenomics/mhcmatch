@@ -98,6 +98,11 @@ def test_potts_vendored_scores_are_pinned(cls, pep, allele, want):
     Nothing else pins them, so a refit or a weight swap could change every shipped affinity number and
     still pass CI. These are not ground truth -- they are a tripwire. If a deliberate refit moves them,
     update the values in the same commit and say so in the CHANGELOG.
+
+    ``PottsAffinity(cls)`` bare has no ``anchor_model``, so this pins the **energy alone**, without
+    the ligand-length factor ``Store.affinity_model`` wires in. That is what makes it a clean test of
+    the weights: the length term is per-allele and panel-derived, so folding it in here would make a
+    weight tripwire fire on a corpus change. The shipped path is pinned separately, below.
     """
     got = PottsAffinity(cls).predict_ic50(pep, allele)
     assert abs(got - want) / want < 0.02, f"{pep}/{allele}: {got:.1f} nM, pinned {want} nM"
@@ -177,9 +182,65 @@ def test_potts_effective_table_is_bit_identical_to_the_triple_loop():
     peps = ["".join(rng.choices("ACDEFGHIKLMNPQRSTVWY", k=rng.choice([8, 9, 10, 11])))
             for _ in range(400)]
     for allele in ("HLA-A*02:01", "HLA-B*07:02", "HLA-C*07:01"):
-        ref = [_potts_y_reference(m, p, allele) for p in peps]
+        # the reference is the energy; predict_y adds the ligand-length factor on top of it
+        ly = m._length_y  # noqa: E501 -- keeps the comprehension on one line
+        ref = [_potts_y_reference(m, p, allele) + ly(len(p), m._key(allele)) for p in peps]
         assert [m.predict_y(p, allele) for p in peps] == ref
         assert np.array_equal(m.predict_y_batch(peps, allele), np.asarray(ref))
     # an unresolvable allele is nan for every peptide, in place, both paths
     assert all(v != v for v in m.predict_y_batch(peps, "HLA-Z*99:99"))
     assert m.predict_y(peps[0], "HLA-Z*99:99") != m.predict_y(peps[0], "HLA-Z*99:99")
+
+
+@pytest.mark.hfdata
+def test_potts_is_no_longer_length_blind():
+    """The defect, pinned as a contract.
+
+    ``_pep_idx`` maps every peptide onto the same nine slots, so before the ligand-length factor
+    ``SLYNTGATL`` and ``SLYNTAAAGATL`` scored **bit-identically** -- a 12-mer's middle residues are
+    dropped and nothing replaced them (ROADMAP.md Defect 1). Measured on the NCI exome scan, that
+    put the same fraction of every length in the top 1% (L9 1.26%, L12 1.22%) where netMHCpan puts
+    3.38% and 0.13%, and Fisher-combining a flat head with the presentation head's correct prior
+    dragged `binder`'s 9-mer-vs-12-mer selectivity from 16.7x down to 4.4x.
+    """
+    from mhcmatch import Store
+    m = Store.from_pmhc(tier="shortlist", species="human", classes=("mhc1",)).affinity_model("mhc1")
+    a = "HLA-A*02:01"
+    nine, twelve = m.predict_y("SLYNTGATL", a), m.predict_y("SLYNTAAAGATL", a)
+    assert nine != twelve
+    # and the direction is the corpus's: 9-mers are 60.8% of the human MHC-I panel, 12-mers 3.9%
+    assert m._length_y(9, "HLA-A02:01") > m._length_y(12, "HLA-A02:01")
+    assert m._length_y(9, "HLA-A02:01") > m._length_y(8, "HLA-A02:01")
+
+
+@pytest.mark.hfdata
+def test_length_term_is_exactly_additive_and_mhc1_only():
+    """The factor adds to the energy and nothing else -- the same contract
+    ``test_length_prior_is_on_by_default_and_exactly_additive`` holds for the anchor head.
+
+    Additive matters: it is a log-likelihood ratio over a *different* variable than the residue
+    terms, so it cannot double-count them, and a caller can subtract it back off exactly."""
+    from mhcmatch import Store
+    st = Store.from_pmhc(tier="shortlist", species="human", classes=("mhc1", "mhc2"))
+    m = st.affinity_model("mhc1")
+    bare = PottsAffinity("mhc1")                    # same weights, no oracle -> no length term
+    for pep in ("NLVPMVATV", "SLYNTGAT", "SLYNTAAAGATL", "KVDPIGHVY"):
+        got = m.predict_y(pep, "HLA-A*02:01") - bare.predict_y(pep, "HLA-A*02:01")
+        assert abs(got - m._length_y(len(pep), "HLA-A02:01")) < 1e-12, pep
+    # MHC-II keeps its register oracle and gains no length term: the class-II core is a located
+    # 9-mer slice, so length is already absorbed by the register search.
+    m2 = st.affinity_model("mhc2")
+    assert m2.am is not None and m2._length_y(15, "DRB1_1501") == 0.0
+
+
+@pytest.mark.hfdata
+def test_potts_shipped_path_scores_are_pinned():
+    """The tripwire on what a user actually gets: ``Store.affinity_model`` + the length factor.
+
+    Moves if the weights move, if the panel's length histogram moves, or if the factor's scale
+    changes. Update deliberately, never reflexively, and record the old values."""
+    from mhcmatch import Store
+    m = Store.from_pmhc(tier="shortlist", species="human", classes=("mhc1",)).affinity_model("mhc1")
+    for pep, want in (("NLVPMVATV", 18.6), ("GILGFVFTL", 11.2), ("SLYNTGAT", 50000.0)):
+        got = m.predict_ic50(pep, "HLA-A*02:01")
+        assert abs(got - want) / want < 0.02, f"{pep}: {got:.1f} nM, pinned {want} nM"

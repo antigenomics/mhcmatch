@@ -743,8 +743,12 @@ class Store:
         from .affinity import PottsAffinity
         cache = self.__dict__.setdefault("_affinity", {})
         if cls not in cache:
-            am = self.anchor_model(cls, background="proteome", footprint="core") \
-                if cls == "mhc2" else None
+            # MHC-II: the register oracle, at the proteome/core config it was fit under.
+            # MHC-I: the source of the ligand length prior (PottsAffinity._length_y) -- the
+            # adaptive footprint, i.e. the model the predict path already built and cached,
+            # so it costs nothing beyond what a rank invocation pays anyway.
+            am = self.anchor_model(cls, background="proteome",
+                                   footprint="core" if cls == "mhc2" else "adaptive")
             cache[cls] = PottsAffinity(cls, anchor_model=am)
         return cache[cls]
 

@@ -85,7 +85,9 @@ class PottsAffinity:
         self.NF_PEP = self.PEPP * self.Q
         self.NF_FIELD = self.NF_PEP + self.PSP * self.Q
         self.cls = cls_name
-        self.am = anchor_model                      # MHC-II register oracle; unused for MHC-I
+        # MHC-II: the register oracle that locates the 9-mer core. MHC-I: the source of the ligand
+        # length prior, which the Potts energy itself cannot carry (see _length_y).
+        self.am = anchor_model
         self.pseudo = load_pseudo(cls_name)
         self._psidx = {a: [self._AAI.get(c, -1) for c in ps] for a, ps in self.pseudo.items()}
         self._eff = {}          # allele key -> (b0, E as nested list, E as array); see _effective
@@ -169,6 +171,30 @@ class PottsAffinity:
         self._eff[key] = (b0, E, np.asarray(E))
         return self._eff[key]
 
+    def _length_y(self, length, key) -> float:
+        """The MHC-I ligand-length factor, in log50k units. ``0.0`` for MHC-II or with no oracle.
+
+        The Potts energy is **structurally length-blind**: :meth:`_pep_idx` maps every peptide onto
+        the same nine slots, so ``SLYNTGATL`` and ``SLYNTAAAGATL`` used to score bit-identically --
+        the middle residues of a 10/11/12-mer are dropped and nothing replaces them. That is
+        ROADMAP.md's Defect 1, and it is the same structural blindness the anchor log-odds has, for
+        the same reason: a length-invariant number of per-position terms.
+
+        :meth:`AnchorModel.length_logodds` is the correction that head already carries -- per-allele
+        ``log P(L|a) - log P_bg(L)`` in nats, kernel-shrunk toward groove-similar alleles so a rare
+        allele borrows a length profile instead of trusting a handful of ligands. Its own docstring
+        makes the argument that applies verbatim here: the factorization is over two *different*
+        variables, so the term adds to the energy and cannot double-count it. Weight is fixed at 1;
+        it is a log-likelihood ratio, not a tunable feature.
+
+        ``/LOG50K`` is a unit conversion, not a weight: ``y`` is the log50k scale, so nats divided by
+        ``ln(50000)`` land in it. Measured against the shipped corpus (60.8% 9-mers), that moves a
+        9-mer's Kd by x0.43 and a 12-mer's by x6.1.
+        """
+        if self.cls != "mhc1" or self.am is None:
+            return 0.0
+        return self.am.length_logodds(length, key) / LOG50K
+
     def predict_y(self, peptide, allele) -> float:
         """log50k score (higher = stronger binder), or ``nan`` if the allele can't be resolved."""
         key = self._key(allele)
@@ -182,7 +208,7 @@ class PottsAffinity:
         s = b0
         for p, r in enumerate(pidx):
             s += E[p][r if r >= 0 else Q]
-        return s
+        return s + self._length_y(len(peptide), key)
 
     def predict_y_batch(self, peptides, allele):
         """:meth:`predict_y` over an iterable, as a numpy array -- one gather instead of a loop.
@@ -205,6 +231,10 @@ class PottsAffinity:
             else:
                 R[i] = [r if r >= 0 else self.Q for r in idx]
         out = b0 + E[np.arange(self.PEPP)[None, :], R].sum(1)
+        if self.cls == "mhc1" and self.am is not None:      # one shrink per distinct length, not per peptide
+            lens = np.fromiter((len(p) for p in peps), int, len(peps))
+            ly = {L: self._length_y(int(L), key) for L in np.unique(lens)}
+            out = out + np.array([ly[L] for L in lens])
         out[bad] = float("nan")
         return out
 
