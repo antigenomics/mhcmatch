@@ -754,7 +754,9 @@ class Store:
         if families:
             params["families"] = tuple((tuple(sorted(pos)), int(k)) for pos, k in families)
         if reverse:                       # same rule as families: absent when off, so the 27
-            params["reverse"] = float(reverse)   # vendored models keep matching their params key
+            # `"auto"` (a per-allele prior fit from the corpus) stays a string here: it is a
+            # different model from any scalar p, and the params key has to say so.
+            params["reverse"] = reverse if isinstance(reverse, str) else float(reverse)
         if _vendored:
             m = load_vendored_anchor_model(self, cls, params)
             if m is not None:
