@@ -273,17 +273,29 @@ def tile(seq: str, lengths) -> list:
 
 
 # ----------------------------------------------------------------- scoring ---
+#: Bumped by hand when the *scoring code* changes what a head returns, independently of any
+#: version bump or artifact rebuild. This exists because everything else in `_fingerprint` is data,
+#: and no hash over data can see a code change: 1.3.0 gained the corpus length prior in
+#: `PottsAffinity.predict_y` and an extrapolated upper tail in `calibrate.percent_rank` *within one
+#: released version*, so a background cached before those and one cached after shared a key and the
+#: stale one was served. Same discipline as the EPIC model version -- an int, moved deliberately.
+#:
+#: 1 = pre-1.3.0 heads. 2 = length-aware Potts + extrapolated %rank tail.
+SCORER_EPOCH = 2
+
+
 def _fingerprint(store, cls, background, footprint, head):
     """Identity of a scoring model, for the on-disk calibration cache key.
 
     Everything here changes the numbers a calibrator produces, so everything here must be in the
     key: the class, the null the score is measured against, the footprint, which of the three
-    heads it is, the panel it was built from, and the library version -- the anchor and affinity
-    artifacts are vendored and are rebuilt on version bumps.
+    heads it is, the panel it was built from, the library version -- the anchor and affinity
+    artifacts are vendored and are rebuilt on version bumps -- and :data:`SCORER_EPOCH`, which
+    covers the one thing the rest cannot, a change to the scoring code inside one version.
     """
     from . import __version__
     panel = store._panel[cls]
-    return "|".join([__version__, cls, background, footprint, head,
+    return "|".join([__version__, str(SCORER_EPOCH), cls, background, footprint, head,
                      str(len(panel.epitopes)), str(len(set(panel.alleles)))])
 
 
