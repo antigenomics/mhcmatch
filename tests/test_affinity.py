@@ -4,7 +4,8 @@ import math
 
 import pytest
 
-from mhcmatch.affinity import AffinityModel, PottsAffinity, _EPS_OVER_L, ic50_to_y, y_to_ic50
+from mhcmatch.affinity import (AffinityModel, LOG50K, PottsAffinity, _EPS_OVER_L,
+                               ic50_to_y, y_to_ic50)
 from mhcmatch.pseudoseq import resolve_allele
 
 from conftest import HydrophobicStub as _Stub
@@ -244,3 +245,35 @@ def test_potts_shipped_path_scores_are_pinned():
     for pep, want in (("NLVPMVATV", 18.6), ("GILGFVFTL", 11.2), ("SLYNTGAT", 50000.0)):
         got = m.predict_ic50(pep, "HLA-A*02:01")
         assert abs(got - want) / want < 0.02, f"{pep}: {got:.1f} nM, pinned {want} nM"
+
+
+@pytest.mark.hfdata
+def test_length_term_is_finite_and_bounded_for_every_scorable_allele():
+    """No allele may fall through to the degenerate branch.
+
+    ``_length_y`` reaches the anchor model through ``Pseudoseq.shrink``, which returns ``{}`` if the
+    kernel is zero to everything -- and then ``length_logodds`` is ``log(eps / (P_bg + eps))`` for
+    *every* length, a flat -0.51 in log50k units, i.e. a silent ~260x Kd penalty on that allele.
+    Per-allele %rank would hide it (a constant offset cancels against the background), but
+    ``occupancy`` and ``log10a`` are absolute and would not.
+
+    It cannot happen today -- ``PottsAffinity`` requires the key to be in the same pseudosequence
+    table the anchor model's kernel is built over -- but "cannot happen" is what a test is for."""
+    import math
+    from mhcmatch import Store
+    st = Store.from_pmhc(tier="shortlist", species="human", classes=("mhc1",))
+    m = st.affinity_model("mhc1")
+    degenerate = math.log(1e-3 / (0.25 + 1e-3)) / LOG50K      # eps and P_bg = 1/4 from length_logodds
+    seen = 0
+    for a in sorted(st.alleles("mhc1")):
+        key = m._key(a)
+        if key is None or key not in m._psidx:
+            continue
+        seen += 1
+        vals = [m._length_y(L, key) for L in (8, 9, 10, 11, 12)]
+        assert all(v == v and abs(v) != float("inf") for v in vals), (a, vals)
+        assert not all(abs(v - degenerate) < 1e-9 for v in vals), f"{a}: shrink returned nothing"
+        assert max(vals) - min(vals) > 1e-6, f"{a}: flat profile, no length preference at all"
+        assert all(-1.0 < v < 1.0 for v in vals), (a, vals)   # |0.51| would already be the degenerate
+    assert seen > 100, seen
+
