@@ -139,6 +139,15 @@ sequence from :func:`mhcmatch.vector.select` anyway --- it reported and did not 
    leaves plenty of headroom under the default ``q = 0.5``; feeding a raw sigmoid of the log-odds
    does not.
 
+.. note::
+
+   **The same** ``q`` **is what** ``cassette select --block-live`` **prices HLA loss with**, and it
+   is documented once, here. What differs is where it lands: :func:`~mhcmatch.portfolio.compose`
+   uses it inside ``P(X >= target)``, while :func:`~mhcmatch.cassette.goal_energy` uses it to add
+   the covariance a lost allele implies, :math:`\gamma (1 - q_b) p_i p_j / q_b`, to same-allotype
+   pairs of the coupling. Both read the same block model; neither fits anything.
+   :doc:`cassette` has the derivation and what it is worth measured.
+
 **The arms are disjoint on purpose.** A frameshift neoepitope is presented on MHC-I, so if it
 counted toward both budgets, "at least one non-conventional epitope responds" could be satisfied for
 free by the class-I arm and would never change a cassette. Charged to its own arm

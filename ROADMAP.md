@@ -14,6 +14,59 @@ the build plan. Phase sections marked _(TBD)_ await detail.
 > tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
 > below resolve there, not here.
 
+## Where this stands, 2026-08-29 — the cassette stage, and an EPIC refit that clears its own bar
+
+**The shipped EPIC artifact was stale, and the chain says so by 108 BIC.** Re-running
+`bench/run_epic.sh` end to end on the same corpus — **342,432 rows, 741 positives, the same eight
+screens** — gives **BIC 4328.3 → 4220.3** and held-out-screen **LOO mean 0.6998 → 0.7142**. Same nine
+features, same corpus geometry (BLOSUM62-normalised, sliced, k = 3), same `n` on every screen, so
+this is like-for-like and not a change of question. Per screen, **6 improvements, 2 ties, 0
+regressions**; the two screens v10 regressed on — `IEDB_neoag` and `ITSNdb`, the pair its own
+`verdict` block cited for `"ship": false` — are **both improvements now** (+0.0066 and +0.0201).
+The one negative cell is VACCIMEL (−0.0379 on **n = 93, 26 positives**), inside its own
+resolution 1/26 and therefore a tie by the repo's rule. The ship bar is **MET** where v10's was not.
+Largest coefficient moves: `binder` +0.4623 → **+0.6117**, `log10a` +0.4005 → **+0.2637**,
+`C_corpus_thymus` +0.2588 → **+0.1463**. `bench/results/epic_fit.md`.
+
+The cause is the one `CLAUDE.md` already names: **the copy from `bench/epic/aggregate_mhc1.json` to
+`src/mhcmatch/data/` is manual, so the shipped file drifts and `build --check` cannot see it** — it
+compares version stamps, and a hand-copied older fit stamped with the current version is current by
+that test. The candidate that sat beside it was itself fitted against a frame the chain later
+rebuilt. Today's is the first in a while where the frame and the fit come from one run.
+
+**The cassette stage: HLA loss is in the objective, and its coupling is derived.**
+`portfolio.survival` has modelled a block going dead since it was written, and the one call site
+that used it (`cassette.size_for`) pinned `q` at **1.0** — so the failure mode that takes a whole
+allotype's units at once could not reach the selection rule. Under `R_i = B_b eps_i`, two units on
+one allotype covary by `(1 - q_b) p_i p_j / q_b` and two on different allotypes not at all, so the
+contribution to `J_ij` is exactly `gamma (1 - q_b) p_i p_j / q_b` — no `rho`, no overlap heuristic,
+no parameter that is not the stated loss rate. It matters because `overlap` returns the **mean** of
+its three channels, so the allotype signal previously reached `J` at one third weight, diluted by
+whether two peptides happened to share 3-mers. On the six TESLA donors at *k* = 20 (605 nominated
+candidates, 37 validated): the sort captures **7** validated units and keeps **1** through the loss
+of its worst allotype; `q = 0.8` captures **10** and keeps **4**.
+`bench/results/cassette_tesla_donors.md`.
+
+**`coverage` could not see an allotype holding zero units.** `portfolio.coverage` has taken a
+`universe` argument since it was written and **no call path ever passed one**, so the index was
+computed over the labels the cassette happened to carry — which cannot report a missing allotype,
+the one inequality it exists for, and scores a homozygous donor as a design flaw against a
+denominator of six. `select`, `score` and both CLIs now take it, and a coverage floor
+(`universe`, `max_share`) binds inside `greedy` and survives the swap pass.
+
+**Tumour selectivity is stated, not fitted, and the reason is a coefficient.** EPIC fits `expr_norm`
+— the source gene's level in *healthy* tissue — at **+0.4950**, the largest positive coefficient in
+the model, because it answers *will this respond* and a gene transcribed everywhere responds more
+often. "High in tumour, low in normal" is a **safety** question, so it enters as a declared exchange
+rate `h_i += w (expr_lvl_i - expr_norm_i)` in expected responding units per log2-fold, charged to
+the objective and never to `p`. Both coefficients stay as measured, both terms stay reported, and
+the run prints the trade it made. Imposing the ratio on the fit would have asserted an answer the
+data rejects.
+
+All four cassette parameters ship **off** and are bit-identical at their defaults.
+
+---
+
 ## Where this stands, 2026-08-28 — 1.4.1
 
 **Shipped scorer: EPIC artifact version 10, nine fitted terms, `binder` as the presentation term.**
