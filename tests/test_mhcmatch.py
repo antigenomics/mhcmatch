@@ -801,6 +801,53 @@ def test_mhc2_ships_the_mixture_by_default():
         "the default mixture must actually change scores vs the single PWM"
 
 
+def test_one_full_core_family_is_bit_identical_to_plain_n_motifs():
+    # The merge gate for `families`. A single family covering the whole footprint, k of them, must
+    # reproduce `n_motifs=k` exactly -- not approximately. If this drifts, every committed class-II
+    # number silently moves, because the mask is on the scoring path of the shipped configuration.
+    store, pep = _mhc2_bimodal_store()
+    plain = store.anchor_model("mhc2", footprint="core", n_motifs=3, _vendored=False)
+    fam = store.anchor_model("mhc2", footprint="core", _vendored=False,
+                             families=[(tuple(range(1, 10)), 3)])
+    assert fam.n_motifs == plain.n_motifs == 3
+    probes = [pep(_MODE_A) for _ in range(5)] + [pep(_MODE_B) for _ in range(5)]
+    for a in ("DRB1_1501", "DRB1_1301"):
+        for q in probes:
+            assert fam.score(q, a) == plain.score(q, a)
+
+
+def test_a_family_scores_only_its_own_positions():
+    # What `families` buys: each component's counters are keyed on its own gap placement, and a
+    # position outside the family contributes nothing -- log-odds 0, i.e. "background here".
+    store, _ = _mhc2_bimodal_store()
+    m = store.anchor_model("mhc2", footprint="core", _vendored=False,
+                           families=[((1, 4, 6, 9), 2), ((1, 3, 6, 9), 1)])
+    assert m.n_motifs == 3                                   # 2 + 1, summed over families
+    assert [sorted(c) for c in m.prefs_mix] == [[1, 4, 6, 9], [1, 4, 6, 9], [1, 3, 6, 9]]
+    assert m.anchors == tuple(range(1, 10))                  # the union is untouched
+    idx = {j: i for i, j in enumerate(m.anchors)}
+    assert m._mix_mask[2] == tuple(idx[j] for j in (1, 3, 6, 9))
+
+
+def test_a_family_outside_the_footprint_is_rejected():
+    # Silently dropping an unknown position would fit a model the caller did not ask for.
+    store, _ = _mhc2_bimodal_store()
+    with pytest.raises(ValueError, match="outside the footprint"):
+        store.anchor_model("mhc2", footprint="anchor", _vendored=False,
+                           families=[((1, 2), 1)])           # P2 is not in MHC2_ANCHORS
+
+
+def test_families_stay_out_of_the_vendored_params_when_unused():
+    # Same rule as `anticore`: a new params key at its default would invalidate all 27 shipped
+    # models and force a multi-minute refit on every load.
+    store, _ = _mhc2_bimodal_store()
+    _, params = store.anchor_model("mhc2", _vendored=False, _return_params=True)
+    assert "families" not in params
+    _, used = store.anchor_model("mhc2", footprint="core", _vendored=False, _return_params=True,
+                                 families=[((1, 4, 6, 9), 2)])
+    assert used["families"] == (((1, 4, 6, 9), 2),)          # normalised, so lists and tuples agree
+
+
 def test_mixture_recovers_two_planted_binding_modes():
     # The claim the mixture exists to make: an allele with two binding modes gets one component per
     # mode, fit from its own ligands by EM -- no external predictor's labels involved.

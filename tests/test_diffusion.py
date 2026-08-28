@@ -157,3 +157,12 @@ def test_a_model_pickled_before_the_anticore_still_scores():
     from mhcmatch.diffusion import AnchorModel
     old = AnchorModel.__new__(AnchorModel)           # exactly what pickle.loads produces
     assert old.anticore is None and old.anticore_w == 0.0
+
+
+def test_a_model_pickled_before_families_still_scores():
+    """`__init__` does not run on unpickle, so every attribute `_frame_scores` reads on the class-II
+    path needs a class-level default. This is exactly what `pickle.loads` produces for one of the
+    three vendored models, which were all built before `families` existed."""
+    from mhcmatch.diffusion import AnchorModel
+    old = AnchorModel.__new__(AnchorModel)           # exactly what pickle.loads produces
+    assert old._mix_mask is None
