@@ -900,6 +900,47 @@ def test_register_em_converge_reaches_a_real_fixed_point():
         "at the fixed point a full unfrozen pass reassigns no allele's frames"
 
 
+def test_converge_frequent_holds_rare_alleles_at_the_pooled_motif():
+    # The allele-frequency gate. Convergence does not reach a thin allele through its own register --
+    # measured on the class-II shortlist, 0 of 187 rare training frames and 0 of 225 raw count cells
+    # move against register_em=2 -- it reaches it through the mixture, which re-searches every
+    # peptide's per-component frame afterwards (567 of 675 rare mixture cells move). So the gate is on
+    # _refit_mixture, and the property is that _dist's n_k=0 backoff then returns the pooled motif
+    # *identically* for a held-out allele: same object, not merely an equal dict.
+    store, _ = _mhc2_bimodal_store()
+    # rare_max=500 makes DRB1_1301 (n=400) rare and DRB1_1501 (n=800) frequent in this fixture.
+    am = store.anchor_model("mhc2", register_em="converge-frequent", n_motifs=2, rare_max=500)
+    assert am._mix_hold == {"DRB1_1301"}, f"the gate must hold exactly the rare allele, got {am._mix_hold}"
+    for j in am.anchors:
+        pooled = am._dist(j, "DRB1_1301", False)
+        for k in range(am.n_motifs):
+            assert am._dist(j, "DRB1_1301", False, k) is pooled, \
+                f"held-out allele must back off to the pooled motif at anchor {j}, component {k}"
+    assert any(am.prefs_mix[k][j].get("DRB1_1501") for j in am.anchors for k in range(am.n_motifs)), \
+        "the frequent allele must still get its own components"
+    plain = store.anchor_model("mhc2", register_em="converge", n_motifs=2, rare_max=500)
+    assert plain._mix_hold == frozenset(), "plain converge gates nothing by ligand count"
+    assert plain._bg_hold is None, "plain converge freezes no background"
+
+
+def test_converge_frequent_freezes_the_pooled_null_for_held_out_alleles():
+    # The other half of the gate, and the larger half on a ligand background: `self.bg` is re-pooled
+    # over EVERY allele's frames on every EM pass, so converging the frequent alleles moves the null
+    # each rare allele is scored against. Measured on the class-II shortlist that null carries 81% of
+    # a rare allele's score movement (0.2195 -> 0.0417 nats with the pre-convergence background put
+    # back). The gate hands a held-out allele the null as it stood at _EM_FLOOR passes; a frequent
+    # allele reads the converged one.
+    store, _ = _mhc2_bimodal_store()
+    am = store.anchor_model("mhc2", register_em="converge-frequent", n_motifs=2, rare_max=500,
+                            background="ligand")
+    assert am._bg_hold is not None and am._mix_hold == {"DRB1_1301"}
+    j = am.anchors[0]
+    held = [am._bg_prob(j, r, None, "DRB1_1301") for r in _AA]
+    live = [am._bg_prob(j, r, None, "DRB1_1501") for r in _AA]
+    assert live == [am._bg_prob(j, r, None) for r in _AA], "an ungated allele reads the live null"
+    assert held != live, "the held-out allele must read the frozen null, not the converged one"
+
+
 def test_footprint_adaptive_masks_rare_and_not_frequent():
     # The mode EVERY committed MHC-I benchmark number is generated under, previously untested: adaptive
     # scores rare alleles on the primary anchors only and frequent ones on the full core. Mutation-tested
