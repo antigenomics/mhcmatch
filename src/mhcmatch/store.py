@@ -687,7 +687,7 @@ class Store:
                      reverse=0.0,
                      rare_max=30, background="ligand", length_prior="score", length_motifs=True,
                      register="marginal", n_motifs=3, pseudocount=0.0, anticore=0.0,
-                     pseudo_matrix="blosum62", families=None,
+                     pseudo_matrix="blosum62", families=None, route=None,
                      _vendored=True, _return_params=False):
         """Anchor-factored presentation model with cross-allele kernel-shrinkage diffusion.
 
@@ -712,9 +712,26 @@ class Store:
         (default) is off -- see :meth:`mhcmatch.diffusion.AnchorModel._add_pseudocounts`.
         ``anticore`` (MHC-II) weights a pooled flank model of the residues *outside* the core, so
         frames are compared on the whole ligand rather than on nine positions each; ``0`` (default)
-        is off -- see :meth:`mhcmatch.diffusion.AnchorModel._fit_anticore`.
+        is off -- see :meth:`mhcmatch.diffusion.AnchorModel._fit_anticore`. ``route`` (a dict of
+        parameter overrides, ``None`` by default) fits a **second** model with those overrides and
+        sends alleles at or below ``rare_max`` ligands to it -- the rare and frequent class-II optima
+        are incompatible in one fit, see :class:`mhcmatch.diffusion.RoutedAnchorModel`.
         """
-        from .diffusion import AnchorModel, load_vendored_anchor_model
+        from .diffusion import AnchorModel, RoutedAnchorModel, load_vendored_anchor_model
+        if route:
+            # Each sub-model resolves its own params and may still hit its own vendored entry, which
+            # is free. `route` itself never enters a params key -- a routed model is a pair, not an
+            # artifact, so the 27 shipped ones keep matching.
+            kw = dict(h=h, prior_strength=prior_strength, anchors=anchors,
+                      learn_weights=learn_weights, prune_dpi=prune_dpi, weights=weights,
+                      register_em=register_em, footprint=footprint, reverse=reverse,
+                      rare_max=rare_max, background=background, length_prior=length_prior,
+                      length_motifs=length_motifs, register=register, n_motifs=n_motifs,
+                      pseudocount=pseudocount, anticore=anticore, pseudo_matrix=pseudo_matrix,
+                      families=families, _vendored=_vendored)
+            return RoutedAnchorModel(self.anchor_model(cls, **kw),
+                                     self.anchor_model(cls, **{**kw, **route}),
+                                     Counter(self._panel[cls].alleles), rare_max)
         params = dict(anchors=anchors, h=h, prior_strength=prior_strength, learn_weights=learn_weights,
                       prune_dpi=prune_dpi, weights=weights, register_em=register_em,
                       reverse=reverse,

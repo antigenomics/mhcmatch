@@ -1001,6 +1001,47 @@ def test_ligand_null_leaves_the_queried_allele_out():
         m.bg[jj].get("A", 0) / m._nbg[jj]), "a sole allele keeps the pooled null"
 
 
+def test_route_dispatches_by_ligand_count_and_is_inert_when_off():
+    """Two-model frequency routing: `route=None` is today's model, `route={...}` is a pair.
+
+    The class-II rare and frequent optima are incompatible inside one fit -- gating everything a rare
+    allele borrows recovers about half the rare loss and stops, because the rare optimum needs the
+    *donors* under-converged, which no gate on the borrower can supply
+    (`bench/results/mhc2_register_frequency_gate.md` §5). So the two become two fits, dispatched on
+    the ligand count that already defines both the library's rare-allele backoff and the benchmark's
+    `rare` stratum.
+
+    Asserted structurally, not against a benchmark number: a frequent allele scores exactly as the
+    unrouted model, a rare one exactly as its own override fit, and neither is the other.
+    """
+    rng = random.Random(11)
+
+    def pep(core):
+        return ("".join(rng.choice(_FLANK) for _ in range(3)) + core
+                + "".join(rng.choice(_FLANK) for _ in range(3)))
+
+    recs = [{"epitope": pep(_MODE_A), "mhc_a": "DRA*01:01", "mhc_b": "DRB1*15:01",
+             "mhc_class": "MHCII"} for _ in range(400)]
+    recs += [{"epitope": pep(_MODE_C), "mhc_a": "DRA*01:01", "mhc_b": "DRB1*13:01",
+              "mhc_class": "MHCII"} for _ in range(12)]        # 12 <= rare_max=30
+    store = Store.from_records(recs)
+    kw = dict(n_motifs=1, register_em=2)
+    plain = store.anchor_model("mhc2", **kw)
+    other = store.anchor_model("mhc2", **{**kw, "register_em": 0})
+    routed = store.anchor_model("mhc2", **kw, route={"register_em": 0})
+
+    assert type(plain).__name__ == "AnchorModel", "route=None must not wrap"
+    probe = pep(_MODE_A)
+    assert store.anchor_model("mhc2", **kw, route=None).score(probe, "DRB1_1501") == \
+        plain.score(probe, "DRB1_1501"), "route=None must score identically to no route= at all"
+    assert routed.score(probe, "DRB1_1501") == plain.score(probe, "DRB1_1501"), "frequent -> primary"
+    assert routed.score(probe, "DRB1_1301") == other.score(probe, "DRB1_1301"), "rare -> override"
+    assert routed.score(probe, "DRB1_1301") != plain.score(probe, "DRB1_1301"), \
+        "the fixture must actually separate the two fits, or this test proves nothing"
+    assert routed.cls == "mhc2" and routed.ps is routed.frequent.ps, \
+        "an attribute this wrapper does not define must come from the frequent model"
+
+
 def test_reverse_orientation_is_bit_identical_when_off():
     """`reverse=0.0` must leave every class-II score untouched, to the last bit.
 

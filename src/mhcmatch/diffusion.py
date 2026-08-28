@@ -1341,6 +1341,63 @@ def panel_sha(store, cls) -> str:
     return cache[cls]
 
 
+class RoutedAnchorModel:
+    """Two fitted :class:`AnchorModel`s, one per allele-frequency stratum, dispatched per query.
+
+    `bench/results/mhc2_register_frequency_gate.md` §5 established that the class-II rare and frequent
+    optima are **incompatible inside one fitted model**. Gating everything a rare allele borrows --
+    its register, its mixture, its pooled null, its donor table and its ``tau`` -- recovers about half
+    the rare loss and stops there, and the reason is not a missing channel: ``tau="auto"`` at
+    ``register_em=2`` reaches rare screening AUPRC **0.689** while the same ``tau`` on a fully gated
+    ``converge`` reaches **0.639**. The rare optimum needs *the donors themselves* to be
+    under-converged, which no gate on the borrower can supply -- so the two have to be two fits.
+
+    The cut is ``counts[a] <= rare_max``, which introduces no new number: 30 is already both the
+    library's rarity threshold (:attr:`AnchorModel._rare_max`, the adaptive-footprint switch) and the
+    benchmark's ``rare`` stratum boundary.
+
+    Only the four methods the library actually calls on an anchor model are dispatched; everything
+    else -- ``.ps``, ``.cls``, ``.anchors``, ``.panel_key`` and friends -- delegates to the frequent
+    model, which is the one whose panel-wide quantities are shared.
+
+    ponytail: raw ``score`` values from two different fits are not comparable **across** alleles, only
+    within one. Every shipped cross-allele path is already safe -- :class:`RankCalibrator` is per
+    allele and ``restriction``/``vote`` ship ``calibrated=True`` -- so this is a documented ceiling,
+    not a bug to design around. If a caller ever needs raw cross-allele comparability, calibrate.
+    """
+
+    def __init__(self, frequent, rare, counts, rare_max):
+        self.frequent, self.rare = frequent, rare
+        self._counts, self._rare_max = counts, rare_max
+
+    def _for(self, allele):
+        return self.rare if self._counts.get(allele, 0) <= self._rare_max else self.frequent
+
+    def score(self, peptide, allele, raw=False, eps=1e-3):
+        return self._for(allele).score(peptide, allele, raw, eps)
+
+    def best_register(self, peptide, allele, raw=False, eps=1e-3):
+        return self._for(allele).best_register(peptide, allele, raw, eps)
+
+    def score_sd(self, peptide, allele, raw=False, eps=1e-3):
+        return self._for(allele).score_sd(peptide, allele, raw, eps)
+
+    def anchor_terms(self, peptide, allele, raw=False, eps=1e-3):
+        return self._for(allele).anchor_terms(peptide, allele, raw, eps)
+
+    def __getattr__(self, name):
+        # Only reached for attributes this class does not define; `frequent`/`rare`/`_counts` are set
+        # in __init__ so they never recurse. Guard the pre-__init__ unpickle window explicitly.
+        if name in ("frequent", "rare", "_counts", "_rare_max"):
+            raise AttributeError(name)
+        return getattr(self.frequent, name)
+
+    def __repr__(self):
+        n = sum(1 for a, c in self._counts.items() if c <= self._rare_max)
+        return (f"RoutedAnchorModel(rare_max={self._rare_max}, "
+                f"{n} rare / {len(self._counts) - n} frequent alleles)")
+
+
 def load_vendored_anchor_model(store, cls, params):
     """The pre-fit :class:`AnchorModel` for ``(cls, footprint, background)`` when one is shipped and
     the mhcmatch version, panel hash and full ``params`` all match; else ``None`` (caller builds)."""
