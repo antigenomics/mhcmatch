@@ -239,3 +239,31 @@ def test_dai_names_one_quantity_on_both_paths():
     # `Prediction` carries both, and `dai` is the log form -- the one `Ranked.dai` must match
     assert "dai" in Prediction.__dataclass_fields__
     assert "agretopicity" in Prediction.__dataclass_fields__
+
+
+def test_the_shipped_artifact_is_pinned_to_the_fit_that_produced_it(art):
+    """The one check `mhcmatch build --check` structurally cannot do.
+
+    ``aggregate_mhc1.json`` carries a *model* version (an int), so `_stamp` returns ``None`` for
+    it and `--check` presence-checks it and nothing more. It cannot tell a current artifact from a
+    stale one, and it cannot see a hand-copy at all -- the copy from the benchmark repo is a `cp`,
+    and 646 tests passed either side of the v9 -> v10 replacement without one of them noticing that
+    every `score` in the library had moved.
+
+    So the coefficients are pinned here, to the digest of the exact triple that ships. Failing this
+    means the scorer changed; that is a deliberate act (`PROVENANCE.md`, "History"), so update the
+    digest in the same commit that copies the artifact and put the old numbers in the message.
+    """
+    import hashlib
+    import json
+
+    blob = json.dumps([art["coef"], art["mu"], art["sigma"]], sort_keys=True).encode()
+    assert art["version"] == 10, art["version"]
+    assert art["features"] == [
+        "binder", "log10a", "expr_lvl", "expr_norm",
+        "C_phys_buried", "C_phys_charge",
+        "C_corpus_thymus", "C_corpus_self", "C_corpus_viral",
+    ], art["features"]
+    # v9 was e77a5325562a1547 (coef binder +0.5481, log10a +0.2914; BIC 4390.2, LOO mean 0.6942)
+    assert hashlib.sha256(blob).hexdigest()[:16] == "92e0b4e707e67f7f", (
+        hashlib.sha256(blob).hexdigest()[:16])

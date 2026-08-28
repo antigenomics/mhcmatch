@@ -1078,18 +1078,27 @@ def test_binder_score_is_pinned():
     single function is provably behaviour-preserving. Values recorded on the synthetic class-I
     panel at seed 0 -- if a modelling change moves them, update deliberately, never reflexively.
 
-    Moved once, at the Potts ligand-length factor (was ``(0.12, 4.94, 0.27)`` / ``(0.2, 20.04,
-    1.08)`` / ``(0.97, 55.29, 4.83)``). ``ALACVQWER`` is a 9-mer and 9-mers are the modal MHC-I
-    ligand, so every affinity %rank here improves against a length-mixed null. The presentation
-    ranks are unchanged to the digit, which is the check that the change stayed in one head.
+    **These values survived the Potts ligand-length factor unchanged, and that is the point.** On
+    this panel the length term is provably a no-op: `_make_store` holds only 9-mers, so every
+    allele's `P(L|a)` is the same point mass, `_length_y(9)` is the same ``+0.127849`` for all
+    three alleles, and the affinity %rank background it is ranked against is 10,000 9-mers. Query
+    and background shift by one shared constant, which cancels exactly in a rank. So this test
+    pins the *invariance*: a length term that moved these numbers would be leaking a length
+    preference out of a panel that contains no length information.
+
+    They were briefly re-pinned to ``(0.12, 1.33, 0.1)`` / ``(0.2, 7.75, 0.68)`` / ``(0.97, 32.12,
+    3.42)`` on 2026-08-28. Those came from a warm `~/.cache/mhcmatch/calibration` whose key could
+    not see the code change, so the query was scored with the length term against a background
+    cached without it -- the affinity ranks improved by a factor of ~3.7 for nothing. `SCORER_EPOCH`
+    now covers that; `bench/results/calibration_cache_stale.md` records the measurement.
     """
     from mhcmatch import predict
     out = predict.binder_score(_make_store(), "ALACVQWER", alleles="all", cls="mhc1")
     got = {b.allele: (b.presentation_rank, b.affinity_rank, b.binder_rank, b.band) for b in out}
     assert got == {
-        "HLA-A*02:01": (0.12, 1.33, 0.1, "strong"),
-        "HLA-A*01:01": (0.2, 7.75, 0.68, "weak"),
-        "HLA-B*07:02": (0.97, 32.12, 3.42, "non-binder"),
+        "HLA-A*02:01": (0.12, 4.94, 0.27, "strong"),
+        "HLA-A*01:01": (0.2, 20.04, 1.08, "weak"),
+        "HLA-B*07:02": (0.97, 55.29, 4.83, "non-binder"),
     }, got
     # sorted ascending by the combined rank -- the contract callers rely on
     assert [b.binder_rank for b in out] == sorted(b.binder_rank for b in out)

@@ -317,7 +317,7 @@ def test_aggregate_carries_the_fit_provenance_a_reader_needs():
     # v6. Neopep was dropped as a relabelling of NCI + TESLA + HiTIDE -- it shared 419,851 of its
     # 422,132 keys with NCI at zero label disagreements, so leave-one-screen-out on any of those
     # three still trained on their own rows -- and the mouse arm is held out rather than fitted.
-    assert a["version"] == 9 and "former_name" not in a
+    assert a["version"] == 10 and "former_name" not in a
     # v9 fits the expression block as two free terms -- the candidate's own abundance and the same
     # gene's level in matched normal tissue -- rather than one, and rather than their ratio.
     assert a["expression"]["terms"] == ["expr_lvl", "expr_norm"]
