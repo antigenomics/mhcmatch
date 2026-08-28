@@ -119,10 +119,17 @@ class AnchorModel:
     anticore = None
     anticore_w = 0.0
 
+    #: Per-component position masks (indices into :attr:`anchors`), one per motif component, or
+    #: ``None`` for "every component scores every anchor" -- which is every model built before
+    #: ``families`` existed. Class-level for the same reason as ``anticore``: ``__init__`` does not
+    #: run on unpickle and ``_frame_scores`` reads this on every class-II score.
+    _mix_mask = None
+
     def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0, anticore=0.0,
                  learn_weights=True, prune_dpi=False, weights="learned",
                  register_em=2, footprint="anchor", rare_max=30, background="ligand",
                  length_prior="score", length_motifs=True, register="marginal", n_motifs=3,
+                 families=None,
                  pseudocount=0.0, pseudo_matrix="blosum62"):
         """``weights``: ``"learned"`` (per-anchor MI over the panel, default) or ``"uniform"``.
         ``learn_weights=False`` forces uniform.
@@ -156,7 +163,24 @@ class AnchorModel:
         mixture -- see :meth:`_refit_mixture`. ``3`` (default, human MHC-II) closes ~40% of the
         frequent-stratum AUPRC gap to NetMHCIIpan-4.3i; ``1`` is the single-PWM model (bit-identical to
         the pre-mixture code -- it never enters the mixture path). Measured on human MHC-II only; thin
-        alleles back off to the single PWM regardless of ``K``."""
+        alleles back off to the single PWM regardless of ``K``.
+
+        ``families`` (MHC-II) gives each component its own **gap placement**: a list of
+        ``(positions, k)``, meaning ``k`` components that score only ``positions``. Positions outside
+        a component's family contribute log-odds 0 -- that component asserts the allele is
+        indistinguishable from background there, which is a statement about the likelihood, unlike a
+        soft per-position weight (measured worse on every cell that moved:
+        ``bench/results/anchor_position_weights.md``). ``n_motifs`` becomes the sum of the ``k``.
+        ``self.anchors`` is untouched -- families are subsets of it -- so ``anchor_terms``,
+        ``score_sd``, ``best_register`` and the learned groove weights are unaffected, and
+        ``families=[(tuple(anchors), K)]`` is bit-identical to ``n_motifs=K``.
+
+        The motivation is per-locus: ``MHC2_ANCHORS`` is DR's pocket set applied to every locus
+        (``bench/results/anchor_position_weights.md``), and the crystals put P7 above P4 in mouse
+        H-2 I-A (``bench/results/mhc2_gap_families.md``). Pinning component *k* to family *F_k* also
+        fixes the label-switching that stops components being kernel-shrunk across alleles --
+        see :meth:`_dist`. **Ships off**: the default is one implicit family over the whole
+        footprint."""
         self.cls = cls
         self.background = background
         self.length_prior = length_prior
@@ -225,6 +249,24 @@ class AnchorModel:
         self._off_cache = {}
         # Motif mixture (MHC-II). ``prefs_mix`` stays None for n_motifs=1 and for MHC-I, and every
         # mixture branch keys off that -- so the default path is the pre-mixture code, untouched.
+        # ``families`` gives each motif component its own *gap placement*: a list of
+        # ``(positions, k)``, k components scoring only those core positions. Positions outside a
+        # component's family contribute log-odds 0, i.e. that component asserts the allele is
+        # indistinguishable from background there -- a statement about the likelihood, which is why
+        # this is not the soft per-position weighting that made things worse
+        # (`bench/results/anchor_position_weights.md`): scaling a log-odds breaks the ratio, masking
+        # one does not. ``self.anchors`` is untouched (families are subsets of it), so
+        # ``anchor_terms``, ``score_sd``, ``best_register``, ``_fit_tau`` and the groove weights all
+        # keep working on the same key space.
+        if families:
+            unknown = {j for pos, _ in families for j in pos} - set(self.anchors)
+            if unknown:
+                raise ValueError(f"families reference positions outside the footprint: "
+                                 f"{sorted(unknown)} not in {self.anchors}")
+            idx = {j: i for i, j in enumerate(self.anchors)}
+            self._mix_mask = tuple(tuple(idx[j] for j in sorted(pos))
+                                   for pos, kk in families for _ in range(kk))
+            n_motifs = len(self._mix_mask)
         self.n_motifs = n_motifs
         self.prefs_mix = None
         self.log_pi = None
@@ -257,7 +299,7 @@ class AnchorModel:
                 self._fit_offset_prior(store)
             self._smooth_offset_prior()
         self._tau = self._fit_tau() if prior_strength == "auto" else None
-        if cls == "mhc2" and n_motifs > 1:  # needs the offset prior: the E-step scores the marginal
+        if cls == "mhc2" and (n_motifs > 1 or self._mix_mask):  # E-step scores the register marginal
             self._refit_mixture(store)
         self._add_pseudocounts(pseudocount, pseudo_matrix)  # last: all the above fits raw counts
         # Fit from the registers the model has just settled on, so it goes after every fit that
@@ -355,7 +397,8 @@ class AnchorModel:
         ligand-count threshold to pick.
         """
         if raw:
-            src = self.prefs_mix[k][j] if (k is not None and self.prefs_mix) else self.prefs[j]
+            src = (self.prefs_mix[k].get(j, self.prefs[j])
+                   if (k is not None and self.prefs_mix) else self.prefs[j])
             own = src.get(allele, Counter())
             total = sum(own.values())
             return {r: c / total for r, c in own.items()} if total else {}
@@ -371,7 +414,7 @@ class AnchorModel:
         hit = self._cache_mix.get(mkey)
         if hit is not None:
             return hit
-        own = self.prefs_mix[k][j].get(allele)
+        own = self.prefs_mix[k].get(j, {}).get(allele)
         n = float(sum(own.values())) if own else 0.0
         if n <= 0:                                   # backoff identity: the pooled single-PWM motif
             self._cache_mix[mkey] = pooled
@@ -610,7 +653,12 @@ class AnchorModel:
         """
         K = self.n_motifs
         core_pos = [j - 1 for j in self.anchors]
-        mix = [{j: {} for j in self.anchors} for _ in range(K)]
+        # With families, component k only owns its own positions -- tallying the rest would build
+        # counters nothing reads, since `_frame_scores` masks them out of the sum.
+        own = [[(self.anchors[i], core_pos[i]) for i in (self._mix_mask[k] if self._mix_mask
+                                                         else range(len(self.anchors)))]
+               for k in range(K)]
+        mix = [{j: {} for j, _ in own[k]} for k in range(K)]
         mass = {}
         for (ep, a, wt), rs in zip(rows, resp):
             tot = mass.setdefault(a, [0.0] * K)
@@ -619,7 +667,7 @@ class AnchorModel:
                 if r <= 1e-6:                        # contributes nothing; skip the frame search
                     continue
                 w9 = ep[self._best_frame(ep, a, k):][:9]
-                for j, c in zip(self.anchors, core_pos):
+                for j, c in own[k]:
                     mix[k][j].setdefault(a, Counter())[w9[c]] += r * wt
         self.prefs_mix = mix
         self.log_pi = {a: [math.log((v + _MIX_ALPHA) / (sum(t) + K * _MIX_ALPHA)) for v in t]
@@ -851,6 +899,9 @@ class AnchorModel:
             return hit
         core_pos = [j - 1 for j in self.anchors]
         mask = self._score_mask(allele)
+        if k is not None and self._mix_mask:                 # component k scores its family only
+            fam = self._mix_mask[k]
+            mask = fam if mask is None else tuple(i for i in mask if i in set(fam))
         markov = self.background == "markov"
         out = []
         for st in range(len(peptide) - 8):

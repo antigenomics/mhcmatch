@@ -8,6 +8,27 @@ versioning is [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Added
+- `AnchorModel(families=[(positions, k), ...])` / `Store.anchor_model(families=)` --- per-component
+  **gap placement** for MHC-II. Each motif component scores only its own subset of the core, so a
+  mixture can hold several *different* gap patterns at once (`k1` of `A··A·A··A`, `k2` of
+  `A·A··A··A`) instead of `n_motifs` copies of one. A position outside a component's family
+  contributes log-odds 0 --- that component asserting the allele is background there --- which is
+  why this is not the soft per-position weighting that measured worse on every cell that moved: a
+  mask keeps the sum a likelihood ratio, a scale factor does not.
+
+  `self.anchors` stays the union, so `anchor_terms`, `score_sd`, `best_register`, `_fit_tau` and the
+  learned groove weights are untouched, and `families=[(tuple(anchors), K)]` is **bit-identical** to
+  `n_motifs=K` (pinned by `test_one_full_core_family_is_bit_identical_to_plain_n_motifs`). Ships
+  **off**; `families` enters the vendored-model params only when set, so the 27 shipped artifacts
+  stay valid and `SCORER_EPOCH` does not move --- the shipped configuration returns the same scores
+  it did before.
+
+  Motivated by two independent lines: `MHC2_ANCHORS = (1,4,6,9)` is the top-4 by information content
+  for 20 of 32 DR alleles and 1 of 23 everything else, and on 24 H-2 I-A crystals P7 buries 53.0 MHC
+  heavy atoms against P4's 31.3. Pinning component *k* to family *F_k* also fixes the label-switching
+  that currently stops mixture components being kernel-shrunk across alleles.
+
 ## [1.3.0] --- 2026-08-27
 
 ### Added

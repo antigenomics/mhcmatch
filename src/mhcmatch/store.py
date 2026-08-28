@@ -686,7 +686,8 @@ class Store:
                      prune_dpi=False, weights="learned", register_em=2, footprint="anchor",
                      rare_max=30, background="ligand", length_prior="score", length_motifs=True,
                      register="marginal", n_motifs=3, pseudocount=0.0, anticore=0.0,
-                     pseudo_matrix="blosum62", _vendored=True, _return_params=False):
+                     pseudo_matrix="blosum62", families=None,
+                     _vendored=True, _return_params=False):
         """Anchor-factored presentation model with cross-allele kernel-shrinkage diffusion.
 
         See :class:`mhcmatch.diffusion.AnchorModel`. The diffusion rescues rare alleles by borrowing
@@ -728,6 +729,11 @@ class Store:
         # `_add_pseudocounts` returns immediately at the shipped beta = 0.
         if pseudo_matrix != "blosum62":
             params["pseudo_matrix"] = pseudo_matrix
+        # Same rule as `anticore`: absent at the default so every vendored model still matches, and a
+        # family list is a different model that correctly forces a refit. Normalised to a tuple of
+        # tuples so an equal spec written as lists still hits the same cache entry.
+        if families:
+            params["families"] = tuple((tuple(sorted(pos)), int(k)) for pos, k in families)
         if _vendored:
             m = load_vendored_anchor_model(self, cls, params)
             if m is not None:
