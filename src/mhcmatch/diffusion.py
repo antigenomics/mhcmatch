@@ -786,6 +786,41 @@ class AnchorModel:
         self._off_cache[key] = lp
         return lp
 
+    def panel_key(self, allele):
+        """``allele`` in **this model's** key space -- the spelling its panel was fit under.
+
+        The panel is keyed on the raw corpus string (``'HLA-A*02:01'``, ``'H-2Kb'``) while every
+        lookup path resolves through :func:`~mhcmatch.pseudoseq.normalize_allele` (``'HLA-A02:01'``,
+        ``'H-2-Kb'``), so one molecule had two key spaces and which one you got depended on how the
+        caller typed the name. For human that is lossy -- the kernel fallback over ~200 alleles is
+        nearly right. For mouse it is fatal: ``'H-2-Kb'`` and ``'H2-Kb'`` are *both* keys in
+        ``mhci_pseudo.fa`` on a byte-identical 34-mer, so ``resolve_allele`` called them exact while
+        the panel held 35,037 ligands under ``'H-2Kb'`` and none under either. SIINFEKL scored
+        presentation %rank 0.0040 under the panel spelling and **20.19** under the resolver's own.
+
+        Canonicalising to the *panel's* spelling rather than the FASTA's is deliberate: it is what
+        every output string, result table and calibrator key already says, so this repairs the
+        lookup without renaming ``'HLA-A*02:01'`` in a user's output. Unknown names pass through, so
+        an allele the model has never seen still falls out downstream rather than raising.
+        """
+        from .pseudoseq import class2_from_name, normalize_allele, resolve_allele
+        norm = class2_from_name if self.cls == "mhc2" else normalize_allele
+        alias = self.__dict__.get("_alias_map")
+        if alias is None:
+            keys = set()
+            for by_allele in self.prefs.values():
+                keys.update(by_allele)
+            alias = {norm(k): k for k in keys}
+            self.__dict__["_alias_map"] = alias
+        hit = alias.get(norm(allele))
+        if hit is not None:
+            return hit
+        # A name the panel does not spell that way at all -- 'A*02:01' for 'HLA-A*02:01'. The full
+        # resolver knows the prefix repairs and the two-field completions; normalising its answer
+        # lands back in the same key space.
+        k, _ = resolve_allele(allele, self.cls)
+        return alias.get(norm(k), allele) if k else allele
+
     def best_register(self, peptide, allele, raw=False, eps=1e-3):
         """Best-scoring binding register of ``peptide`` for ``allele``, as ``(start, score)``.
 

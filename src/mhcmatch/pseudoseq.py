@@ -32,8 +32,13 @@ _BARE_I = re.compile(r"^(?:HLA[- ])?([ABC])w?\*?(\d{2,3}):?(\d{2,3})[A-Z]?$")
 def normalize_allele(a: str) -> str:
     """pmhc allele name -> pseudosequence-FASTA key.
 
-    Drops the ``*`` (``'HLA-A*02:01'`` -> ``'HLA-A02:01'``) and repairs the mouse H-2 dash
-    (pmhc ``'H-2Kb'`` -> FASTA ``'H-2-Kb'``).
+    Drops the ``*`` (``'HLA-A*02:01'`` -> ``'HLA-A02:01'``) and folds **all three** mouse H-2
+    spellings onto one key: pmhc ``'H-2Kb'``, deposit ``'H2-Kb'`` and FASTA ``'H-2-Kb'`` name the
+    same molecule, and ``mhci_pseudo.fa`` carries the last two as separate keys on a byte-identical
+    34-mer. Until 1.4.0 only the first was folded, so ``'H2-Kb'`` resolved ``exact=True`` to a key
+    with **zero** panel ligands and SIINFEKL scored at presentation %rank 20.19 instead of 0.0040.
+    One molecule, one key -- the invariant :func:`hla_spellings` already enforces for human class I
+    and :func:`class2_from_name` for class II.
 
     Takes one allele name. A cell naming several (``'B0801,C0701'``) is a genotype, not an allele;
     :func:`mhcmatch.rank.split_alleles` is what splits it, and normalising the cell whole is the
@@ -41,7 +46,9 @@ def normalize_allele(a: str) -> str:
     has, which then resolves to nothing.
     """
     a = a.replace("*", "")
-    if a.startswith("H-2") and len(a) > 3 and a[3] != "-":  # mouse: 'H-2Kb' -> 'H-2-Kb'
+    if a.startswith("H2-"):                                   # mouse: 'H2-Kb'  -> 'H-2-Kb'
+        a = "H-2-" + a[3:]
+    elif a.startswith("H-2") and len(a) > 3 and a[3] != "-":  # mouse: 'H-2Kb' -> 'H-2-Kb'
         a = "H-2-" + a[3:]
     return a
 
