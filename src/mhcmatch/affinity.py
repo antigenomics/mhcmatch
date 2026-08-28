@@ -93,14 +93,26 @@ class PottsAffinity:
         self._eff = {}          # allele key -> (b0, E as nested list, E as array); see _effective
 
     def _key(self, allele):
+        """The **pseudosequence** key -- what indexes the pockets, which are a groove property."""
         from .pseudoseq import resolve_allele
         k, _ = resolve_allele(allele, self.cls)
         return k
 
+    def _am_key(self, allele):
+        """The **panel** key -- what indexes :attr:`am`'s preferences, offsets and length histogram.
+
+        Not the same string as :meth:`_key`: the panel is keyed on the raw corpus spelling and the
+        pseudosequence table on the resolved one. Passing the pseudosequence key to ``am`` is why
+        the 1.4.0 MHC-I length prior silently used a kernel fallback instead of the allele's own
+        length histogram -- for HLA-A*02:01 a 0.72-nat error on 8-mers, and for H-2Kb a 1.74-nat one
+        in the wrong direction (H-2Kb *prefers* 8-mers; the human-shaped fallback penalises them).
+        """
+        return self.am.panel_key(allele) if self.am is not None else allele
+
     def _core(self, pep, key):
         if self.cls == "mhc1" or self.am is None:
             return pep                              # end-anchored: mapped by _pep_idx below
-        start, _ = self.am.best_register(pep, key)  # open groove: locate the 9-mer core register
+        start, _ = self.am.best_register(pep, self._am_key(key))  # open groove: locate the core
         return pep[start:start + 9]
 
     def _pep_idx(self, core):
@@ -193,7 +205,7 @@ class PottsAffinity:
         """
         if self.cls != "mhc1" or self.am is None:
             return 0.0
-        return self.am.length_logodds(length, key) / LOG50K
+        return self.am.length_logodds(length, self._am_key(key)) / LOG50K
 
     def predict_y(self, peptide, allele) -> float:
         """log50k score (higher = stronger binder), or ``nan`` if the allele can't be resolved."""

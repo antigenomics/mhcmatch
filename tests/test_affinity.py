@@ -239,10 +239,21 @@ def test_potts_shipped_path_scores_are_pinned():
     """The tripwire on what a user actually gets: ``Store.affinity_model`` + the length factor.
 
     Moves if the weights move, if the panel's length histogram moves, or if the factor's scale
-    changes. Update deliberately, never reflexively, and record the old values."""
+    changes. Update deliberately, never reflexively, and record the old values.
+
+    **Updated 2026-08-28, 1.4.0 -> 1.4.1: NLVPMVATV 18.6 -> 18.9, GILGFVFTL 11.2 -> 11.4,
+    SLYNTGAT 50000.0 -> 40046.4 nM.** The length factor was reaching ``AnchorModel`` under the
+    *pseudosequence* key (``'HLA-A02:01'``) while the panel is keyed on the corpus spelling
+    (``'HLA-A*02:01'``), so ``length_logodds`` missed on every class-I allele and returned a
+    kernel-shrunk fallback instead of the allele's own ligand-length histogram. Over 135 alleles
+    with >=100 ligands the fallback sat a median **0.282 nats** from the truth (mean 0.435, max
+    2.910; 57 of 540 (allele, length) cells past 1.0). ``PottsAffinity._am_key`` now maps to the
+    panel's key space. Only the 8-mer moves visibly here because the 9-mers were already close --
+    HLA-A*02:01's own 8-mer prior is 0.72 nats above the fallback's.
+    """
     from mhcmatch import Store
     m = Store.from_pmhc(tier="shortlist", species="human", classes=("mhc1",)).affinity_model("mhc1")
-    for pep, want in (("NLVPMVATV", 18.6), ("GILGFVFTL", 11.2), ("SLYNTGAT", 50000.0)):
+    for pep, want in (("NLVPMVATV", 18.9), ("GILGFVFTL", 11.4), ("SLYNTGAT", 40046.4)):
         got = m.predict_ic50(pep, "HLA-A*02:01")
         assert abs(got - want) / want < 0.02, f"{pep}: {got:.1f} nM, pinned {want} nM"
 

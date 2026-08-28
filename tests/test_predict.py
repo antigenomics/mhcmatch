@@ -331,3 +331,78 @@ def test_calibration_cache_is_on_by_default_and_can_be_turned_off(tmp_path, monk
     for off in ("0", "off", "none", "false", ""):
         monkeypatch.setenv(calibrate.CACHE_ENV, off)
         assert calibrate.cache_dir() is None, off
+
+
+# -- one molecule, one key: the mouse class-I allele collision ----------------
+
+@pytest.mark.hfdata
+def test_spelling_does_not_change_a_score():
+    """Every spelling of one molecule must give byte-identical ``binder_score`` output.
+
+    This is the defect pinned as a contract. ``binder_score`` handed the caller's raw string to the
+    presentation head while :meth:`~mhcmatch.affinity.PottsAffinity._key` resolved it, so the two
+    heads keyed on different name spaces inside one call, and the panel was keyed on a third (the
+    raw pmhc string, because ``Store.from_records`` normalised class II and not class I).
+
+    Measured before the fix, library 1.4.0, on the full pmhc panel -- SIINFEKL, the canonical
+    H-2Kb ligand:
+
+    ===========  ==================  ==========  ==========
+    spelling     presentation %rank  Kd (nM)     ``presentation_sd``
+    ===========  ==================  ==========  ==========
+    ``H-2Kb``    0.0040              714.2       0.048
+    ``H-2-Kb``   20.19               714.2       2.199
+    ``H2-Kb``    0.0500              130.3       1.935
+    ===========  ==================  ==========  ==========
+
+    ``H-2-Kb`` is what ``resolve_allele('H-2Kb', 'mhc1')`` itself returned, so the library's own
+    resolver produced the 20.19.
+    """
+    from mhcmatch import Store, predict
+    st = Store.from_pmhc(tier="full", classes=("mhc1",))
+    for pep, spellings in (("SIINFEKL", ("H-2Kb", "H-2-Kb", "H2-Kb")),
+                           ("ASNENMETM", ("H-2Db", "H-2-Db", "H2-Db")),
+                           ("NLVPMVATV", ("HLA-A*02:01", "HLA-A02:01", "A*02:01"))):
+        got = set()
+        for a in spellings:
+            out = predict.binder_score(st, pep, alleles=[a], cls="mhc1")
+            assert out, f"{pep} on {a}: dropped"
+            b = out[0]
+            got.add((b.allele, b.presentation_rank, b.affinity_rank, b.binder_rank, b.affinity_nm))
+        assert len(got) == 1, f"{pep}: {len(got)} answers for one molecule -- {sorted(got)}"
+
+
+@pytest.mark.hfdata
+def test_siinfekl_is_a_strong_h2kb_binder():
+    """The sanity check the collision defeated: mouse class I must actually work.
+
+    SIINFEKL/H-2Kb is the most-used epitope in mouse immunology and an **8-mer**, which is the point
+    -- H-2Kb prefers 8-mers (``length_logodds(8, 'H-2-Kb') = +0.370``) where the human-dominated
+    kernel fallback penalises them (``-1.367``). Scoring it under an empty allele key applied a
+    1.74-nat human-shaped length prior to a mouse allele.
+    """
+    from mhcmatch import Store, predict
+    st = Store.from_pmhc(tier="full", classes=("mhc1",))
+    for a in ("H-2Kb", "H-2-Kb", "H2-Kb"):
+        b = predict.binder_score(st, "SIINFEKL", alleles=[a], cls="mhc1")[0]
+        assert b.presentation_rank < 0.1, f"SIINFEKL on {a}: presentation %rank {b.presentation_rank}"
+        assert b.presentation_sd < 0.5, f"SIINFEKL on {a}: sd {b.presentation_sd} -- unsupported allele"
+
+
+@pytest.mark.hfdata
+def test_presentation_sd_flags_an_allele_with_no_panel_support():
+    """The rare-allele SD is a usable guard for exactly this failure, and that is measured.
+
+    On the pre-fix spellings it read 0.048 (real key) against 2.199 and 1.935 (empty keys) -- a 46x
+    step. Here it is asserted against a synthetic name that resolves to a real groove but carries no
+    ligands, which is what an empty key *is*.
+    """
+    from mhcmatch import Store, predict
+    st = Store.from_pmhc(tier="full", classes=("mhc1",))
+    supported = predict.binder_score(st, "SIINFEKL", alleles=["H-2Kb"], cls="mhc1")[0]
+    unsupported = predict.binder_score(st, "SIINFEKL", alleles=["H-2-Qa2"], cls="mhc1")
+    assert supported.presentation_sd < 0.5
+    if unsupported:                       # Qa2 has a groove but no ligands in the panel
+        assert unsupported[0].presentation_sd > 4 * supported.presentation_sd, (
+            f"sd did not flag an unsupported allele: {unsupported[0].presentation_sd} "
+            f"vs {supported.presentation_sd}")

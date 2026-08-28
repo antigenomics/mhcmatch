@@ -281,7 +281,7 @@ def tile(seq: str, lengths) -> list:
 #: stale one was served. Same discipline as the EPIC model version -- an int, moved deliberately.
 #:
 #: 1 = pre-1.3.0 heads. 2 = length-aware Potts + extrapolated %rank tail.
-SCORER_EPOCH = 2
+SCORER_EPOCH = 3
 
 
 def _fingerprint(store, cls, background, footprint, head):
@@ -485,6 +485,7 @@ def binder_score(store, peptide, alleles="all", cls=None, background="proteome",
         alleles = [a.strip() for a in alleles.split(",") if a.strip()]
     out = []
     for a in alleles:
+        a = model.panel_key(a)          # one molecule, one key -- see AnchorModel.panel_key
         pr = pcal.percent_rank(a, model.score(peptide, a))
         ar = acal.percent_rank(a, aff.predict_y(peptide, a))
         cstat = _fisher_combine(pr, ar)                 # -inf iff either %rank is nan
@@ -534,6 +535,7 @@ def binder_ranks(store, peptides, allele, cls=None, background="proteome",
         raise RuntimeError(f"no affinity model available for {cls}")
     acal = _affinity_calibrator(store, cls, aff, background, footprint, seed)
     ccal = _binder_calibrator(store, cls, model, aff, pcal, acal, background, footprint, seed)
+    allele = model.panel_key(allele)    # one molecule, one key -- see AnchorModel.panel_key
     nan = float("nan")
     pr_o, ar_o, br_o, nm_o = [], [], [], []
     for pep in peps:
