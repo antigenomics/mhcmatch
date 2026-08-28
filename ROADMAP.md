@@ -1191,6 +1191,39 @@ NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2)
 
 ## 6c. Known issues
 
+- **RESOLVED 2026-08-28 — every class-II head-to-head measured `--n-motifs 1` against a library
+  shipping 3.** `run_compare.py`'s flag default said 1; `Store.anchor_model` has said 3 since
+  v0.7.0; and none of the four `compare_mhc2_*` regenerate commands passed the flag. Correcting it,
+  one variable, same tier and seed: human hard frequent AUPRC **0.558 → 0.614** (gap to
+  NetMHCIIpan-4.3i −0.124 → −0.068) and PPV@P 0.521 → 0.593 (−0.141 → −0.070); human screening
+  frequent AUPRC **0.524 → 0.625** (−0.250 → −0.149); mouse screening flips from a tie to winning
+  all three cells (AUPRC 0.256 → **0.416**, −0.064 → +0.096). Mouse *hard* is the one arm it costs
+  (frequent AUROC 0.773 → 0.688) and is the first measurement of `n_motifs` on mouse at all — the K
+  sweep's own open loop, above. The human numbers were never unknown: `motif_mixture_mhc2.md`
+  measured them when the mixture shipped. They never reached the canonical table because the flag
+  selecting the model defaulted to the ablation, and because the report suffix was `"" if
+  n_motifs == 1`, so the unsuffixed canonical name silently *became* the ablation the day the
+  library's default moved. Both fixed; `bench/compare/check_defaults.py` now asserts every restated
+  flag default against `Store.anchor_model`'s signature and runs in `make check`. Third instance of
+  this class after the Tadros `--length-prior` and the mouse class-I `--footprint`.
+
+- **Class-II register placement is not what limits class-II discrimination — two measurements,
+  opposite directions.** `bench/results/mhc2_anticore.md`. (1) An **anticore** — pooled N-/C-side
+  flank PWMs by distance, modelling the residues the frame leaves *outside* the core so frames stop
+  being compared on different subsets of the peptide — fit on DR and applied to alleles it never
+  saw, places the DP-A1\*02 core **0.221** of the time against the shipped model's **0.019**, off
+  160 pooled parameters and ~0.2 bits over six positions. As a normalised tilt on the register prior
+  it is **neutral on `compare_mhc2_*`** (frequent AUPRC +0.008 at w=1, within CI; regressive above).
+  (2) `footprint="anchor"` (four pockets) improves core agreement in every group — DP-A1\*02
+  0.019 → 0.145 — and **loses all nine cells** of the hard-decoy benchmark to the shipped
+  `adaptive` (medium AUPRC 0.550 vs 0.370). So the five non-pocket core positions degrade register
+  placement and carry real allele-specific binding signal, and the second is worth more.
+  **Agreeing with NetMHCIIpan's `Core` is not the objective function.** That qualifies
+  `mhc2_register_deficit.md` without retracting it — core agreement still predicts the AUROC gap
+  across alleles at r = +0.697 — and it means the remaining DP/DQ gap has to be sought somewhere
+  other than the register. `AnchorModel(anticore=w)` ships **off**, with its inertness pinned;
+  `AnchorModel.register_entropy()` ships as the class-II health check (fix #1 of that write-up).
+
 - **RESOLVED 1.4.1 — one molecule had three keys, and mouse class I paid for it.** The class-I
   panel is keyed on the raw pmhc string (`H-2Kb`, 35,037 ligands) while every lookup resolves
   through `normalize_allele` (`H-2-Kb`), and `mhci_pseudo.fa` carries `H-2-Kb` **and** `H2-Kb` --
