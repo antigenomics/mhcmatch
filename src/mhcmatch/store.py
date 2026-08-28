@@ -685,7 +685,7 @@ class Store:
     def anchor_model(self, cls="mhc1", h=2.0, prior_strength=10.0, anchors=None, learn_weights=True,
                      prune_dpi=False, weights="learned", register_em=2, footprint="anchor",
                      rare_max=30, background="ligand", length_prior="score", length_motifs=True,
-                     register="marginal", n_motifs=3, pseudocount=0.0,
+                     register="marginal", n_motifs=3, pseudocount=0.0, anticore=0.0,
                      pseudo_matrix="blosum62", _vendored=True, _return_params=False):
         """Anchor-factored presentation model with cross-allele kernel-shrinkage diffusion.
 
@@ -708,6 +708,9 @@ class Store:
         see :meth:`mhcmatch.diffusion.AnchorModel._refit_mixture`. ``pseudocount`` (β) spreads each
         anchor's observed counts onto chemically similar residues with weight ``β/(n+β)``; ``0``
         (default) is off -- see :meth:`mhcmatch.diffusion.AnchorModel._add_pseudocounts`.
+        ``anticore`` (MHC-II) weights a pooled flank model of the residues *outside* the core, so
+        frames are compared on the whole ligand rather than on nine positions each; ``0`` (default)
+        is off -- see :meth:`mhcmatch.diffusion.AnchorModel._fit_anticore`.
         """
         from .diffusion import AnchorModel, load_vendored_anchor_model
         params = dict(anchors=anchors, h=h, prior_strength=prior_strength, learn_weights=learn_weights,
@@ -715,6 +718,10 @@ class Store:
                       footprint=footprint, rare_max=rare_max, background=background,
                       length_prior=length_prior, length_motifs=length_motifs, register=register,
                       n_motifs=n_motifs, pseudocount=pseudocount)
+        # Kept out of `params` at 0.0 so every vendored model stays valid; a non-zero weight is a
+        # different model and correctly forces a refit.
+        if anticore:
+            params["anticore"] = anticore
         # `load_vendored_anchor_model` compares this dict to the artifact's verbatim, so a new key
         # would invalidate all 27 shipped models and force a refit (minutes, for MHC-II). The matrix
         # only enters when it is not the default, which is also the only case where it does anything:
