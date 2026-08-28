@@ -1191,6 +1191,36 @@ NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2)
 
 ## 6c. Known issues
 
+- **RESOLVED 1.4.1 — one molecule had three keys, and mouse class I paid for it.** The class-I
+  panel is keyed on the raw pmhc string (`H-2Kb`, 35,037 ligands) while every lookup resolves
+  through `normalize_allele` (`H-2-Kb`), and `mhci_pseudo.fa` carries `H-2-Kb` **and** `H2-Kb` --
+  the deposit spelling -- as separate keys on a byte-identical 34-mer. So `resolve_allele` returned
+  `exact=True` for a key with zero ligands, and the answer depended on how the caller typed the
+  name: SIINFEKL scored presentation %rank **0.0040** under `H-2Kb` and **20.19** under `H-2-Kb`,
+  which is what the resolver itself returns. `AnchorModel.panel_key` folds any spelling into the
+  model's own key space, canonicalising to the *panel's* spelling so no user-visible allele name
+  changes. Five tests pin it. The rare-allele `presentation_sd` reads 0.048 against 2.199 across the
+  two sides of the defect -- it is what found it.
+
+  The same seam had `PottsAffinity` querying `AnchorModel.length_logodds` under the pseudosequence
+  key, so the 1.4.0 MHC-I length prior fell back to kernel shrinkage on **every** class-I allele:
+  human median error 0.282 nats over 135 alleles with >=100 ligands (mean 0.435, max 2.910; 57 of
+  540 (allele, length) cells past 1.0), and H-2Kb at L=8 wrong by 1.737 nats *in the wrong
+  direction* -- H-2Kb prefers 8-mers, the human-shaped fallback penalises them. Repairing it moved
+  TESLA EPIC score AUROC 0.8708 -> 0.8742 and HiTIDE 0.7093 -> 0.7119 with `mhc1`/`mhc2`/`tadros`
+  byte-identical (`bench/regress.sh`).
+
+  Two mouse tables were measuring the defect. `mouse_kesmir.md` out-of-fold AUROC 0.6151 -> 0.6453
+  with `binder`/`occupancy` going 0 -> 1,593 of 1,593 rows; the larger half of that was a *harness*
+  bug (`canon()` handed `H2KB` to the scorer, for which `rank.species_of` returns `None`, so the
+  corpus channels read the **human** tables against H-2 ligands). `epic_mouse_holdout.md` 0.4851 ->
+  0.4803 -- the mouse features moved a lot (`pres` on 99.3% of rows, median 0.799 relative) and the
+  transfer did **not** improve, which is consistent with `mouse_transfer.md` locating that failure
+  in the negative class.
+
+  New and unrelated to the fix: `compare_mhc1_mouse_{hard_ligandbg,random_proteomebg}.md`, the first
+  mouse class-I head-to-heads in the repo -- all nine cells and all three cells respectively.
+
 - **`agretopicity` names two different quantities, and the sign is flipped between them.**
   `predict.py:86` defines `Prediction.agretopicity` as `Kd_MT / Kd_WT` ("pipeline convention;
   < 1 = mutant binds better"), written at `predict.py:634` and emitted at `:680-682`. `rank.py:422`
