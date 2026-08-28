@@ -12,6 +12,7 @@ from __future__ import annotations
 import bisect
 import hashlib
 import json
+import math
 import os
 import random
 import tempfile
@@ -266,7 +267,23 @@ class RankCalibrator:
         marginalising over the corpus length mix -- required for any **absolute** threshold (a binder
         gate), since the raw score is length-inflated. Leave it ``None`` to rank peptides of a single
         length against each other, where the marginal null is what preserves MHC-I's real length
-        preference."""
+        preference.
+
+        **Above the background maximum the rank is extrapolated, not floored at zero.** An empirical
+        rank over ``n`` draws resolves ``100/n``, so with the default n=10,000 every peptide beating
+        all 10,000 returned exactly ``0.0`` and they all tied. On the NCI exome scan that was 79 of
+        420,786 rows -- and **6 of the 104 assayed-immunogenic candidates**, a 307x enrichment,
+        because the strongest binders are exactly where the answer is. In ``-log10`` terms the
+        emitted column could take values in ``[-2, 2] u {4}`` with literally nothing in between, and
+        crossing that empty two-log-unit gap was worth +2.05 log-odds of EPIC score (the shipped
+        ``binder`` standardizer, coef 0.5481 / sigma 0.5346) for no information at all.
+
+        The tail of a sum of per-position terms is close to exponential, so a mean-excess fit to the
+        top percentile of the background extends the rank smoothly past its last draw. It costs no
+        extra peptide scoring -- the background is already sorted -- and it is monotone, so it can
+        only break ties that were previously exact. It cannot move an AUROC; it moves a shortlist's
+        ordering and any threshold that sits inside the saturated block.
+        """
         if length is not None:
             self._ensure_len(allele, length)
             bg = self._bg_len.get((allele, length))
@@ -275,8 +292,22 @@ class RankCalibrator:
             bg = self._bg.get(allele)
         if not bg:
             return float("nan")
-        above = len(bg) - bisect.bisect_right(bg, score)
-        return 100.0 * above / len(bg)
+        n = len(bg)
+        above = n - bisect.bisect_right(bg, score)
+        if above:
+            return 100.0 * above / n
+        # ponytail: mean-excess exponential tail, not a fitted GPD. Upgrade to a Pickands shape
+        # parameter only if the upper tail is ever measured to be heavy; nothing here needs it.
+        #
+        # Anchored at the maximum, not at the threshold u: pinning the curve to 100/n at bg[-1]
+        # makes it continuous with the empirical rank immediately below and strictly decreasing
+        # above, with no clamp. Anchoring at u instead needs a min() to stay monotone, and that
+        # min then flattens the whole near-tail back into one value -- the tie this exists to fix.
+        k = max(2, n // 100)
+        mean_excess = sum(bg[-k:]) / k - bg[-k]      # the top percentile's mean excess = 1/rate
+        if mean_excess <= 0.0:                       # degenerate tail: every top draw is equal
+            return 100.0 / n
+        return (100.0 / n) * math.exp(-(score - bg[-1]) / mean_excess)
 
     def p_present(self, allele: str, score: float) -> float:
         """Isotonic-calibrated P(present | score) if positives were supplied, else a rank-derived
