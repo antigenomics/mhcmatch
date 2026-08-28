@@ -332,19 +332,28 @@ class _AffinityAsScore:
         return y if y == y else float("-inf")
 
 
-def _affinity_calibrator(store, cls, aff, seed=0, n_bg=10000):
-    """Per-allele %rank calibrator over the Potts affinity score (cached on ``store``)."""
+def _affinity_calibrator(store, cls, aff, background="proteome", footprint="adaptive",
+                         seed=0, n_bg=10000):
+    """Per-allele %rank calibrator over the Potts affinity score (cached on ``store``).
+
+    Keyed on the whole config, as :func:`build_scorer` already is. It used to key on ``cls`` alone
+    and stamp its on-disk fingerprint with a literal ``"proteome", "adaptive"`` whatever the caller
+    asked for -- so one process (or one shared cache dir) mixing ``--background ligand`` and
+    ``--background proteome`` served the first build to the second, silently. The affinity score
+    itself does not depend on the presentation config, but the *register oracle* does for MHC-II and
+    the length prior does for MHC-I, and a stale background is invisible in the output either way."""
+    key = (cls, background, footprint, seed, n_bg)
     cache = store.__dict__.setdefault("_aff_cal_cache", {})
-    if cls not in cache:
+    if key not in cache:
         panel = store._panel[cls]
         pos = defaultdict(list)
         for ep, a in zip(panel.epitopes, panel.alleles):
             pos[a].append(ep)
-        cache[cls] = RankCalibrator(_AffinityAsScore(aff), list(pos), panel.epitopes,
+        cache[key] = RankCalibrator(_AffinityAsScore(aff), list(pos), panel.epitopes,
                                     n=n_bg, seed=seed, positives=pos,
-                                    fingerprint=_fingerprint(store, cls, "proteome", "adaptive",
+                                    fingerprint=_fingerprint(store, cls, background, footprint,
                                                              "affinity"))
-    return cache[cls]
+    return cache[key]
 
 
 def _fisher_combine(*ranks):
@@ -381,19 +390,24 @@ class _CombinedScore:
                                self._acal.percent_rank(allele, self._aff.predict_y(pep, allele)))
 
 
-def _binder_calibrator(store, cls, model, aff, pcal, acal, seed=0, n_bg=10000):
-    """Per-allele %rank calibrator over the combined (Fisher) statistic (cached on ``store``)."""
+def _binder_calibrator(store, cls, model, aff, pcal, acal, background="proteome",
+                       footprint="adaptive", seed=0, n_bg=10000):
+    """Per-allele %rank calibrator over the combined (Fisher) statistic (cached on ``store``).
+
+    Keyed on the whole config for the reason in :func:`_affinity_calibrator` -- and here the stale
+    build is unambiguously wrong, since the combined statistic reads the presentation %rank."""
+    key = (cls, background, footprint, seed, n_bg)
     cache = store.__dict__.setdefault("_binder_cal_cache", {})
-    if cls not in cache:
+    if key not in cache:
         panel = store._panel[cls]
         pos = defaultdict(list)
         for ep, a in zip(panel.epitopes, panel.alleles):
             pos[a].append(ep)
-        cache[cls] = RankCalibrator(_CombinedScore(model, aff, pcal, acal), list(pos),
+        cache[key] = RankCalibrator(_CombinedScore(model, aff, pcal, acal), list(pos),
                                     panel.epitopes, n=n_bg, seed=seed, positives=pos,
-                                    fingerprint=_fingerprint(store, cls, "proteome", "adaptive",
+                                    fingerprint=_fingerprint(store, cls, background, footprint,
                                                              "binder"))
-    return cache[cls]
+    return cache[key]
 
 
 @dataclass
@@ -437,8 +451,8 @@ def binder_score(store, peptide, alleles="all", cls=None, background="proteome",
     model, pcal, aff = build_scorer(store, cls, background, footprint, seed)
     if aff is None:
         raise RuntimeError(f"no affinity model available for {cls}")
-    acal = _affinity_calibrator(store, cls, aff, seed)
-    ccal = _binder_calibrator(store, cls, model, aff, pcal, acal, seed)
+    acal = _affinity_calibrator(store, cls, aff, background, footprint, seed)
+    ccal = _binder_calibrator(store, cls, model, aff, pcal, acal, background, footprint, seed)
     if alleles == "all":
         alleles = store.alleles(cls)
     elif isinstance(alleles, str):
@@ -491,8 +505,8 @@ def binder_ranks(store, peptides, allele, cls=None, background="proteome",
     model, pcal, aff = build_scorer(store, cls, background, footprint, seed)
     if aff is None:
         raise RuntimeError(f"no affinity model available for {cls}")
-    acal = _affinity_calibrator(store, cls, aff, seed)
-    ccal = _binder_calibrator(store, cls, model, aff, pcal, acal, seed)
+    acal = _affinity_calibrator(store, cls, aff, background, footprint, seed)
+    ccal = _binder_calibrator(store, cls, model, aff, pcal, acal, background, footprint, seed)
     nan = float("nan")
     pr_o, ar_o, br_o, nm_o = [], [], [], []
     for pep in peps:
@@ -567,8 +581,8 @@ def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
     model, cal, aff = build_scorer(store, cls, background, footprint, seed)
     # the calibrated combined %rank (presentation x affinity) needs the affinity + Fisher calibrators;
     # both are cached on the store and only fill their per-allele background lazily.
-    acal = _affinity_calibrator(store, cls, aff, seed) if aff is not None else None
-    ccal = _binder_calibrator(store, cls, model, aff, cal, acal, seed) if aff is not None else None
+    acal = _affinity_calibrator(store, cls, aff, background, footprint, seed) if aff is not None else None
+    ccal = _binder_calibrator(store, cls, model, aff, cal, acal, background, footprint, seed) if aff is not None else None
     lengths = KMER_LENS[cls]
     by_window = defaultdict(list)
     for header, seq in records:

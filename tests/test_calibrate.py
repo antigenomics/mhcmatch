@@ -76,3 +76,67 @@ def test_isotonic_is_monotone_and_bounded():
     assert all(a <= b for a, b in zip(xs, xs[1:]))       # x sorted
     assert all(a <= b for a, b in zip(ys, ys[1:]))       # y non-decreasing: the whole point
     assert all(0.0 <= y <= 1.0 for y in ys)              # a pooled mean of 0/1 labels
+
+
+# -- the upper tail: what happens past the last background draw ----------------
+
+def _tail_cal():
+    """A stub with a continuous score, so the background has a real tail to extrapolate from.
+    ``HydrophobicStub`` counts residues, i.e. it is integer-valued, and every top draw ties."""
+    import random
+    rng = random.Random(20260828)
+
+    class _Smooth:
+        def score(self, pep, allele):
+            return sum((ord(c) % 17) * (1.0 + (i % 3)) for i, c in enumerate(pep)) / 37.0
+
+    corpus = ["".join(rng.choices("ACDEFGHIKLMNPQRSTVWY", k=9)) for _ in range(200)]
+    return RankCalibrator(_Smooth(), ["X"], corpus, n=10000, seed=0), _Smooth()
+
+
+def test_percent_rank_is_strictly_monotone_above_the_background():
+    """An empirical rank over n draws resolves 100/n and returns 0 above the last one, so every
+    peptide beating all 10,000 used to tie at exactly 0.0 -> -log10 = 4.0. On the NCI exome scan
+    that block held 79 of 420,786 rows and 6 of the 104 immunogenic candidates: no resolution at
+    all in the one place a shortlist reads. The tail extrapolation gives it back."""
+    cal, _ = _tail_cal()
+    cal._ensure("X")
+    bg = cal._bg["X"]
+    n = len(bg)
+    ranks = [cal.percent_rank("X", bg[-1] + d) for d in (0.0, 1e-4, 1e-2, 0.1, 0.3, 1.0)]
+    assert all(a > b for a, b in zip(ranks, ranks[1:])), ranks       # strictly stronger, in order
+    assert all(r > 0.0 for r in ranks)                               # never collapses back to zero
+    assert ranks[0] == 100.0 / n                                     # pinned to the grid at the knot
+    # and the emitted column now spans the gap it could not represent: -log10 in (2, 4), not {4}
+    from mhcmatch.rank import _neglog10
+    assert 2.0 < _neglog10(ranks[2]) < _neglog10(ranks[4]) < 4.0
+
+
+def test_percent_rank_is_unchanged_inside_the_background():
+    """The extrapolation is reachable only past the last draw. Everywhere the empirical rank is
+    non-zero -- which is every score a real screen produces bar the saturated block -- this change
+    must move nothing, not one value.
+
+    The one boundary that does move is ``score == bg[-1]``: it used to return ``0.0``, since
+    ``bisect_right`` puts it past the end, and now returns the grid floor ``100/n``. That is the
+    fix, not a side effect. A peptide that merely ties the best of 10,000 draws has not beaten
+    them all, and reporting it as ``%rank = 0`` is what created the tie in the first place."""
+    import bisect
+    cal, _ = _tail_cal()
+    cal._ensure("X")
+    bg = cal._bg["X"]
+    n = len(bg)
+    for i in (0, 1, 17, n // 4, n // 2, n - 2):
+        s = bg[i]
+        assert cal.percent_rank("X", s) == 100.0 * (n - bisect.bisect_right(bg, s)) / n
+    assert cal.percent_rank("X", bg[0] - 1.0) == 100.0       # below every draw is still exactly 100
+    assert cal.percent_rank("X", bg[-1]) == 100.0 / n        # the moved boundary, pinned
+
+
+def test_percent_rank_survives_a_degenerate_tail():
+    """A stub whose top draws all tie leaves zero mean excess to fit. Falls back to the grid floor
+    rather than dividing by zero -- HydrophobicStub is integer-valued, so this is not hypothetical."""
+    cal = _cal()
+    cal._ensure("X")
+    r = cal.percent_rank("X", cal._bg["X"][-1] + 100.0)
+    assert 0.0 < r <= 100.0 / len(cal._bg["X"])

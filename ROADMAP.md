@@ -1226,21 +1226,41 @@ NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2)
 - **`from_records`' `weight` field is inert in production.** It reads `float(r.get("weight", 1.0))`, but neither pmhc table has a `weight` column and `n_references` (shortlist only) is read by nothing — so every shipped ligand is weight 1.0 and the weighting above is carried by row *count*. `bench_diffusion.py --weighted` is the only caller that ever sets it. The knob looks live and is not.
 - **Out-of-range peptides are admitted but mostly quarantined.** `_DEFAULT_LENGTHS` is a background/scan-window convention, not an ingest filter, so `from_pmhc` admits 109,304 MHC-I rows (10.5%) outside 8–11 (37,327 12-mers, 17,914 13-mers, and absurdities down to a length-2 "epitope") and 56,934 MHC-II rows (17.7%) outside 13–18. Too-short peptides are already inert — `anchor_preferences` skips them via the `mhc1_positions`/`resolve_anchor_index` `None` guard, as do the register-EM and the offset prior. Long ones (a 15-mer labelled MHCI resolves all five end-anchors) land in their own bucket under `length_motifs=True` and so cannot pollute the 8–11 motifs directly — but they *can* reach rare alleles through `_dist_len`'s backoff to the pooled counter. Second-order; unmeasured.
 
-- **`calibrate.random_peptides(length_bg="uniform")` is still unwired.** It exists and its docstring calls it the right null for MHC-I now that the MHC-I score carries a length prior, but both production call sites (`store.py`, `predict.py`) still construct `RankCalibrator` with the default `length_bg="corpus"`, so MHC-I's `%rank` marginalises over the corpus length mix rather than a length-neutral one. Unrelated to the gate above (that is a different mechanism); `"corpus"` remains correct for MHC-II.
+- **`calibrate.random_peptides(length_bg="uniform")` is still unwired, and measurement says leave it that way.** It exists and its docstring calls it the right null for MHC-I, but both production call sites (`store.py`, `predict.py`) construct `RankCalibrator` with the default `length_bg="corpus"`. The docstring's argument is that a corpus-mixture null deletes the length signal; measured on NCI, the opposite holds. Under the shipped `"corpus"` null `presentation` already carries a near-netMHCpan length prior — `L8 0.48 / L9 3.25 / L10 0.81 / L11 0.46 / L12 0.19` of each length in the pooled top 1%, an L9-vs-L12 selectivity of 16.7× against netMHCpan's 26.0× — precisely *because* a 9-mer-heavy null makes long peptides rank worse. A uniform null would weaken it. **Do not act on the docstring; correct it.** `"corpus"` remains correct for MHC-II for the original reason.
 
-- **The MHC-I Potts affinity score is length-blind (Defect 1) — open.** Every slot index is taken from
-  one end or the other (`{0..4} ∪ {L-4..L-1}`), so nothing in the energy depends on `len(peptide)`:
-  `SLYNTGATL` and `SLYNTAAAGATL` score **bit-identically**. The legacy `AffinityModel` this head
-  replaced carried length one-hots; the Potts rewrite dropped them. The effect is real on the affinity
-  target — within-allele, an 8-mer binds **5.5×** weaker than a 9-mer (Δln IC50 +1.702, worse in 11/13
-  alleles), a 10-mer 1.5×, an 11-mer 2.2×. **But per-length intercepts are measured null** on per-allele
-  Spearman, because the large effects live at 8/11-mers = 5.6% of the corpus and the dominant 9-vs-10
-  contrast is only 0.13 SD of within-allele IC50 spread. The recorded **+0.059 AUROC** is the *NCI
-  immunogenicity ranking* task (near-uniform candidate lengths, 61.8% 9-mer positives) — a different
-  question. **Fix it for the ranking path**, minding the recorded composition trap (add
-  `length_logodds` *after* ranking; inside the calibrator's background it normalises straight back out,
-  0.912 vs 0.921). Slots `{0..4} ∪ {L-4..L-1}` also silently discard the middle of 10–12mers, which a
-  length term does not fix. `bench/results/{potts_mhc1_encoding_defects,potts_encoding_ablation}.md`.
+- **The MHC-I Potts affinity score was length-blind (Defect 1) — fixed 2026-08-28.** Every slot index
+  is taken from one end or the other (`{0..4} ∪ {L-4..L-1}`), so nothing in the energy depended on
+  `len(peptide)`: `SLYNTGATL` and `SLYNTAAAGATL` scored **bit-identically**. The legacy `AffinityModel`
+  this head replaced carried length one-hots; the Potts rewrite dropped them. `PottsAffinity.predict_y`
+  now adds `AnchorModel.length_logodds(L, allele) / ln(50000)` — the per-allele, kernel-shrunk term the
+  presentation head already carried, converted from nats into the log50k scale. No weight is fitted and
+  `affinity_potts_mhc1.npz` does not move; `Store.affinity_model` builds the MHC-I oracle at
+  proteome/adaptive, which the predict path had already built and cached. MHC-II is untouched, since
+  its core is a located 9-mer slice.
+
+  Measured on the NCI exome scan (420,786 candidates, 104 immunogenic): `binder` 0.9762 → **0.9829**,
+  i.e. Δ vs netMHCpan-4.2 −0.0062 [−0.0108, −0.0014] → **+0.0005** [−0.0029, +0.0041], and `score`
+  0.9708 → **0.9777**, Δ −0.0116 [−0.0270, −0.0010] → −0.0047 [−0.0206, +0.0056]. Both intervals
+  excluded zero before and include it now, which closes `issues.md` §1c. PPV@100 for `score` goes
+  0.070 → 0.140. It costs on the two nominated shortlists — HiTIDE `score` 0.7346 → 0.7130, TESLA flat —
+  and the mechanism is recorded beside the number: a 9-mer prior is worth what a screen's own 9-mer
+  enrichment is worth, and HiTIDE's positives are 9-mer *depleted* (46.3% of positives against a 62.8%
+  pool) because netMHCpan nominated the pool. `bench/results/binding_length_prior.md`.
+
+  **The composition trap below does not apply to the shipped null, and this run is the evidence.**
+  The prior was added *inside* the scorer handed to `RankCalibrator` — exactly what the trap warns
+  against — and it demonstrably survives: `binder`'s share of the pooled top 1% goes
+  `L8 0.27 / L9 2.39 / L10 1.00 / L11 0.83 / L12 0.55` to `0.13 / 3.82 / 0.75 / 0.40 / 0.11`, an
+  L9-vs-L12 selectivity of 4.4× → **33.7×** against netMHCpan's 26.0×. It cancels only against a
+  null that is length-matched to the query, and the shipped null is not: `length_bg="corpus"` draws
+  a ~61% 9-mer background, so every background peptide shifts by roughly the *9-mer* factor while
+  each query shifts by its own, and the prior survives as the difference. The recorded 0.912-vs-0.921
+  regression was measured on the affinity %rank alone under a different composition and is not
+  reproduced here. `percent_rank(length=)` — the per-length null, used only by the MHC-II binder
+  gate — is where the trap would bite.
+
+  Still true and still unfixed: slots `{0..4} ∪ {L-4..L-1}` silently discard the middle of 10–12mers,
+  which a length term does not fix. `bench/results/{potts_mhc1_encoding_defects,potts_encoding_ablation}.md`.
 
 - **The Potts head is a supervised ridge, not a DCA fit — the name overclaims.** It is penalized least
   squares on one-hot pair features against a scalar label: no partition function, no pseudo-likelihood,
