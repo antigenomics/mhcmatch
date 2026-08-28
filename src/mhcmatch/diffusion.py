@@ -933,11 +933,22 @@ class AnchorModel:
         length-matched decoys, the top quartile loses 0.09-0.18 AUROC against the best bin at
         A*02:01, B*07:02 and B*27:05.
 
-        **This is the SD of the estimator, not of the biology.** It says how well the panel pins this
-        score down; it does not know that an allele's ligands were all measured in one assay, and it
-        cannot see model misspecification. Use it to rank confidence and to build a coverage curve
-        (retain the most confident fraction, report the metric there), not as a fitted weight -- the
-        moment it acquires a coefficient it stops being a posterior and starts being a hyperparameter.
+        **This is the SD of the estimator, not of the biology, and not of discriminability.** It says
+        how well the panel pins this score down. It does not know that an allele's ligands were all
+        measured in one assay, and it cannot see model misspecification.
+
+        **So do not select on it.** Measured as a coverage curve on per-pMHC held-out ligands vs 19:1
+        length-matched decoys (`bench/results/sd_coverage.md`), keeping the lowest-SD fraction makes
+        AUROC *worse*, monotonically: pooled 0.9921 at full coverage to 0.9847 at 25%, and the same
+        direction in all three rarity strata. The mechanism is that SD is low wherever theta is high
+        at the peptide's anchor residues -- which is equally true of a decoy carrying canonical anchor
+        residues, i.e. of the hardest negatives. Low SD selects confidently-estimated *hard* cases,
+        not easy ones.
+
+        What it is for is reporting: an allele-level and query-level statement of how much of this
+        score is borrowed, so a rare-allele call can be shown as provisional. Never fit a weight on
+        it -- the moment it acquires a coefficient it stops being a posterior and becomes a
+        hyperparameter.
 
         For MHC-II this is evaluated at the best register rather than marginalised over registers,
         matching :meth:`anchor_terms` and not :meth:`score`.

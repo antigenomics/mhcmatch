@@ -449,10 +449,11 @@ class BinderScore:
     the panel pins this score down, and it cannot see model misspecification or an allele whose
     ligands all came from one assay.
 
-    Rank confidence with it, or build a coverage curve -- keep the most confident fraction and report
-    the metric there. Do not fit a weight on it; the moment it has a coefficient it stops being a
-    posterior. Across 107 human class-I alleles it runs 0.032 nats (A*02:01, 115,408 ligands) to 6.07
-    (n=2), Spearman -0.945 against log ligand count.
+    Report it; do not select on it. Across 107 human class-I alleles it runs 0.032 nats (A*02:01,
+    115,408 ligands) to 6.07 (n=2), Spearman -0.945 against log ligand count -- so it says cleanly
+    how provisional a rare-allele call is. But keeping the lowest-SD fraction makes AUROC *worse*
+    (`bench/results/sd_coverage.md`), because low SD also picks out decoys with canonical anchor
+    residues. See :meth:`AnchorModel.score_sd`.
     """
 
 
