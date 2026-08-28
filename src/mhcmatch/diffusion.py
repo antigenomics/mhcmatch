@@ -91,6 +91,18 @@ def load_markov1():
             for f in (ln.split("\t") for ln in lines[1:])}
 
 
+#: Anticore flank positions: distances 1, 2, 3 from the core edge, then one shared tail for >=4.
+#: The measured signal is not monotone in distance -- the N side peaks at 2 (0.099 bits) rather than
+#: at the residue adjacent to the core -- so the near positions stay separate and only the far tail
+#: is pooled. `bench/results/mhc2_anticore.md`.
+_ANTICORE_DIST = (1, 2, 3, 4)
+#: Alleles at or above this normalised register-prior entropy are excluded from the anticore fit:
+#: their own frame assignments are what the anticore exists to repair. The split is measured in
+#: `bench/results/mhc2_register_deficit.md`.
+_ANTICORE_MAX_H = 0.85
+_AA20 = "ACDEFGHIKLMNPQRSTVWY"
+
+
 class AnchorModel:
     """Per-allele anchor presentation model with optional cross-allele diffusion.
 
@@ -100,7 +112,14 @@ class AnchorModel:
     False; the kernel bandwidth ``h`` controls how much rare alleles borrow.
     """
 
-    def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0,
+    #: Class-level so an :class:`AnchorModel` **unpickled** from a vendored model serialised before
+    #: the anticore existed still answers "off" -- ``__init__`` does not run on unpickle, and
+    #: ``_register_logprior`` reads this on every class-II score. Without it every shipped
+    #: ``anchor_model_mhc2_*.pkl.gz`` raises ``AttributeError`` on first use.
+    anticore = None
+    anticore_w = 0.0
+
+    def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0, anticore=0.0,
                  learn_weights=True, prune_dpi=False, weights="learned",
                  register_em=2, footprint="anchor", rare_max=30, background="ligand",
                  length_prior="score", length_motifs=True, register="marginal", n_motifs=3,
@@ -217,6 +236,11 @@ class AnchorModel:
         self._frame_cache = {}
         self._frames = {}
         self._em_passes = 0
+        # Declared before the register EM runs, because it scores frames. Stays None through the
+        # whole fit: the anticore is learned *from* the registers the EM settles on, so it cannot
+        # be in the loop that produces them.
+        self.anticore_w = float(anticore)
+        self.anticore = None
         # tau is fit on the *final* prefs below; the register EM bootstraps on the scalar.
         self._tau = None
         # lengths and core offsets are not residue distributions, so a per-residue-position tau is
@@ -236,6 +260,10 @@ class AnchorModel:
         if cls == "mhc2" and n_motifs > 1:  # needs the offset prior: the E-step scores the marginal
             self._refit_mixture(store)
         self._add_pseudocounts(pseudocount, pseudo_matrix)  # last: all the above fits raw counts
+        # Fit from the registers the model has just settled on, so it goes after every fit that
+        # can still move a frame assignment.
+        if cls == "mhc2" and self.anticore_w:
+            self._fit_anticore(store)
 
     def _add_pseudocounts(self, beta, matrix="blosum62"):
         """Mass-preserving BLOSUM substitution pseudocount on every residue counter (Nielsen et al. 2004,
@@ -545,7 +573,7 @@ class AnchorModel:
         ``k=None`` is the pooled single-PWM marginal, i.e. exactly what :meth:`score` computed before
         motif mixtures existed."""
         terms = [f + p for f, p in zip(self._frame_scores(peptide, allele, raw, eps, k),
-                                       self._offset_logprior(allele, len(peptide)))]
+                                       self._register_logprior(peptide, allele))]
         m = max(terms)
         return m + math.log(sum(math.exp(t - m) for t in terms))
 
@@ -691,6 +719,118 @@ class AnchorModel:
                 prior_strength=self._tau_scalar)
         th = self._len_cache[allele]
         return math.log((th.get(length, 0.0) + eps) / (self._len_bg + eps))
+
+    def _fit_anticore(self, store):
+        """Pooled N-/C-side flank PWMs, indexed by distance from the core edge (MHC-II).
+
+        :meth:`_frame_scores` sums the anchor positions of a frame and ignores the other ``L-9``
+        residues, so two frames are compared on **different subsets of the peptide**. It is not a
+        likelihood over the ligand, which is why it can say which 9-mer looks most core-like and not
+        where the core *ends*. This models the outside as well; the background then covers the whole
+        peptide for every frame and cancels in the argmax, leaving a comparison of PWMs in which
+        sliding the frame swaps which model owns which residue.
+
+        Pooled over alleles by construction -- trimming is a property of the proteolytic machinery,
+        not the groove, and per-allele context PWMs sit within JSD 0.003-0.010 of the pooled one
+        (:class:`mhcmatch.ligand.SpanModel`). That is what makes it useful: it carries full strength
+        on an allele whose own motif is too blurred to place a core. Measured out-of-sample, fit on
+        DR and applied to alleles it never saw, it places the DP-A1*02 core 0.221 of the time against
+        the shipped model's 0.019 (``bench/results/mhc2_anticore.md``).
+
+        Fit only on alleles whose register prior is peaked (:meth:`register_entropy` below
+        :data:`_ANTICORE_MAX_H`) -- the assignments the model is entitled to believe. Feeding it the
+        flat-prior alleles would teach it their own mistakes.
+        """
+        from collections import Counter
+        panel = store._panel[self.cls]
+        keep = {}
+        for a in set(panel.alleles):
+            keep[a] = self.register_entropy(a) < _ANTICORE_MAX_H
+        cnt = {side: {d: Counter() for d in _ANTICORE_DIST} for side in "NC"}
+        bg = Counter()
+        for ep, a in zip(panel.epitopes, panel.alleles):
+            if len(ep) < 11 or not keep.get(a):
+                continue
+            st, _ = self.best_register(ep, a)
+            if st < 0:
+                continue
+            bg.update(ep)
+            for i in range(st):
+                cnt["N"][min(st - i, _ANTICORE_DIST[-1])][ep[i]] += 1
+            for i in range(st + 9, len(ep)):
+                cnt["C"][min(i - st - 8, _ANTICORE_DIST[-1])][ep[i]] += 1
+        tot = sum(bg.values())
+        if not tot:
+            self.anticore = None
+            return
+        self.anticore = {}
+        for side in "NC":
+            self.anticore[side] = {}
+            for d in _ANTICORE_DIST:
+                c, n = cnt[side][d], sum(cnt[side][d].values())
+                if not n:
+                    self.anticore[side][d] = {}
+                    continue
+                self.anticore[side][d] = {
+                    r: math.log(((c[r] + 0.5) / (n + 0.5 * len(_AA20))) / max(bg[r] / tot, 1e-9))
+                    for r in _AA20}
+        self._frame_cache = {}
+
+    def _register_logprior(self, peptide, allele):
+        """``log P(frame start | peptide, length, allele)`` -- the offset prior, anticore-tilted.
+
+        Without the anticore this is :meth:`_offset_logprior` unchanged, so the default path is the
+        pre-anticore code. With it, each frame's prior is tilted by the flank log-odds of the
+        residues that frame leaves *outside* the core, and the result is **renormalised over
+        frames**.
+
+        Renormalising is the whole design. The anticore is evidence about *where* the core sits, not
+        about whether the peptide binds, so it must redistribute weight between registers and must
+        not change the peptide's total score. Adding it to :meth:`_frame_scores` instead -- which is
+        what the first implementation did -- lets a term worth ~0.2 bits per position, weighted to
+        compete with the motif, dominate the score itself: measured, that cost the class-II
+        screening benchmark 0.836 -> 0.607 frequent AUROC. Here it cannot, by construction.
+        """
+        lp = self._offset_logprior(allele, len(peptide))
+        if not self.anticore or len(lp) < 2:
+            return lp
+        t = [x + self.anticore_w * self._anticore_score(peptide, r) for r, x in enumerate(lp)]
+        m = max(t)
+        z = m + math.log(sum(math.exp(x - m) for x in t))
+        return [x - z for x in t]
+
+    def _anticore_score(self, peptide, st):
+        """Flank log-odds of the residues **outside** the frame starting at ``st``. 0.0 when off."""
+        if not self.anticore:
+            return 0.0
+        tot = 0.0
+        far = _ANTICORE_DIST[-1]
+        for i in range(st):
+            tot += self.anticore["N"][min(st - i, far)].get(peptide[i], 0.0)
+        for i in range(st + 9, len(peptide)):
+            tot += self.anticore["C"][min(i - st - 8, far)].get(peptide[i], 0.0)
+        return tot
+
+    def register_entropy(self, allele, length=15):
+        """Normalised entropy ``H/Hmax`` of the fitted core-offset prior, in ``[0, 1]``.
+
+        A pure function of the fitted model -- no rival, no labels -- and a usable health check: it
+        tracks agreement with NetMHCIIpan's own ``Core`` at Spearman **-0.885** and the class-II
+        AUROC gap at **-0.703**. Alleles below 0.85 average +0.0094 of AUROC against NetMHCIIpan and
+        those at or above it **-0.1208** (``bench/results/mhc2_register_deficit.md``). A near-uniform
+        value means the register EM never locked on for this allele and its core placement should
+        not be trusted, whatever the score says.
+
+        Returns 0.0 for MHC-I, which is end-anchored and has no register to be uncertain about.
+        """
+        if self.cls != "mhc2":
+            return 0.0
+        lp = self._offset_logprior(allele, length)
+        if len(lp) < 2:
+            return 0.0
+        # Clamped: a perfectly uniform prior lands at 1.0000000000000002 in floating point, and the
+        # value is documented as a fraction of the maximum.
+        return min(1.0, -sum(math.exp(x) * x for x in lp) / math.log(len(lp)))
 
     def _score_mask(self, allele):
         """Position subset for ``allele`` under the adaptive footprint (None = all positions)."""
@@ -850,6 +990,12 @@ class AnchorModel:
             if len(peptide) < 9:
                 return -1, float("-inf")
             fs = self._frame_scores(peptide, allele, raw, eps)
+            if self.anticore:
+                # The anticore picks the register; the motif still supplies the score at it. Same
+                # separation as `_register_logprior`, and the returned value is unchanged by it.
+                lp = self._register_logprior(peptide, allele)
+                r = max(range(len(fs)), key=lambda i: fs[i] + lp[i])
+                return r, fs[r]
             best = max(fs)
             return fs.index(best), best                   # leftmost wins ties, as max() did
         from .store import mhc1_positions

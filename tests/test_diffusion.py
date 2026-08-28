@@ -78,3 +78,82 @@ def test_score_sd_is_nan_when_the_peptide_cannot_be_scored():
     st = Store.from_pmhc(tier="shortlist", species="human", classes=("mhc1",))
     m = st.anchor_model("mhc1", footprint="adaptive", background="proteome")
     assert math.isnan(m.score_sd("AC", "HLA-A*02:01"))
+
+
+# -- the anticore: the residues outside the core, and the health check that goes with it ------
+
+@pytest.mark.hfdata
+def test_anticore_is_bit_identical_when_off():
+    """``anticore=0`` (the default) must leave every class-II score unchanged, to the last bit.
+
+    This is what makes the parameter safe to carry: it is measured to be **neutral** on the
+    benchmark at w=1 and regressive above it (`bench/results/mhc2_anticore.md`), so it ships off,
+    and "off" has to mean off. The first implementation put the term in ``_frame_scores`` -- i.e.
+    into the *score* -- and at w=30 that cost the class-II screening benchmark 0.836 -> 0.607
+    frequent AUROC. It is now a tilt on the register prior, renormalised over frames, so it can
+    only move weight between registers and never the peptide's total.
+    """
+    from mhcmatch import Store
+    st = Store.from_pmhc(tier="shortlist", classes=("mhc2",))
+    off = st.anchor_model("mhc2", n_motifs=1, register_em=0)
+    on = st.anchor_model("mhc2", n_motifs=1, register_em=0, anticore=0.0)
+    assert off.anticore is None and on.anticore is None
+    peps = ["PKYVKQNTLKLATGM", "AAKGVAAWSAGTFRQ", "GELIGILNAAKVPAD"]
+    a = sorted(off.prefs[off.anchors[0]])[0]
+    for p in peps:
+        assert off.score(p, a) == on.score(p, a), p
+
+
+@pytest.mark.hfdata
+def test_anticore_moves_the_register_and_not_the_marginal_scale():
+    """With the anticore on, the register can move; the score stays on the same scale.
+
+    The renormalisation is the contract: ``_register_logprior`` is a proper log-probability over
+    frames whether or not the anticore is on, so turning it on cannot inflate a peptide's score the
+    way an additive score term does.
+    """
+    import math
+    from mhcmatch import Store
+    st = Store.from_pmhc(tier="shortlist", classes=("mhc2",))
+    on = st.anchor_model("mhc2", n_motifs=1, register_em=0, anticore=10.0)
+    assert on.anticore, "a non-zero weight must fit the flank tables"
+    a = sorted(on.prefs[on.anchors[0]])[0]
+    for p in ("PKYVKQNTLKLATGM", "AAKGVAAWSAGTFRQ"):
+        lp = on._register_logprior(p, a)
+        assert abs(sum(math.exp(x) for x in lp) - 1.0) < 1e-9, "register prior must normalise"
+
+
+@pytest.mark.hfdata
+def test_register_entropy_separates_learned_from_unlearned_alleles():
+    """The class-II health check: a near-uniform register prior means the EM never locked on.
+
+    Measured in `bench/results/mhc2_register_deficit.md`: normalised entropy tracks agreement with
+    NetMHCIIpan's own ``Core`` at Spearman -0.885 and the AUROC gap at -0.703, with alleles below
+    0.85 averaging +0.0094 against NetMHCIIpan and those at or above it -0.1208. It is a pure
+    function of the fitted model -- no rival, no labels -- so `mhcmatch` can say "register not
+    learned" at predict time instead of returning a number worth -0.12 AUROC in silence.
+    """
+    from mhcmatch import Store
+    st = Store.from_pmhc(tier="full", classes=("mhc2",))
+    am = st.anchor_model("mhc2", footprint="adaptive", background="proteome")
+    for a in sorted(am.prefs[am.anchors[0]]):
+        assert 0.0 <= am.register_entropy(a) <= 1.0, a
+    # DR is the group whose registers agree with NetMHCIIpan 0.797 of the time; DPA1*02 is the
+    # group that agrees 0.049 of the time. The entropy must order them that way.
+    dr = am.register_entropy("DRB1_0101")
+    dp = am.register_entropy("HLA-DPA10201-DPB10501")
+    assert dr < dp, f"DRB1*01:01 H={dr:.3f} should be below DPA1*02:01-DPB1*05:01 H={dp:.3f}"
+    assert st.anchor_model("mhc1").register_entropy("HLA-A*02:01") == 0.0, "MHC-I has no register"
+
+
+def test_a_model_pickled_before_the_anticore_still_scores():
+    """An `AnchorModel` unpickled from a pre-anticore artifact must answer "off", not raise.
+
+    `__init__` does not run on unpickle, so an instance restored from any of the three shipped
+    `anchor_model_*.pkl.gz` has no `anticore` attribute at all -- and `_register_logprior` reads it
+    on every class-II score. Caught by `test_vendored_models_load_and_are_current`; the fix is a
+    class-level default, and this pins it directly by simulating the old shape.
+    """
+    from mhcmatch.diffusion import AnchorModel
+    old = AnchorModel.__new__(AnchorModel)           # exactly what pickle.loads produces
+    assert old.anticore is None and old.anticore_w == 0.0
