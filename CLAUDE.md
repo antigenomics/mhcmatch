@@ -7,11 +7,22 @@
   it belongs to; `issues_major.md` beside it holds the decisions that are the author's, and
   `issues_minor.md` the repairs already applied.
 
-**The shipped scorer is artifact version 9 in library 1.3.0** — nine fitted terms, `binder` as the
+**The shipped scorer is artifact version 10 in library 1.4.0** — nine fitted terms, `binder` as the
 fitted presentation term (`issues_major.md` M1 and M12, both taken by the author on 2026-08-25). Its
-own `verdict` block reads `"ship": false`, which is worth knowing before quoting it. Do not replace
+own `verdict` block reads `"ship": false`, which is worth knowing before quoting it: v10 was shipped
+on the author's word on 2026-08-28 *against* that bar, over two thin regressions (IEDB_neoag and
+ITSNdb, the latter near chance under v9 too). Do not replace
 `src/mhcmatch/data/aggregate_mhc1.json` without the author's word: it moves every number in the
-manuscript, and `build --check` cannot see that it changed.
+manuscript, and `build --check` cannot see that it changed — but
+`test_the_shipped_artifact_is_pinned_to_the_fit_that_produced_it` now can, by digesting
+`(coef, mu, sigma)`.
+
+**A cache key of pure data cannot see a code change.** `predict.SCORER_EPOCH` is a hand-moved int in
+the calibration-cache fingerprint, because 1.3.0 changed two scoring heads inside one released
+version and the on-disk backgrounds cached before the change kept being served after it — which
+silently moved a pinned test by 3.7x before it was caught. Bump it whenever the scoring code changes
+what a head returns, and use a fresh `MHCMATCH_CALIBRATION_CACHE` for any run meant to *establish* a
+number rather than iterate. `bench/results/calibration_cache_stale.md` has the measurement.
 
 This file captures only *how we work in the repo*.
 
@@ -175,7 +186,7 @@ mhcmatch build corpus -v    # one target, with per-step wall clock
   `** MOVED **` for any cell that changed, and the anchor rebuild is checked against the previous
   file. Bump-only rebuilds have measured max |new − old| = 0.
 - **Two version vocabularies, told apart by the shape of the value, not by the file extension.**
-  A **model** version is an `int` — EPIC is `9`, the recognition heads are `2`, mimicry is `1`; a
+  A **model** version is an `int` — EPIC is `10`, the recognition heads are `2`, mimicry is `1`; a
   **package** version is dotted (`0.26.0`). `--check` compares the dotted ones to `__version__` and
   presence-checks the rest. Comparing a model version to a package version is a category error that
   reports every head stale at every release, which is why `.json` was once blanket-exempted — and
