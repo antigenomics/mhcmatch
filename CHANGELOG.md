@@ -29,6 +29,27 @@ versioning is [SemVer](https://semver.org).
   heavy atoms against P4's 31.3. Pinning component *k* to family *F_k* also fixes the label-switching
   that currently stops mixture components being kernel-shrunk across alleles.
 
+- `AnchorModel(register_em="converge-frequent")` -- `"converge"` plus an allele-frequency gate, from
+  the corpus ligand count already in the panel and the `rare_max = 30` threshold the model already
+  carries. **Ships off**; `register_em` stays at the shipped `2` and no vendored model is rebuilt.
+
+  The gate is on the mixture and the pooled ligand null, not on the pass count, because that is
+  where convergence actually reaches a thin allele. Measured on the 65-allele class-II shortlist
+  (`bench/results/mhc2_register_frequency_gate.md`): under `"converge"` a rare allele's own register
+  never moves -- 0 of 187 rare training frames and 0 of 225 raw count cells change against
+  `register_em=2` -- yet 567 of 675 of its mixture cells do, and restoring the pre-convergence
+  background cuts its score movement from 0.2195 to 0.0417 nats, i.e. 81% of the magnitude is the
+  null `_refit_registers` re-pools over every allele's frames each pass.
+
+  Held-out alleles fall back to the pooled single-PWM motif through `_dist`'s existing `n_k = 0`
+  identity, so there is no new scoring path. Against ungated `"converge"` the gate is a strict
+  improvement -- screening rare AUROC 0.870 -> 0.877, screening medium PPV@P 0.461 -> 0.475,
+  allele-specificity medium PPV@P 0.446 -> 0.460 -- with the frequent gain preserved to the digit
+  (screening AUROC/AUPRC/PPV@P 0.933 / 0.667 / 0.619). It does **not** restore the rare stratum on
+  the allele-specificity arm (AUPRC 0.486 against the shipped 0.528): a null shift is common to an
+  allele's own positives and decoys, so it cancels in the ranking.
+
+
 ## [1.3.0] --- 2026-08-27
 
 ### Added

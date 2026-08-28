@@ -56,6 +56,10 @@ _TAU_MIN_N, _TAU_MIN_ALLELES = 200, 3
 # Runaway backstop for register_em="converge" -- not a tuned value: the panel converges far below it
 # (measured: every human MHC-II allele is frozen by pass ~30, most by pass 2).
 _EM_CAP = 64
+# Passes a rare allele (<= ``rare_max`` ligands) gets under register_em="converge-frequent" before it
+# is frozen. 2 is the shipped ``register_em``, so a rare allele lands on exactly the register the
+# shipped model gives it -- the gate buys the frequent gain and leaves the rare stratum where it was.
+_EM_FLOOR = 2
 
 # Dirichlet pseudo-count per motif component, and the number of mixture-EM passes
 # (see AnchorModel._refit_mixture). ponytail: fixed until n_motifs>1 is measured to be worth a knob.
@@ -125,6 +129,13 @@ class AnchorModel:
     #: run on unpickle and ``_frame_scores`` reads this on every class-II score.
     _mix_mask = None
 
+    #: Frequency-gate state (``register_em="converge-frequent"``), class-level for the same reason:
+    #: ``_bg_prob`` reads these on every ligand-background score and ``__init__`` does not run on
+    #: unpickle. ``None``/empty is "no gate", which is every model built before it existed.
+    _bg_hold = None
+    _nbg_hold = None
+    _mix_hold = frozenset()
+
     def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0, anticore=0.0,
                  learn_weights=True, prune_dpi=False, weights="learned",
                  register_em=2, footprint="anchor", rare_max=30, background="ligand",
@@ -144,6 +155,18 @@ class AnchorModel:
         :meth:`_converge_registers`. No global pass count is right for every allele: HLA-DP is still
         improving at 32 passes while the rare stratum is done by 8, so ``2`` is an early stop that
         flatters rare rather than a correct value.
+
+        ``"converge-frequent"`` is ``"converge"`` plus an allele-frequency gate on the *mixture*, and
+        the gate is there because that is where convergence actually reaches a thin allele. Measured
+        on the 65-allele class-II shortlist: under ``"converge"`` a rare allele's own register never
+        moves (0 of 187 rare training frames, 0 of 225 raw count cells change against ``2`` -- thin
+        alleles reach their fixed point inside the first two passes and freeze), yet **567 of 675 of
+        their mixture cells do**, because :meth:`_refit_mixture` re-searches every peptide's
+        per-component frame afterwards using the converged model. So the frequency gate holds alleles
+        at or below ``rare_max`` out of the component refit; :meth:`_dist`'s ``n_k = 0`` backoff then
+        returns the pooled single-PWM motif for them *identically*, with no new code path. Fitting
+        ``n_motifs`` components on 30 ligands is the same overfit the adaptive footprint already
+        guards against for MHC-I.
 
         ``length_prior`` (MHC-I only) adds the per-allele ligand-length factor the anchor log-odds is
         structurally blind to -- see :meth:`length_logodds`. ``"score"`` (default) folds it into
@@ -291,6 +314,8 @@ class AnchorModel:
         if cls == "mhc2":
             if register_em == "converge":
                 self._converge_registers(store)
+            elif register_em == "converge-frequent":
+                self._converge_registers(store, floor=_EM_FLOOR)
             else:
                 for _ in range(register_em):
                     self._refit_registers(store)   # also tallies offset_prefs, free (same sweep)
@@ -300,7 +325,7 @@ class AnchorModel:
             self._smooth_offset_prior()
         self._tau = self._fit_tau() if prior_strength == "auto" else None
         if cls == "mhc2" and (n_motifs > 1 or self._mix_mask):  # E-step scores the register marginal
-            self._refit_mixture(store)
+            self._refit_mixture(store, hold=self._mix_hold)
         self._add_pseudocounts(pseudocount, pseudo_matrix)  # last: all the above fits raw counts
         # Fit from the registers the model has just settled on, so it goes after every fit that
         # can still move a frame assignment.
@@ -518,7 +543,7 @@ class AnchorModel:
         """``τ`` for anchor ``j`` -- per-position (``prior_strength="auto"``) or the global scalar."""
         return self._tau[j] if self._tau else self._tau_scalar
 
-    def _converge_registers(self, store, cap=_EM_CAP):
+    def _converge_registers(self, store, cap=_EM_CAP, floor=0):
         """Run the register EM to convergence **per allele** (MHC-II) instead of a fixed global count.
 
         A fixed ``register_em=N`` gives a 6,800-ligand DP allele and a 5-ligand DRB the same N passes,
@@ -538,20 +563,30 @@ class AnchorModel:
         Cheaper than the equivalent global count, not dearer: frozen alleles skip the frame search, and
         the alleles that iterate longest are a minority of the panel.
 
+        ``floor``: with a non-zero floor, alleles at or below ``rare_max`` ligands are additionally
+        frozen from that pass on and returned, for :meth:`_refit_mixture` to hold out. ``floor=0``
+        (plain ``"converge"``) freezes nothing by count and returns the empty set.
+
         ponytail: an allele is frozen for good on its first stable pass. It could in principle
         un-converge when a groove neighbour moves, since ``_dist`` mixes in the neighbour mean -- but
         that term is ``τ/(n+τ)``, i.e. 0.15% for the n=6,768 DP alleles that iterate longest, and the
         thin alleles where it is large converge in one or two passes anyway. Re-check every pass if a
         panel ever shows an allele oscillating.
         """
-        frozen, passes = set(), 0
-        alleles = set(store._panel[self.cls].alleles)
+        counts = Counter(store._panel[self.cls].alleles)
+        alleles, frozen, passes = set(counts), set(), 0
+        held = frozenset(a for a in alleles if counts[a] <= self._rare_max) if floor else frozenset()
         for passes in range(1, cap + 1):
             changed = self._refit_registers(store, frozen=frozen)
+            if passes == floor:                          # the null the held-out alleles keep
+                self._bg_hold, self._nbg_hold = dict(self.bg), dict(self._nbg)
             frozen = alleles - changed
+            if passes >= floor:
+                frozen |= held
             if not changed:
                 break
         self._em_passes = passes
+        self._mix_hold = held
 
     def _refit_registers(self, store, frozen=None):
         """One register-EM pass (MHC-II): re-assign each training peptide to the frame its current
@@ -675,7 +710,7 @@ class AnchorModel:
         self._cache_mix = {}
         self._frame_cache = {}                       # prefs_mix reassigned -> frame scores stale
 
-    def _refit_mixture(self, store, passes=_MIX_PASSES):
+    def _refit_mixture(self, store, passes=_MIX_PASSES, hold=()):
         """Fit ``n_motifs`` motif components per allele by EM over the whole corpus (MHC-II).
 
         The register EM (:meth:`_refit_registers`) already answers *which frame*; this answers *which
@@ -694,24 +729,34 @@ class AnchorModel:
         panel = store._panel[self.cls]
         K = self.n_motifs
         rows = [(ep, a, wt) for ep, a, wt in zip(panel.epitopes, panel.alleles, panel.weights)
-                if len(ep) >= 9]
+                if len(ep) >= 9 and a not in hold]
         resp = [[float(zlib.crc32(ep.encode()) % K == k) for k in range(K)] for ep, _, _ in rows]
         self._m_step(rows, resp)                     # prefs_mix was None -> pooled frames, once
         for _ in range(passes):
             resp = [self._responsibilities(ep, a) for ep, a, _ in rows]
             self._m_step(rows, resp)
 
-    def _bg_prob(self, j, r, prev=None):
+    def _bg_prob(self, j, r, prev=None, allele=None):
         """Null probability of residue ``r`` at anchor ``j``: pooled-ligand marginal (specificity),
         order-0 proteome marginal (presentation), or the order-1 Markov proteome conditional given the
         preceding residue ``prev`` (context-aware presentation; backs off to order-0 for an unseen or
-        missing context). Kept out of ``self.bg`` so register-EM cannot clobber it."""
+        missing context). Kept out of ``self.bg`` so register-EM cannot clobber it.
+
+        ``allele`` is read only under ``background="ligand"`` and only when the frequency gate is on
+        (``register_em="converge-frequent"``): a held-out rare allele keeps the pooled null as it
+        stood at ``_EM_FLOOR`` passes. Measured on the class-II shortlist, **81% of a rare allele's
+        score movement under convergence is this null**, not its own motif -- mean |delta score| over
+        187 rare ligands is 0.2195 nats, and 0.0417 with the pre-convergence background restored.
+        ``self.bg`` is re-pooled over *every* allele's frames on every EM pass, so converging the
+        frequent alleles moves the null every rare allele is scored against."""
         if self.background == "markov":
             if prev and prev in self._markov1:
                 return self._markov1[prev].get(r) or PROTEOME_AA_FREQ.get(r, 1e-4)
             return PROTEOME_AA_FREQ.get(r, 1e-4)
         if self.background == "proteome":
             return PROTEOME_AA_FREQ.get(r, 1e-4)
+        if self._bg_hold is not None and allele in self._mix_hold:
+            return self._bg_hold[j].get(r, 0) / self._nbg_hold[j]
         return self.bg[j].get(r, 0) / self._nbg[j]
 
     def _anchor_logodds(self, residues, allele, raw, eps, mask=None, contexts=None, length=None,
@@ -735,7 +780,7 @@ class AnchorModel:
                 continue
             th = self._dist_len(j, allele, raw, length) if use_len else self._dist(j, allele, raw, k)
             p_a = th.get(r, 0.0)
-            p_bg = self._bg_prob(j, r, contexts[i] if contexts else None)
+            p_bg = self._bg_prob(j, r, contexts[i] if contexts else None, allele)
             s += math.log((p_a + eps) / (p_bg + eps))
         return s
 
@@ -1138,7 +1183,8 @@ class AnchorModel:
                 terms.append(0.0)
                 continue
             th = self._dist(j, allele, raw)
-            terms.append(math.log((th.get(r, 0.0) + eps) / (self._bg_prob(j, r, ctx[i] if ctx else None) + eps)))
+            terms.append(math.log((th.get(r, 0.0) + eps)
+                                  / (self._bg_prob(j, r, ctx[i] if ctx else None, allele) + eps)))
         return terms
 
     def score_sd(self, peptide, allele, raw=False, eps=1e-3):
