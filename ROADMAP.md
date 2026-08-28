@@ -1269,7 +1269,27 @@ NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2)
   which of a sample's six alleles presents a peptide of this length — and cancelling it within a
   length removes that too, degrading the min-over-alleles. One term, two jobs; they do not separate.
 
-- **Class II loses badly on the frequent stratum, and this is now measurable here (2026-08-28, OPEN).**
+- **Class II: the deficit is DP/DQ and it is a register-learning failure (2026-08-28, OPEN, diagnosed).**
+  Full write-up in `bench/results/mhc2_register_deficit.md`; the short version is that **DR is at or
+  above NetMHCIIpan-4.3i parity in every stratum** on allele-specificity (+0.027 rare, +0.011 medium,
+  +0.020 frequent) and the loss is DP (frequent −0.131) and DQ (−0.064 to −0.143). Ruled out by
+  measurement: data volume (the panel is 70.7% DP), over-pooling (`raw=True` ≡ shrunk to four
+  decimals above 1,000 ligands), pseudosequence coverage (`mhcii_pseudo.fa` *is* NetMHCpan's own 34
+  positions), and multi-allele contamination (training on unique-only ligands makes DP **worse**,
+  −0.038). What it is: exact agreement with NetMHCIIpan's `Core` is 0.797 on DR, 0.720 on DP-A1\*01
+  and **0.049 on DP-A1\*02**, and core agreement predicts the deficit (r = +0.697; ≥0.50 agreement
+  averages +0.0066 ΔAUROC, <0.50 averages −0.1180). The mechanism is visible in `_offset_logprior`:
+  every working allele's register prior is sharply peaked on frames 3–4, every failing one is
+  near-uniform, and the pairs are too far apart in pseudosequence (distance 5–8, kernel 0.04–0.21)
+  for this to be borrowing. **It self-diagnoses** — normalised register-prior entropy needs no rival
+  and no labels and has Spearman −0.885 against core agreement, −0.703 against ΔAUROC; below 0.85 the
+  mean Δ is +0.0094, at or above it −0.1208. Four fixes proposed there, cheapest first: ship the
+  entropy as a health check (no modelling risk), restart the EM and keep the peaked solution,
+  initialise from the locus-pooled prior rather than uniform, and fall back to a supertype prior when
+  an allele's own EM stays flat. **Structures cannot adjudicate this**: `tcren`'s Native2026 has 94
+  class-II crystals but only one DP, and it is DPA1\*01 — the group that already works.
+
+- **(superseded by the entry above) Class II loses badly on the frequent stratum (2026-08-28).**
   NetMHCIIpan-4.3i is installed (`$NETMHC_ROOT`, wired in `bench/figures/common.sh`), so
   `compare_mhc2_*` runs a real head-to-head for the first time in this checkout. Hard/ligand: rare
   AUROC **+0.029** to us, medium −0.017, frequent **−0.053** (p = 4.3×10⁻⁸), frequent AUPRC −0.124,
