@@ -6,6 +6,32 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [Unreleased]
+
+### Added
+
+- **`AnchorModel(reverse="auto")` -- a per-allele reverse-binding prior learned from the corpus.**
+  A blanket `reverse=p` was measured neutral-to-negative because it pays the reverse channel's cost
+  on every allele to reach a mode most alleles do not have: MixMHC2pred fits a reverse specificity
+  for 2,658 of 3,784 HLA-DP alleles and for **0** of 2,574 DQ, 207 DR and 12 mouse H-2. `"auto"`
+  reads each training ligand both ways under the settled model and shrinks the resulting mass over
+  groove neighbours with the same `tau` as every other per-allele quantity. It reproduces the locus
+  structure unaided -- median `p_a` 0.152 on HLA-DP against 0.025 on DR, and an exact split of the
+  six DPA1\*02:0x panel alleles above all five DPA1\*01:03 ones -- agreeing with MixMHC2pred's
+  independently fitted weights at **Spearman 0.915**. `"auto+em"` additionally re-tallies each
+  ligand into the motif at both readings and refits; `"auto+ctx"` shifts the prior per peptide from
+  the six intra-ligand context positions; `"0+em"` is the diagnostic that pins the prior to zero and
+  keeps only the extra fit round. **Ships off** -- `reverse=0.0` is bit-identical and absent from
+  every vendored params key. `bench/results/mhc2_reverse_per_allele.md`, `mhc2_reverse_context.md`.
+- **`Store.anchor_model(route={...})` -- two fitted models, dispatched by allele frequency.** The
+  class-II rare and frequent optima are incompatible inside one fit: gating every channel a rare
+  allele borrows recovers about half the rare loss, because the rare optimum needs the *donors*
+  under-converged. Routing composes them with no loss on either side -- screening rare AUPRC
+  **0.689** and frequent AUPRC **0.668** / PPV@P **0.629** in one run, each equal to the better
+  single fit to the digit, with the rare stratum beating NetMHCIIpan-4.3i on all three metrics.
+  **Ships off** (`route=None`); `route` never enters a params key, so all 27 vendored models keep
+  matching. `bench/results/mhc2_frequency_routing.md`.
+
 ## [1.5.0] - 2026-08-28
 
 ### Changed

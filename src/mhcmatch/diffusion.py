@@ -63,6 +63,12 @@ _EM_FLOOR = 2
 
 # Dirichlet pseudo-count per motif component, and the number of mixture-EM passes
 # (see AnchorModel._refit_mixture). ponytail: fixed until n_motifs>1 is measured to be worth a knob.
+# |log-odds difference| past which sigma() is 0 or 1 to double precision anyway; math.exp
+# overflows near 710.
+_LOGIT_CAP = 700.0
+#: The six intra-ligand context positions, in `mhcmatch.ligand.LIGAND_KEYS` order. Restated
+#: here so `score` does not import per call; asserted equal in the tests.
+_CTX_POS = ("ligN+1", "ligN+2", "ligN+3", "ligC-3", "ligC-2", "ligC-1")
 _MIX_ALPHA = 1.0
 _MIX_PASSES = 3
 
@@ -141,6 +147,16 @@ class AnchorModel:
     #: Prior mass on the **reverse** (C-to-N) reading of a class-II peptide; 0.0 is off and
     #: bit-identical. Class-level because ``score`` reads it and ``__init__`` does not run on unpickle.
     reverse = 0.0
+
+    #: ``{allele: p_a}`` learned by :meth:`_fit_reverse` (``reverse="auto"``), overriding the scalar
+    #: :attr:`reverse` per allele. ``None`` is "no per-allele prior", which is every model built
+    #: before it existed -- class-level for the same unpickle reason as :attr:`reverse` itself.
+    reverse_by_allele = None
+
+    #: ``{context key: {residue: log-odds}}`` over the six intra-ligand context positions, learned by
+    #: :meth:`_fit_reverse_context` (``reverse="auto+ctx"``). Shifts the reverse prior **per peptide**
+    #: on top of the per-allele one. ``None`` is off; class-level for the same unpickle reason.
+    reverse_ctx = None
 
     def __init__(self, store, cls="mhc1", anchors=None, h=2.0, prior_strength=10.0, anticore=0.0,
                  learn_weights=True, prune_dpi=False, weights="learned",
@@ -312,12 +328,53 @@ class AnchorModel:
         # be in the loop that produces them.
         self.anticore_w = float(anticore)
         self.anticore = None
-        self.reverse = float(reverse)
+        # ``reverse="auto"`` fits a per-allele prior from the corpus at the end of the build; the
+        # scalar stays 0.0 so an allele the fit never saw falls back to "forward only".
+        self._reverse_auto = reverse if isinstance(reverse, str) else None
+        self.reverse = 0.0 if self._reverse_auto else float(reverse)
         # tau is fit on the *final* prefs below; the register EM bootstraps on the scalar.
         self._tau = None
         # lengths and core offsets are not residue distributions, so a per-residue-position tau is
         # meaningless for them -- they keep a scalar.
         self._tau_scalar = _TAU_DEFAULT if prior_strength == "auto" else prior_strength
+        fit = (register_em, prior_strength, n_motifs, pseudocount, pseudo_matrix)
+        self._fit_all(store, *fit)
+        # Dead last: rho is read off the *final* scoring function, so every fit that can move a
+        # frame, a motif or a null has to be in place before it runs.
+        if cls == "mhc2" and self._reverse_auto:
+            mode = self._reverse_auto
+            self._fit_reverse(store)
+            if mode.startswith("0+em"):
+                # The arm that makes `auto+em` interpretable, and the reason it lives here rather
+                # than in a scratch script: running the tail twice is itself a second round of
+                # register and mixture EM from a warm start, which moves alleles that have no reverse
+                # mass at all. Pinning rho to 0 keeps the extra round and removes only the mechanism,
+                # so the difference between this and `auto+em` is the reverse channel and nothing
+                # else. Diagnostic, never a shipping configuration.
+                self.reverse_by_allele = {a: 0.0 for a in self.reverse_by_allele}
+                self._frames = {}
+                self._fit_all(store, *fit)
+            elif "+em" in mode:
+                # One outer EM round. `_refit_registers` now reads `reverse_by_allele` and tallies
+                # each ligand at BOTH readings, so the whole tail has to run again on the re-tallied
+                # counts -- every one of its steps rebuilds what it owns from scratch, so re-running
+                # is a refit, not a second application (`_add_pseudocounts` in particular smooths the
+                # counts `_refit_registers` just rebuilt, never counts it already smoothed).
+                self._frames = {}          # measure convergence fresh, not warm-started off round 1
+                self._fit_all(store, *fit)
+                self._fit_reverse(store)
+            if mode.endswith("+ctx"):
+                self._fit_reverse_context(store)
+
+    def _fit_all(self, store, register_em, prior_strength, n_motifs, pseudocount, pseudo_matrix):
+        """The whole fit tail: registers, offset prior, ``tau``, motif mixture, pseudocounts, anticore.
+
+        Extracted from ``__init__`` because ``reverse="auto+em"`` runs it **twice** -- once forward-only
+        to get ``p_a``, then again with the per-allele prior in place so :meth:`_refit_registers` can
+        tally each ligand at both readings. Every step here rebuilds what it owns from raw counts, so a
+        second call is a refit rather than a second application.
+        """
+        cls = self.cls
         if cls == "mhc2":
             if register_em == "converge":
                 self._converge_registers(store)
@@ -326,7 +383,6 @@ class AnchorModel:
             else:
                 for _ in range(register_em):
                     self._refit_registers(store)   # also tallies offset_prefs, free (same sweep)
-        if cls == "mhc2":
             if not register_em:            # no EM sweep to piggyback on -- pay for one
                 self._fit_offset_prior(store)
             self._smooth_offset_prior()
@@ -634,6 +690,7 @@ class AnchorModel:
         core_pos = [j - 1 for j in self.anchors]
         prefs = {j: {} for j in self.anchors}
         offsets = {}
+        pa = self.reverse_by_allele or {}
         changed, frames = set(), {}
         for i, (ep, a, wt) in enumerate(zip(panel.epitopes, panel.alleles, panel.weights)):
             if len(ep) < 9:
@@ -645,6 +702,16 @@ class AnchorModel:
                 if self._frames.get(i) != best_st:
                     changed.add(a)
             frames[i] = best_st
+            # `reverse="auto+em"`: split each ligand's weight between the two readings, so an allele
+            # that binds partly backwards stops averaging both modes into one forward PWM. `rho=0`
+            # (every allele, every model before this existed) is the untouched single-reading tally.
+            rho = pa.get(a, 0.0)
+            if rho:
+                rp = ep[::-1]
+                r9 = rp[self.best_register(rp, a)[0]:][:9]
+                for j, c in zip(self.anchors, core_pos):
+                    prefs[j].setdefault(a, Counter())[r9[c]] += rho * wt
+                wt = (1.0 - rho) * wt
             w9 = ep[best_st:best_st + 9]
             for j, c in zip(self.anchors, core_pos):
                 prefs[j].setdefault(a, Counter())[w9[c]] += wt
@@ -763,6 +830,130 @@ class AnchorModel:
         for _ in range(passes):
             resp = [self._responsibilities(ep, a) for ep, a, _ in rows]
             self._m_step(rows, resp)
+
+    def _fit_reverse(self, store):
+        """Learn ``p_a``, the per-allele prior mass on the **reverse** (C-to-N) reading, from the
+        corpus alone (MHC-II, ``reverse="auto"``).
+
+        A class-II groove is open at both ends and its conserved MHC-to-peptide hydrogen bonds are
+        backbone-mediated, so a peptide can thread it C-to-N and drop its side chains into P1/P4/P6/P9
+        in reverse sequence order. :meth:`score` can already marginalise the two readings; what it
+        lacked was a prior, and a *blanket* one is measurably wrong -- it pays the reverse channel's
+        false-positive cost on every allele to reach a mode most alleles do not have
+        (`bench/results/mhc2_reverse_orientation.md`: frequent AUPRC 0.614 -> 0.605 at p=0.20).
+
+        The mode is not spread evenly. Read off MixMHC2pred's 6,577 shipped PWM definitions, a reverse
+        specificity is fitted for **2,658 of 3,784 HLA-DP alleles** and for **0 of 2,574 DQ, 0 of 207
+        DR and 0 of 12 mouse H-2** -- and within DP it is structured by the alpha chain (DPA1*02
+        0.839 of alleles, DPA1*01 0.540). On our own panel it reaches a **0.685** mixture weight at
+        HLA-DPA1*02:02-DPB1*05:01, i.e. that allele's majority binding mode. One number cannot serve
+        both that allele and every DR allele at once, so ``p`` becomes ``p_a``.
+
+        The estimator is the E-step the model already implies, with no rival's opinion in the loop:
+        each training ligand is read forwards and backwards under the settled model, and
+
+            ``rho = sigma(s(reverse x) - s(x))``
+
+        is its posterior probability of being reverse-bound under a uniform orientation prior -- so
+        ``rho`` needs no hyperparameter of its own. Summing ``rho`` and ``1 - rho`` per allele gives a
+        two-outcome counter, which is exactly the shape :meth:`Pseudoseq.shrink` already takes: ``p_a``
+        is kernel-shrunk over groove neighbours with the same ``tau`` as every other per-allele
+        quantity in the model, so a five-ligand allele cannot mint a prior out of five coin flips.
+
+        Two properties worth stating rather than engineering away:
+
+        * The shrinkage is over the **whole groove** (``anchor=None``, hence uniform pseudoseq
+          weights). That is deliberate and not the silent fallback it looks like: orientation is a
+          property of the binding mode, not of one pocket, so no single anchor's learned weights are
+          the right ones to borrow along.
+        * The reverse reading is scored under the **mirror image** of the learned core-offset prior
+          (:meth:`_register_logprior` was fitted on forward frames, so offset ``s`` in the reversed
+          string is offset ``L-9-s`` in the forward one). For a mode that reads the peptide backwards
+          that is arguably the correct prior, not an approximation of one.
+
+        This is a single EM half-step on a converged forward model: it learns *how much* of an allele
+        binds backwards without re-tallying the motif those ligands were counted into. For an allele
+        whose reverse mass is a minority that is the whole fix; at 0.685 the forward PWM is itself a
+        blur of two modes read one way, and only re-tallying repairs it.
+        """
+        panel = store._panel[self.cls]
+        tally = {}
+        for ep, a, wt in zip(panel.epitopes, panel.alleles, panel.weights):
+            if len(ep) < 9:
+                continue
+            d = self._orientation_term(ep[::-1], a) - self._orientation_term(ep, a)
+            rho = 0.0 if d < -_LOGIT_CAP else (1.0 if d > _LOGIT_CAP else 1.0 / (1.0 + math.exp(-d)))
+            c = tally.setdefault(a, Counter())
+            c["R"] += rho * wt
+            c["F"] += (1.0 - rho) * wt
+        self.reverse_by_allele = {
+            a: self.ps.shrink(tally, a, prior_strength=self._tau_scalar).get("R", 0.0)
+            for a in tally}
+        # The reversed strings doubled the frame memo and nothing reads those entries again.
+        self._frame_cache = {}
+
+    def _fit_reverse_context(self, store):
+        """Learn a **per-peptide** shift on the reverse prior from the six residues at the ligand's
+        own termini (MHC-II, ``reverse="auto+ctx"``).
+
+        Measured before it was built (`bench/results/mhc2_reverse_context.md`, 49,241 HLA-DP corpus
+        pairs labelled by MixMHC2pred's independent deconvolution): the flanking context does predict
+        which way a ligand threads, at **held-out-allele AUROC 0.649** (4,866 reverse / 2,326 forward
+        on the test allele) -- and essentially all of it is *inside* the ligand. The six outer flank
+        positions reach only **0.540**, i.e. adding the source protein to the scoring API would buy
+        0.649 -> 0.652. So this fits the six positions :meth:`score` can already see, and the API
+        stays as it is.
+
+        Two facts make it orientation rather than composition. The divergence peaks at the **third**
+        residue in from each terminus (``ligN+3`` 0.058 bits, ``ligC-3`` 0.055, against 0.021 and
+        0.020 at the first) -- and it is at exactly those deep positions that a reverse ligand's
+        N-side profile resembles a forward ligand's **C-side** profile more than its own N-side
+        (cosine 0.949 mirrored against 0.878 same-end at ``ligN+3``). Position 1 in from each end is
+        dominated by trimming chemistry, which is not orientation-specific, and there the mirror
+        loses. That is a prediction the "reverse ligands just look different" reading does not make.
+
+        Fit from the model's own ``rho``, never from the rival's labels -- the labels are the
+        validation, and a validation that entered the fit would not be one. Tallied **within allele**
+        and then pooled: a global tally would put DP on the reverse side and DR/DQ on the forward
+        side and learn the locus, the same confound that once turned a 4.0x enrichment into a locus
+        effect.
+        """
+        from .ligand import LIGAND_KEYS
+        panel = store._panel[self.cls]
+        per = {}                                    # allele -> (R counts, F counts, R mass, F mass)
+        for ep, a, wt in zip(panel.epitopes, panel.alleles, panel.weights):
+            rho = (self.reverse_by_allele or {}).get(a, 0.0)
+            if len(ep) < 9 or not rho:
+                continue
+            R, F, mr, mf = per.setdefault(a, ({k: Counter() for k in LIGAND_KEYS},
+                                              {k: Counter() for k in LIGAND_KEYS}, [0.0], [0.0]))
+            d = self._orientation_term(ep[::-1], a) - self._orientation_term(ep, a)
+            r = 0.0 if d < -_LOGIT_CAP else (1.0 if d > _LOGIT_CAP else 1.0 / (1.0 + math.exp(-d)))
+            for k, i in zip(LIGAND_KEYS, (0, 1, 2, -3, -2, -1)):
+                R[k][ep[i]] += r * wt
+                F[k][ep[i]] += (1.0 - r) * wt
+            mr[0] += r * wt
+            mf[0] += (1.0 - r) * wt
+
+        acc = {k: {} for k in LIGAND_KEYS}
+        tot = 0.0
+        for R, F, mr, mf in per.values():
+            w = min(mr[0], mf[0])               # an allele with one class only cannot vote on a contrast
+            if w <= 0:
+                continue
+            tot += w
+            for k in LIGAND_KEYS:
+                nr, nf = sum(R[k].values()) or 1.0, sum(F[k].values()) or 1.0
+                for res in set(R[k]) | set(F[k]):
+                    lo, hi = acc[k].setdefault(res, [0.0, 0.0])
+                    lo += w * R[k][res] / nr
+                    hi += w * F[k][res] / nf
+                    acc[k][res] = [lo, hi]
+        if tot <= 0:
+            return
+        eps = 1e-3
+        self.reverse_ctx = {k: {res: math.log((r / tot + eps) / (f / tot + eps))
+                                for res, (r, f) in v.items()} for k, v in acc.items()}
 
     def _bg_prob(self, j, r, prev=None, allele=None):
         """Null probability of residue ``r`` at anchor ``j``: pooled-ligand marginal (specificity),
@@ -1189,12 +1380,20 @@ class AnchorModel:
             return self.best_register(peptide, allele, raw, eps)[1]
         if len(peptide) < 9:
             return float("-inf")
+        p = (self.reverse_by_allele or {}).get(allele, self.reverse)
+        if p and self.reverse_ctx:
+            # A per-allele p spreads its mass evenly over every ligand of that allele, including the
+            # ~70% that read forwards. The context moves it towards the ones that do not.
+            z = math.log(p / (1.0 - p)) + sum(
+                self.reverse_ctx[k].get(peptide[i], 0.0)
+                for k, i in zip(_CTX_POS, (0, 1, 2, -3, -2, -1)))
+            p = 1.0 / (1.0 + math.exp(-max(-_LOGIT_CAP, min(_LOGIT_CAP, z))))
         fwd = self._orientation_term(peptide, allele, raw, eps)
-        if not self.reverse:
+        if not p:
             return fwd
         rev = self._orientation_term(peptide[::-1], allele, raw, eps)
-        a = math.log1p(-self.reverse) + fwd
-        b = math.log(self.reverse) + rev
+        a = math.log1p(-p) + fwd
+        b = math.log(p) + rev
         m = max(a, b)
         return m + math.log(math.exp(a - m) + math.exp(b - m))
 

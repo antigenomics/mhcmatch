@@ -1001,6 +1001,75 @@ def test_ligand_null_leaves_the_queried_allele_out():
         m.bg[jj].get("A", 0) / m._nbg[jj]), "a sole allele keeps the pooled null"
 
 
+def test_reverse_auto_learns_which_allele_binds_backwards():
+    """The per-allele prior has to find a reverse-binding allele from the corpus alone.
+
+    The latent only exists **within** an allele: an allele whose ligands are all reverses of another's
+    simply fits them forwards and has no reverse mass, which is the correct answer and not the
+    interesting one. So the planted allele is a 70/30 mixture of a core and that same core reversed --
+    a single PWM fits the majority, and the minority 30% then score better read backwards. That is the
+    real shape: MixMHC2pred puts **0.685** of HLA-DPA1*02:02-DPB1*05:01's mixture on its reverse
+    specificity, i.e. that allele's majority binding mode.
+
+    ``n_motifs=1`` on purpose. At K>1 a free component can fit the reversed motif as just another
+    forward PWM, which conflates the two hypotheses; the point of the marginal is that it costs **one**
+    parameter instead of a whole 9x20 PWM and shares the forward motif's statistics. K=1 isolates the
+    latent, and the corpus fit finds it anyway at the shipped K=3
+    (`bench/results/mhc2_reverse_per_allele.md`).
+    """
+    rng = random.Random(3)
+    fwd, rev = "WWWKKKFFF", "WWWKKKFFF"[::-1]      # asymmetric and aperiodic: no shifted self-match
+
+    def pep(core):
+        return ("".join(rng.choice(_FLANK) for _ in range(3)) + core
+                + "".join(rng.choice(_FLANK) for _ in range(3)))
+
+    recs = []
+    for i in range(400):
+        recs.append({"epitope": pep(rev if i % 10 < 3 else fwd),      # 30% read backwards
+                     "mhc_a": "DRA*01:01", "mhc_b": "DRB1*15:01", "mhc_class": "MHCII"})
+        recs.append({"epitope": pep("MMMNNNYYY"),                     # a pure-forward neighbour
+                     "mhc_a": "DRA*01:01", "mhc_b": "DRB1*13:01", "mhc_class": "MHCII"})
+    store = Store.from_records(recs)
+    m = store.anchor_model("mhc2", n_motifs=1, register_em=2, reverse="auto")
+
+    assert set(m.reverse_by_allele) == {"DRB1_1501", "DRB1_1301"}
+    mixed, pure = m.reverse_by_allele["DRB1_1501"], m.reverse_by_allele["DRB1_1301"]
+    assert mixed > 0.20, f"the planted 30% reverse mode was not found: {m.reverse_by_allele}"
+    assert mixed > 5 * pure, f"the prior did not separate the two alleles: {m.reverse_by_allele}"
+
+
+def test_reverse_auto_is_absent_and_inert_without_it():
+    """Two guards in one: an MHC-I model never grows the attribute, and a model built before the
+    per-allele prior existed still scores -- `reverse_by_allele` is class-level for exactly the
+    reason `anticore` and `_bg_hold` are, since `__init__` does not run on unpickle."""
+    import pickle
+    store, _ = _mhc2_bimodal_store()
+    plain = store.anchor_model("mhc2", n_motifs=2, register_em=0)
+    assert plain.reverse_by_allele is None, "off must leave the per-allele prior unset"
+    assert _mhc1_store().anchor_model("mhc1", reverse="auto").reverse_by_allele is None, \
+        "MHC-I has no register to reverse; `auto` must be inert there"
+
+    # With `reverse` off the attribute never reaches the *instance* dict -- which is the property
+    # that makes every model pickled before it existed still score, since the class default answers.
+    assert "reverse_by_allele" not in plain.__dict__
+    old = pickle.loads(pickle.dumps(plain))
+    assert old.reverse_by_allele is None
+    assert old.score("PKYVKQNTLKLATGM", "DRB1_1501") == plain.score("PKYVKQNTLKLATGM", "DRB1_1501")
+
+
+def test_reverse_context_positions_match_the_ligand_module():
+    """`diffusion._CTX_POS` restates `ligand.LIGAND_KEYS` so `score` need not import per call.
+
+    A second source of truth is exactly the shape of defect this repo keeps finding, so it gets the
+    one assertion that makes it safe: if the six intra-ligand context positions are ever reordered or
+    renamed, this fails rather than silently scoring the wrong residue at the wrong weight.
+    """
+    from mhcmatch.diffusion import _CTX_POS
+    from mhcmatch.ligand import LIGAND_KEYS
+    assert _CTX_POS == LIGAND_KEYS
+
+
 def test_reverse_orientation_is_bit_identical_when_off():
     """`reverse=0.0` must leave every class-II score untouched, to the last bit.
 
