@@ -266,6 +266,41 @@ mhcmatch -- `compare_mhc2_mouse_hard_ligandbg.md` did, on all nine cells. Reache
 side, `families=` (per-component gap placement) can only *subtract* from a 9-mer core and loses
 monotonically in how many positions it masks.
 
+## Reverse binding, and the confound that nearly got attributed to it
+
+Class-II reverse (C-to-N) binding is **an HLA-DP mechanism that splits on the alpha chain**: read off
+MixMHC2pred's 6,577 `PWMdef/*.txt`, a reverse specificity is fitted for 2,658 of 3,784 DP alleles and
+**0** of 2,574 DQ / 207 DR / 12 mouse H-2, reaching **0.685** mixture weight at
+HLA-DPA1*02:02-DPB1*05:01. `AnchorModel(reverse="auto")` recovers that from our corpus with no locus
+in the loop -- median `p_a` 0.152 on DP against 0.025 on DR, an exact DPA1*02 / DPA1*01 partition,
+**Spearman 0.915** against their independently fitted weights. Flank context predicts the orientation
+too, at held-out-allele AUROC **0.649** from the six *intra-ligand* positions against **0.540** from
+the six outer flanks -- so `score(peptide, allele)` already sees what matters and **must not** grow a
+source-protein argument for this.
+
+**The scoring channel still does not pay**, and the reason that sentence is trustworthy is one arm.
+`reverse="auto+em"` refits the model with each ligand tallied at both readings and looked like +0.018
+screening frequent AUPRC -- but running the fit tail twice is *itself* a second EM round from a warm
+start. `reverse="0+em"` keeps the extra round and pins the prior to zero: it reaches **0.652** where
+`auto+em` reaches 0.643. The gain was the EM, and the mechanism was costing on top of it. The tell was
+per-allele -- DRB1*01:02 +0.133 and DRB3*03:01 -0.167 at `p_a` around 0.02, where a 2% prior cannot
+move anything. **Whenever a mechanism needs a refit to take effect, ship the arm that refits with it
+forced off**; that is reading your own diff, not a null model. `bench/results/mhc2_reverse_*.md`.
+
+## Frequency routing composes the two class-II optima
+
+`Store.anchor_model(route={"register_em": 2})` on a `converge-frequent, prior_strength="auto"` primary
+fits two models and dispatches on `counts[allele] <= rare_max`. Screening rare AUPRC **0.689** *and*
+frequent AUPRC **0.668** / PPV@P **0.629** in one run -- each equal to the better single fit **to the
+digit**, with the rare stratum beating NetMHCIIpan-4.3i on all three, which no earlier class-II
+configuration did. It resolves the §5 dead end in `mhc2_register_frequency_gate.md`: the rare optimum
+needs the *donors* under-converged, so it needs its own fit, not a gate on the borrower.
+
+Ships **off**. Two things to say when quoting it: raw scores from two fits compare within an allele
+only (every shipped cross-allele path is already calibrated per allele), and the router reads the
+**training** panel's counts, so a holdout benchmark can route a borderline `medium` allele to the
+rare model -- which is the cut working, not a bug. `bench/results/mhc2_frequency_routing.md`.
+
 ## MixMHC2pred is the third rival, and it is the informative one
 
 Installed at `~/work/academy/software/MixMHC2pred-2.1` (v2.1-beta1); adapter `bench/compare/mixmhc2.py`,
