@@ -198,9 +198,9 @@ TARGETS = {
 EXTERNAL = {
     "recognition": "uv run tools/build_recognition.py",
     # `aggregate_mhc1.json`'s own `generator` field. The fit writes a *candidate* to
-    # `bench/immuno/aggregate_mhc1_v4.json`; copying it here is manual, so diff the two after any
+    # `bench/epic/aggregate_mhc1.json`; copying it here is manual, so diff the two after any
     # run of `bench/run_epic.sh`, which is the chain that leads to it.
-    "aggregate": "python bench/epic/fit.py --physchem rose_af5             # benchmark repo",
+    "aggregate": "python bench/epic/fit.py --physchem rose_af5 --presentation binder --density log10a   # benchmark repo",
     "affinity": "python bench/affinity/train.py --cls mhc1 --species human   # benchmark repo",
     "potts": "python bench/affinity/fit_potts.py --cls mhc1    # and --cls mhc2; benchmark repo",
     "complement1": "python bench/neoag/complement.py --fit chowell_rebuilt --tables all",
@@ -217,7 +217,7 @@ def _stamp(path: str):
     """The **package** version a shipped artifact carries, or None if it does not carry one.
 
     Two version vocabularies live in this directory and they are told apart **by the shape of the
-    value, not by the file extension**. A *model* version is an int — EPIC is ``3``, the recognition
+    value, not by the file extension**. A *model* version is an int — EPIC is ``10``, the recognition
     heads are ``2`` — and comparing one to a package version is a category error that reports every
     head stale at every release. A *package* version is dotted (``"0.26.0"``), and an artifact that
     carries one is asserting which release built it, so it is checked.
@@ -250,7 +250,7 @@ def _stamp(path: str):
         if path.endswith(".json"):
             v = json.load(open(path)).get("version")
             # The two vocabularies, told apart by shape rather than by filename. A *model* version
-            # is an int -- EPIC is 3, the recognition heads are 2 -- and comparing it to a package
+            # is an int -- EPIC is 10, the recognition heads are 2 -- and comparing it to a package
             # version reports every head stale at every release. A *package* version is dotted, and
             # an artifact carrying one is making a claim about which release built it, so it is
             # checked. `mimicry_mhc1.json` is the file this distinction exists for: it carries

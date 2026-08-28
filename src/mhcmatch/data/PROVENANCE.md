@@ -388,7 +388,7 @@ against a live rebuild of the four deposit channels.
 
 ## `aggregate_mhc1.json` — the shipped neoantigen scorer (`EPIC`)
 
-**Derived, not experimental.** A fitted model: eight standardised slopes in four hierarchical
+**Derived, not experimental.** A fitted model: nine standardised slopes in four hierarchical
 blocks, one unpenalised intercept per screen and no global intercept, ridge `tau = 0.25`. The file
 carries its own standardiser (`mu`, `sigma`) alongside the coefficients, because coefficients on
 z-scores applied to raw axes move the *ranking* and not merely the calibration — the two travel as
@@ -399,7 +399,7 @@ prints the terms and `--holdout` the per-screen held-out AUROCs; those two comma
 document, are the record of what a given install actually scores with.
 
 **Two version vocabularies, told apart by shape.** `version` here is a *model* version and is an
-**integer** — 3, 4, 5, 6 — where a package version is dotted. `_build._stamp` therefore returns
+**integer** — 3 through 10 — where a package version is dotted. `_build._stamp` therefore returns
 `None` for this file and `mhcmatch build --check` **presence-checks it only**. It cannot tell a
 current artifact from a stale one, which is deliberate (a model version does not move at every
 release) and is why the copy below has to be checked by hand.
@@ -408,7 +408,7 @@ release) and is why the copy below has to be checked by hand.
 script; `_build.EXTERNAL["aggregate"]` prints the command and stops.
 
     # in ~/vcs/projects/2026-mhcmatch-benchmark, and only after `corpus` and `features`:
-    python bench/epic/fit.py --physchem rose_af5 --presentation binder
+    python bench/epic/fit.py --physchem rose_af5 --presentation binder --density log10a
     # then, deliberately:
     cp bench/epic/aggregate_mhc1.json ~/vcs/code/mhcmatch/src/mhcmatch/data/aggregate_mhc1.json
 
@@ -425,4 +425,31 @@ recorded in the artifact's own `fit` block.
 monotone function of the same predicted Kd; v5 refitted v4's specification on a rebuilt corpus; v6
 returns to `binder`, because that argument conflated a within-allele `%rank` with an absolute Kd —
 measured, `pres` is *more* collinear with `binder` (Spearman +0.8797) than `occupancy` is (+0.7431).
-`bench/results/epic_binder_vs_pres.md`.
+`bench/results/epic_binder_vs_pres.md`. v7 puts the density term on its natural scale, `log10a`
+in place of `occupancy`; v8 fits abundance as a level rather than a rank; v9 splits expression into
+the two terms `expr_lvl` and `expr_norm`, reaching the nine that ship.
+
+**v10 (2026-08-28) is v9's nine terms refitted, and it is the first entry here that ships against
+its own verdict.** Nothing about the specification moved — same features, same blocks, same
+`tau = 0.25`. What moved is underneath: `mhcmatch.affinity.PottsAffinity.predict_y` gained the
+corpus length prior and `mhcmatch.calibrate.percent_rank` gained an extrapolated upper tail, so
+`binder` and `log10a` are computed from a binding layer that knows two things v9's did not. Only
+those two standardisers move; the other seven `mu`/`sigma` pairs are bit-identical to v9's, which
+is the check that the refit is downstream of the binding change and of nothing else.
+
+    BIC        4390.2 -> 4328.3
+    LOO mean   0.6942 -> 0.6998   (leave-one-screen-out, 8 screens)
+    coef       log10a +0.2914 -> +0.4005 (+37%), binder +0.5481 -> +0.4623 (-16%)
+
+All nine terms stay individually significant (|z| 2.52-6.22, max p = 0.0118, sign stability >= 0.995
+over 400 clusters). The fit leans harder on affinity because affinity now knows something.
+
+**Its `verdict` block reads `"ship": false` and it ships anyway — that is the author's call, taken
+2026-08-28, and it is recorded rather than edited away.** `fit.py`'s bar is *no per-screen
+regression at all*, and v10 posts 3 improvements, 3 ties and 2 regressions: IEDB_neoag
+0.7270 -> 0.7217 (-0.0053, 235 discordant pairs, against that screen's own 1/234 = 0.0043
+resolution) and ITSNdb 0.5510 -> 0.5329 (-0.0180, 159 discordant pairs of 8,832). Both are on
+screens where the measurement is thin -- ITSNdb sits near chance under *both* artifacts, and it
+also blocks the currently-shipped v9 by the same bar. Against them stand NCI +0.0134 over 449,998
+discordant pairs, TESLA +0.0320 and Gfeller_GBM +0.0285. The bar is not relaxed and the verdict is
+not rewritten; the artifact carries its own dissent.
