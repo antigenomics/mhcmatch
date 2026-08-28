@@ -1228,6 +1228,8 @@ NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2)
 
 - **`calibrate.random_peptides(length_bg="uniform")` is still unwired, and measurement says leave it that way.** It exists and its docstring calls it the right null for MHC-I, but both production call sites (`store.py`, `predict.py`) construct `RankCalibrator` with the default `length_bg="corpus"`. The docstring's argument is that a corpus-mixture null deletes the length signal; measured on NCI, the opposite holds. Under the shipped `"corpus"` null `presentation` already carries a near-netMHCpan length prior — `L8 0.48 / L9 3.25 / L10 0.81 / L11 0.46 / L12 0.19` of each length in the pooled top 1%, an L9-vs-L12 selectivity of 16.7× against netMHCpan's 26.0× — precisely *because* a 9-mer-heavy null makes long peptides rank worse. A uniform null would weaken it. **Do not act on the docstring; correct it.** `"corpus"` remains correct for MHC-II for the original reason.
 
+  **Second, independent measurement, 2026-08-28 — the Tadros screen, which is the one case the docstring's argument actually describes.** Its decoys are drawn *exactly uniform over length* (73,472 at each of L8–L11), so if `"uniform"` is ever the right null it is here. Measured leak-free over 73,472 ligands: `length_bg="uniform"` gives P@2% 0.794 / R@2% 0.947 / F1@2% 0.864 / maxF1 0.889 / AUROC 0.9826 against the shipped `"corpus"`'s 0.855 / 0.920 / **0.886** / **0.891** / **0.9828**. It trades precision for recall and **does not move the ranking at all** — maxF1 −0.002, AUROC −0.0002, and the per-length miss enrichment is unchanged (L11 2.61× → 2.85×). The raw miss count falls 4,371 → 2,400 only because the 2% line moves. `length_bg` is a threshold-placement knob, not a ranking term. Two screens, opposite decoy compositions, same verdict: leave it. `bench/results/tadros_length_terms.md`.
+
 - **The MHC-I Potts affinity score was length-blind (Defect 1) — fixed 2026-08-28.** Every slot index
   is taken from one end or the other (`{0..4} ∪ {L-4..L-1}`), so nothing in the energy depended on
   `len(peptide)`: `SLYNTGATL` and `SLYNTAAAGATL` scored **bit-identically**. The legacy `AffinityModel`
@@ -1257,7 +1259,25 @@ NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2)
   each query shifts by its own, and the prior survives as the difference. The recorded 0.912-vs-0.921
   regression was measured on the affinity %rank alone under a different composition and is not
   reproduced here. `percent_rank(length=)` — the per-length null, used only by the MHC-II binder
-  gate — is where the trap would bite.
+  gate — is where the trap would bite. **Measured 2026-08-28: it does not bite.** On Tadros the
+  per-length null was run end to end and recombined with the prior applied exactly once,
+  `lambda(L,a) − ln(%rank_len/100)`, no fitted weight. Cancelling the prior lands on maxF1 0.862 /
+  AUROC 0.9768 — within 0.002 of the length-blind arm, so the algebra is confirmed — and putting it
+  back gives 0.890 / 0.9817, still *behind* the shipped marginal null's 0.891 / 0.9828. Per-length
+  evaluation with per-length thresholds is the same story (weighted F1 0.8570 vs 0.8861). The reason
+  is that `lambda(L,a)` is **per allele**, so it is not only a length prior but a restriction signal —
+  which of a sample's six alleles presents a peptide of this length — and cancelling it within a
+  length removes that too, degrading the min-over-alleles. One term, two jobs; they do not separate.
+
+- **Class II loses badly on the frequent stratum, and this is now measurable here (2026-08-28, OPEN).**
+  NetMHCIIpan-4.3i is installed (`$NETMHC_ROOT`, wired in `bench/figures/common.sh`), so
+  `compare_mhc2_*` runs a real head-to-head for the first time in this checkout. Hard/ligand: rare
+  AUROC **+0.029** to us, medium −0.017, frequent **−0.053** (p = 4.3×10⁻⁸), frequent AUPRC −0.124,
+  frequent PPV@P −0.141. Random/proteome is worse: frequent AUROC −0.082, AUPRC **−0.254**, PPV@P
+  −0.241, and medium −0.068 / −0.113 / −0.135. The shape is the class-I story inverted — we win
+  where support is thin (rare, 19 alleles) and lose where the rival has the most data. Nothing here
+  was investigated; the MHC-I length prior is guarded off for class II and the class-II tables did
+  not move when it landed, which is the only claim this run supports.
 
   Still true and still unfixed: slots `{0..4} ∪ {L-4..L-1}` silently discard the middle of 10–12mers,
   which a length term does not fix. `bench/results/{potts_mhc1_encoding_defects,potts_encoding_ablation}.md`.
