@@ -323,7 +323,10 @@ A CSV in the pipeline ``.scored.csv`` shape, but only these columns are consulte
      - expression. Absent, the fallback below runs and ``expr_imputed`` is set
    * - ``gene_name``
      - no
-     - only used to look expression up when ``tpm`` is absent and ``--tissue`` is given
+     - the parent gene's HGNC symbol, used to look expression up when ``tpm`` is absent and
+       ``--tissue`` is given, and by ``expr_norm`` always. ``gene`` --- what ``mhcmatch genes``
+       writes and what ``rank pairs`` reads --- is accepted under that name too, so an annotated
+       table needs no rename; see :ref:`parent-gene`
 
 ``ref_seq`` / ``seq`` are read when present, and an incoming ``score`` is preserved in
 ``components['score_builtin']`` so the two rankings can be compared. Everything else in the
@@ -389,6 +392,58 @@ does not recognise, rather than returning a plausible number computed from the w
    matters for cross-sample comparison and for any absolute reading of the score, since ``expr_lvl``
    and ``expr_norm`` are both fitted with positive weight --- run ``mhcmatch rank --coefficients``
    for the sizes the installed artifact uses, which move at every refit.
+
+.. _parent-gene:
+
+The parent gene, when the deposit does not name one
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Both fitted expression terms are keyed on an **HGNC gene symbol**: ``expr_lvl`` needs it whenever
+``tpm`` is absent, and ``expr_norm`` needs it always. Most published neoantigen deposits ship the
+peptide and not the gene --- over the benchmark corpus, **356,387 of 695,811 rows (51.2%) and
+5,205 of 5,833 positives (89.2%)** carried no symbol. Those rows do not drop out; they all collapse
+onto one mean-imputed constant, and a constant cannot order anything. On the VACCIMEL screen
+``expr_norm`` had standard deviation **exactly 0.0000** and AUROC **exactly 0.5000** while carrying
+**+0.4950** log-odds per standard deviation in the shipped EPIC v10 artifact --- a fitted parameter
+paid for on no information. (Which term is largest moves with every refit; ``mhcmatch rank
+--coefficients`` prints the current set.)
+
+The symbol is recoverable from the peptide, because a neoantigen is a near-copy of a self peptide:
+
+.. code-block:: fish
+
+   mhcmatch genes candidates.tsv --species human --max-subs 2 --out annotated.tsv
+   mhcmatch rank pairs annotated.tsv --tumor SKCM --out ranked.tsv
+
+``genes`` searches the reference proteome for the nearest self peptide
+(:meth:`mhcmatch.proteome.Proteome.assign_genes`), names it by its UniProt ``GN=`` field and writes
+a ``gene`` column back beside every column the table already had. Both ``rank pairs`` and
+``rank table`` read that column, so the two commands compose with no join and no rename.
+
+Over the same corpus that leaves coverage at **692,349 of 695,811 rows (99.5%)**, up from **339,424
+(48.8%)**, and **4,511 of the 5,833 positives** gain a symbol they were not deposited with --- which
+is what takes ``expr_norm``'s standard deviation on VACCIMEL from **0.0000** to **2.520**, i.e. from
+no ordering to an ordering. ``bench/results/gene_resolution.md``.
+
+Three properties of the annotation, each of which is a way the axis would otherwise lose
+information:
+
+* **The radius is 2, because a neoantigen can carry more than one mutation.** The first shell does
+  nearly all of the work --- **349,921 of 695,811 corpus rows** find a parent one substitution out
+  --- and the second is not rounding: **3,004 further rows** need two, and on VACCIMEL it is the
+  difference between **87 of 93 rows** resolved and **90 of 93**. Those are precisely the rows a
+  radius-1 search would have left on the imputed constant.
+* **Only the nearest shell votes.** A radius-2 shell is roughly 85 times the size of the radius-1
+  shell inside it, so pooling the two lets a distant coincidence outvote a genuine
+  single-substitution parent.
+* **A tie becomes several rows, and an unresolved peptide keeps its row with an empty cell.**
+  Which of several equally-near parents a peptide should be scored under is a question the
+  expression reference answers and the search cannot, so every tied gene is emitted and the caller
+  takes the best score per peptide --- ``group_by(peptide).agg(max(score))``. Expect them, and
+  expect them shortest-first: over the corpus's 345,478 (host, peptide) pairs, **22,172 of 70,485
+  8-mers (31.5%)** name more than one nearest gene against **7,448 of 97,995 11-mers (7.6%)**,
+  because the shorter the peptide the more of the proteome sits one substitution away. Nothing in
+  the ranker assumes one row per *(peptide, allele)*.
 
 Reading the output
 ------------------

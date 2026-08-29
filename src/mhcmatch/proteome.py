@@ -414,6 +414,64 @@ class Proteome:
                         out.setdefault(w, g)
         return out
 
+    def assign_genes(self, peptides, max_subs=2, threads=0, path=None):
+        """``{peptide: [gene, ...]}`` -- the HGNC symbol(s) of the gene each peptide derives from.
+
+        :meth:`window_genes` answers this for a peptide that *is* a proteome window. A neoantigen is
+        not: it carries the substitution that made it one, so it has to be found by near-exact
+        search. That is what makes this the entry point a candidate table needs --
+        ``expression.gene_level`` and both fitted expression terms are keyed on the symbol, and a
+        row without one contributes a single mean-imputed constant. Measured over the benchmark
+        corpus, **356,387 of 695,811 rows (51.2%) and 5,205 of 5,833 positives (89.2%)** carried no
+        deposited symbol; on the VACCIMEL screen ``expr_norm`` had standard deviation **exactly
+        0.0000** and AUROC **exactly 0.5000** while carrying the largest positive coefficient of the
+        shipped EPIC v10 artifact, **+0.4950** log-odds per standard deviation.
+
+        Three choices, all load-bearing:
+
+        * **Only the nearest shell votes.** ``best = min(h.n_subs)``, and hits further out are
+          discarded rather than pooled. A radius-2 shell is ~85x the size of the radius-1 shell
+          inside it, so pooling them lets a distant coincidence outvote a genuine
+          single-substitution parent.
+        * **Exact matches are excluded.** A peptide that *is* a proteome window is not a
+          neoantigen, and its own gene is not the question being asked.
+        * **Ties come back in full, sorted.** Resolving one needs expression data this method does
+          not have -- the caller picks among the tied genes (the CLI emits a row each and lets the
+          scorer's best-per-peptide selection decide). A peptide with no parent, or whose parents
+          carry no ``GN=``, maps to ``[]``; neither is an error.
+
+        ``max_subs`` defaults to 2 because **a neoantigen can carry more than one mutation**, and
+        the radius is what buys the coverage: at radius 1 VACCIMEL resolves 88.2% of its peptides,
+        at radius 2 96.8% (TESLA 98.5%, ITSNdb 99.5%, GBM 94.0%, Sahin_TNBC 100%).
+        ``bench/results/gene_resolution.md``.
+
+        One length at a time, dropping :attr:`_cache` after each: :meth:`_index` costs 12.6 GB peak
+        for the first length and ~3.6 GB for each further one, so holding a four-length query set at
+        once is the difference between fitting in memory and not. ``path`` is the FASTA the symbols
+        are read from and defaults to the one this proteome was loaded from, as in
+        :meth:`window_genes`.
+        """
+        path = path or getattr(self, "_path", None)
+        if path is None:
+            raise ValueError("assign_genes needs the FASTA the symbols are read from")
+        gene_of = gene_symbols(path, key="name")
+        qs = sorted({str(p).strip().upper() for p in peptides if str(p).strip()})
+        by_len = {}
+        for q in qs:
+            by_len.setdefault(len(q), []).append(q)
+        out = {q: [] for q in qs}
+        for L in sorted(by_len):
+            hits = self.find_sources(by_len[L], max_subs=max_subs, exclude_exact=True,
+                                     threads=threads)
+            self._cache.pop(L, None)
+            for q, hs in hits.items():
+                if not hs:
+                    continue
+                best = min(h.n_subs for h in hs)
+                out[q] = sorted({g for h in hs
+                                 if h.n_subs == best and (g := gene_of.get(h.protein))})
+        return out
+
     def wildtype(self, peptide, max_subs=1):
         """The wild-type self peptide a mutated ``peptide`` derives from, or ``None``.
 

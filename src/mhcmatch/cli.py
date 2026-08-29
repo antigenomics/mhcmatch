@@ -17,9 +17,9 @@ a few thousand per second. A shell ``while read`` loop around the single-peptide
 way to use this CLI and the benchmark repo measures exactly how wrong (``bench/cli/``).
 
 ``--threads`` is offered only where it does something: the C++ neighbour search (``source``,
-``mimics``) releases the GIL and scales across cores. The scoring heads are small numpy products per
-peptide, so threads there would buy nothing and the flag is not offered rather than being offered
-and ignored.
+``mimics``, ``genes``) releases the GIL and scales across cores. The scoring heads are small numpy
+products per peptide, so threads there would buy nothing and the flag is not offered rather than
+being offered and ignored.
 """
 from __future__ import annotations
 
@@ -824,18 +824,22 @@ def cmd_complement(a):
               file=sys.stderr)
 
 
-def _read_table(path):
-    """Every row of a TSV with a ``peptide`` column, as dicts, preserving column order."""
+def _read_table(path, col="peptide"):
+    """Every row of a TSV with a ``peptide`` column, as dicts, preserving column order.
+
+    ``col`` names that column for the one caller whose table does not spell it ``peptide``
+    (``genes``, which offers ``--peptide-col``); it is the column normalised to upper case, so the
+    key a lookup is built on and the cell that is written back agree."""
     with _open_text(path) as fh:
         cols = fh.readline().rstrip("\n").split("\t")
-        if "peptide" not in cols:
-            raise SystemExit(f"{path}: no `peptide` column (found {cols})")
+        if col not in cols:
+            raise SystemExit(f"{path}: no `{col}` column (found {cols})")
         out = []
         for line in fh:
             line = line.rstrip("\n")
             if line:
                 d = dict(zip(cols, line.split("\t")))
-                d["peptide"] = (d.get("peptide") or "").strip().upper()
+                d[col] = (d.get(col) or "").strip().upper()
                 out.append(d)
         return out
 
@@ -960,6 +964,45 @@ def cmd_mimics(a):
             top_subs, top = (0, p) if n_ex else hits[0]
             out.row(p, cat, M.KINDS.get(cat, "?"), n_ex, len(hits), top, top_subs)
     out.close()
+
+
+def cmd_genes(a):
+    """Add a ``gene`` column to a candidate table, naming the gene each peptide derives from.
+
+    The step the expression axis cannot do without: ``expr_lvl`` and ``expr_norm`` are keyed on an
+    HGNC symbol, and a deposit that ships peptides without one leaves both terms at a single
+    mean-imputed constant for every row. :meth:`mhcmatch.proteome.Proteome.assign_genes` is the
+    whole computation; this reads the table, carries every original column through, and writes the
+    annotation back so ``rank pairs`` can be handed the result with no join.
+
+    **A tie becomes several rows, not a refusal.** Which of several equally-near parents a peptide
+    should be scored under is a question the expression reference answers and this pass cannot, so
+    every tied gene is emitted and the caller takes the best aggregate score per peptide
+    (``group_by(peptide).agg(max(score))``). **An unresolved peptide keeps its row** with an empty
+    ``gene``, and is scored on the terms it does have -- losing the row would be the larger error.
+    """
+    with step(f"loading the {a.species} proteome"):
+        pm = (Proteome.from_fasta(a.species) if os.path.exists(a.species)
+              else Proteome.from_hf(a.species))
+    rows = _read_table(a.input, a.peptide_col)
+    with step(f"resolving parent genes within {a.max_subs} substitution(s)"):
+        genes = pm.assign_genes([r[a.peptide_col] for r in rows], max_subs=a.max_subs,
+                                threads=a.threads)
+    cols = list(rows[0]) if rows else [a.peptide_col]
+    if "gene" not in cols:
+        cols.append("gene")
+    out = _Out(a, "row")
+    out.header(*cols)
+    n_res = n_tie = 0
+    for r in rows:
+        got = genes.get(r[a.peptide_col]) or [""]
+        n_res += 1 if got[0] else 0
+        n_tie += 1 if len(got) > 1 else 0
+        for g in got:
+            out.row(*(g if c == "gene" else r.get(c, "") for c in cols))
+    out.close()
+    say(f"{n_res:,} of {len(rows):,} peptide row(s) resolved to a gene, {n_tie:,} with a tie; "
+        "an unresolved row keeps its place with an empty `gene`")
 
 
 def cmd_expression(a):
@@ -2218,6 +2261,24 @@ def main(argv=None):
     ds = sub.add_parser("deslip", help="DEPRECATED alias for `cassette deslip`")
     _add_deslip_opts(ds)
     ds.set_defaults(fn=cmd_deslip, deprecated="cassette deslip")
+
+    gn = sub.add_parser("genes",
+                        help="add a `gene` column to a peptide table -- the parent gene each "
+                             "candidate derives from, which is what the expression terms are "
+                             "keyed on")
+    gn.add_argument("input", help="TSV(.gz) with a peptide column (`-` = stdin); every other "
+                                  "column is carried through unchanged")
+    gn.add_argument("--out", metavar="FILE", help="write TSV here instead of stdout")
+    gn.add_argument("--peptide-col", default="peptide", help="the column holding the peptide")
+    gn.add_argument("--species", default="human",
+                    help="reference proteome: human / mouse / a pathogen stem auto-fetched from "
+                         "the public dataset, or a FASTA(.gz) path")
+    gn.add_argument("--max-subs", type=int, default=2,
+                    help="search radius. 2 by default because a neoantigen can carry more than "
+                         "one mutation; at radius 1 one screen resolved 88.2%% of its peptides "
+                         "against 96.8%% at radius 2. Only the nearest shell votes")
+    _add_thread_opt(gn)
+    gn.set_defaults(fn=cmd_genes)
 
     xp = sub.add_parser("expression", help="reference expression by normal tissue or tumour type")
     xp.add_argument("key", nargs="?", default="", help="gene symbol (with --tissue) or peptide "

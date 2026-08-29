@@ -197,6 +197,23 @@ def test_rank_table_reads_the_pipeline_schema_and_keeps_the_builtin_score(tmp_pa
     assert by["CCCCCCCCC"].expression_imputed is True
 
 
+def test_rank_table_reads_a_gene_column_as_well_as_gene_name(tmp_path, tiny_reference):
+    """`mhcmatch genes` writes `gene`; the pipeline schema spells it `gene_name`. Both reach the
+    expression lookup, so an annotated table drops in with no rename -- and duplicate rows from a
+    tied gene are kept, because the caller takes the best score per peptide afterwards."""
+    p = tmp_path / "g.scored.csv"
+    p.write_text("epitope,best_allele,gene,tpm\n"
+                 "AAAAAAAAA,HLA-A*02:01,PMEL,\n"
+                 "CCCCCCCCC,HLA-A*02:01,PMEL,\n"
+                 "CCCCCCCCC,HLA-A*02:01,NOSUCHGENE,\n")
+    rows = R.rank_table(str(p), tissue="Skin", channels=channel_fn)
+    assert len(rows) == 3, "a tie is two rows, and the ranker must not collapse them"
+    assert {r.gene for r in rows} == {"PMEL", "NOSUCHGENE"}
+    by_gene = {r.gene: r for r in rows if r.peptide == "CCCCCCCCC"}
+    assert by_gene["PMEL"].expression == pytest.approx(math.log1p(44.1))
+    assert by_gene["NOSUCHGENE"].expression != by_gene["NOSUCHGENE"].expression   # nan
+
+
 def test_rank_table_skips_blank_rows(tmp_path):
     p = tmp_path / "y.scored.csv"
     p.write_text("epitope,best_allele\n,\nAAAAAAAAA,HLA-A*02:01\n")

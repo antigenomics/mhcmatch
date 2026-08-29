@@ -1,7 +1,7 @@
 Command-line reference
 ======================
 
-Twenty commands, one binary --- and one of them, ``cassette``, has sub-verbs. This page groups them by **what you are trying to do**; every
+Twenty-one commands, one binary --- and one of them, ``cassette``, has sub-verbs. This page groups them by **what you are trying to do**; every
 command also has ``mhcmatch <command> --help``.
 
 .. important::
@@ -11,8 +11,8 @@ command also has ``mhcmatch <command> --help``.
    binder calibrator ~45 s, a human-proteome length index ~70 s. One process over a list is the
    difference between seconds *per peptide* and thousands *per second*.
 
-   ``--threads`` exists **only** on ``source`` and ``mimics``, whose neighbour search runs in C++
-   with the GIL released. Elsewhere it is absent rather than accepted and ignored.
+   ``--threads`` exists **only** on ``source``, ``mimics`` and ``genes``, whose neighbour search
+   runs in C++ with the GIL released. Elsewhere it is absent rather than accepted and ignored.
 
 Machine-readable output
 -----------------------
@@ -63,6 +63,8 @@ Routine tasks
      - ``mhcmatch mimicry --peptides p.txt``
    * - Where in the proteome does it come from?
      - ``mhcmatch source --peptides p.txt --proteome human --threads 0``
+   * - Which gene does this candidate come from?
+     - ``mhcmatch genes cand.tsv --out annotated.tsv``
    * - Is the gene on in the tumour, and in normal tissue?
      - ``mhcmatch expression GENE --tumor SKCM``
    * - Which *k* of this donor's candidates should the cassette carry?
@@ -163,6 +165,15 @@ The commands, by axis
        ``--core`` appends the binding core — see :ref:`binding-core`
    * - ``explain``
      - every component of the aggregate for one *(peptide, allele)*
+   * - ``genes``
+     - add a ``gene`` column to a peptide table --- the parent gene each candidate derives from,
+       found by near-exact proteome search (radius 2, threaded C++) and named by its UniProt
+       ``GN=`` field. This is what ``expr_lvl`` and ``expr_norm`` are keyed on, so a table
+       without it scores both terms at one mean-imputed constant; over the benchmark corpus it
+       lifts symbol coverage from **339,424 of 695,811 rows (48.8%)** to **692,349 (99.5%)**.
+       **A tie becomes several rows**, so take the best score per peptide; an unresolved peptide
+       keeps its row with an empty cell. Every other column is carried through --- see
+       :ref:`parent-gene`
    * - ``expression``
      - reference expression by normal tissue or tumour type. ``--list-contexts`` prints the 19
        TCGA↔GTEx pairings

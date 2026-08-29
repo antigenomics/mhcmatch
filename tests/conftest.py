@@ -1,4 +1,4 @@
-"""Shared test setup: the HF-deposit gate, and the one stub two suites share.
+"""Shared test setup: the HF-deposit gate, and the stubs and fixtures two suites share.
 
 Most of the suite is offline by construction -- vendored artifacts, synthetic tables, monkeypatched
 readers. A handful of tests genuinely need the ``isalgo/pmhc_data`` deposit (a reference panel, the
@@ -35,6 +35,36 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "hfdata" in item.keywords:
             item.add_marker(skip)
+
+
+#: A five-protein proteome laid out so every rule of ``Proteome.assign_genes`` has a query that
+#: isolates it. ``GENEA`` and ``GENEC`` carry the same 9-mer ``MKTAYIAKQ``, so the 1-substitution
+#: query ``MKTAYIAKW`` ties between them; ``GENED`` carries a copy two substitutions from that same
+#: query, so it is inside the radius-2 ball and must not vote; ``Q4`` has no ``GN=`` at all, which
+#: is the "a parent, but no symbol" case. Real UniProt header shapes, invented accessions.
+GENE_FASTA = (
+    ">sp|Q1|ONE_HUMAN Protein one OS=Homo sapiens OX=9606 GN=GENEA PE=1 SV=1\n"
+    "MKTAYIAKQRQISFVK\n"
+    ">sp|Q2|TWO_HUMAN Protein two OS=Homo sapiens OX=9606 GN=GENEB PE=1 SV=1\n"
+    "GHIKLMNPQRSTVWYA\n"
+    ">sp|Q3|THREE_HUMAN Protein three OS=Homo sapiens OX=9606 GN=GENEC PE=1 SV=1\n"
+    "CCCCMKTAYIAKQCCC\n"
+    ">sp|Q5|FIVE_HUMAN Protein five OS=Homo sapiens OX=9606 GN=GENED PE=1 SV=1\n"
+    "EEEMKTAYIACCEEEE\n"
+    ">tr|Q4|FOUR_HUMAN Uncharacterized OS=Homo sapiens OX=9606 PE=4 SV=1\n"
+    "DDDDDDDDDDDDDDDD\n")
+
+
+@pytest.fixture
+def gene_fasta(tmp_path):
+    """:data:`GENE_FASTA` written to disk, as a path.
+
+    A path and not a :class:`~mhcmatch.Proteome`: ``assign_genes`` re-reads the headers for ``GN=``,
+    and the CLI is handed the same file through ``--species``, so both suites need the file itself.
+    """
+    p = tmp_path / "genes.fasta"
+    p.write_text(GENE_FASTA)
+    return p
 
 
 class HydrophobicStub:

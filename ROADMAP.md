@@ -1078,6 +1078,19 @@ calibrated=True)` and the CLI `--calibrated`).
   axis (Spearman(Δ, log nM)≈+0.5–0.65); their Fisher combination, calibrated per allele into a true
   %rank, beats both single heads on immunogenicity (TESLA 0.786, NCI 0.965). It is the recommended
   single-number binder index. `bench/results/head_complementarity.md`.
+- **The parent-gene annotation ships; the shipped fit predates it.** `Proteome.assign_genes` /
+  `mhcmatch genes` recover an HGNC symbol from the peptide by near-exact proteome search, taking
+  corpus coverage from **339,424 of 695,811 rows (48.8%)** to **692,349 (99.5%)** and giving
+  **4,511 of the 5,833 positives** a symbol the deposit never carried
+  (`bench/results/gene_resolution.md`). **EPIC artifact version 10 was fitted before that existed**,
+  so its `expr_norm` coefficient — **+0.4950** log-odds per standard deviation — was estimated
+  against a column that is one mean-imputed constant on 89% of positives; on VACCIMEL that column
+  had standard deviation exactly 0.0000. The like-for-like refit on identical rows is measured and
+  recorded (`bench/results/epic_gene_repair.md`): `expr_norm` moves **+0.4880 → +0.2098** and
+  `expr_lvl` **+0.3730 → +0.4073**, no other term by more than 0.01 — the term stops being a second
+  screen intercept and becomes a measurement. **Whether that refit ships is the author's call**,
+  per the model-version rule: replacing `src/mhcmatch/data/aggregate_mhc1.json` moves every number
+  in the manuscript, and `build --check` cannot see that it changed.
 
 ## 6.5 Menu — candidate refinements & tooling
 

@@ -409,3 +409,52 @@ def test_rank_pairs_emits_a_row_whose_allele_resolves_to_nothing(monkeypatch):
     assert r.presentation != r.presentation     # nan
     assert r.binder != r.binder and r.occupancy != r.occupancy
     assert r.physchem == 0.25                   # allele-free terms are still real
+
+
+def test_genes_emits_one_row_per_tie_and_drops_none(tmp_path, gene_fasta, capsys):
+    """`mhcmatch genes` annotates a table in place: every input column through, `gene` appended.
+
+    Three contracts in one run, and each is a way the expression axis silently loses information:
+    a tied peptide becomes several rows (the caller keeps the best aggregate score per peptide, so
+    picking one here would be picking blind), an unresolved peptide keeps its row with an empty
+    `gene` rather than vanishing, and the columns the caller already had are untouched.
+    """
+    t = tmp_path / "cand.tsv"
+    t.write_text("peptide\tallele\ttpm\n"
+                 "GHIKLMNPW\tHLA-A*02:01\t3.0\n"      # resolves to one gene
+                 "MKTAYIAKW\tHLA-A*02:01\t1.0\n"      # ties between GENEA and GENEC
+                 "WWWWWWWWW\tHLA-A*02:01\t0.5\n")     # no parent within the radius
+    out = tmp_path / "annotated.tsv"
+    cli.main(["genes", str(t), "--species", str(gene_fasta), "--out", str(out)])
+
+    # rstrip("\n"), not strip(): the unresolved row's last cell is empty, and strip() would eat the
+    # tab that holds its place and turn a 4-column row into a 3-column one
+    lines = [ln.split("\t") for ln in out.read_text().rstrip("\n").split("\n")]
+    assert lines[0] == ["peptide", "allele", "tpm", "gene"]
+    rows = [dict(zip(lines[0], r)) for r in lines[1:]]
+    assert len(rows) == 4, "three inputs, one of them tied two ways"
+    by_pep = {}
+    for r in rows:
+        by_pep.setdefault(r["peptide"], []).append(r["gene"])
+    assert by_pep["GHIKLMNPW"] == ["GENEB"]
+    assert by_pep["MKTAYIAKW"] == ["GENEA", "GENEC"]
+    assert by_pep["WWWWWWWWW"] == [""], "unresolved keeps its row, with an empty gene"
+    # the caller's own columns survive, on the tie rows too
+    assert all(r["tpm"] == "1.0" and r["allele"] == "HLA-A*02:01"
+               for r in rows if r["peptide"] == "MKTAYIAKW")
+    assert "2 of 3 peptide row(s) resolved" in capsys.readouterr().err
+
+
+def test_genes_reads_a_named_peptide_column_and_refuses_a_missing_one(tmp_path, gene_fasta, capsys):
+    """`--peptide-col` because a screen's table calls it `mt_peptide` as often as `peptide`, and a
+    silently-empty annotation is worse than a usage error."""
+    t = tmp_path / "cand.tsv"
+    t.write_text("mt_peptide\tgene\nGHIKLMNPW\t\n")
+    cli.main(["genes", str(t), "--species", str(gene_fasta), "--peptide-col", "mt_peptide"])
+    lines = [ln.split("\t") for ln in capsys.readouterr().out.strip().split("\n")]
+    # a `gene` column the caller already has is filled in place, not appended a second time
+    assert lines[0] == ["mt_peptide", "gene"]
+    assert lines[1] == ["GHIKLMNPW", "GENEB"]
+
+    with pytest.raises(SystemExit, match="mt_peptide"):
+        cli.main(["genes", str(t), "--species", str(gene_fasta)])
