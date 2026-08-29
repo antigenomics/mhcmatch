@@ -1304,7 +1304,10 @@ def rank_table(path: str, *, channels=None,
             if not pep or not pep.isalpha():
                 continue
             allele = (rec.get("best_allele") or "").strip()
-            gene = (rec.get("gene_name") or "").strip()
+            # `gene_name` is the pipeline schema's spelling; `gene` is what `mhcmatch genes` writes
+            # and what `rank_pairs` already reads, so a table annotated by that command drops in
+            # here with no rename. The pipeline column wins where both are present.
+            gene = (rec.get("gene_name") or rec.get("gene") or "").strip()
             try:
                 tpm = float(rec["tpm"]) if rec.get("tpm") else None
             except ValueError:

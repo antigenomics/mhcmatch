@@ -10,6 +10,32 @@ versioning is [SemVer](https://semver.org).
 
 ### Added
 
+- **`Proteome.assign_genes()` and `mhcmatch genes` -- a parent gene for a peptide that came without
+  one, so the expression terms stop being a constant.** `expr_lvl` and `expr_norm` are keyed on an
+  HGNC symbol and most neoantigen deposits ship only the peptide: over the benchmark corpus,
+  **356,387 of 695,811 rows (51.2%) and 5,205 of 5,833 positives (89.2%)** carry no symbol, and
+  every one of them collapses onto a single mean-imputed value. On the VACCIMEL screen `expr_norm`
+  had standard deviation **exactly 0.0000** and AUROC **exactly 0.5000** while carrying the largest
+  positive coefficient of the shipped v10 artifact, **+0.4950** log-odds per standard deviation.
+
+  The symbol is recoverable from the peptide, because a neoantigen is a near-copy of a self peptide.
+  `assign_genes` runs `find_sources` -- one seqtree index per query length and one threaded C++
+  batch query, one length at a time so the ~12.6 GB index is not held four times over -- and names
+  each parent by its UniProt `GN=` field. **The default radius is 2, because a neoantigen can carry
+  more than one mutation**: VACCIMEL resolves 88.2% of its peptides at radius 1 against 96.8% at
+  radius 2 (TESLA 98.5%, ITSNdb 99.5%, GBM 94.0%, Sahin_TNBC 100%).
+  `bench/results/gene_resolution.md`.
+
+  Three semantics, all load-bearing. **Only the nearest shell votes** -- a radius-2 shell is ~85x
+  the radius-1 shell inside it, so pooling them lets a distant coincidence outvote a real
+  single-substitution parent. **Exact matches are excluded**, because a peptide that *is* a proteome
+  window is not a neoantigen. **Ties come back in full** and the CLI emits a row each, because
+  choosing between equally-near parents needs expression data this pass does not have; the caller
+  takes the best score per peptide. A peptide with no parent, or whose parents carry no `GN=`, maps
+  to `[]` and **keeps its row** with an empty `gene`.
+
+  `mhcmatch genes table.tsv --out annotated.tsv` carries every input column through and appends
+  `gene`; `--peptide-col`, `--species` (a name or a FASTA path), `--max-subs` and `--threads`.
 - **`AnchorModel(reverse="auto")` -- a per-allele reverse-binding prior learned from the corpus.**
   A blanket `reverse=p` was measured neutral-to-negative because it pays the reverse channel's cost
   on every allele to reach a mode most alleles do not have: MixMHC2pred fits a reverse specificity
@@ -31,6 +57,12 @@ versioning is [SemVer](https://semver.org).
   single fit to the digit, with the rare stratum beating NetMHCIIpan-4.3i on all three metrics.
   **Ships off** (`route=None`); `route` never enters a params key, so all 27 vendored models keep
   matching. `bench/results/mhc2_frequency_routing.md`.
+
+### Changed
+
+- `rank_table` now reads a `gene` column as well as the pipeline schema's `gene_name`, so a table
+  annotated by `mhcmatch genes` reaches the expression lookup with no rename. `gene_name` still
+  wins where both are present, and a table carrying neither is scored bit-identically.
 
 ## [1.5.0] - 2026-08-28
 

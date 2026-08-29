@@ -323,7 +323,10 @@ A CSV in the pipeline ``.scored.csv`` shape, but only these columns are consulte
      - expression. Absent, the fallback below runs and ``expr_imputed`` is set
    * - ``gene_name``
      - no
-     - only used to look expression up when ``tpm`` is absent and ``--tissue`` is given
+     - the parent gene's HGNC symbol, used to look expression up when ``tpm`` is absent and
+       ``--tissue`` is given, and by ``expr_norm`` always. ``gene`` --- what ``mhcmatch genes``
+       writes and what ``rank pairs`` reads --- is accepted under that name too, so an annotated
+       table needs no rename; see :ref:`parent-gene`
 
 ``ref_seq`` / ``seq`` are read when present, and an incoming ``score`` is preserved in
 ``components['score_builtin']`` so the two rankings can be compared. Everything else in the
@@ -388,6 +391,47 @@ does not recognise, rather than returning a plausible number computed from the w
    :math:`10^6`. If you hold only per-candidate values the constant is not recoverable, and it
    matters for cross-sample comparison and for any absolute reading of the score, since ``expr_lvl``
    and ``expr_norm`` are fitted at +0.3694 and +0.4811 per standard deviation.
+
+.. _parent-gene:
+
+The parent gene, when the deposit does not name one
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Both fitted expression terms are keyed on an **HGNC gene symbol**: ``expr_lvl`` needs it whenever
+``tpm`` is absent, and ``expr_norm`` needs it always. Most published neoantigen deposits ship the
+peptide and not the gene --- over the benchmark corpus, **356,387 of 695,811 rows (51.2%) and
+5,205 of 5,833 positives (89.2%)** carried no symbol. Those rows do not drop out; they all collapse
+onto one mean-imputed constant, and a constant cannot order anything. On the VACCIMEL screen
+``expr_norm`` had standard deviation **exactly 0.0000** and AUROC **exactly 0.5000** while carrying
+the largest positive coefficient of the shipped artifact, **+0.4950** log-odds per standard
+deviation --- a fitted parameter paid for on no information.
+
+The symbol is recoverable from the peptide, because a neoantigen is a near-copy of a self peptide:
+
+.. code-block:: fish
+
+   mhcmatch genes candidates.tsv --species human --max-subs 2 --out annotated.tsv
+   mhcmatch rank pairs annotated.tsv --tumor SKCM --out ranked.tsv
+
+``genes`` searches the reference proteome for the nearest self peptide
+(:meth:`mhcmatch.proteome.Proteome.assign_genes`), names it by its UniProt ``GN=`` field and writes
+a ``gene`` column back beside every column the table already had. Both ``rank pairs`` and
+``rank table`` read that column, so the two commands compose with no join and no rename.
+
+Three properties of the annotation, each of which is a way the axis would otherwise lose
+information:
+
+* **The radius is 2, because a neoantigen can carry more than one mutation.** At radius 1 the
+  VACCIMEL screen resolves 88.2% of its peptides and at radius 2, 96.8% (TESLA 98.5%, ITSNdb 99.5%,
+  GBM 94.0%, Sahin_TNBC 100%). ``bench/results/gene_resolution.md``.
+* **Only the nearest shell votes.** A radius-2 shell is roughly 85 times the size of the radius-1
+  shell inside it, so pooling the two lets a distant coincidence outvote a genuine
+  single-substitution parent.
+* **A tie becomes several rows, and an unresolved peptide keeps its row with an empty cell.**
+  Which of several equally-near parents a peptide should be scored under is a question the
+  expression reference answers and the search cannot, so every tied gene is emitted and the caller
+  takes the best score per peptide --- ``group_by(peptide).agg(max(score))``. Nothing in the ranker
+  assumes one row per *(peptide, allele)*.
 
 Reading the output
 ------------------

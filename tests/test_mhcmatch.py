@@ -407,6 +407,74 @@ def test_find_exact_sources_agrees_with_find_sources_at_radius_zero():
     assert all(exact["W" * L] == [] for L in (8, 9, 10, 11))
 
 
+# -- parent-gene assignment ---------------------------------------------------
+# The proteome is `conftest.GENE_FASTA`; every query below is chosen against that layout.
+
+
+def test_assign_genes_names_the_parent_gene_of_a_substituted_peptide(gene_fasta):
+    """The join the expression axis is keyed on: a mutated peptide -> its parent gene's symbol.
+
+    ``expr_lvl`` and ``expr_norm`` are both looked up by HGNC symbol, and a deposit that ships
+    peptides without one leaves every such row at a single mean-imputed constant.
+    """
+    from mhcmatch import Proteome
+    pm = Proteome.from_fasta(str(gene_fasta))
+    # one substitution from GHIKLMNPQ, which only TWO carries
+    assert pm.assign_genes(["GHIKLMNPW"]) == {"GHIKLMNPW": ["GENEB"]}
+    # queries are stripped, upper-cased and deduplicated exactly as `find_sources` does
+    assert pm.assign_genes([" ghiklmnpw ", "GHIKLMNPW", ""]) == {"GHIKLMNPW": ["GENEB"]}
+
+
+def test_assign_genes_radius_two_reaches_a_two_mutation_neoantigen(gene_fasta):
+    """**A neoantigen can carry more than one mutation**, which is why the default radius is 2.
+
+    Measured over the benchmark screens the radius is worth 88.2% -> 96.8% of VACCIMEL's peptides
+    resolved (``bench/results/gene_resolution.md``), so a radius-1 default would leave roughly one
+    peptide in nine of that screen unassigned.
+    """
+    from mhcmatch import Proteome
+    pm = Proteome.from_fasta(str(gene_fasta))
+    q = "GHIKLMNWW"                                   # two substitutions from GHIKLMNPQ
+    assert pm.assign_genes([q], max_subs=1) == {q: []}
+    assert pm.assign_genes([q], max_subs=2) == {q: ["GENEB"]}
+
+
+def test_assign_genes_returns_every_tied_gene_and_only_the_nearest_shell(gene_fasta):
+    """Two rules at once, because one query separates them.
+
+    ``MKTAYIAKW`` sits 1 substitution from a 9-mer GENEA and GENEC both carry, and 2 from GENED's
+    copy. Both nearest parents come back -- resolving a tie needs expression data this method does
+    not have -- and GENED does not, because a radius-2 shell is ~85x the size of the radius-1 shell
+    inside it and pooling them lets a distant coincidence outvote a real parent.
+    """
+    from mhcmatch import Proteome
+    pm = Proteome.from_fasta(str(gene_fasta))
+    q = "MKTAYIAKW"
+    assert [(h.n_subs, h.protein.split("|")[2]) for h in
+            pm.find_sources([q], max_subs=2, exclude_exact=True)[q]] == [
+        (1, "ONE_HUMAN"), (1, "THREE_HUMAN"), (2, "FIVE_HUMAN")], "the fixture must set up the tie"
+    assert pm.assign_genes([q], max_subs=2) == {q: ["GENEA", "GENEC"]}, "GENED is a shell too far"
+
+
+def test_assign_genes_maps_an_unresolvable_peptide_to_an_empty_list(gene_fasta):
+    """Neither "no parent" nor "a parent carrying no symbol" is an error -- both are ``[]``.
+
+    Raising would cost the caller the row, and a row scored on the terms it does have beats a row
+    that is not scored at all.
+    """
+    from mhcmatch import Proteome
+    pm = Proteome.from_fasta(str(gene_fasta))
+    assert pm.assign_genes(["WWWWWWWWW"]) == {"WWWWWWWWW": []}, "nothing within the radius"
+    assert pm.assign_genes(["DDDDDDDDW"]) == {"DDDDDDDDW": []}, "a parent, but it carries no GN="
+    # an in-memory Proteome has no FASTA to read symbols from, and says so rather than guessing.
+    # `path=` supplies one, keyed on the protein name exactly as `window_genes` is.
+    from mhcmatch.proteome import read_fasta
+    mem = Proteome(read_fasta(str(gene_fasta)))
+    with pytest.raises(ValueError):
+        mem.assign_genes(["GHIKLMNPW"])
+    assert mem.assign_genes(["GHIKLMNPW"], path=str(gene_fasta)) == {"GHIKLMNPW": ["GENEB"]}
+
+
 # -- CLI ----------------------------------------------------------------------
 # -- allele-name resolution (item 7) -----------------------------------------
 def test_resolve_allele():
