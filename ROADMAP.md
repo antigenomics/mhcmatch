@@ -14,19 +14,37 @@ the build plan. Phase sections marked _(TBD)_ await detail.
 > tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
 > below resolve there, not here.
 
-## Where this stands, 2026-08-29 — the cassette stage, and an EPIC refit that clears its own bar
+## Where this stands, 2026-08-29 — 1.6.0, EPIC v11, and the cassette stage
 
-**The shipped EPIC artifact was stale, and the chain says so by 108 BIC.** Re-running
-`bench/run_epic.sh` end to end on the same corpus — **342,432 rows, 741 positives, the same eight
-screens** — gives **BIC 4328.3 → 4220.3** and held-out-screen **LOO mean 0.6998 → 0.7142**. Same nine
-features, same corpus geometry (BLOSUM62-normalised, sliced, k = 3), same `n` on every screen, so
-this is like-for-like and not a change of question. Per screen, **6 improvements, 2 ties, 0
-regressions**; the two screens v10 regressed on — `IEDB_neoag` and `ITSNdb`, the pair its own
-`verdict` block cited for `"ship": false` — are **both improvements now** (+0.0066 and +0.0201).
-The one negative cell is VACCIMEL (−0.0379 on **n = 93, 26 positives**), inside its own
-resolution 1/26 and therefore a tie by the repo's rule. The ship bar is **MET** where v10's was not.
-Largest coefficient moves: `binder` +0.4623 → **+0.6117**, `log10a` +0.4005 → **+0.2637**,
-`C_corpus_thymus` +0.2588 → **+0.1463**. `bench/results/epic_fit.md`.
+**Shipped scorer: EPIC artifact version 11, nine fitted terms, `binder` as the presentation term.**
+`mhcmatch build --check` reports 0 stale of 27 against 1.6.0. Three things moved underneath a
+specification that did not change — same nine terms, same blocks, same `tau = 0.25`:
+
+1. **`expr_norm` was fitted on a per-screen constant.** It keys on a gene symbol, and **356,387 of
+   695,811 corpus rows (51.2%) and 5,205 of 5,833 positives (89.2%)** deposited none, so they all
+   collapsed onto one mean-imputed value. On VACCIMEL the term had standard deviation **exactly
+   0.0000** and AUROC **exactly 0.5000** while carrying v10's second-largest coefficient. Repaired
+   through `Proteome.assign_genes` at radius 2; symbol coverage **48.8% → 99.5%**.
+   `bench/results/gene_resolution.md`, `epic_gene_repair.md`.
+2. **`Gfeller_GBM` re-admitted what corpus rule 10 excludes.** 2,733 of its 2,833 pairs (**96.5%**)
+   are Gfeller, held out as viral and self rather than neoantigen, and it leaked across the holdout
+   boundary into GBM (100 of 150) and ITSNdb (49 of 197). Removed as rule 10a, at a cost of 144 of
+   741 positives.
+3. **v10 did not rebuild.** Its `binder` and `log10a` standardisers reproduce from no current fit,
+   on exactly the two columns its own note says define it. Superseded rather than reconciled, on
+   the author's decision.
+
+Held-out-screen **LOO mean 0.6998 → 0.7102** over 7 screens; `binder` **+0.4623 → +0.7569** and
+`expr_norm` **+0.4950 → +0.2155**, which is one mechanism seen twice — viral and self rows had been
+pulling the fit off presentation and onto the corpus and expression channels. **BIC is not
+comparable** across the change (4328.3 against 3109.8 on different `n`: 342,432 rows / 741
+positives / 8 screens → **339,599 / 597 / 7**), and the bootstrap cluster count fell 3,294 → 527,
+so v11's intervals are wider for that reason and not from a less certain fit.
+
+v11's own `verdict` block reads `"ship": false` — 4 improvements, 1 tie, 2 regressions against v10
+(`IEDB_neoag` −0.025 AUROC on 424 pairs, `VACCIMEL` −0.045 on 93) — and it was shipped on the
+author's word on 2026-08-29, as v10 was on 2026-08-28. Quote the artifact with that attached.
+`bench/results/epic_fit.md`.
 
 The cause is the one `CLAUDE.md` already names: **the copy from `bench/epic/aggregate_mhc1.json` to
 `src/mhcmatch/data/` is manual, so the shipped file drifts and `build --check` cannot see it** — it
@@ -55,9 +73,9 @@ denominator of six. `select`, `score` and both CLIs now take it, and a coverage 
 (`universe`, `max_share`) binds inside `greedy` and survives the swap pass.
 
 **Tumour selectivity is stated, not fitted, and the reason is a coefficient.** EPIC fits `expr_norm`
-— the source gene's level in *healthy* tissue — at **+0.4950**, the largest positive coefficient in
-the model, because it answers *will this respond* and a gene transcribed everywhere responds more
-often. "High in tumour, low in normal" is a **safety** question, so it enters as a declared exchange
+— the source gene's level in *healthy* tissue — **positive** (v11: **+0.2155** log-odds per standard
+deviation, beside `expr_lvl` at **+0.5180**), because it answers *will this respond* and a gene
+transcribed everywhere responds more often. "High in tumour, low in normal" is a **safety** question, so it enters as a declared exchange
 rate `h_i += w (expr_lvl_i - expr_norm_i)` in expected responding units per log2-fold, charged to
 the objective and never to `p`. Both coefficients stay as measured, both terms stay reported, and
 the run prints the trade it made. Imposing the ratio on the fit would have asserted an answer the

@@ -260,7 +260,7 @@ def test_both_fitted_expression_terms_are_emitted_columns():
 def test_an_unresolvable_tumour_reaches_the_caller_and_the_row_names_the_floor(monkeypatch):
     """`resolve_context` raises `ValueError` to stop an unrecognised context becoming the pooled
     reference. `rank._finish` caught it, so `rank table --tumor <unlisted>` on a gene-less input
-    scored `expr_lvl` -- a fitted term -- against the artifact's pooled 0.180005 TPM while the eight
+    scored `expr_lvl` -- a fitted term -- against the artifact's pooled 0.180005 TPM while the seven
     fitted screens' own floors span 0.140003-0.239999, and nothing on the output row said which had
     been used. Both halves are pinned here: the guard propagates, and every row records its floor.
     """

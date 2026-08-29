@@ -8,11 +8,15 @@
   what is **open**, what is **withheld** from the published documents, and **where a rival is
   ahead**. It replaced `issues_major.md` / `issues_minor.md` / `caveats.md`, none of which exist.
 
-**The shipped scorer is artifact version 10 in library 1.4.0** — nine fitted terms, `binder` as the
+**The shipped scorer is artifact version 11 in library 1.6.0** — nine fitted terms, `binder` as the
 fitted presentation term (recorded in `issues.md`; both taken by the author on 2026-08-25). Its
-own `verdict` block reads `"ship": false`, which is worth knowing before quoting it: v10 was shipped
-on the author's word on 2026-08-28 *against* that bar, over two thin regressions (IEDB_neoag and
-ITSNdb, the latter near chance under v9 too). Do not replace
+own `verdict` block still reads `"ship": false`, which is worth knowing before quoting it: v11 was
+shipped on the author's word on 2026-08-29 *against* that bar, over two thin regressions
+(IEDB_neoag −0.025 AUROC on 424 pairs, VACCIMEL −0.045 on 93), exactly as v10 was on 2026-08-28.
+The fit population moved with it — 342,432 rows / 741 positives / 8 screens → **339,599 / 597 / 7**,
+because parent genes were resolved for the 51.2% of rows that deposited none and `Gfeller_GBM` left
+the corpus as 96.5% Gfeller — so **BIC does not compare across v10 and v11** and the leave-one-
+screen-out mean is the number that does: **0.6998 → 0.7102**. Do not replace
 `src/mhcmatch/data/aggregate_mhc1.json` without the author's word: it moves every number in the
 manuscript, and `build --check` cannot see that it changed — but
 `test_the_shipped_artifact_is_pinned_to_the_fit_that_produced_it` now can, by digesting

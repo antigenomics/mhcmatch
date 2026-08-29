@@ -6,7 +6,7 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
-## [Unreleased]
+## [1.6.0] --- 2026-08-29
 
 ### Changed
 

@@ -943,7 +943,7 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
             `mhcmatch.expression.resolve_context` raises it precisely to stop an unrecognised
             tumour or tissue becoming the pooled reference, and catching it here put that guard
             back where it started: `--tumor <unlisted>` scored `expr_lvl` -- a fitted term -- on
-            the artifact's pooled 0.180005 TPM while the eight fitted screens' own floors span
+            the artifact's pooled 0.180005 TPM while the seven fitted screens' own floors span
             0.140003-0.239999 TPM, and no column on the row said which had been used. Only a
             *staging* failure falls back: no deposit on disk, no numpy, an artifact with no
             `floor_quantile`."""
