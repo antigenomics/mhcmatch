@@ -77,6 +77,7 @@ mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor 
 | Does that mimicry raise or lower the risk, and why? | `mhcmatch mimicry --peptides p.txt` | `mimicry.score` |
 | Has this, or something near it, already been tested? | `mhcmatch neoag --peptides p.txt` | `mimicry.annotate` |
 | Where in the proteome does it come from? | `mhcmatch source --peptides p.txt --proteome human` | `Proteome.find_sources` |
+| Which gene is it from, when the deposit did not say? | `mhcmatch genes pairs.tsv --out annotated.tsv` | `Proteome.assign_genes` |
 | Is the gene on in the tumour, and in normal tissue? | `mhcmatch expression --list-contexts` | `expression.lookup` |
 | What does this allele's motif look like? | `mhcmatch logo 'HLA-A*02:01'` | `logo.motif` |
 | Which peptides in this protein are presented? | `mhcmatch scan p.fasta --correction bh` | `store.scan_protein` |
@@ -243,9 +244,10 @@ cut -f1 table.tsv | mhcmatch complement --peptides -              # `-` reads st
 ```
 
 The input is one peptide per line, or a TSV with a `peptide` column (`.gz` fine); the output is TSV
-with a header on stdout or `--out`. `--threads` is offered **only** on `source` and `mimics`, whose
-neighbour search runs in C++ with the GIL released; everywhere else the per-peptide work is a small
-numpy product and a thread pool would buy nothing, so the flag is absent rather than ignored.
+with a header on stdout or `--out`. `--threads` is offered **only** on `source`, `mimics` and
+`genes`, whose neighbour search runs in C++ with the GIL released; everywhere else the per-peptide
+work is a small numpy product and a thread pool would buy nothing, so the flag is absent rather
+than ignored.
 
 ## The two axes
 
@@ -271,6 +273,30 @@ but only while they are the same column. Where a submitted abundance is on some 
 clear that gate, and should not: a mutation reaches one only where the gene was seen in RNA, so the
 ratio would measure that conditioning rather than the library. A candidate whose gene is unknown
 scores on the terms it does have, flagged, never dropped.
+
+**Both terms are keyed on a gene symbol, and most deposits do not ship one.** Over the neoantigen
+corpus the symbol is missing on **356,387 of 695,811 rows (51.2%)** and on **5,205 of 5,833
+immunogenic candidates (89.2%)**, and every row without one takes the same mean-imputed value — on
+the VACCIMEL screen that left `expr_norm` at standard deviation **exactly 0.0000** and AUROC
+**exactly 0.5000**. `mhcmatch genes` recovers the symbol from the peptide, because a neoantigen is a
+near-copy of a self peptide: near-exact proteome search, each parent named by its UniProt `GN=`
+field. Coverage over that corpus goes to **692,349 of 695,811 rows (99.5%)** and **4,511 of the
+5,833 positives** gain a symbol, which takes `expr_norm`'s standard deviation on VACCIMEL from
+**0.0000** to **2.520** (`bench/results/gene_resolution.md`).
+
+```bash
+mhcmatch genes pairs.tsv --species human --out annotated.tsv     # + a `gene` column
+mhcmatch rank pairs annotated.tsv --tumor SKCM --out ranked.tsv  # reads it: no join, no rename
+```
+
+Three semantics decide whether the answer is the right one. **Only the nearest shell votes** — a
+radius-2 shell is ~85× the radius-1 shell inside it, so pooling the two lets a coincidence outvote
+a real single-substitution parent. **Ties come back in full, one row each**, because which of
+several equally-near parents to score under is a question expression answers and a search cannot;
+take the best score per peptide, and expect them — **22,172 of 70,485 8-mers (31.5%)** name more
+than one nearest gene, against **7,448 of 97,995 11-mers (7.6%)**. **The radius is 2 because a
+neoantigen can carry more than one mutation**, and the second shell is not rounding: **3,004 of the
+695,811 rows** find their parent only there.
 
 A **gate** — a product of sigmoids rather than a sum, so a candidate failing either axis cannot be
 rescued by the other — is reachable as `mhcmatch rank --score gate`.
@@ -556,6 +582,7 @@ mimics.neighbours(peptides, ref_sets, threads=0)     # threaded C++ neighbour se
 
 pm = mhcmatch.Proteome.from_hf("human")
 pm.find_sources(peptides, max_subs=1, threads=0)     # batch; find_source() is the single-query form
+pm.assign_genes(peptides)                            # {peptide: [gene, ...]}, ties kept in full
 pm.wildtype("NLVPMVATV")                             # the WT counterpart, for agretopicity
 ```
 

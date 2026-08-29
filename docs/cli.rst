@@ -166,11 +166,14 @@ The commands, by axis
    * - ``explain``
      - every component of the aggregate for one *(peptide, allele)*
    * - ``genes``
-     - add a ``gene`` column to a peptide table --- the parent gene each candidate derives
-       from, found by near-exact proteome search and named by its UniProt ``GN=`` field. This
-       is what ``expr_lvl`` and ``expr_norm`` are keyed on, so a table without it scores both
-       terms at one mean-imputed constant. **A tie becomes several rows** and an unresolved
-       peptide keeps its row with an empty cell --- see :ref:`parent-gene`
+     - add a ``gene`` column to a peptide table --- the parent gene each candidate derives from,
+       found by near-exact proteome search (radius 2, threaded C++) and named by its UniProt
+       ``GN=`` field. This is what ``expr_lvl`` and ``expr_norm`` are keyed on, so a table
+       without it scores both terms at one mean-imputed constant; over the benchmark corpus it
+       lifts symbol coverage from **339,424 of 695,811 rows (48.8%)** to **692,349 (99.5%)**.
+       **A tie becomes several rows**, so take the best score per peptide; an unresolved peptide
+       keeps its row with an empty cell. Every other column is carried through --- see
+       :ref:`parent-gene`
    * - ``expression``
      - reference expression by normal tissue or tumour type. ``--list-contexts`` prints the 19
        TCGA↔GTEx pairings
