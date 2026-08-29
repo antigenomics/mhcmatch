@@ -413,6 +413,32 @@ Three consequences that a user should take away.
   the top of this page, and the ladder is what isolates it: once ``self`` absorbs what the two
   channels have in common, what is left in ``thymus`` points the other way.
 
+Re-run on the shipped v11 base: the same finding, and a sharper reading
+------------------------------------------------------------------------
+
+The ladder above was fitted on the v4 base block. Re-entered on the base the **shipped v11** model
+carries, on 339,599 rows and 597 positives over seven datasets, every qualitative conclusion holds
+and two get stronger.
+
+* **The decisive cell reproduces.** ``thymus`` + ``viral`` without ``self`` is again the worst
+  subset of the seven --- both channels non-significant (+0.0311, *p* = 0.68 and +0.0366,
+  *p* = 0.60) and the worst BIC of any subset, 3116.0 against 3098.4 for the best.
+* **Each partner still resolves only beside self**, and by more than before: ``thymus`` goes
+  +0.0596 (*z* +1.20, 85 %) alone to **+0.2534** (*z* +3.91, *p* = 9.4×10⁻⁵, 100 %) beside it, and
+  ``viral`` +0.0584 (*z* +1.26, 88 %) to **+0.2923** (*z* +3.85, 100 %).
+* **In the full block all three are now individually significant with the expected signs** ---
+  ``thymus`` +0.1556 (*z* +2.14), ``self`` **−0.4350** (*z* −4.41), ``viral`` +0.2191 (*z* +2.53).
+  At v4 that held only under the ``max`` reduction; at v11 it is the shipped ``mean`` configuration.
+
+The sharper reading comes from one further arm. **Replacing** ``self`` **by a constant reproduces
+dropping it exactly** --- ``thymus`` returns to +0.0596, *z* +1.20, 85 % in both cases. Since
+``optimize.standardise`` mean-centres, a constant column carries the level and none of the
+variation, so what the block needs from ``self`` is its *variation across candidates*, not its
+level. That is narrower than "reference level": ``self`` is a **correlated covariate doing
+suppression** --- it absorbs the composition the three channels share, and the partner coefficients
+are what is left once it has. The consequences above are unchanged; only the mechanism is stated
+more precisely.
+
 The correlation is a property of the density scale, not of :math:`\kappa`
 --------------------------------------------------------------------------
 
