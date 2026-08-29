@@ -353,9 +353,11 @@ def aggregate() -> dict:
       gene in the tumour's matched normal tissue, both ``log2(1 + TPM/c)`` on the floor the tumour
       type's own transcriptome sets. **Two free terms rather than an imposed ratio**, and the fit
       says the ratio would have been the wrong constraint: a difference of logs requires equal and
-      opposite coefficients, where these come back +0.3694 and +0.4811 per standard deviation,
-      *both positive*. ``expr_pct``, the within-batch percentile, is still emitted and is not
-      fitted.
+      opposite coefficients, and every fit since v9 has returned these two *both positive* --- so
+      abundance and normal-tissue level carry separate information rather than a ratio's worth
+      between them. Their sizes move at every refit and are not restated here; ``mhcmatch rank
+      --coefficients`` prints what the installed artifact actually uses. ``expr_pct``, the
+      within-batch percentile, is still emitted and is not fitted.
     * ``physchem`` -- ``C_phys_buried`` and ``C_phys_charge``, :func:`mhcmatch.complement.burial`
       over the TCR face on the Rose burial propensity and on Atchley AF5 electrostatic charge.
       Imported scales, so **zero fitted residue parameters**; burial carries a cysteine loading of

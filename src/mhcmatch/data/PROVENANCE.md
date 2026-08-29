@@ -399,7 +399,7 @@ prints the terms and `--holdout` the per-screen held-out AUROCs; those two comma
 document, are the record of what a given install actually scores with.
 
 **Two version vocabularies, told apart by shape.** `version` here is a *model* version and is an
-**integer** — 3 through 10 — where a package version is dotted. `_build._stamp` therefore returns
+**integer** — 3 through 11 — where a package version is dotted. `_build._stamp` therefore returns
 `None` for this file and `mhcmatch build --check` **presence-checks it only**. It cannot tell a
 current artifact from a stale one, which is deliberate (a model version does not move at every
 release) and is why the copy below has to be checked by hand.
@@ -443,6 +443,49 @@ is the check that the refit is downstream of the binding change and of nothing e
 
 All nine terms stay individually significant (|z| 2.52-6.22, max p = 0.0118, sign stability >= 0.995
 over 400 clusters). The fit leans harder on affinity because affinity now knows something.
+
+**v11 (2026-08-29) supersedes a v10 that no longer reproduces, and is fitted on a corpus that
+changed twice.** The specification is untouched again — same nine features, same blocks, same
+`tau = 0.25`. Three things moved, and they are separable:
+
+*1. A v10 that does not rebuild.* Every fit the chain produces gives `binder` `(mu, sigma)`
+`(-1.392931, 0.514058)` and `log10a` `(-2.865114, 0.924722)`; the shipped v10 file carries
+`(-1.437181, 0.505559)` and `(-2.878300, 0.915829)` — on exactly the two columns the v10 note above
+says define it over v9, and on no others. The intent recorded there is still the right description
+of what v10 was *for*; the file drifted from it. The cause was not established. On the author's
+decision the artifact is **superseded rather than reconciled**, which restores the property that a
+shipped artifact rebuilds from the chain.
+
+*2. Parent genes resolved.* `expr_lvl` and `expr_norm` key on a gene symbol, and the symbol was
+missing on 356,387 of 695,811 corpus rows (51.2%) and on 5,205 of 5,833 positives (89.2%). Every
+such row took one mean-imputed value, so on VACCIMEL `expr_norm` had standard deviation **exactly
+0.0000** and AUROC **exactly 0.5000** while carrying v10's second-largest coefficient. Resolved by
+`bench/neoag/resolve_genes.py` (seqtree, radius 2 — a neoantigen can carry more than one mutation);
+coverage 48.8% -> 99.5%. `bench/results/gene_resolution.md`.
+
+*3. Gfeller_GBM removed from the fit.* It is not an independent screen but the compendium published
+with Koohy's immunogenicity comparison, and **2,733 of its 2,833 (peptide, allele) pairs (96.5%)
+are Gfeller**, which `corpus.py` rule 10 already excludes as viral and self rather than neoantigen.
+It also carried 592 CEDAR pairs, 100 of GBM's 150 and 49 of ITSNdb's 197, so leave-one-screen-out on
+Gfeller left 83.4% of Gfeller's own pairs in training and on GBM 66.7%. Removing it costs 144 of 741
+positives — 19.4% — and is recorded as `corpus.py` rule 10a.
+
+    rows       342,432 -> 339,599      positives  741 -> 597      screens  8 -> 7
+    LOO mean   0.6998 -> 0.7102        (leave-one-screen-out)
+    BIC        4328.3 -> 3109.8        NOT comparable: n and the positive count both moved
+    coef       binder +0.4623 -> +0.7569 (+64%), expr_norm +0.4950 -> +0.2155 (-56%),
+               expr_lvl +0.3704 -> +0.5180, log10a +0.4005 -> +0.1713
+
+**The two large coefficient moves have one mechanism between them.** 2,733 viral-and-self pairs were
+pulling the fit away from presentation and onto the corpus and expression channels; removing them
+lets `binder` carry what it actually carries, and giving `expr_norm` real variation drops it to what
+the information supports. Held-out accuracy is unchanged within noise despite losing a fifth of the
+positives, which says those rows were bending the fit rather than carrying it.
+
+**One number to read with care:** the bootstrap resamples (patient, screen) clusters, and the count
+fell 3,294 -> 527 with Gfeller_GBM, whose rows each formed their own cluster. Intervals are wider
+than v10's for that reason and not because the fit is less certain.
+
 
 **Its `verdict` block reads `"ship": false` and it ships anyway — that is the author's call, taken
 2026-08-28, and it is recorded rather than edited away.** `fit.py`'s bar is *no per-screen

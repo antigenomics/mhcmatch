@@ -311,13 +311,16 @@ def test_aggregate_carries_the_fit_provenance_a_reader_needs():
     """A shipped scorer that cannot say what it was fitted on is not reproducible."""
     a = R.aggregate()
     # the CLEANED corpus: pathogen epitopes and unmutated self windows removed, host keyed on the
-    # MHC genus, CEDAR and Gfeller held out.
-    assert a["fit"]["rows"] == 342432 and a["fit"]["positives"] == 741
-    assert len(a["fit"]["screens"]) == 8
+    # MHC genus, CEDAR and Gfeller held out. v11 additionally holds out Gfeller_GBM -- 96.5% of its
+    # pairs ARE Gfeller, so admitting it re-admitted what holding Gfeller out was for, and cost 144
+    # of the 741 positives v10 was fitted on.
+    assert a["fit"]["rows"] == 339599 and a["fit"]["positives"] == 597
+    assert len(a["fit"]["screens"]) == 7
+    assert "Gfeller_GBM" not in a["fit"]["screens"]
     # v6. Neopep was dropped as a relabelling of NCI + TESLA + HiTIDE -- it shared 419,851 of its
     # 422,132 keys with NCI at zero label disagreements, so leave-one-screen-out on any of those
     # three still trained on their own rows -- and the mouse arm is held out rather than fitted.
-    assert a["version"] == 10 and "former_name" not in a
+    assert a["version"] == 11 and "former_name" not in a
     # v9 fits the expression block as two free terms -- the candidate's own abundance and the same
     # gene's level in matched normal tissue -- rather than one, and rather than their ratio.
     assert a["expression"]["terms"] == ["expr_lvl", "expr_norm"]

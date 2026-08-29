@@ -258,12 +258,13 @@ def test_the_shipped_artifact_is_pinned_to_the_fit_that_produced_it(art):
     import json
 
     blob = json.dumps([art["coef"], art["mu"], art["sigma"]], sort_keys=True).encode()
-    assert art["version"] == 10, art["version"]
+    assert art["version"] == 11, art["version"]
     assert art["features"] == [
         "binder", "log10a", "expr_lvl", "expr_norm",
         "C_phys_buried", "C_phys_charge",
         "C_corpus_thymus", "C_corpus_self", "C_corpus_viral",
     ], art["features"]
-    # v9 was e77a5325562a1547 (coef binder +0.5481, log10a +0.2914; BIC 4390.2, LOO mean 0.6942)
-    assert hashlib.sha256(blob).hexdigest()[:16] == "92e0b4e707e67f7f", (
+    # v9  was e77a5325562a1547 (coef binder +0.5481, log10a +0.2914; BIC 4390.2, LOO mean 0.6942)
+    # v10 was 92e0b4e707e67f7f (coef binder +0.4623, log10a +0.4005; BIC 4328.3, LOO mean 0.6998)
+    assert hashlib.sha256(blob).hexdigest()[:16] == "ec4bb310d10c688c", (
         hashlib.sha256(blob).hexdigest()[:16])

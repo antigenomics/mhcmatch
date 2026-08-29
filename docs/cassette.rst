@@ -123,10 +123,10 @@ enumerate; that is the only warrant the :math:`O(kN)` rule has and it is a test 
 
 .. important::
 
-   **Give it the whole candidate pool, not a shortlist.** ``binder`` and the two expression terms
-   carry the largest positive coefficients in the shipped model — +0.5481, +0.4811 and +0.3694 per
-   standard deviation — so a pool that has already been cut on binding and expression has no range
-   left along them. This is measurable rather than
+   **Give it the whole candidate pool, not a shortlist.** ``binder`` and ``expr_lvl`` are the two
+   largest positive coefficients in the shipped model and ``expr_norm`` is positive too — run
+   ``mhcmatch rank --coefficients`` for the sizes, which move at every refit — so a pool that has
+   already been cut on binding and expression has no range left along them. This is measurable rather than
    arguable: on the 46-patient half of the NCI gastrointestinal screen held out of the EPIC fit, an
    **exhaustive** exome screen responding at 0.0144 per mutation, selection lifts captured responses
    to **3.92× the base rate** at *k* = 5 (13 of 58 positives against 3.3 expected). On TESLA's

@@ -275,8 +275,11 @@ class RankCalibrator:
         420,786 rows -- and **6 of the 104 assayed-immunogenic candidates**, a 307x enrichment,
         because the strongest binders are exactly where the answer is. In ``-log10`` terms the
         emitted column could take values in ``[-2, 2] u {4}`` with literally nothing in between, and
-        crossing that empty two-log-unit gap was worth +2.05 log-odds of EPIC score (the shipped
-        ``binder`` standardizer, coef 0.5481 / sigma 0.5346) for no information at all.
+        crossing that empty two-log-unit gap was worth **+2.94 log-odds** of EPIC score under the
+        shipped standardizer for no information at all. That figure is
+        ``coef * 2 / sigma`` and so moves with the fit --- it was +2.05 under v9, and v11's heavier
+        ``binder`` makes the artefact worse, not better, which is the reason this path is not
+        optional.
 
         The tail of a sum of per-position terms is close to exponential, so a mean-excess fit to the
         top percentile of the background extends the rank smoothly past its last draw. It costs no

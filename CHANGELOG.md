@@ -8,6 +8,30 @@ versioning is [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Changed
+
+- **`data/aggregate_mhc1.json` is version 11**, superseding a v10 that no longer rebuilds from the
+  chain. The specification is untouched --- same nine terms, same blocks, same `tau = 0.25` --- and
+  three things moved underneath it. **(1)** v10's `binder` and `log10a` standardisers do not
+  reproduce from any current fit, on exactly the two columns its own note says define it; the cause
+  was not established and the artifact was superseded rather than reconciled. **(2)** Parent genes
+  were resolved for the 51.2% of corpus rows that deposited none, so `expr_norm` is a measurement
+  rather than one per-screen constant --- on VACCIMEL it had standard deviation **exactly 0.0000**
+  and AUROC **exactly 0.5000** while carrying v10's second-largest coefficient. **(3)** Gfeller_GBM
+  left the fit: 96.5% of its pairs are Gfeller, which the corpus rules already exclude as viral and
+  self rather than neoantigen, and it leaked across the holdout boundary into Gfeller, GBM and
+  ITSNdb. That costs 144 of 741 positives.
+  Leave-one-screen-out mean **0.6998 -> 0.7102** over 7 screens; `binder` **+0.4623 -> +0.7569** and
+  `expr_norm` **+0.4950 -> +0.2155**, which is one mechanism seen twice --- viral and self rows had
+  been pulling the fit off presentation and onto the corpus and expression channels. BIC is **not**
+  comparable across the change (4328.3 against 3109.8 on different `n`), and the bootstrap cluster
+  count fell 3,294 -> 527, so v11's intervals are wider for that reason and not from a less certain
+  fit.
+- **Coefficient literals removed from the docs.** `README.md`, `docs/cassette.rst`,
+  `docs/neoantigen.rst`, `rank.py` and `calibrate.py` quoted fitted coefficients that were two model
+  versions stale. They now state the direction and point at `mhcmatch rank --coefficients`, which is
+  what `PROVENANCE.md` already named as the record of what an install actually scores with.
+
 ### Added
 
 - **`AnchorModel(reverse="auto")` -- a per-allele reverse-binding prior learned from the corpus.**

@@ -387,7 +387,8 @@ does not recognise, rather than returning a plausible number computed from the w
    exactly needs the whole table**, not the FASTA: renormalise the sample's FPKM column to sum to
    :math:`10^6`. If you hold only per-candidate values the constant is not recoverable, and it
    matters for cross-sample comparison and for any absolute reading of the score, since ``expr_lvl``
-   and ``expr_norm`` are fitted at +0.3694 and +0.4811 per standard deviation.
+   and ``expr_norm`` are both fitted with positive weight --- run ``mhcmatch rank --coefficients``
+   for the sizes the installed artifact uses, which move at every refit.
 
 Reading the output
 ------------------
