@@ -418,7 +418,10 @@ Re-run on the shipped v11 base: the same finding, and a sharper reading
 
 The ladder above was fitted on the v4 base block. Re-entered on the base the **shipped v11** model
 carries, on 339,599 rows and 597 positives over seven datasets, every qualitative conclusion holds
-and two get stronger.
+and two get stronger. Both readings are kept, and both regenerate: they are the ``decor`` and
+``decor-v11`` stages of ``bench/run_epic.sh`` in the benchmark repository, writing
+``epic_corpus_decor.md`` and ``epic_corpus_decor_v11base.md``. The v11 arm was outside that chain
+until 2026-08-29, which is how a page here came to cite a file only a branch carried.
 
 * **The decisive cell reproduces.** ``thymus`` + ``viral`` without ``self`` is again the worst
   subset of the seven --- both channels non-significant (+0.0311, *p* = 0.68 and +0.0366,
