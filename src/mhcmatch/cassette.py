@@ -573,6 +573,11 @@ def lam(h, sel, k: int | None = None) -> float:
     ranker scores a median ``lambda = -0.539`` nats --- *below* a uniform random subset of the same
     pool --- against ``+3.417`` for the greedy argmax of ``H``, a gain of ``+4.083`` nats.
 
+    **``lambda`` is computed against whatever field it is handed**, so a ``select`` run with a
+    ``selectivity`` weight reports nats above a uniform subset *of the tilted objective*, not of the
+    untilted one. That is the coherent reading -- both sides move together -- but it means two runs
+    at different ``w`` are not on one axis, exactly as two runs at different ``gamma`` are not.
+
     Exact, with the couplings switched off; ``h`` is the field. With couplings the partition function
     has no closed form and the correction must be estimated, which is a separate job --- the
     coupling-aware estimator moves the score a median 0.666 nats against an inter-quartile spread of
@@ -827,7 +832,9 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
     upper = min(k + tol, keep.size)
     first = greedy(h, J, upper, codes=codes, cap=cap, must=must)
     best, best_h, best_sw = None, -np.inf, 0
-    for size in range(max(k - tol, 1), upper + 1):
+    # A trial size below the floor cannot satisfy it, and `refine` would spend every swap trying:
+    # the tolerance window starts at the floor, not at `k - tol`.
+    for size in range(max(k - tol, len(must), 1), upper + 1):
         cand = refine(h, J, first[:size], rounds=rounds, codes=codes, cap=cap, must=must)
         e = energy(h, J, cand)
         if e > best_h + 1e-12:
