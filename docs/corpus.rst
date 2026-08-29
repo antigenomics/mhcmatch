@@ -215,7 +215,11 @@ Fitted shapes
 -------------
 
 :math:`\kappa` is profiled per component by within-screen deviance over the whole fit corpus and
-vendored as :data:`~mhcmatch.mimicry.SHAPES`. The profiles are shallow, so the rule is **the
+vendored as :data:`~mhcmatch.mimicry.SHAPES` --- those are the Hamming-kernel values, and the table
+below is read under that kernel. The shipped BLOSUM62 artifact carries its own
+:math:`\kappa` = 1.65 (``thymus``) / 0.65 (``self``) / 1.35 (``viral``) in its ``corpus_shapes``
+field, which :func:`~mhcmatch.mimicry.corpus_shapes` reads at score time and which
+:data:`~mhcmatch.mimicry.SHAPES` only falls back to. The profiles are shallow, so the rule is **the
 smallest** :math:`\kappa` **within 0.05 deviance units of the minimum** --- an argmin on a flat
 likelihood is noise, not a fit.
 
@@ -542,7 +546,7 @@ transfers to a selection corpus and the corpus channels do not, which is the sep
 factors are supposed to have.
 
 On the neoantigen screens the block does carry signal on its own: fitted with screen intercepts and
-nothing else, leave-one-screen-out mean **0.5781** against 0.6602 for the full model.
+nothing else, leave-one-screen-out mean **0.5781** against 0.6602 for the full v4-base model.
 
 The matching option on the chemistry side is :func:`mhcmatch.complement.burial`'s ``scale=``, which
 selects the residue basis; :doc:`burial` owns it, together with the 576-candidate selection that

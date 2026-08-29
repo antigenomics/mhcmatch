@@ -10,7 +10,9 @@ the build plan. Phase sections marked _(TBD)_ await detail.
 
 
 > **Benchmarks live in a separate repo.** `bench/` moved to
-> [`2026-mhcmatch-benchmark`](https://github.com/antigenomics/2026-mhcmatch-benchmark) — the head-to-head harness, the `bench/results/*.md`
+> `2026-mhcmatch-benchmark` (local checkout; remote `repseq/2026-mhcmatch-code`, **private**) — the head-to-head harness, the `bench/results/*.md`
+
+(The same dead URL appears at ROADMAP.md:365, skills/mhcmatch/SKILL.md:237, README.md:233 and :631, docs/burial.rst:458 and docs/safety.rst:142; fix them in one pass or the repo keeps two answers to the same question.)
 > tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
 > below resolve there, not here.
 
@@ -85,7 +87,7 @@ All four cassette parameters ship **off** and are bit-identical at their default
 
 ---
 
-## Where this stands, 2026-08-28 — 1.4.1
+## Where this stood, 2026-08-28 — 1.4.1 (superseded by the 1.6.0 section above)
 
 **Shipped scorer: EPIC artifact version 10, nine fitted terms, `binder` as the presentation term.**
 `mhcmatch build --check` reports 0 stale of 27 against 1.4.1.
@@ -98,7 +100,7 @@ them:** a rare allele's motif is 67–77% borrowed from its groove neighbours, w
 alleles convergence moves. `register_em="converge-frequent"` gates the borrower's register, mixture,
 pooled null, donor table and `τ` — it strictly dominates ungated `converge` and recovers about half
 the rare screening loss, no more. Taking both optima needs **routing by allele frequency at the model
-level** (two fitted models). That is the open product decision, not a parameter.
+level** (two fitted models). That decision has since been measured rather than left open: `Store.anchor_model(route={"register_em": 2})` on a `converge-frequent, prior_strength="auto"` primary fits two models and dispatches on the **training** panel's ligand count, reaching screening rare AUPRC **0.689** *and* frequent AUPRC **0.668** / PPV@P **0.629** in one run -- each equal to the better single fit to the digit. It ships **off**. `bench/results/mhc2_frequency_routing.md`.
 `bench/results/mhc2_register_frequency_gate.md`.
 
 **MixMHC2pred is now a rival, and it paid immediately.** It is architecturally the same object we fit
@@ -106,8 +108,11 @@ level** (two fitted models). That is the open product decision, not a parameter.
 that no AUC could give: `SubSpec = -1` is **reverse-orientation binding**, a mode `AnchorModel` cannot
 represent at all and which is enriched in our misses; and mhcmatch covers **47 of 47** human class-II
 panel alleles against MixMHC2pred's **42**. `AnchorModel(reverse=p)` now marginalises the C-to-N
-reading; a blanket prior measures neutral, so the next step is a **per-allele** one, learned the way
-the register is. `bench/results/mhc2_mixmhc2pred.md`.
+reading; a blanket prior measures neutral, and the **per-allele** prior was then built: `AnchorModel(reverse="auto")` learns `p_a` from the corpus with
+no locus in the loop, recovering the DP-only, DPA1-splitting pattern at Spearman **0.915** against
+MixMHC2pred's independently fitted weights. The scoring channel still does not pay -- `reverse="0+em"`
+reaches 0.652 screening frequent AUPRC where `auto+em` reaches 0.643, so the apparent gain was the extra
+EM round -- and it ships **off**, `reverse=0.0` bit-identical. `bench/results/mhc2_reverse_*.md`. `bench/results/mhc2_mixmhc2pred.md`.
 
 **Three class-II parameters landed and all ship off**, each bit-identical at its default:
 `families=` (per-component gap placement), `register_em="converge-frequent"`, `reverse=`. Verified,
@@ -151,7 +156,7 @@ version 5. The specification was unchanged; the data under it moved.
 **Landed at 1.1.0 -- the shipped scorer's specification moves.** Artifact **version 6**: the
 deduplicated corpus (Neopep dropped as a relabelling of NCI + TESLA + HiTIDE, mouse held out) with
 **`binder` in place of `pres`** as the fitted presentation term. Both were author decisions --
-manuscript `issues_major.md` M1 and M12. `bench/epic/fit.py` gained `--presentation {pres,binder}`
+manuscript `issues.md` M1 and M12. `bench/epic/fit.py` gained `--presentation {pres,binder}`
 so either arm reproduces, and `ship_artifact` now stamps the model version instead of leaving it to
 a hand patch.
 
@@ -190,7 +195,7 @@ list in place**, so indexing by original position after it reads whichever row s
 `F2` (the corpus refit), `F3` (`agretopicity` naming two quantities -- both field docstrings carry
 the warning and `Ranked.dai` names the quantity `Prediction.dai` does) and `F4` (occupancy's
 IC50-as-Kd approximation and its clamped, tied low tail, both documented). All three are recorded
-closed in the manuscript's `issues_minor.md`.
+closed in the manuscript's `issues.md`.
 
 ## 0. What mhcmatch is
 
@@ -239,7 +244,7 @@ diffusion model, and the downstream predictors.
 | `C_corpus` — the label-free corpus factor of Complementarity | `mhcmatch.mimicry.corpus_R` | **v0.21.0** (`docs/corpus.rst`) |
 | TCR precursor frequency (six estimators) | `mhcmatch.precursor` | **v0.12.0** re-export of `vdjmatch.precursor` (§5a) |
 | Reference expression by GTEx tissue / TCGA tumour type | `mhcmatch.expression` | **v0.9.0** |
-| Neoantigen ranking: the fitted `EPIC` aggregate, v4, eight terms in four blocks (`--score gate` is the pre-0.19.0 noisy-AND) | `mhcmatch.rank` | **v0.27.0** (§5b-7, §5b-12) |
+| Neoantigen ranking: | Neoantigen ranking: the fitted `EPIC` aggregate, artifact **v11**, nine fitted terms in four blocks (`--score gate` is the pre-0.19.0 noisy-AND) | `mhcmatch.rank` | **v0.27.0**; artifact v11 ships at 1.6.0 (§5b-6, §6b) | |
 | Known-epitope reference sets, exact-match lookup | `mhcmatch.known` | **v0.18.0** |
 | Łuksza `R = Z/(1+Z)` recognition term | `mhcmatch.luksza` | **v0.17.0** |
 | Per-allele `%rank` / `P(present)` / band calibration | `mhcmatch.calibrate` | **v0.9.0** |
@@ -247,7 +252,7 @@ diffusion model, and the downstream predictors.
 | Binding core (NetMHCpan `core`/`Of`): class-I signed footprint with the bulge dropped and an 8-mer gap-padded, class-II register-anchored 9-mer, with the register's provenance beside it | `mhcmatch.store.binding_core` | **v0.23.0**, `--core` on `rank`/`predict`/`neoag` (`docs/neoantigen.rst`) |
 | **Cassette assembly** — screen, size, order, spacer, map | `mhcmatch.vector` | **v0.16.0** (`docs/safety.rst`) |
 | **Cassette composition** — the portfolio layer above `vector.select` | `mhcmatch.portfolio` | **v0.21.0** (`docs/portfolio.rst`) |
-| Mimicry scan (thymus / viral / neoag references) | `mhcmatch.mimics` | **v0.9.0**, on the slow search path (§6c) |
+| Mimicry scan (thymus / viral / neoag references) | `mhcmatch.mimics` | **v0.9.0**; `neighbours` / `scan(evalue=False)` are the batched path (§6c) |
 | **Mimicry risk** — viral/self/thymus × anchor/TCR-facing, signed log-odds | `mhcmatch.mimicry` | **v0.12.0**; the face is class-aware since v0.21.0, the fitted aggregate is class I only (§5c) |
 | Stability | — | Phase 2 |
 | NetMHCpan / MixMHCpred head-to-head benchmark + paper | separate repo | Phase 3 |
@@ -325,7 +330,7 @@ diffusion model, and the downstream predictors.
 - **Done:** Sphinx docs (`docs/`) + CI/docs GitHub workflows; benchmark scripts (`bench/`,
   `bench_diffusion.py`, `make_figures.py`); CLI (`mhcmatch.cli`: decompose / restriction / scan /
   source / logo).
-- _(TBD)_ pseudosequence position set per locus; distance metric (Hamming vs BLOSUM-weighted);
+- _(TBD)_ pseudosequence position set per locus; ~~distance metric (Hamming vs BLOSUM-weighted)~~ **settled: BLOSUM62 is the `Pseudoseq` default** (`metric="blosum"`, `pseudoseq.py:445`; §6.5, the Fisher-kernel arm);
   cluster cut selection.
 
 ## 5. Phase 2 — additional predictors (theory in appendix §7)
@@ -359,10 +364,10 @@ data. Each is a milestone whose spec is its appendix subsection:
 - **Immunogenicity**: physicochemical TCR-facing features + **TCR precursor frequency** estimates
   (cross-reactivity distance à la Łuksza et al. *Nature* 2022, Q = R×D). See §5a — in progress.
 
-## 5a. Immunogenicity (v0.9-dev, branch `immuno`)
+## 5a. Immunogenicity (v0.9.0–v0.12.0; the analysis lives on `master` in the benchmark repo)
 
 Analysis, benchmarks and the full milestone list live in
-[`2026-mhcmatch-benchmark`](https://github.com/antigenomics/2026-mhcmatch-benchmark) branch `immuno`,
+`2026-mhcmatch-benchmark` (remote `repseq/2026-mhcmatch-code`, private) on `master`,
 `ROADMAP_immuno.md`. This section records only what lands **in the library**.
 
 ### What this is trying to overturn
@@ -575,11 +580,13 @@ vs 0.473, Neopep 0.802 vs 0.662, Gfeller 0.782 vs 0.702.
 
 **Open in the library:**
 
-1. **The vendored parameters are the human arm only.** `posbayes` still carries a per-species table;
-   `complement.score` does not, and accepts `species` nowhere. Fit the mouse arm and key on it.
-2. **Class II returns `NaN` by design** — the register floats, so the class-I role split labels the
-   wrong residues. A class-II `complement` needs `store.anchor_indices` in the encoder.
-3. **`mimics.scan` is on the slow search path** — see §6c.
+1. ~~**The vendored parameters are the human arm only.**~~ **Closed.** `complement.score(peps, species=)`
+   selects, and `complement_mhc{1,2}_{human,mouse}.json` all ship.
+2. ~~**Class II returns `NaN` by design**~~ **Closed.** `complement.score(peps, cls="mhc2")` scores the
+   register-anchored core, with the roles taken from `complement.mhc2_anchors` (which calls
+   `store.anchor_indices`) and the position key binned on register zones rather than length.
+3. ~~**`mimics.scan` is on the slow search path**~~ **Closed.** `mimics.neighbours` is the batched
+   plain-neighbour scan and `mimics.scan(evalue=False)` routes through it — see §6c.
 4. **The gate is fitted where presentation is weak** (`IEDB_ligandome`, 0.610), so its `a`
    under-weights presentation for screens where presentation is strong. Presentation alone still
    leads the LODO mean (0.707 vs 0.698).
@@ -704,8 +711,8 @@ dropping it *exactly* (`thymus` +0.0596, z +1.20, 85% in both). `optimize.standa
 so a constant carries the level and none of the variation: what the block needs from `self` is its
 **variation across candidates**. `self` is a correlated covariate doing **suppression**, not merely
 the term an `~ 0 +` removes. Recorded in `docs/corpus.rst` and in the manuscript's corpus paragraph.
-**Not a chain stage** -- the v11base arm has no `run_epic.sh` entry, so this record does not
-regenerate from `mhcmatch bootstrap`; adding one is open.
+**A chain stage since 2026-08-29** -- `run decor-v11` in `bench/run_epic.sh` regenerates this record
+from `mhcmatch bootstrap`.
 
 ## 5b-8. Release topology: four repos, and the code repo is a reviewer artifact (2026-08-23)
 
@@ -755,7 +762,7 @@ ambiguous: it is TCR-pMHC geometry *and* it produced the shipped `contact_profil
 **Three layers, each doing only what it can justify. Measured on 178 experimentally immunogenic
 somatic neoantigens (`isalgo/pmhc_data`), rebuilt as the 27-mer units they would enter a cassette
 as. Full record in `bench/results/vector_{somatic_arm,near_identical,rule_1mm_gene,stringent_rule,
-safety_literature,report_tier}.md`.**
+report_tier}.md` and `bench/results/safety_literature.md`.**
 
 | layer | rule | rejects |
 |---|---|--:|
@@ -889,7 +896,7 @@ frameshift case is exactly the `nonconventional` arm the cassette quota holds a 
 
 ## 5b-6. EPIC is class-I only, and class II cannot inherit it (v0.27.0, OPEN)
 
-`data/aggregate_mhc1.json` is the **only** aggregate artifact, and `rank.py:189` loads it
+`data/aggregate_mhc1.json` is the **only** aggregate artifact, and `rank.py:404` loads it
 unconditionally. There is no class-II scorer: a class-II query gets presentation and expression
 columns and then the class-I recognition coefficients applied to a face that was never defined for
 it.
@@ -1090,7 +1097,7 @@ shortlist, human):
   frequent AUPRC 0.81 vs 0.69); MHC-II **wins the rare stratum on all three metrics since v0.6's
   register fix** (AUROC 0.842 vs 0.813, AUPRC 0.521 vs 0.473, PPV@P 0.402 vs 0.372; n.s. at n=19) and
   trails medium/frequent. **Mouse MHC-II: mhcmatch wins all nine cells**
-  (`compare_mhc2_mouse_hard_ligandbg.md`) — the only panel where it leads every stratum on every
+  (`compare_mhc2_mouse_hard_ligandbg.md`) — one of the two panels where it leads every stratum on every
   metric. Scope note, not a caveat on the wins: with positives restricted to mass-spec-supported
   pairs the human rare stratum has nothing left to evaluate (15 of 52 alleles have zero eluted
   ligands, 8 more are under a 20-ligand floor), so that number answers "reproduce IEDB" rather than
@@ -1161,14 +1168,14 @@ calibrated=True)` and the CLI `--calibrated`).
   no cheap training-free explanation left on the table — this moves up the queue by elimination.
 - Full-tier + temporal-split cluster sweep; affinity band on the measured-nM allowlist (TESLA/Gfeller
   only); ~~MixMHCpred/MixMHC2pred~~ — **MixMHC2pred done** (`bench/mixmhc2/`, v2.1-beta1, both human
-  arms; MixMHCpred 3.0 for class I is still open); the LaTeX paper (methodology = appendix §8).
+  arms; MixMHCpred 3.0 for class I is **done** -- `bench/mixmhcpred3/`, results in `bench/results/mixmhcpred3_{f1,analysis,glm}.md`); the LaTeX paper (methodology = appendix §8).
 - ~~**Generalized binder score**~~ — **shipped** (`store.binder_score` / `mhcmatch binder`;
   `predict_windows` emits `binder_rank`/`binder_band`/`affinity_rank` into the native table, so the
   Nextflow module carries it). The presentation and affinity heads disagree along the binding-strength
   axis (Spearman(Δ, log nM)≈+0.5–0.65); their Fisher combination, calibrated per allele into a true
   %rank, beats both single heads on immunogenicity (TESLA 0.786, NCI 0.965). It is the recommended
   single-number binder index. `bench/results/head_complementarity.md`.
-- **The parent-gene annotation ships; the shipped fit predates it.** `Proteome.assign_genes` /
+- ~~**The parent-gene annotation ships; the shipped fit predates it.**~~ **Closed at 1.6.0 -- EPIC v11 is fitted on the repaired column.** `Proteome.assign_genes` /
   `mhcmatch genes` recover an HGNC symbol from the peptide by near-exact proteome search, taking
   corpus coverage from **339,424 of 695,811 rows (48.8%)** to **692,349 (99.5%)** and giving
   **4,511 of the 5,833 positives** a symbol the deposit never carried
@@ -1178,7 +1185,7 @@ calibrated=True)` and the CLI `--calibrated`).
   had standard deviation exactly 0.0000. The like-for-like refit on identical rows is measured and
   recorded (`bench/results/epic_gene_repair.md`): `expr_norm` moves **+0.4880 → +0.2098** and
   `expr_lvl` **+0.3730 → +0.4073**, no other term by more than 0.01 — the term stops being a second
-  screen intercept and becomes a measurement. **Whether that refit ships is the author's call**,
+  screen intercept and becomes a measurement. **That refit shipped as EPIC artifact version 11 on 2026-08-29, on the author's word** -- `expr_norm` +0.4950 -> +0.2155, `binder` +0.4623 -> +0.7569, leave-one-screen-out mean 0.6998 -> 0.7102 over 7 screens,
   per the model-version rule: replacing `src/mhcmatch/data/aggregate_mhc1.json` moves every number
   in the manuscript, and `build --check` cannot see that it changed.
 
@@ -1225,7 +1232,7 @@ needing fetched neoantigen/self/pathogen sets are flagged.
   `bench/results/motif_mixture_mhc2.md`.
 - ~~**Mouse MHC-II head-to-head** (never run)~~ **done — two tables, two questions, both reported.**
   *Reproduce IEDB's mouse annotation* (`compare_mhc2_mouse_hard_ligandbg.md`): **mhcmatch wins all
-  nine cells**, medium AUROC +0.422 / AUPRC +0.424 (p<0.001) — recorded observation, NetMHCIIpan's
+  nine cells**, medium AUROC +0.394 / AUPRC +0.340 (p<0.001; these read +0.422 / +0.424 until the 2026-08-28 `--n-motifs` correction) — recorded observation, NetMHCIIpan's
   medium AUROC is 0.464, below chance. *Find eluted ligands* (`compare_mhc2_mouse_random_proteomebg.md`,
   `--el-only` + proteome decoys): NetMHCIIpan above chance everywhere and nothing separates the tools
   — AUROC 0.793 vs 0.789 (p=0.94), NetMHCIIpan's AUPRC lead inside its interval (0.256 vs 0.320,
@@ -1407,7 +1414,7 @@ NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2)
   one attribute name, both reaching user-facing tables.** Each docstring states its own convention
   and nothing reconciles them, so a figure sourced from `predict` and labelled like `rank` has the
   sign inverted. No published number currently comes from the `predict` path; nothing prevents one.
-  Fix: one name per quantity, or one convention. Manuscript ledger F3.
+  Fix: one name per quantity, or one convention. Manuscript ledger F3 -- **recorded closed** (see §"Closed" above): `rank.Ranked.agretopicity` carries the cross-path warning and both paths expose `dai` as the one name that means the same thing. The ledger itself is now the manuscript's `issues.md`, which uses no `F` numbering.
 
 - **`occupancy` uses a predicted competition-assay IC50 as if it were a true Kd**, in a Langmuir
   expression `[P]/([P] + Kd)` at `[P] = 10` nM. Standard in the field and defensible, but it is
@@ -1417,9 +1424,9 @@ NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2)
   3.66-decade reachable span at every `[P]` tried, so the clamp is the lever and the concentration
   is not. 23.59 % of 669,974 scored rows sit at exactly the ceiling Kd, sharing one occupancy value.
   The audit found this costs nothing on the ranking task (breaking the tie moves AUROC by 0.0000),
-  so this is a **documentation** fix, not a model fix. Manuscript ledger F4.
+  so this is a **documentation** fix, not a model fix. Manuscript ledger F4 -- **recorded closed** (see §"Closed" above); the caveat and the clamped tail are on `rank.Ranked.occupancy` (`rank.py:615-622`), and the ledger itself is the manuscript's `issues.md`, which uses no `F` numbering.
 
-- **`mimics.scan` is 4,300× slower than it needs to be, measured.** It routes every binder through
+- **RESOLVED — `mimics.scan` was 4,300× slower than it needed to be, and the second entry point landed.** `mimics.neighbours` is the batched plain-neighbour scan (one `seqtree.Index` per category and length, `search_batch`, GIL released) and `mimics.scan(evalue=False)` routes through it; `evalue=True` still uses `find_mimics` because only it gives the per-allele presentation-aware E-value. The measurement that motivated it: It routes every binder through
   `seqtree.pmhc.find_mimics`, i.e. `KmerIndex.seed_and_gather` one query at a time in a Python loop:
   **55 queries/s** against **237,000/s** for `seqtree.Index.search_batch` with the `seqtm` engine, on
   identical counts and distances (`bench/results/neighbour_search_speed.md`). That is why
@@ -1514,7 +1521,7 @@ NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2)
   squares on one-hot pair features against a scalar label: no partition function, no pseudo-likelihood,
   no MCMC. `J_ij` is *not* a direct-coupling estimate and should not be read as one. Rename or caveat.
 
-- **The Potts numbers in `README.md` have no backing results file.** `0.702 / 0.485 / 0.531 / 0.457`
+- **RESOLVED in part — the unbacked Potts table is out of `README.md`; the docstring still carries it.** `0.702 / 0.485 / 0.531 / 0.457` `0.702 / 0.485 / 0.531 / 0.457`
   appear in no `bench/results/*.md`; their source is a docstring (`affinity.py:67`), and the only
   recorded per-allele table (`affinity_iedb.md`) is the *ridge `AffinityModel`*, not Potts. Today's
   eval pool is 96 alleles vs the 68 those runs report. Measured on the current corpus (5 seeds, paired,

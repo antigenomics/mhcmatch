@@ -17,7 +17,8 @@ versioning is [SemVer](https://semver.org).
   was not established and the artifact was superseded rather than reconciled. **(2)** Parent genes
   were resolved for the 51.2% of corpus rows that deposited none, so `expr_norm` is a measurement
   rather than one per-screen constant --- on VACCIMEL it had standard deviation **exactly 0.0000**
-  and AUROC **exactly 0.5000** while carrying v10's second-largest coefficient. **(3)** Gfeller_GBM
+  and AUROC **exactly 0.5000** while carrying v10's largest positive coefficient (+0.4950, second
+  largest in magnitude behind `C_corpus_self` at -0.5434). **(3)** Gfeller_GBM
   left the fit: 96.5% of its pairs are Gfeller, which the corpus rules already exclude as viral and
   self rather than neoantigen, and it leaked across the holdout boundary into Gfeller, GBM and
   ITSNdb. That costs 144 of 741 positives.
@@ -129,6 +130,49 @@ versioning is [SemVer](https://semver.org).
 - `rank_table` now reads a `gene` column as well as the pipeline schema's `gene_name`, so a table
   annotated by `mhcmatch genes` reaches the expression lookup with no rename. `gene_name` still
   wins where both are present, and a table carrying neither is scored bit-identically.
+- **`mhcmatch rank` gains two reported columns, `expr_floor` and `expr_floor_pooled`.** They join
+  `EXPR_COLUMNS`, so the row records which expression floor it was scored against. Reported, never
+  fitted: GTEx Liver's floor is 0.1800 TPM against a pooled 0.180005, so the flag is what tells a
+  resolved context apart from one that could not be.
+
+### Fixed
+
+- **Three lookups that failed open now stop instead.** `rank._finish` caught the `ValueError`
+  `expression.resolve_context` raises *to block* an unrecognised context from reaching the pooled
+  reference, so `--tumor <unlisted>` scored `expr_lvl`, a fitted term, against the artifact's pooled
+  0.180005 TPM while the seven fitted screens' own floors span 0.140003--0.239999 TPM, and no column
+  recorded which had been used. Only a *staging* failure --- no deposit, no numpy, no
+  `floor_quantile` --- now falls back. `store.from_pmhc` used `_SPECIES.get(species)`, whose miss is
+  `None`, the same value as "no species filter", so `species=("human", "mouse")` loaded the whole
+  panel instead of raising; it is a subscript now, matching the `_CLASS[c]` beside it.
+
+### Removed
+
+- **`mimicry.safety` loses its `tumor` argument.** It sat at positional #2 through 1.5.0 and was
+  never read --- `expression.safety_profile` conditions on no context at all --- so
+  `safety(scores, "SKCM")` returned the pooled profile while reading as conditioned. **A positional
+  second argument now binds to `top`**; drop it. No caller in the repo passed it.
+
+## [1.4.0] --- 2026-08-28
+
+### Fixed
+
+- **The calibration cache key could not see a code change.** `predict._fingerprint` was
+  `version|cls|background|footprint|head|n_epitopes|n_alleles`, justified by "the artifacts are
+  rebuilt on version bumps" -- true of artifacts, silent about code. 1.3.0 gained the corpus length
+  prior in `PottsAffinity.predict_y` and the extrapolated tail in `calibrate.percent_rank` *within
+  one released version*, so a background cached before them and one cached after share a key and the
+  stale one is served. `predict.SCORER_EPOCH` -- an int, moved by hand, the same discipline as the
+  EPIC model version -- now sits in the key. No hash over data could have caught this.
+- **`test_binder_score_is_pinned` is restored to its original values.** The re-pin to (0.12, 1.33,
+  0.1) / (0.2, 7.75, 0.68) / (0.97, 32.12, 3.42) was the warm cache scoring the query with the
+  length term against a background cached without it -- a 3.7x "improvement" that was an artifact.
+  `_make_store` holds only 9-mers, so `_length_y(9)` is one shared constant that cancels exactly in
+  a rank; the docstring now pins that *invariance*.
+
+### Changed
+
+- `data/aggregate_mhc1.json` is version 10.
 
 ## [1.5.0] - 2026-08-28
 

@@ -139,7 +139,7 @@ essential-tissue genes:
 .. note::
 
    ``bench/results/...`` paths on this page resolve in the benchmark repository,
-   `2026-mhcmatch-benchmark <https://github.com/antigenomics/2026-mhcmatch-benchmark>`_, not in the
+   ``2026-mhcmatch-code`` (private, released with the manuscript), not in the
    library repo.
 
 **Equal sensitivity, 35× the false positives.** Anchor-channel similarity to a presented reference
@@ -557,7 +557,7 @@ Running it
 
 .. code-block:: bash
 
-   mhcmatch vector \
+   mhcmatch cassette build \
        --candidates ranked.tsv \
        --context windows.fasta \
        --n0 6 --alleles A*02:01,B*07:02 --cls mhc1 \

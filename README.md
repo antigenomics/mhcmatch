@@ -39,7 +39,7 @@ and every model that ships by default runs on it.
 | `mhcmatch[esm]` | `torch`, `transformers` | **only** the `esm64_glm` recognition head. Downloads a ~2.4 GB ESM2 checkpoint on first use |
 | `mhcmatch[structure]` | `tcren` | the structure-based ΔΔG head |
 | `mhcmatch[precursor]` | `vdjmatch` | precursor-frequency estimates |
-| `mhcmatch[notebooks]` | `marimo` | the worked examples in `notebooks/` |
+| `mhcmatch[notebooks]` | `marimo`, `polars` | the worked examples in `notebooks/` |
 | `mhcmatch[logo]` | `logomaker`, `matplotlib` | **drawing** a motif logo (`logo.render`). `logo.motif` returns the matrix on the base install |
 
 `torch` is **not** required to score recognition. The default head is the six-block `complement`
@@ -64,10 +64,10 @@ mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor 
 
 | your question | command | Python |
 |---|---|---|
-| Which of these peptides does an allele present? | `mhcmatch predict f.fasta --cls mhc1` | `predict.predict_fasta` |
+| Which of these peptides does an allele present? | `| Which of these peptides does an allele present? | `mhcmatch predict f.fasta --alleles 'HLA-A*02:01' --cls mhc1` | `predict.predict_fasta` |` | `predict.predict_fasta` |
 | Which allele presents this peptide? | `mhcmatch restriction PEP --calibrated` | `store.restriction` |
 | Is it a binder at all, one number? | `mhcmatch binder PEP` | `store.binder_score` |
-| What is the IC50, and vs its wild type? | `mhcmatch affinity PEP --wt WTPEP` | `store.affinity_model` |
+| What is the IC50, and vs its wild type? | `| What is the IC50, and vs its wild type? | `mhcmatch affinity PEP --allele A --wt WTPEP` | `store.affinity_model` |` | `store.affinity_model` |
 | Will a T cell respond to it? | `mhcmatch complement --peptides p.txt` | `complement.score` |
 | Rank neoantigen candidates for a donor | `mhcmatch rank fasta ...` | `rank.rank_fasta` |
 | How many of the donor's own allotypes present it? | (a `rank` column) | `predict.Prediction.n_alleles_presenting` |
@@ -78,7 +78,7 @@ mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor 
 | Has this, or something near it, already been tested? | `mhcmatch neoag --peptides p.txt` | `mimicry.annotate` |
 | Where in the proteome does it come from? | `mhcmatch source --peptides p.txt --proteome human` | `Proteome.find_sources` |
 | Which gene is it from, when the deposit did not say? | `mhcmatch genes pairs.tsv --out annotated.tsv` | `Proteome.assign_genes` |
-| Is the gene on in the tumour, and in normal tissue? | `mhcmatch expression --list-contexts` | `expression.lookup` |
+| Is this gene on in a normal tissue, and where else? | `mhcmatch expression GENE --tissue TISSUE --safety` | `expression.lookup` |
 | What does this allele's motif look like? | `mhcmatch logo 'HLA-A*02:01'` | `logo.motif` |
 | Which peptides in this protein are presented? | `mhcmatch scan p.fasta --correction bh` | `store.scan_protein` |
 | What is the full MHC-II ligand around this core? | `mhcmatch span CORE --protein p.fasta` | `ligand.presented_span` |
@@ -90,10 +90,10 @@ mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor 
 | …with the linker already decided, not swept | `mhcmatch cassette order ... --linker GS10` | `vector.order(linker=)` / `vector.assemble` |
 | Which linkers are there, and what is each for? | `mhcmatch cassette linkers` | `vector.LINKERS` |
 | Turn the finished cassette into an mRNA | `mhcmatch cassette build ... --linker GS10 --mrna c.fa` | `vector.mrna` |
+| …and a map of it a viewer can draw | `mhcmatch cassette build ... --map c.tsv --map-json c.json` | `vector.epitope_map` |
 | How many *independent* shots is it worth? | (a `cassette score` column) | `portfolio.p_at_least` / `n_effective` |
 | Are my own response counts over-dispersed? | — | `portfolio.betabinom_rho` |
 | Which candidates can no weighted score ever pick? | — | `portfolio.linearly_supported` |
-| …and a map of it a viewer can draw | `mhcmatch cassette build ... --map c.tsv --map-json c.json` | `vector.epitope_map` |
 | Strip frameshift-prone motifs from the CDS | `mhcmatch cassette deslip cassette.fa` | `vector.slippery_sites` |
 | Split a peptide into anchor / TCR-facing parts | `mhcmatch decompose PEP` | `store.decompose` |
 | How viral-like is it, as a soft sum not a cutoff? | — | `luksza.viral_r` |
@@ -215,7 +215,7 @@ written to a temporary file in the same directory and moved into place with `os.
 atomic on POSIX and on POSIX-compliant network mounts, so a concurrent reader never sees a partial
 file. Two tasks that compute the same allele simultaneously both write and the second rename wins,
 which is safe rather than merely tolerated: the payload is a deterministic function of the cache
-key, so the racing writers produce identical bytes. There is no lock -- a lock would serialise the
+key, so the racing writers produce identical bytes. There is no lock — a lock would serialise the
 fleet to buy nothing.
 
 The key covers the library version, class, background, footprint, head, panel size, draw count,
@@ -283,7 +283,7 @@ the VACCIMEL screen that left `expr_norm` at standard deviation **exactly 0.0000
 near-copy of a self peptide: near-exact proteome search, each parent named by its UniProt `GN=`
 field. Coverage over that corpus goes to **692,349 of 695,811 rows (99.5%)** and **4,511 of the
 5,833 positives** gain a symbol, which takes `expr_norm`'s standard deviation on VACCIMEL from
-**0.0000** to **2.520** (`bench/results/gene_resolution.md`).
+**0.0000** to **2.520** (`bench/results/epic_gene_repair.md`).
 
 ```bash
 mhcmatch genes pairs.tsv --species human --out annotated.tsv     # + a `gene` column
@@ -348,7 +348,7 @@ all **576** candidate columns (every vendored residue vector × {anchor, TCR} ×
 *inside* the general model keeps exactly one: **the Rose burial propensity summed over the TCR
 face**, at z **+4.57** — the second-largest coefficient of the ten-term model it was selected in,
 behind expression alone — against the sixteen-column chemistry block's +0.18 in the same slot. In
-the shipped eight-term model it is `C_phys_buried`, the larger of the block's two fitted terms, and
+the shipped nine-term model it is `C_phys_buried`, the larger of the block's two fitted terms, and
 smaller than at selection because the corpus block now carries three coefficients it previously
 shared one with (`mhcmatch rank --coefficients` prints the current value; this file no longer
 transcribes it, having carried a superseded one across two refits). Rose's scale is not a hydrophobicity scale
@@ -395,7 +395,7 @@ references, split by *when a T cell meets them*:
 | `viral` | foreign ligandome — **never seen during selection** | reference | + |
 
 (`mhcmatch rank --coefficients` for the magnitudes. Signs are what the argument rests on, and all
-three have held at 100 % of 400 cluster bootstrap resamples across every refit.)
+three hold their sign in at least 98 % of 400 cluster bootstrap resamples in the shipped v11 fit -- `self` 100 %, `thymus` 98.5 %, `viral` 98.0 %.)
 
 The thymic channel is positive because the thymus is not a random sample of self: mTECs
 promiscuously express tissue-restricted antigens under *Aire* and *Fezf2* precisely to purge the
@@ -484,7 +484,7 @@ the frame the construct sets it in — is the one that must hold.
 Both ends join to the rest of the library. `--context windows.fasta` takes `rank`'s **minimal
 epitopes** and rebuilds them as long units against the FASTA they were called on, one per variant
 rather than one per register — a minimal peptide loads onto any cell without costimulation and is
-the tolerising configuration, so the reader will not take one. `--fasta-nt` writes the epitope
+the tolerising configuration, so `--candidates` must carry long windows rather than minimal epitopes. `--fasta-nt` writes the epitope
 cassette's coding sequence alone: highest-usage human codon per residue, backed off to shorten
 homopolymers, then deslipped. It is **not a codon optimiser** — it fixes the two things that break a
 concatemer specifically and leaves GC, structure and CpG to the manufacturer's tooling.
@@ -506,7 +506,7 @@ not recognition. Exclusion goes through `vector.self_origin_risk`
 ### `EPIC` — the shipped model, one letter per *block*
 
 **E**xpression, **P**resentation, **I**mmunogenic **C**omplementarity. Four letters, four blocks,
-entered in that pipeline order — so a later block's coefficient is what that term is worth *after*
+entered in the pipeline order the table below gives — presentation first, then expression — so a later block's coefficient is what that term is worth *after*
 the earlier ones, not in competition with them. Ridge with an unpenalised per-screen intercept at
 `tau = 0.25`; `sd`, `z`, `p` and the 95 % CI are a 400-resample cluster bootstrap over
 (patient, screen).
@@ -570,7 +570,7 @@ store.scan_protein(my_protein, cls="mhc1")
 store.decompose("NLVPMVATV")                         # anchor / TCR-facing split, with X masks
 
 aff = store.affinity_model("mhc1")
-aff.predict_ic50("NLVPMVATV", "HLA-A*02:01")             # 52.5 nM (shortlist tier)
+aff.predict_ic50("NLVPMVATV", "HLA-A*02:01")             # 18.9 nM (shortlist tier)
 aff.amplitude("NLVPMVATL", "NLVPMVATV", "HLA-A*02:01")   # Kd_WT/Kd_MT (Łuksza eq. 9)
 
 complement.score(peptides)                           # vectorised: pass the list, not a loop
@@ -587,7 +587,7 @@ pm.assign_genes(peptides)                            # {peptide: [gene, ...]}, t
 pm.wildtype("NLVPMVATV")                             # the WT counterpart, for agretopicity
 ```
 
-Full API: [antigenomics.github.io/mhcmatch](https://antigenomics.github.io/mhcmatch/). Nine
+Full API: [antigenomics.github.io/mhcmatch](https://antigenomics.github.io/mhcmatch/). Twelve
 [marimo](https://marimo.io) notebooks in [`notebooks/`](notebooks/README.md) run the workflows end to
 end on whole published deposits (`pip install 'mhcmatch[notebooks]'`).
 
@@ -628,7 +628,7 @@ Python ≥ 3.10 where a cluster's system `python3` is often older.
 ## Benchmarks
 
 > Harness and result tables live in
-> [`2026-mhcmatch-benchmark`](https://github.com/antigenomics/2026-mhcmatch-benchmark). Paths like
+> [`2026-mhcmatch-code`](https://github.com/repseq/2026-mhcmatch-code) (private; released to reviewers). Paths like
 > `bench/results/...` resolve there.
 
 Head-to-head against **NetMHCpan-4.2b** / **NetMHCIIpan-4.3i** on the same per-(peptide, allele)
@@ -640,7 +640,7 @@ task, stratified by allele rarity, with bootstrap CIs and paired significance
   **0.747**; each single head also beats it (affinity 0.757, presentation 0.763).
   `bench/results/immuno_binder_score.md`.
 - **Allele specificity, MHC-I** — mhcmatch beats NetMHCpan on medium and frequent alleles on AUROC,
-  AUPRC and PPV@k (all p < 0.001; frequent AUPRC 0.850 vs 0.769). Rare is a wash (p = 0.41).
+  AUPRC and PPV@P (all p < 0.001; frequent AUPRC 0.852 vs 0.769). Rare is a wash (p = 0.41).
 - **Presented-vs-random screening** — mhcmatch wins MHC-I frequent (AUPRC 0.881 vs 0.846, p = 0.001);
   medium and rare sit inside the CI. Both tools are ≥ 0.97 here.
 - **MHC-II** — mhcmatch wins the **rare** stratum on both tasks; NetMHCIIpan leads medium and
@@ -648,7 +648,7 @@ task, stratified by allele rarity, with bootstrap CIs and paired significance
   parity or better (+0.010)**, and the mechanism is a register-EM convergence failure on
   DPA1\*02:01 that `register_em="converge"` closes 28 % of. `bench/results/register_em_convergence_dp.md`.
 - **Mouse MHC-II** — mhcmatch wins all nine cells on specificity.
-- **Speed** — MHC-I ~195k–260k peptide-allele scores/s (~68× NetMHCpan); MHC-II ~19k/s (~6.6×
+- **Speed** — MHC-I ~195k peptide-allele scores/s (~68× NetMHCpan); MHC-II ~19k/s (~6.6×
   NetMHCIIpan), heavier because of 3 mixture components × ~7 register frames.
 - **Recognition** — the complementarity score beats the shipped `posbayes` sum on all four corpus
   arms and both hosts under peptide-grouped CV; the per-length and relative-position role tables add

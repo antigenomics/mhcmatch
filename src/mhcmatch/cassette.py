@@ -727,7 +727,9 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
     4. :func:`overlap` builds the mechanistic pair similarity, :func:`goal_energy` turns it into
        ``(h, J)``.
     5. :func:`greedy` takes ``k + tol`` units, :func:`refine` swaps until no single exchange raises
-       ``H``, and the reported size is the one in ``[k - tol, k + tol]`` with the largest ``H``.
+       ``H``, and the reported size is the one with the largest ``H`` in ``[k - tol, k + tol]``, the
+       lower end raised to the coverage floor --- the number of ``universe`` allotypes the pool can
+       supply, since no smaller cassette can hold them.
 
     ``tol`` is the manufacturing tolerance: a budget of "twenty units, give or take three" is
     ``k=20, tol=3``. With ``tol=0`` the size is exactly ``k``.

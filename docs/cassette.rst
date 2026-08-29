@@ -115,7 +115,9 @@ Four steps, in order:
 3. :func:`~mhcmatch.cassette.goal_energy` turns ``(p, overlap, rho, gamma)`` into ``(h, J)``.
 4. :func:`~mhcmatch.cassette.greedy` takes ``k + tol`` units in :math:`O(kN)` — about 4,000
    operations for twenty of two hundred — :func:`~mhcmatch.cassette.refine` swaps until no single
-   exchange raises ``H``, and the reported size is the one in ``[k - tol, k + tol]`` with the
+   exchange raises ``H``, and the reported size is the one with the largest ``H`` in
+   ``[k - tol, k + tol]`` --- with the lower end raised to the coverage floor, the number of
+   ``universe`` allotypes the pool can supply, since no smaller cassette can hold them.
    largest ``H``.
 
 Greedy plus the swap pass reaches the **brute-force optimum** on every pool small enough to
@@ -129,10 +131,16 @@ enumerate; that is the only warrant the :math:`O(kN)` rule has and it is a test 
    already been cut on binding and expression has no range left along them. This is measurable rather than
    arguable: on the 46-patient half of the NCI gastrointestinal screen held out of the EPIC fit, an
    **exhaustive** exome screen responding at 0.0144 per mutation, selection lifts captured responses
-   to **3.92× the base rate** at *k* = 5 (13 of 58 positives against 3.3 expected). On TESLA's
+   to **3.31× the base rate** at *k* = 5 (11 of 58 positives against 3.3 expected). On TESLA's
    *nominated* list — the same disease question, but candidates a consortium's pipelines had already
    put forward, responding at 0.0612, **4.25×** the NCI rate — every rule sits at the base rate,
    because the selection had already been done. Full table in ``bench/results/cassette_select.md``.
+
+.. note::
+
+   ``bench/results/...`` paths on this page resolve in the benchmark repository,
+   `2026-mhcmatch-benchmark <https://github.com/antigenomics/2026-mhcmatch-benchmark>`_, not in the
+   library repo.
 
 **``--tol`` is spent on the objective, not on the largest size that fits.** A mean–variance
 objective has an internal optimum size, and where it falls moves with the prevalence and with
@@ -146,7 +154,15 @@ exactly *k*, which is what a fixed manufacturing budget wants.
 **When the budget is a confidence rather than a count, ask for the size.**
 :func:`~mhcmatch.cassette.size_for` returns the smallest cassette reaching
 :math:`\Pr(\ge m \text{ responses}) \ge C` for one donor's own pool, and ``--confidence C`` ---
-with ``-k`` as the manufacturing ceiling --- runs it before selecting:
+In src/mhcmatch/cli.py, cmd_cassette_select, forward the loss rate to the probe:
+
+            probe = CA.size_for([r["_score"] for r in g], [r["peptide"] for r in g], alleles,
+                                target=a.target, confidence=a.confidence, k_max=a.size,
+                                block_live=(a.block_live if alleles is not None else 1.0),
+                                **{k: v for k, v in kw.items() if k != "gamma"})
+
+If the pass is documentation-only, the reviewer's caveat at docs/cassette.rst:149 is an acceptable
+stopgap, but the code change is what makes the two flags compose as the page implies.
 
 .. code-block:: bash
 
@@ -159,11 +175,11 @@ thirty, and one who cannot reach it inside the ceiling is reported at the ceilin
 
 **``--prevalence`` is what lets it see that, and the default is one pool's number.** The map from
 score to probability is :math:`\sigma(s + b)` with a single additive offset: the *slope* is measured
-and is right — :math:`\alpha = 1.0195 \pm 0.0447` over 342,372 labelled rows, likelihood ratio 0.2
+and is right — :math:`\alpha = 1.0004 \pm 0.0364` over 339,598 labelled rows, likelihood ratio 0.0
 against 1 — and the *level* is stated, because EPIC carries one unpenalised intercept per screen and
 no global one, so it is not identifiable from the fit. :data:`~mhcmatch.rank.POOL_PREVALENCE` is
 0.0602; TESLA's own candidates respond at 0.0462 and HiTIDE's at 0.0263, so that one default
-over-states predicted yield by 1.3× on the first pool and 2.9× on the second. Pass the pool's own
+over-states predicted yield by 1.3× on the first pool and 2.3× on the second. Pass the pool's own
 expected base rate.
 
 
@@ -213,8 +229,11 @@ positive is better, and the units are nats.
 
 Dividing by the donor's own pool is what removes both pool depth and *k*. Measured on 3,064 TCGA
 donors: a cassette built by sorting the candidate list on the ranker scores a median
-:math:`\lambda = -0.539` nats — *below* a uniform random subset of the same pool — against
-**+3.417** for the greedy argmax of ``H``, a gain of **+4.083** nats.
+:math:`\lambda = -0.408` nats — *below* a uniform random subset of the same pool — against
+**+3.164** for the greedy argmax of ``H``, a gain of **+3.490** nats.
+
+And in src/mhcmatch/cassette.py:573-574, the same three numbers: ``lambda = -0.408`` / ``+3.164`` /
+``+3.490``.
 
 .. note::
 
@@ -306,7 +325,9 @@ that draw; pricing the loss at :math:`q = 0.8` keeps **4 of 10**. Full table, pe
 The floor is a constraint, not an objective term
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``--max-share`` caps any one allotype's share of the cassette and ``--universe`` gives every
+``--max-share`` caps any one allotype's share of the cassette; ``--universe`` --- or ``--floor``,
+which takes the floor from the allotypes the donor's own pool carries rather than from a stated
+genotype --- gives every
 allotype the pool can supply a unit before the free slots are filled. Both are **manufacturing
 constraints** and are deliberately outside :math:`H`: the loss coupling already prefers spread, and
 stacking a second diversity term inside the objective double-counts unless you mean it --- the
@@ -368,7 +389,7 @@ This is the trap, and it is worth a section because it is silent.
 donor — which is what a per-sample pipeline does without thinking about it — it pins *every* donor's
 pool mean to the declared prevalence, whatever their pool holds. On 7,261 TCGA donors with pools
 spanning **1 to 5,221** candidates, every per-donor-anchored pool mean lands on **0.060163** with a
-standard deviation of **2.75 × 10⁻¹⁷**. Read as a probability, that number is not one, and two
+standard deviation of **3.37 × 10⁻¹⁷**. Read as a probability, that number is not one, and two
 donors' numbers are the same number.
 
 ================================  ==========================  ==========================
@@ -377,10 +398,10 @@ donors' numbers are the same number.
 what ``sum p`` means              a **level**: expected        an **enrichment**: how far
                                   responding units             the chosen units sit above
                                                                that donor's own background
-pool mean ``p``, range            0.0138 – 0.3376              0.060163 – 0.060163
-spread (sd)                       1.49 × 10⁻²                  2.75 × 10⁻¹⁷
-comparable between donors?        yes                          no
-against an IFN-γ signature        ρ = **+0.1115**              ρ = **+0.1298**
+pool mean ``p``, range            0.002977 – 0.435027         0.060163 – 0.060163
+spread (sd)                       2.47 × 10⁻²                 3.37 × 10⁻¹⁷
+comparable between donors?        yes                         no
+against an IFN-γ signature        ρ = **+0.1261**             ρ = **+0.1322**
 ================================  ==========================  ==========================
 
 **Neither is wrong and the enrichment is the stronger readout** — on 4,073 TCGA donors across 30

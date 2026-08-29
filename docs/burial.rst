@@ -243,7 +243,7 @@ different physical questions, but on real peptides they are not different number
      - the 20 residue types
    * - per peptide, TCR-face mean
      - **−0.837**
-     - the 354,909-row fit population
+     - the 354,909-row fit population of the day of the day of the day
 
 The signature of that in a fit is a Wald test and a likelihood-ratio test disagreeing about the same
 block: χ² = 3.18, *p* = 0.204 against LR χ² = 11.0, *p* = 4.0×10⁻³. The block matters; neither

@@ -7,7 +7,7 @@ Install
 .. code-block:: bash
 
    pip install mhcmatch
-   mhcmatch bootstrap       # pre-fetch the reference proteomes (optional; they fetch on first use)
+   mhcmatch bootstrap       # pre-fetch the pmhc panel; add --proteome human,mouse for the proteomes
 
 From a checkout
 ~~~~~~~~~~~~~~~
@@ -71,7 +71,7 @@ Pipeline integration
 Score a variant peptide-window FASTA (the neoantigen-pipeline schema) into the pipeline's
 ``.scored.csv`` plus mhcmatch's richer native table. The native table carries, per predicted binder,
 the presentation ``percent_rank`` / ``p_present`` / ``band``, the Potts ``affinity_nm`` / ``affinity_rank``,
-the WT counterpart + agretopicity / amplitude / DAI, the equilibrium ``occupancy``, and the
+the WT counterpart + agretopicity / amplitude / DAI, and the
 **generalized binder score**
 (``binder_rank`` = calibrated combined %rank, plus ``binder_band``):
 
@@ -80,9 +80,9 @@ the WT counterpart + agretopicity / amplitude / DAI, the equilibrium ``occupancy
    mhcmatch predict sample.mhcI.peptide.fasta --alleles 'HLA-A*02:01,HLA-B*07:02' \
        --cls mhc1 --species human --scored-csv out.scored.csv --native out.native.tsv
 
-A ready nf-core-style Nextflow module lives in ``integrations/nextflow/mhcmatch/`` — five processes
-(``MHCMATCH_PREDICT``, ``_RANK``, ``_NEOAG``, ``_MIMICRY``, ``_VECTOR``) plus a subworkflow chaining
-them, with ``nextflow.config``, a ``slurm.config`` executor profile, ``environment.yml`` and a
+A ready nf-core-style Nextflow module lives in ``integrations/nextflow/mhcmatch/`` — six processes
+(``MHCMATCH_PREDICT``, ``_RANK``, ``_NEOAG``, ``_MIMICRY``, ``_CASSETTE``, ``_CASSETTE_SCORE``) plus a
+subworkflow chaining them, with ``nextflow.config``, a ``slurm.config`` executor profile, ``environment.yml`` and a
 ``Dockerfile``. ``MHCMATCH_PREDICT`` is the drop-in for MHCflurry (class I) and TLimmuno2 (class II);
 species follows ``params.genome``, mirroring the ``arda`` module. See that directory's ``README.md``
 for the per-process input/output contract and for running it under SLURM.
@@ -94,5 +94,5 @@ Data
   :meth:`mhcmatch.store.Store.from_pmhc` or set ``MHCMATCH_PMHC``.
 - **Pseudosequences** — 34-mer groove pseudosequences vendored in ``src/mhcmatch/data/``.
 - **Reference proteomes** — :meth:`mhcmatch.proteome.Proteome.from_hf` auto-fetches the human (UP000005640),
-  mouse (UP000000589), and pathogen proteomes from HF on first use (cached); ``mhcmatch bootstrap``
-  pre-fetches them. Pass your own FASTA to :meth:`mhcmatch.proteome.Proteome.from_fasta` to override.
+  mouse (UP000000589), and pathogen proteomes from HF on first use (cached);
+  ``mhcmatch bootstrap --proteome human,mouse`` pre-fetches them. Pass your own FASTA to :meth:`mhcmatch.proteome.Proteome.from_fasta` to override.

@@ -1071,7 +1071,7 @@ def safety(scores, top: int = 5, symbols=None) -> list[dict]:
     """Where the self/thymus mimics are expressed -- the autoimmunity read-out, made actionable.
 
     **There is no tumour argument, and there used to be one that did nothing.** ``tumor`` sat at
-    positional #2 through 1.4.0 and was never read -- :func:`mhcmatch.expression.safety_profile`
+    positional #2 through 1.5.0 and was never read -- :func:`mhcmatch.expression.safety_profile`
     conditions on no context at all -- so ``safety(scores, "SKCM")`` returned the pooled profile
     while reading as if it had been conditioned. On a read-out whose job is to say which tissue you
     cannot afford to damage, a caller believing they narrowed the question is the dangerous

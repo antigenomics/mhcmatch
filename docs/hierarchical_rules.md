@@ -1,7 +1,7 @@
 # Design: hierarchical rules — global prior → family → allele
 
 **Status:** design, with the measurements that motivate it. One piece (`register_em="converge"`) is
-built and benchmarked; the rest is specified, not built.
+built and benchmarked; so are the per-position tau (`prior_strength="auto"`) and the frequency router (`Store.anchor_model(route=...)`), both shipping off. The rest is specified, not built.
 
 **Not a Sphinx page.** This file is a design record, not library documentation: it is markdown, the
 docs build reads reStructuredText only, and it is deliberately outside `index.rst`'s toctree. Every

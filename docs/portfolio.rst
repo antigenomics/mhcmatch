@@ -30,7 +30,7 @@ every* :math:`m`. The scalar objective grows without bound while the one a vacci
 ceiling no further unit passes.
 
 This is not a hypothetical. On the adjuvant TNBC mRNA vaccine trial of Sahin et al.
-(*Nature* 2026;651:1088--1096) --- 13 patients, 20 assayed units each --- the intra-patient
+(*Nature* 2026;651:1088--1096) --- 13 patients, 216 assayed units between them --- the intra-patient
 correlation is :math:`\rho = 0.124` at :math:`p = 1.0 \times 10^{-3}`, 3.45x the binomial variance.
 Measure it on your own readout before assuming a value:
 
@@ -38,8 +38,8 @@ Measure it on your own readout before assuming a value:
 
    from mhcmatch import portfolio
 
-   m = [20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 5, 11]   # units assayed per patient
-   k = [8, 8, 6, 2, 3, 2, 2, 2, 2, 1, 0, 5, 0]               # of which positive
+   m = [20, 5, 20, 20, 20, 20, 1, 10, 20, 20, 20, 20, 20]    # units assayed per patient
+   k = [8, 5, 2, 8, 6, 2, 0, 0, 3, 1, 2, 2, 2]               # of which positive
 
    portfolio.dispersion(m, k)["ratio"]      # observed / independent-Bernoulli variance
    portfolio.betabinom_rho(m, k)            # {'rho': ..., 'D': ..., 'p_value': ...}
@@ -244,7 +244,7 @@ Limits
   it says which axis a candidate stands out on, not why it works.
 * :math:`\Pr(\ge k)` treats a response as binary at the assay's threshold; magnitude is discarded.
 * An absolute :math:`\Pr(\ge k)` inherits the calibration of its inputs, and corpus prevalence
-  varies by a factor of 75 across published screens. The **ordering** results do not.
+  varies by four orders of magnitude across published screens. The **ordering** results do not.
 * ``linearly_supported`` and ``betabinom_rho`` need SciPy, which is not a hard dependency.
 
 API

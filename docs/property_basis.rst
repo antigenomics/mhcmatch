@@ -53,7 +53,7 @@ and 32 of the 39 reach :math:`|\rho| \ge 0.80`:
      - **+0.9774**
      - 1.3e-13
    * - Eisenberg
-     - +0.9700
+     - +0.9699
      - 1.7e-12
    * - Roseman
      - +0.9643

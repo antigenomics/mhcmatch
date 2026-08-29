@@ -1,7 +1,7 @@
 Command-line reference
 ======================
 
-Twenty-one commands, one binary --- and one of them, ``cassette``, has sub-verbs. This page groups them by **what you are trying to do**; every
+Twenty-two commands, one binary --- and one of them, ``cassette``, has sub-verbs. This page groups them by **what you are trying to do**; every
 command also has ``mhcmatch <command> --help``.
 
 .. important::
@@ -38,13 +38,13 @@ Routine tasks
    * - your question
      - command
    * - Which peptides in this FASTA are presented?
-     - ``mhcmatch predict f.fasta --cls mhc1``
+     - ``mhcmatch predict f.fasta --cls mhc1 --alleles 'HLA-A*02:01'``
    * - Which allele presents this peptide?
      - ``mhcmatch restriction PEP --calibrated``
    * - Is it a binder at all, as one number?
      - ``mhcmatch binder PEP``
    * - What is the IC50, and how does it compare with the wild type?
-     - ``mhcmatch affinity PEP --wt WTPEP``
+     - ``mhcmatch affinity PEP --wt WTPEP --allele 'HLA-A*02:01'``
    * - Which windows of this protein are presented?
      - ``mhcmatch scan p.fasta --correction bh``
    * - Will a T cell recognise it?
@@ -65,8 +65,8 @@ Routine tasks
      - ``mhcmatch source --peptides p.txt --proteome human --threads 0``
    * - Which gene does this candidate come from?
      - ``mhcmatch genes cand.tsv --out annotated.tsv``
-   * - Is the gene on in the tumour, and in normal tissue?
-     - ``mhcmatch expression GENE --tumor SKCM``
+   * - Has this peptide been seen expressed in the tumour, and is its gene on in normal tissue?
+     - ``mhcmatch expression PEPTIDE --tumor SKCM`` / ``mhcmatch expression GENE --safety``
    * - Which *k* of this donor's candidates should the cassette carry?
      - ``mhcmatch cassette select --candidates pool.tsv -k 20 --tol 3``
    * - What is this cassette worth, against one from another donor of another size?
@@ -157,10 +157,11 @@ The commands, by axis
        this package ships, so a figure built on them and a run of ``rank`` are the same model
        by construction. Neither scores anything, and neither needs a *mode* or an *input*.
        **The aggregate computes every one of its features before scoring** — a model emits the
-       features it used and refuses to run without them (0.20.0). ``EPIC`` takes its corpus term
-       from the thymic channel alone (26,513 peptides), so since 0.21.0 the host-proteome reference
+       features it used and refuses to run without them (0.20.0). ``EPIC`` scores all three corpus
+       channels --- ``C_corpus_thymus``, ``C_corpus_self``, ``C_corpus_viral`` --- as a 64 KB k-mer
+       table contraction rather than a neighbour search (0.24.0), so the host-proteome reference
        index — ~7.5 GB and 6 min 15 s — is off the ranking path and ``--no-self`` is allowed with
-       ``--score aggregate``. It still costs that much under ``--extended``/``--annotate``, which
+       ``--score aggregate`` (the refusal went in 0.21.0). It still costs that much under ``--extended``/``--annotate``, which
        report the ``self`` channels.
        ``--core`` appends the binding core — see :ref:`binding-core`
    * - ``explain``
@@ -193,12 +194,14 @@ The commands, by axis
        mean-variance objective rather than sorting on the score (:doc:`cassette`)
    * - ``cassette score``
      - score finished cassettes across donors and across sizes: expected responding units,
-       ``P(>= k)`` under the block model, and ``lam`` (:doc:`cassette`)
+       ``P(X >= target)`` under the block model, ``target`` being ``--target`` (default 1),, and ``lam`` (:doc:`cassette`)
    * - ``cassette build``
      - assemble a polyepitope cassette: withdraw on safety, choose how many units per allotype,
        order them, pick the spacer, and optionally emit the cassette map
    * - ``cassette order``
      - the assembly half alone, on units already chosen — so ``--n0`` is not required
+   * - ``cassette linkers``
+     - list the named linker presets ``--linker`` accepts
    * - ``cassette deslip``
      - remove m1-pseudouridine +1-frameshift slippery motifs from a coding sequence, synonymously
    * - ``vector`` · ``deslip``
@@ -216,6 +219,9 @@ The commands, by axis
    * - ``bootstrap``
      - pre-fetch the pmhc panel; ``--reference`` also stages the corpora, mimicry references and
        expression tables that ``rank``, ``neoag`` and ``mimicry`` read
+   * - ``build``
+     - rebuild the shipped artifacts in-process; ``--check`` builds nothing and exits 1 if any of
+       the 27 is stale against ``__version__`` --- this is what CI runs
 
 Two commands people expect to be one
 ------------------------------------

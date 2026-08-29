@@ -28,7 +28,7 @@ def _(mo):
        the readout is `captured_loh`: validated units still in the cassette after the worst single
        allotype is lost.
     3. **Tumour selectivity is a stated preference, not a fitted one.** The shipped model fits
-       `expr_norm` — the source gene's level in *healthy* tissue — at **+0.4950**, its largest
+       `expr_norm` — the source gene's level in *healthy* tissue — at **+0.2155**, a
        positive coefficient, because it answers *will this respond*. "High in tumour, low in normal"
        is a different, safety question, and it enters as a declared exchange rate.
 
@@ -261,11 +261,11 @@ def _(mo):
 
     | term | what it is | coefficient |
     |---|---|--:|
-    | `expr_lvl` | this candidate's own source-gene abundance | +0.3704 |
-    | `expr_norm` | the same gene's median in the tumour's **matched normal** tissue | **+0.4950** |
+    | `expr_lvl` | this candidate's own source-gene abundance | +0.5180 |
+    | `expr_norm` | the same gene's median in the tumour's **matched normal** tissue | **+0.2155** |
 
     That is not a defect. It was fitted on *will this respond*, and a gene transcribed everywhere
-    responds more often — the largest coefficient in the model is telling you something true about
+    responds more often — a positive coefficient on normal-tissue level is telling you something true about
     immunogenicity. It is simply not the safety question, and the two must not be conflated:
     imposing the tumour/normal ratio on the fit (equal and opposite coefficients) would assert an
     answer the data rejects.
@@ -321,7 +321,7 @@ def _(mo):
     3. **`captured_loh` and `yield_loh` are what to design against** when HLA loss is the worry.
        Two cassettes with the same `captured` and different `captured_loh` are different objects,
        and only the second column can tell them apart.
-    4. **A fitted coefficient answers the question it was fitted on.** `expr_norm` at +0.4950 is a
+    4. **A fitted coefficient answers the question it was fitted on.** `expr_norm` at +0.2155 is a
        fact about immunogenicity, not permission to ignore tumour selectivity — and not a reason to
        refit either. State the preference, charge it to the objective, and report the trade.
 

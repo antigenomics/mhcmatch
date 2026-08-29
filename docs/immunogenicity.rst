@@ -109,7 +109,8 @@ it is a benchmark, not a library default. Note ``run_n`` under ``p2_pomega``: ma
 run rather than bridging it, so one stretch of 9 becomes two. A buried anchor between two exposed
 hydrophobics does not make them contiguous from the TCR's point of view.
 
-Class II ignores ``scheme`` entirely and always masks the register-anchored core P1/P4/P6/P9,
+Class II ignores the three :data:`~mhcmatch.immuno.ANCHOR_SCHEMES` keys and masks the register-anchored
+core P1/P4/P6/P9 (``scheme="contact"`` is the exception -- it reads the class-II contact profile),
 because *that* definition is agreed across the toolchain. Pass ``register_start=`` from
 :meth:`mhcmatch.diffusion.AnchorModel.best_register` so the annotated frame matches the scored one.
 

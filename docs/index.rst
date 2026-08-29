@@ -23,7 +23,7 @@ The mathematical and statistical theory lives in the technical appendix,
      </a>
      <a class="proj-card" href="cli.html">
        <h3>Command line</h3>
-       <p>Twenty commands grouped by what you are trying to do, and the two env vars a cluster needs.</p>
+       <p>Twenty-two commands grouped by what you are trying to do, and the two env vars a cluster needs.</p>
      </a>
      <a class="proj-card" href="complementarity.html">
        <h3>Complementarity</h3>
@@ -32,7 +32,7 @@ The mathematical and statistical theory lives in the technical appendix,
      </a>
      <a class="proj-card" href="neoantigen.html">
        <h3>Ranking neoantigens</h3>
-       <p>The shipped scorer end to end: the seven terms, what each was fitted on, what it does not do.</p>
+       <p>The shipped scorer end to end: the nine terms, what each was fitted on, what it does not do.</p>
      </a>
      <a class="proj-card" href="cassette.html">
        <h3>Cassette design</h3>

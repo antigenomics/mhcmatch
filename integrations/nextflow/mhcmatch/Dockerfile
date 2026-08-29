@@ -1,12 +1,12 @@
 # mhcmatch epitope-prediction image, for the -profile docker path of the module beside it.
 #
-# Packages the mhcmatch CLI + its seqtree C++ core + every reference the module's five processes
-# read, so predict / rank / neoag / mimicry / vector all run with no host data mounts. Everything is
+# Packages the mhcmatch CLI + its seqtree C++ core + every reference the module's six processes
+# read, so predict / rank / neoag / mimicry / cassette / cassette score all run with no host data mounts. Everything is
 # staged from the public HF dataset isalgo/pmhc_data at BUILD time, into the image's
 # huggingface_hub cache, so runtime needs no network -- which matters on offline compute nodes.
 #
 # Build (no data staging needed -- the references are auto-fetched):
-#   docker build -t <registry>/mhcmatch:1.1.0 integrations/nextflow/mhcmatch/
+#   docker build -t <registry>/mhcmatch:1.6.0 integrations/nextflow/mhcmatch/
 #
 # mhcmatch and seqtree come from PyPI (pinned via MHCMATCH_VERSION). The build tools are a fallback
 # for platforms without a prebuilt seqtree wheel; on ARM/x86_64 linux the wheel is used directly.
@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
-ARG MHCMATCH_VERSION=1.1.0
+ARG MHCMATCH_VERSION=1.6.0
 RUN pip install --no-cache-dir "mhcmatch==${MHCMATCH_VERSION}"
 
 # Bootstrap the reference ligand panel from the public HF dataset (both tiers, ~12 MB + ~4 MB) into

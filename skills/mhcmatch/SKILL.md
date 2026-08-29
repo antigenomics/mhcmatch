@@ -1,14 +1,14 @@
 ---
 name: mhcmatch
-description: Applied peptide-MHC tool — restriction/presentation, cross-allele diffusion, quantitative affinity, ligand spans, motif logos. Use when working on pMHC presentation, MHC restriction of a peptide, neoantigen screening, or the mhcmatch library itself.
+description: Applied peptide-MHC tool — restriction/presentation, cross-allele diffusion, quantitative affinity, ligand spans, motif logos, expression and mimicry scoring, and vaccine-cassette selection and assembly. Use when working on pMHC presentation, MHC restriction of a peptide, neoantigen screening or ranking, vaccine cassette design, or the mhcmatch library itself.
 ---
 
 # mhcmatch — public API
 
 The applied peptide–MHC tool. Sits on **seqtree** (fuzzy-search core, anchor/TCR layout, E-values) and
-**tcren** (groove pseudosequences); it does **not** reimplement search, E-values, anchor masking, or
+vendored groove pseudosequences (`data/mhci_pseudo.fa` / `mhcii_pseudo.fa`, generated out-of-process; `tcren` itself is only the optional `[structure]` extra); it does **not** reimplement search, E-values, anchor masking, or
 k-mer indexing. Authoritative context: [`ROADMAP.md`](../../ROADMAP.md) (phase status, open loops) and
-`../../manuscripts/2026-mhcmatch/appendix/mhcmatch.tex` (the method/statistics spec).
+`../../../../manuscripts/2026-mhcmatch/appendix/mhcmatch.tex` (the method/statistics spec, in the manuscript repo).
 
 **Check here before writing new code** — most of what a task needs already exists.
 
@@ -28,7 +28,7 @@ store = mhcmatch.Store.from_pmhc(tier="shortlist", species="human")   # fetched 
 | `store.anchor_model(cls, ...)` | the forward scorer — see below |
 | `store.affinity_model` | `PottsAffinity`; IC50 (nM) + Łuksza amplitude / DAI |
 | `store.binder_score(peptide, alleles=, cls=)` | **generalized binder score** = calibrated combined %rank (Fisher of presentation %rank × affinity %rank); a soft-AND, ranks alleles best-first (`BinderScore`) |
-| `store.alleles(cls)`, `store.anchor_preferences(cls, j)` | panel introspection |
+| `store.alleles(cls)`, `store.anchor_preferences(cls, anchor)` | panel introspection |
 
 ## `AnchorModel` — the presentation scorer (`store.anchor_model(cls, ...)`)
 
@@ -40,8 +40,8 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 
 | param | default | use |
 |---|---|---|
-| `background` | `"ligand"` | **the null, and the main per-task knob.** `"ligand"` = specificity (which allele? → restriction/hard-negative tasks). `"proteome"` = presentation `log(θ_A/p_proteome)` (is it presented at all? → screening). `"markov"` = order-1 proteome (measured slightly worse; opt-in) |
-| `footprint` | `"anchor"` | `"anchor"` (primary pockets) / `"core"` (all core positions) / `"adaptive"` (anchors for rare, core otherwise). ⚠️ `rare_max=30` is a hard threshold sitting on the eval stratum boundary — see `docs/hierarchical_rules.md` |
+| `background` | `"ligand"` | **the null, and the main per-task knob.** `"ligand"` = specificity (which allele? → restriction/hard-negative tasks). `"proteome"` = presentation `log(θ_A/p_proteome)` (is it presented at all? → screening). `"markov"` = order-1 proteome (measured slightly worse; opt-in). Since 1.5.0 `"ligand"` pools every allele's ligands **except the queried one**; `"ligand-pooled"` reproduces the pre-1.5.0 self-inclusive null, which scored `H-2-IAb` (6,483 of 6,705 mouse class-II ligands) against its own motif at AUROC 0.322 |
+| `footprint` | `"anchor"` | `"anchor"` (primary pockets) / `"core"` (all core positions) / `"adaptive"` (MHC-I: anchors for rare alleles, full core otherwise; MHC-II: always the full 9-mer core). **`predict.build_scorer` ships `"adaptive"`, so `"anchor"` is never the predict-path footprint** — a benchmark arm left at `"anchor"` understates mhcmatch. ⚠️ `rare_max=30` is a hard threshold sitting on the eval stratum boundary — see `docs/hierarchical_rules.md` |
 | `n_motifs` | `3` (MHC-II) | motif-mixture components, fit by EM on the corpus. K=3 closes ~40% of the frequent gap. Self-adapting: an empty component returns the pooled motif *identically*. `1` = single-PWM escape hatch |
 | `register` | `"marginal"` | MHC-II: integrate the register out under the learned core-offset prior; `"max"` picks the single best frame instead |
 | `register_em` | `2` | best-frame register-EM passes. **`"converge"`** runs each allele to *its own* fixed point — closes 28% of the class-II frequent screening gap, but is a restriction cost. See below |
@@ -50,6 +50,8 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 | `h` | `2.0` | kernel bandwidth |
 | `weights` | `"learned"` | groove-position weights: MI-learned, or `"uniform"` (`"structural"`/`"blend"` were removed — measured neutral) |
 | `length_prior`, `length_motifs` | `"score"`, `True` | MHC-I only; class-gated deliberately (measured, `length_prior_mhc2.md`) |
+| `reverse` | `0.0` | MHC-II C-to-N reading, marginalised with this prior mass; `"auto"` recovers the DP/DPA1 split from the corpus. **Ships off — `0.0` is bit-identical** |
+| `route` | `None` | fit a second model for rare alleles and dispatch on the training panel's ligand count, e.g. `route={"register_em": 2}` over a `"converge-frequent"` primary. Composes the rare and frequent class-II optima; **ships off** |
 
 ### The per-allele estimators, and when to use them
 
@@ -68,7 +70,7 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 | module | API | does |
 |---|---|---|
 | `mhcmatch.search` | `search(mode="tcr"\|"mhc")`, `find_mimics` | large-scale similarity; neoantigen mimicry with per-allele E-values |
-| `mhcmatch.Proteome` | `from_hf("human")`, `from_fasta`, `find_source` | neoantigen → parent self peptide, protein, position, mutation |
+| `mhcmatch.Proteome` | `from_hf("human")`, `from_fasta`, `find_source`, `assign_genes` | neoantigen → parent self peptide, protein, position, mutation |
 | `mhcmatch.Pseudoseq` | `kernel`, `neighbors`, `cluster`, `shrink` | allele-similarity kernel over 34-mer grooves; kernel communities respect allele families (Q=0.94/0.90). `pseudoseq.blosum62_conditional()` is a **module function**, not a method |
 | `mhcmatch.PottsAffinity` | `store.affinity_model` | IC50 (nM), amplitude `A = Kd_WT/Kd_MT`, DAI. Vendored weights |
 | `mhcmatch.ligand` | `SpanModel`, `presented_span`, `processing_score` | core → full presented ligand; register-free (terminus-relative) |
@@ -81,10 +83,10 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 | `mhcmatch.known` | five built-in reference sets | exact-match lookup. An exact match outranks any model output, so `rank` flags it and never folds it into the score |
 | `mhcmatch.expression` | `lookup`, `safety_profile`, `matched_tissues`, `tumor_types`, `TUMOR_TISSUE`, `context_floor`, `gene_level`, `resolve_context`, `batch_scale` | GTEx `SMTSD` tissues and TCGA study abbreviations — **two vocabularies, never merged, neither clinical**. **Always pass the caller's own tumour type**: since v9 it sets the floor `c` both expression terms divide by, and **a tumour's floor is roughly half its matched normal's** (SKCM 0.1600 against skin 0.3050 TPM), so the pooled fallback is not neutral. `context_floor`/`gene_level` read the single-pipeline reference (UCSC Xena/Toil, one RSEM pipeline over GENCODE v23, TPM for both cohorts) through a 58,581 × 86 matrix rather than the 5 M-row table — 0.05 s and 29 MB against 5.20 s and 3,168 MB. `resolve_context` turns a free-text origin into a study code plus matched normals and **raises** on an unrecognised string; one organ is more than one study more often than not, so the mapping is one-to-many. `batch_scale` rescales a non-TPM column by median-of-ratios and **refuses below half-transcriptome coverage** — a candidate list cannot clear it, because a mutation reaches one only where the gene was seen in RNA |
 | `mhcmatch.mimics` | `neighbours`, `KINDS`, `DEFAULT_REFS` | the raw scan, per category, **never summed** — each category argues something different |
-| `mhcmatch.mimicry` | `score`, `probability`, `annotate`, `safety`, `masks`, `corpus_R`, `features`, `load_references` | the *fitted* form: `viral`/`self`/`thymus` × `anchor`/`tcr` as signed log-odds. `probability` demands a **named** corpus. `annotate` (tested-neoantigen DB) is prior evidence and **never a fitted term**. **`corpus_R` is `C_corpus`** — the **exact** Luksza density over the TCR face, evaluated as a sliding-k-mer table contraction (`corpus_counts` + `contract`), not a search. All three components (`thymus`/`self`/`viral`) ship in EPIC, under a graded BLOSUM62 kernel since v4; `SHAPES` is one `kappa` each (`a0` retired). `self_species=` picks the proteome, so mouse self for mouse. Counts are memoised per `(cls, comp, k, species)` and **not** keyed on `kappa`, so a kappa sweep is free; there is **no disk cache** ([docs/corpus.rst](../../docs/corpus.rst)). `load_references` still builds the index `features`/`annotate`/`safety` need, because those report *which* reference was hit |
-| `mhcmatch.vector` | `screen`, `self_origin_risk`, `select`, `order`, `assemble`, `LINKERS`/`resolve_linker`, `mrna`, `slippery_sites`, `epitope_map`, `write_map` | **cassette assembly**, the step after `rank`: withdraw on safety, then how many units per allotype, in what order, joined by what. `screen` **excludes**, never down-ranks. Scoring is injected (`binder`, `risk`), so the layout logic needs no panel. `epitope_map`/`write_map`  emit the TSV/JSON cassette map — unit, linker and epitope rows with 1-based coordinates, the class-II core, cross-class overlaps and per-unit `self_help`; **one row per (peptide, allele)**, so a heterozygote is duplicated by construction. `LINKERS` is the named preset table (family, intended class, provenance) — `order(linker=)` pins one, no argument sweeps them all, and the table deliberately does **not** rank itself. `mrna` assembles the molecule and returns a nucleotide parts map that tiles it exactly; the whole ORF is back-translated in one pass so the seams are repaired too, and the backbone (UTRs, signal, trafficking domain, tail) is caller-supplied and defaults to nothing |
+| `mhcmatch.mimicry` | `score`, `probability`, `annotate`, `safety`, `masks`, `corpus_R`, `features`, `load_references` | the *fitted* form: `viral`/`self`/`thymus` × `anchor`/`tcr` as signed log-odds. `probability` demands a **named** corpus. `annotate` (tested-neoantigen DB) is prior evidence and **never a fitted term**. **`corpus_R` is `C_corpus`** — the **exact** Luksza density over the TCR face, evaluated as a sliding-k-mer table contraction (`corpus_counts` + `contract`), not a search. All three components (`thymus`/`self`/`viral`) ship in EPIC, under a graded BLOSUM62 kernel since v4; `SHAPES` is one `kappa` each (`a0` retired). `self_species=` picks the proteome, so mouse self for mouse. Counts are memoised per `(cls, comp, k, species, pmhc_dir, weights, mask)` and **not** keyed on `kappa`, so a kappa sweep is free; there is **no disk cache** ([docs/corpus.rst](../../docs/corpus.rst)). `load_references` still builds the index `features`/`annotate`/`safety` need, because those report *which* reference was hit |
+| `mhcmatch.vector` | `screen`, `self_origin_risk`, `select`, `order`, `assemble`, `LINKERS`/`resolve_linker`, `mrna`, `slippery_sites`, `epitope_map`, `write_map` | **cassette assembly**, the step after `rank`: withdraw on safety, then how many units per allotype, in what order, joined by what. `screen` **excludes** by default; a reason carrying `veto=False` (the graded mode of `self_origin_risk`, findings below `veto_tpm`) is recorded into `notes=` without withdrawing and priced into composition through `offtarget_cost`. Scoring is injected (`binder`, `risk`), so the layout logic needs no panel. `epitope_map`/`write_map`  emit the TSV/JSON cassette map — unit, linker and epitope rows with 1-based coordinates, the class-II core, cross-class overlaps and per-unit `self_help`; **one row per (peptide, allele)**, so a heterozygote is duplicated by construction. `LINKERS` is the named preset table (family, intended class, provenance) — `order(linker=)` pins one, no argument sweeps them all, and the table deliberately does **not** rank itself. `mrna` assembles the molecule and returns a nucleotide parts map that tiles it exactly; the whole ORF is back-translated in one pass so the seams are repaired too, and the backbone (UTRs, signal, trafficking domain, tail) is caller-supplied and defaults to nothing |
 | `mhcmatch.cassette` | `select`, `score`, `lam`, `prob_offset`, `group_offsets`, `goal_energy`, `greedy`, `refine`, `overlap`, `pair_stats`, `log_ek`, `energy` | **cassette design** (1.0.1): pick *k* units maximising `H = sum h - sum J`, the mean-variance objective derived from the design goal, and score a finished cassette. `lam` is `H` minus the exact log partition function over every size-*k* subset of the donor's own pool — the one axis comparable across donors AND sizes, and it needs no shared calibration. `select` takes the **whole pool**; a shortlist already cut on binding/expression has no range left along the two largest coefficients. Greedy + bounded swap reaches the brute-force optimum on every enumerable pool. `score` deliberately does **not** report `H`: `goal_energy` renormalises to the set it is handed, so an `H` on a cassette alone scores a diversifying rule identically to one that did not |
-| `mhcmatch.portfolio` | `pareto_front`, `linearly_supported`, `chebyshev_score`, `corner`, `p_at_least`, `n_effective`, `dispersion`, `betabinom_rho` | **cassette composition**, the layer above `vector.select`. Fits nothing: it says what a proposed *set* is worth. `vector.select` now takes `block=` (a callable `Unit -> hashable`, default the allotype) so the budget can saturate against allotype **x** mechanism; `Selection.expected_yield` follows whatever partition the rule used, and `per_block()` reports it. `linearly_supported` is exact (LP), the sampled searches in the benchmark repo are not. SciPy is a **lazy** import — `linearly_supported` and `betabinom_rho` need it, nothing else does |
+| `mhcmatch.portfolio` | `pareto_front`, `linearly_supported`, `chebyshev_score`, `corner`, `survival`, `coverage`, `compose`, `p_at_least`, `n_effective`, `dispersion`, `betabinom_rho` | **cassette composition**, the layer above `vector.select`. Fits nothing: it says what a proposed *set* is worth. `vector.select` now takes `block=` (a callable `Unit -> hashable`, default the allotype) so the budget can saturate against allotype **x** mechanism; `Selection.expected_yield` follows whatever partition the rule used, and `per_block()` reports it. `linearly_supported` is exact (LP), the sampled searches in the benchmark repo are not. SciPy is a **lazy** import — `linearly_supported` and `betabinom_rho` need it, nothing else does |
 | `mhcmatch.luksza` | `viral_r`, `r_term`, `counts_by_distance`, `shape` | the Łuksza `R = Z/(1+Z)` term. `EPIC` does not score with it; it ships so the published quantity is computable without the benchmark repo. `k`/`a0` are **read from the artifact**, never hardcoded. The neighbour search is 98.6% of the runtime — do not micro-optimise the rest |
 | `mhcmatch.recognition` | `score`, `default_head`, `lowest_bic_head`, `roles_for`, `score_mhc2` | the head dispatcher over the recognition axis: `complement` (the **default**), `posbayes`, `physchem_glm`, `esm64_glm`. `default_head` and `lowest_bic_head` answer different questions and do not agree — see [docs/complementarity.rst](../../docs/complementarity.rst) |
 | `mhcmatch.immuno` | `features`, `ANCHOR_SCHEMES`, `contact_profile` | 141 physicochemical features per peptide over selectable TCR-facing position schemes ([docs/immunogenicity.rst](../../docs/immunogenicity.rst)); no store, no download |
@@ -93,15 +95,15 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 
 ## CLI
 
-Twenty commands, one of them with sub-verbs. Full reference: [docs/cli.rst](../../docs/cli.rst).
+Twenty-two commands, one of them with sub-verbs. Full reference: [docs/cli.rst](../../docs/cli.rst).
 
 | axis | commands |
 |---|---|
 | presentation | `predict` · `restriction` · `binder` · `affinity` · `scan` · `span` · `decompose` · `logo` |
 | recognition | `complement` · `mimics` · `mimicry` · `neoag` |
-| integration | `rank` · `explain` · `expression` · `source` |
-| cassette | `cassette select` · `cassette score` · `cassette build` · `cassette order` · `cassette deslip` |
-| setup | `bootstrap` |
+| integration | `rank` · `explain` · `expression` · `source` · `genes` |
+| cassette | `cassette select` · `cassette score` · `cassette build` · `cassette order` · `cassette linkers` · `cassette deslip` |
+| setup | `bootstrap` · `build` (`build --check` = are any of the 27 shipped artifacts stale?) |
 
 `mhcmatch binder <peptide> --alleles ... --cls mhc1` ranks alleles by the generalized binder score.
 `mhcmatch cassette select --candidates pool.tsv -k 20 [--tol 3]` chooses the units; give it the
@@ -117,7 +119,7 @@ deprecated aliases for `cassette build` / `cassette deslip` and print a deprecat
 **Pass `--peptides FILE`, never loop the shell.** The setup a per-peptide invocation re-pays is the
 whole cost: the presentation/affinity calibrators ~5 s, a human-proteome length index ~70 s. One
 process over a list is the difference between seconds per peptide and thousands per second.
-`--threads` exists **only** on `source` and `mimics`, whose neighbour search runs in C++ with the GIL
+`--threads` exists **only** on `source`, `mimics` and `genes`, whose neighbour search runs in C++ with the GIL
 released; elsewhere it is absent rather than accepted and ignored.
 
 **`$MHCMATCH_REFERENCE_CACHE` is gone in 0.24.0** and so is the ~1 GB it held (yours to delete).
@@ -127,7 +129,7 @@ still wants; `integrations/nextflow/mhcmatch/slurm.config` exports both.
 
 ## The shipped scorer
 
-`EPIC` — eight terms in four **hierarchical blocks**, entered in pipeline order so a recognition
+`EPIC` — nine terms in four **hierarchical blocks**, entered in pipeline order so a recognition
 coefficient is what it is worth *after* presentation and expression. Vendored at
 `data/aggregate_mhc1.json`; `mhcmatch rank` scores with it by default. Per-screen intercept,
 `tau = 0.25`, leave-one-screen-out holdout.
@@ -162,18 +164,18 @@ The four blocks and what each reads:
   z = +0.83; on its logit, z = +3.53. Monotone, so nothing is reordered.
 - **Computed but never scored.** `pres`, `occupancy`, `dai`, `agretopicity`, `d_occupancy`, `wt_absent`, the
   Luksza amplitude and any Kidera scale (`burial(..., scale="KIDERA:KF4")`) are all reachable and
-  emitted for comparison; none is a fitted term, and `tests/test_rank.py` asserts that none of them
+  emitted for comparison; none is a fitted term, and `tests/test_scoring_regression.py` asserts that none of them
   appears in `AGGREGATE_FEATURES`.
 - **Two expression terms, and not a ratio, since artifact v9.** `expr_lvl` is what this candidate
   is transcribed at; `expr_norm` is the same gene's median in the tumour's matched normal, falling
   back to that gene's pan-tissue median and **never to missing**, which would be a constant per
   cohort and could not rank. Entering them free lets a tumour-versus-normal ratio be *found* rather
   than imposed, and it is not found: a difference of logs needs equal and opposite coefficients,
-  and both come back positive (+0.3694 and +0.4811 per standard deviation). Held out one screen at
-  a time, the pair reaches mean 0.6952 / median 0.6801 against 0.6920 / 0.6719 for the single term
+  and both come back positive — the fitted values are the artifact's, printed by `mhcmatch rank --coefficients`, and deliberately not transcribed here. Held out one screen at
+  a time, v11 reaches mean 0.7102 / median 0.6963 over its seven screens (v10: 0.6998 mean over eight); at v9 the pair reached 0.6952 / 0.6801 against 0.6920 / 0.6719 for the single term
   it replaced.
 - **`c` is a property of a transcriptome and never of the batch in front of you.** It is the 25th
-  percentile of the tumour type's non-zero gene medians — 0.1400 to 0.2400 TPM over 35 cancer
+  percentile of the tumour type's non-zero gene medians — 0.1200 to 0.3700 TPM over the 33 TCGA cancer
   types, pooled 0.1800 — and the value the data put it at, 0.1 TPM, is where the response to
   abundance flattens with binding held fixed by stratification, not where a grid search landed.
   A floor taken from the candidates tracks the donor's mutational burden instead of the assay.
@@ -232,9 +234,9 @@ The four blocks and what each reads:
   essential-tissue hits against the shipped thymic set. Anchor-masked similarity to a *presented*
   reference is presentation, not recognition (`mimicry_collinear.md`), so it fires for every peptide
   sharing the allele motif. Exclusion uses `vector.self_origin_risk` — `Proteome.find_source` at
-  ≤1 substitution, joined to `expression.safety_profile` — which resolves titin `ESDPIVAQY` to
+  exact coincidence (`max_subs=0` — at radius 1 over 8-11mers, 3 of 6 random 27-mers are withdrawn by chance; `--report-subs 1` reports without withdrawing), joined to `expression.safety_profile` — which resolves titin `ESDPIVAQY` to
   `TITIN_HUMAN` and viral epitopes to nothing (`bench/results/vector_safety_screen.md`).
-- **Benchmarks live in a separate repo**: [`2026-mhcmatch-benchmark`](https://github.com/antigenomics/2026-mhcmatch-benchmark). `bench/results/...` resolves there.
+- **Benchmarks live in a separate, private repo**: `2026-mhcmatch-benchmark` (local checkout at `~/vcs/projects/2026-mhcmatch-benchmark`; remote `repseq/2026-mhcmatch-code`). `bench/results/...` resolves there.
 - **`from_records`' `weight` field is inert** in production; a ligand's training weight is its row count
   (publication count). Measured to not matter (ΔAUC −0.001).
 - Repo-local `.venv`. Everything in **this** repo bootstraps its data from HuggingFace

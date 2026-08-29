@@ -322,7 +322,9 @@ a conda interpreter is enough and is what `-profile conda` sidesteps entirely:
 
 ```bash
 /path/to/conda/envs/<env>/bin/python3 -m venv .venv && . .venv/bin/activate
-pip install mhcmatch==1.1.0
+pip install mhcmatch==1.6.0
+
+(README.md:239, :240 and :242 pin the same 1.1.0 in the `docker build` / `docker push` block and must move with it.)
 ```
 
 **Why the calibration directory is worth the trouble.** `mhcmatch` reports a %rank, which means each

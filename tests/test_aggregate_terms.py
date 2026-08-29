@@ -1,6 +1,6 @@
 """Every fitted term is pinned to the column it is actually computed from.  # 2026-08-25
 
-The shipped artifact names eight features. Each one is a *specification* -- a named quantity on a
+The shipped artifact names nine features. Each one is a *specification* -- a named quantity on a
 stated scale -- and the library fills it from somewhere. Nothing enforced the correspondence, and
 the gap is silent in both directions: a term can be filled from the wrong column and the model
 still scores, still ranks, still writes a table.

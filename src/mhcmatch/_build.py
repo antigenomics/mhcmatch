@@ -203,7 +203,7 @@ EXTERNAL = {
     "aggregate": "python bench/epic/fit.py --physchem rose_af5 --presentation binder --density log10a   # benchmark repo",
     "affinity": "python bench/affinity/train.py --cls mhc1 --species human   # benchmark repo",
     "potts": "python bench/affinity/fit_potts.py --cls mhc1    # and --cls mhc2; benchmark repo",
-    "complement1": "python bench/neoag/complement.py --fit chowell_rebuilt --tables all",
+        "complement1": "python bench/neoag/complement.py --fit chowell_rebuilt --tables all   # benchmark repo",
     "complement2": "python bench/neoag/complement_mhc2.py      # benchmark repo",
     "mimicry": "python bench/neoag/mimicry_fit.py              # benchmark repo",
     "ligand": "python bench/train_spans.py                     # benchmark repo",
@@ -217,13 +217,13 @@ def _stamp(path: str):
     """The **package** version a shipped artifact carries, or None if it does not carry one.
 
     Two version vocabularies live in this directory and they are told apart **by the shape of the
-    value, not by the file extension**. A *model* version is an int — EPIC is ``10``, the recognition
+    value, not by the file extension**. A *model* version is an int — EPIC is ``11``, the recognition
     heads are ``2`` — and comparing one to a package version is a category error that reports every
     head stale at every release. A *package* version is dotted (``"0.26.0"``), and an artifact that
     carries one is asserting which release built it, so it is checked.
 
     Blanket-exempting ``.json`` was the earlier rule, and it hid exactly one thing:
-    ``mimicry_mhc1.json`` carries ``"0.12.0"`` and has gone unchecked across fifteen minor releases.
+    ``mimicry_mhc1.json`` carried ``"0.12.0"`` and went unchecked across fifteen minor releases; it now carries the int ``1``.
 
     An artifact with no version record at all is not stale — several are static reference data, and
     demanding a stamp would make the check cry wolf on files no release touches.
@@ -250,10 +250,10 @@ def _stamp(path: str):
         if path.endswith(".json"):
             v = json.load(open(path)).get("version")
             # The two vocabularies, told apart by shape rather than by filename. A *model* version
-            # is an int -- EPIC is 10, the recognition heads are 2 -- and comparing it to a package
+            # is an int -- EPIC is 11, the recognition heads are 2 -- and comparing it to a package
             # version reports every head stale at every release. A *package* version is dotted, and
             # an artifact carrying one is making a claim about which release built it, so it is
-            # checked. `mimicry_mhc1.json` is the file this distinction exists for: it carries
+            # checked. `mimicry_mhc1.json` is the file this distinction exists for: it carried
             # "0.12.0" and was never checked, because JSON was blanket-exempted.
             return v if isinstance(v, str) and "." in v else None
     except Exception as exc:                       # a file that will not open IS corrupt

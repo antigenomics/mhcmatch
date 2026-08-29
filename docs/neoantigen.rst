@@ -15,7 +15,7 @@ The model
 ---------
 
 ``mhcmatch rank`` scores each candidate with the fitted aggregate vendored at
-``data/aggregate_mhc1.json``, which declares itself **EPIC**: eight terms in four
+``data/aggregate_mhc1.json``, which declares itself **EPIC**: nine terms in four
 **hierarchical blocks**, one unpenalised intercept per screen. The artifact carries its own
 ``version`` — a *model* version, an integer, distinct from the package version. Read the feature list from
 :data:`mhcmatch.rank.AGGREGATE_FEATURES` and the grouping from
@@ -49,7 +49,7 @@ what that term is worth **after** presentation and expression rather than in com
      - ``log2(1 + TPM/c)`` for *this candidate's* source-gene abundance — the cohort's own
        measurement where it has one, else the tumour type's reference value, else the gene's
        matched-normal or cross-tissue level. ``c`` is the 25th percentile of the **tumour type's
-       own** non-zero gene medians, 0.1400 to 0.2400 TPM over 35 cancer types. See
+       own** non-zero gene medians, 0.1400 to 0.2400 TPM over the fit's seven screens. See
        :func:`mhcmatch.rank.expr_level`.
    * - ``expression``
      - ``expr_norm``
@@ -546,7 +546,8 @@ ratio cannot set a slope.
 :math:`\theta` is **additive to the binder %rank, not redundant with it**: a %rank says where a
 peptide sits in its allele's own distribution, occupancy says how much groove it actually holds, and
 an allele with a permissive groove has a large self load its candidates must out-compete. Fitted
-together on the grand corpus, ``binder`` holds z +6.5 while occupancy carries z +3.6 to +3.8, stable
+together on the retired ten-screen grand-corpus fit, ``binder`` held z +6.5 while occupancy carried
+z +3.6 to +3.8, stable
 across :math:`[P]` from 1 to 1,000 nM.
 
 :math:`\phi` does not resolve — z −0.48, and 0.4979 on its own. Neither do the raw ratio, the
@@ -559,12 +560,14 @@ Limits
 ------
 
 * **Held-out performance is well below in-fit performance.** Leave-one-twin-group-out on the
-  ``gfeller`` group gives 0.5781 where the in-fit number is far higher, because Gfeller and
-  Gfeller-GBM share 96.5 % of their peptides and TESLA/Neopep 71.8 %. Quote the twin-group column.
+  ``gfeller`` group gave 0.5781 under the retired ten-screen fit, because Gfeller and Gfeller-GBM
+  share 96.5 % of their peptides --- which is why ``Gfeller_GBM`` left the corpus for v11. Quote the
+  twin-group column: the shipped artifact's ``cv_twin`` mean over decided screens is 0.6957.
 * **Not every mimicry channel is established in direction.** ``viral_tcr`` and ``thymus_tcr`` flip
   sign in 22 % and 35 % of bootstrap resamples, which is why ``EPIC`` does not carry them. Its own
   sign stabilities are in ``bench/results/epic_recognition_terms.md``.
 * **The prior is a property of your candidate pool, not of biology.** The fitted prevalence is
-  0.31 %, which is how these screens were assembled. Supply your own.
+  0.18 % (597 positives of 339,599 fitted rows), which is how these screens were assembled. Supply
+  your own.
 * ``--score gate`` is the two-term product-of-sigmoids, kept for when a candidate failing either
   axis should not be rescuable by the other.

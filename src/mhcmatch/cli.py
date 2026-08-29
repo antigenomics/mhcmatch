@@ -2215,6 +2215,8 @@ def main(argv=None):
                     help="target cassette size (default: 20)")
     cs.add_argument("--tol", type=int, default=0, metavar="N",
                     help="manufacturing tolerance: the reported size is the one in [k-tol, k+tol] "
+                         "with the largest objective, with the lower bound raised to the number of "
+                         "--universe allotypes the pool can supply (default: 0, i.e. exactly k)"
                          "with the largest objective (default: 0, i.e. exactly k)")
     cs.add_argument("--prevalence", type=float, metavar="P",
                     help=f"pool response prevalence the probabilities are anchored on "

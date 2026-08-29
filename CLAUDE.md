@@ -36,7 +36,11 @@ the calibration-cache fingerprint, because 1.3.0 changed two scoring heads insid
 version and the on-disk backgrounds cached before the change kept being served after it — which
 silently moved a pinned test by 3.7x before it was caught. Bump it whenever the scoring code changes
 what a head returns, and use a fresh `MHCMATCH_CALIBRATION_CACHE` for any run meant to *establish* a
-number rather than iterate. `bench/results/calibration_cache_stale.md` has the measurement.
+number rather than iterate. `bench/results/calibration_cache_stale.md` has the measurement. The
+benchmark repo's feature frame keys its freshness guard on the same int as of 2026-08-30, so a patch
+release is a restamp (`bench/epic/features.py --restamp`, seconds) rather than a chain run (~2 h) --
+which means **`SCORER_EPOCH` is now load-bearing in two repos**: forget to bump it and a frame built
+under the old heads will be accepted under the new ones.
 
 This file captures only *how we work in the repo*.
 

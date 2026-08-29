@@ -41,7 +41,7 @@ One peptide, and what it is made of
 
    f = complement.features("GILGFVFTL")
    sorted(f)[:6]
-   # ['aa_anchor', 'aa_tcr', 'kd_run_frac', 'kd_run_max', 'kd_run_n', 'kf4_anchor']
+      # ['aa_anchor', 'aa_anchor10', 'aa_anchor11', 'aa_anchor8', 'aa_anchor9', 'aa_tcr']
 
 The score is a **log-odds and carries no prior**, exactly like :func:`mhcmatch.posbayes.llr`. The
 training corpus runs at ~3.2% positives; a viral proteome scan is nearer 3.0e-3 and the NCI
@@ -68,7 +68,7 @@ Each answers something the block above it cannot express.
    acids, so a pooled sum reports their difference weighted by corpus composition.
 
 ``pot``
-   Contact potentials, one per side. **MJ1996** on the anchors — burial in a pocket is what MJ
+   Contact potentials, one per side. **the MJ1985 partition energy** (:data:`mhcmatch.data.aa_tables.MJ_PARTITION`, AAindex ``MIYS850101``) on the anchors — burial in a pocket is what MJ
    measures. **TCRen marginalised over a real CDR3 repertoire** on the TCR-facing residues: TCRen is
    a directed 19x20 potential that is only 3.29% one-body, so no per-residue scale can be extracted
    from it and the unknown receptor side is integrated out instead,
@@ -145,7 +145,11 @@ Each answers something the block above it cannot express.
 
    **What the three columns buy.** Added on top of ``phys+role+pot`` under the same peptide-grouped
    folds and the same linear head, the block gains AUROC on **all eight corpus arms**, median
-   ``+0.0060``, and AUPRC on all eight as well (``bench/results/complementarity.md`` §1, read from
+   ``+0.0060``, and AUPRC on all eight as well (.. note::
+
+   ``bench/results/...`` paths on this page resolve in the benchmark repository,
+   `2026-mhcmatch-benchmark <https://github.com/antigenomics/2026-mhcmatch-benchmark>`_, not in the
+   library repo.
    ``tsv/complement_cv.tsv``):
 
    .. list-table::
@@ -196,9 +200,10 @@ Each answers something the block above it cannot express.
 
 ``aa``
    Residue **identity**, as a log-odds per amino acid per role. Every block above projects the
-   peptide onto a property; this one does not. Its ``aa_anchor`` and ``aa_tcr`` columns sum to
-   exactly :func:`mhcmatch.posbayes.llr`, so the shipped position-role model is a strict special
-   case of this feature set.
+   peptide onto a property; this one does not. Its ``aa_anchor`` and ``aa_tcr`` columns are the same
+   construction as :func:`mhcmatch.posbayes.llr` -- same alphabet, same anchors, same per-face
+   counts -- over ``complement``'s own fitted tables, so the shipped position-role model is a strict
+   special case of this feature set.
 
    The block carries eleven more columns, and they are **length-aware** — a measured choice, not a
    structural guess:
@@ -357,9 +362,11 @@ peptide appears in both a train and a test fold (``complementarity.md``).
      - **0.6886**
      - +0.0016
 
-The ``aa`` block alone *is* :func:`mhcmatch.posbayes.llr` — its two columns sum to that score
-exactly, asserted in the test suite — so the right-hand column measures what the other five blocks
-add to a model that already ships.
+The ``aa`` block's pooled ``aa_anchor``/``aa_tcr`` pair is the same construction as
+:func:`mhcmatch.posbayes.llr` — same alphabet, same anchors, same per-face counts, asserted in the
+test suite — read off ``complement``'s own fitted tables, so the two agree closely but not
+identically; the right-hand column measures what the other five blocks add to a model that already
+ships.
 
 It transfers across species
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -487,7 +494,9 @@ head                  k     what it is
    rec.score(peps)                            # the default head, pure numpy, no extra needed
    rec.score(peps, head="esm64_glm")          # needs pip install 'mhcmatch[esm]'
 
-   rec.score(peps, anchors=[(0, 1, 2, -2, -1)])       # masks given
+      rec.score(peps, head="posbayes", anchors=(0, 1, 2, -2, -1))   # masks given; the default head reads none
+   rec.score(peps, head="posbayes", mhc="HLA-A*02:01", store=store)    # masks from the allele's layout
+   rec.score(peps, head="posbayes", roles=mask)                        # explicit per-residue mask
    rec.score(peps, mhc="HLA-A*02:01", store=store)    # masks from the allele's layout
    rec.score(peps, roles=mask)                        # explicit per-residue mask
    rec.posterior(peps, prior=0.03)                    # a probability needs a prior
@@ -524,8 +533,8 @@ Where the coefficients come from
 ``chowell_iedb_full_matched`` --- the rebuilt Chowell corpus with negatives resampled so the allele
 group carries no signal about the label. A coefficient fitted on the unmatched arm can be paid for
 recognising which allele happened to be typed, and that is not a coefficient about recognition. The
-measured cost of the choice, stated once: against the unmatched arm it loses roughly 0.02 (human)
-and 0.06 (mouse) held-out AUROC.
+measured cost of the choice, stated once: against the unmatched arm it loses roughly 0.01 (human)
+and 0.03 (mouse) AUROC on the held-out Chowell deposit, averaged over the three heads.
 
 Fit criteria on that arm, and performance on the published deposits, whose peptides are removed from
 every training arm first:
@@ -582,6 +591,10 @@ Class II: what this is and what it is not
    :func:`~mhcmatch.recognition.score_mhc2` **is not a class-II model.** What it does is apply
    the **MHC-I-trained coefficients** to the class-II binding core, with the groove-facing positions
    redefined as P1/P4/P6/P9 of the register-anchored 9-mer instead of the class-I
+   P2/P\ :math:`\Omega` pattern -- **but only when a head with its own design matrix is named**
+   (``posbayes``, ``physchem_glm``, ``esm64_glm``). The shipped default head is ``complement``,
+   which takes no role mask, so ``score_mhc2(peptides)`` scores the core under ``complement``'s
+   own class-I P1--P3/PΩ-1/PΩ split. It emits a ``UserWarning`` the first time it is called.
    P2/P\ :math:`\Omega` pattern. It emits a ``UserWarning`` the first time it is called.
 
    Use it to **rank class-II peptides against each other**. Do not compare the values with class-I
@@ -596,7 +609,10 @@ Class II: what this is and what it is not
    rec.mhc2_core(["PKYVKQNTLKLAT"])          # (['YVKQNTLKL'], [2]) -- the register-anchored core
    rec.score_mhc2(["PKYVKQNTLKLAT"])         # ranks; nan where no 9-mer core can be assigned
 
-Two things make it worth more than nothing. The design is mostly interface geometry -- Kidera
+Two things make it worth more than nothing. Two things make it worth more than nothing. Under a named ``physchem_glm``/``esm64_glm`` head the
+design is mostly interface geometry -- Kidera factors and ESM2 embeddings pooled over the
+groove-facing and the TCR-facing residues -- and that split is defined for class II as well (the
+default ``complement`` head reads no role mask, and scores the core on its class-I split).
 factors and ESM2 embeddings pooled over the groove-facing and the TCR-facing residues -- and that
 split is defined for class II as well. And the score is taken on the **core**, not the whole peptide,
 which keeps every feature inside the range the model was fitted on: nine residues, composition
