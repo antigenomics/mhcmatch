@@ -404,8 +404,8 @@ peptide and not the gene --- over the benchmark corpus, **356,387 of 695,811 row
 5,205 of 5,833 positives (89.2%)** carried no symbol. Those rows do not drop out; they all collapse
 onto one mean-imputed constant, and a constant cannot order anything. On the VACCIMEL screen
 ``expr_norm`` had standard deviation **exactly 0.0000** and AUROC **exactly 0.5000** while carrying
-**+0.4950** log-odds per standard deviation in the shipped EPIC v10 artifact --- a fitted parameter
-paid for on no information. (Which term is largest moves with every refit; ``mhcmatch rank
+**+0.4950** log-odds per standard deviation in the then-shipped EPIC v10 artifact --- a fitted
+parameter paid for on no information. Repaired, it fits **+0.2155** in v11. (Which term is largest moves with every refit; ``mhcmatch rank
 --coefficients`` prints the current set.)
 
 The symbol is recoverable from the peptide, because a neoantigen is a near-copy of a self peptide:

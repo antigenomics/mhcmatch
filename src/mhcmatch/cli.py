@@ -1561,6 +1561,16 @@ def _cassette_rows(path, score_col, need_score=True):
     return rows, col
 
 
+def _f(v):
+    """A table cell as a float, ``nan`` for an empty or unparseable one. ``nan`` is the right
+    answer for a missing expression term -- :func:`mhcmatch.cassette.selectivity_delta` turns it
+    into no preference rather than into a deleted candidate."""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return float("nan")
+
+
 def _by_donor(rows):
     """``{donor: [row]}`` preserving file order; one group called ``-`` when there is no column."""
     out = {}
@@ -1579,8 +1589,12 @@ def cmd_cassette_select(a):
     groups = _by_donor(rows)
     kw = {k: v for k, v in (("prevalence", a.prevalence), ("rho", a.rho), ("gamma", a.gamma))
           if v is not None}
+    universe = [x.strip() for x in a.universe.split(",") if x.strip()] if a.universe else None
     say(f"{len(rows)} candidate(s) over {len(groups)} donor(s), scored on {col!r}; "
         f"k = {a.size} +/- {a.tol}", level=1)
+    if a.block_live < 1.0:
+        say(f"HLA loss priced at q = {a.block_live}: two units on one allotype are lost together",
+            level=1)
 
     out, chosen = [], 0
     for donor, g in groups.items():
@@ -1591,6 +1605,18 @@ def cmd_cassette_select(a):
         if not g:
             continue
         alleles = None if a.no_allele or "allele" not in g[0] else [r["allele"] for r in g]
+        # `--floor` seeds every allotype the donor's own pool can supply; `--universe` is the true
+        # genotype and is what lets `coverage` see an allotype holding zero units.
+        uni = universe or (sorted(set(alleles)) if a.floor and alleles else None)
+        sel_kw = dict(kw, block_live=a.block_live, universe=uni, max_share=a.max_share)
+        if a.selectivity:
+            missing = [c for c in ("expr_lvl", "expr_norm") if c not in g[0]]
+            if missing:
+                raise SystemExit(f"--selectivity needs the {' and '.join(missing)} column(s); "
+                                 f"`mhcmatch rank` emits both. Found: {sorted(g[0])}")
+            sel_kw.update(selectivity=a.selectivity,
+                          expr_lvl=[_f(r["expr_lvl"]) for r in g],
+                          expr_norm=[_f(r["expr_norm"]) for r in g])
         size, tol = a.size, a.tol
         if a.confidence is not None:
             # `-k` becomes the manufacturing ceiling and the donor's own pool sets the size. A
@@ -1605,7 +1631,18 @@ def cmd_cassette_select(a):
                    f" -- NOT REACHED, capped at k = {a.size}, best {probe['p_at_least']:.3f}"),
                 level=1)
         c = CA.select([r["_score"] for r in g], [r["peptide"] for r in g], alleles,
-                      k=size, tol=tol, **kw)
+                      k=size, tol=tol, **sel_kw)
+        if a.selectivity:
+            # The counterfactual is what makes a stated weight auditable rather than a knob: what
+            # the same pool would have built at w = 0, and what the trade cost in expected units.
+            base = CA.select([r["_score"] for r in g], [r["peptide"] for r in g], alleles,
+                             k=size, tol=tol, **dict(sel_kw, selectivity=0.0))
+            d = CA.selectivity_delta([_f(r["expr_lvl"]) for r in g],
+                                     [_f(r["expr_norm"]) for r in g])
+            say(f"{donor}: selectivity w={a.selectivity} traded yield {base.yield_:.3f} -> "
+                f"{c.yield_:.3f} unit(s) for mean tumour-over-normal "
+                f"{d[base.index].mean():+.3f} -> {d[c.index].mean():+.3f} log2-fold; "
+                f"{len(set(c.index) - set(base.index))} of {c.k} slot(s) changed", level=1)
         if c.trimmed:
             say(f"{donor}: pool of {c.pool_n} trimmed to {c.pool_n - c.trimmed} before the "
                 f"coupling matrix (see mhcmatch.cassette.MAX_POOL)", level=1)
@@ -1618,7 +1655,10 @@ def cmd_cassette_select(a):
                         "score": f"{g[i]['_score']:.6f}", "p": f"{pi:.6f}",
                         "k": c.k, "pool_n": c.pool_n, "offset": f"{c.offset:.6f}",
                         "energy": f"{c.energy:.6f}", "lam": f"{c.lam:.6f}",
-                        "rho": c.rho, "gamma": c.gamma, "channels": "+".join(c.channels)})
+                        "rho": c.rho, "gamma": c.gamma, "channels": "+".join(c.channels),
+                        "block_live": c.block_live, "selectivity": c.selectivity,
+                        "n_covered": c.coverage.get("n_covered", ""),
+                        "n_allotypes": c.coverage.get("n_allotypes", "")})
         # A tolerance that is spent is a result, not a detail: the objective has an internal
         # optimum size, and it moves with the prevalence and with rho. Saying so is cheaper than
         # letting somebody discover that `-k 20 --tol 5` returned 15 and wonder whether it broke.
@@ -1626,8 +1666,10 @@ def cmd_cassette_select(a):
             say(f"{donor}: {c.k} units, not {size} -- the objective peaks there inside the "
                 f"tolerance (adding the next unit costs more variance than it buys in mean)",
                 level=1)
-        say(f"{donor}: {c.k} of {c.pool_n}, yield {c.yield_:.3f} unit(s), lam {c.lam:+.3f} nats",
-            level=2)
+        cov = c.coverage
+        say(f"{donor}: {c.k} of {c.pool_n}, yield {c.yield_:.3f} unit(s), lam {c.lam:+.3f} nats"
+            + (f", {cov['n_covered']}/{cov['n_allotypes']} allotype(s) covered, "
+               f"{cov['entropy_ratio']:.3f} of maximum entropy" if cov else ""), level=2)
     say(f"selected {chosen} unit(s) over {len(groups)} donor(s)", level=1)
     _write_rows(out, a.out)
 
@@ -1667,7 +1709,9 @@ def cmd_cassette_score(a):
         s = CA.score([r["_score"] for r in g], [r["peptide"] for r in g], alleles,
                      pool_scores=None if pg is None else [r["_score"] for r in pg],
                      pool_peptides=None if pg is None else [r["peptide"] for r in pg],
-                     offset=offs[donor], block_live=a.block_live, target=a.target, **kw)
+                     offset=offs[donor], block_live=a.block_live, target=a.target,
+                     universe=[x.strip() for x in a.universe.split(",") if x.strip()]
+                     if a.universe else None, **kw)
         cov = s.pop("coverage", {}) or {}
         s = {"donor": donor, **s,
              "n_allotypes": cov.get("n_allotypes", ""), "allotype_gini": cov.get("gini", ""),
@@ -2194,6 +2238,30 @@ def main(argv=None):
                          "reported at the ceiling when C is out of reach")
     cs.add_argument("--target", type=int, default=1, metavar="M",
                     help="how many responding units --confidence is about (default: 1)")
+    cs.add_argument("--block-live", type=float, default=1.0, metavar="Q",
+                    help="how often each allotype survives -- the HLA-loss rate. Below 1 the "
+                         "objective prices losing an allele: two units on one allotype are lost "
+                         "together, so the coupling between them is the exact covariance that "
+                         "implies. A unit whose p exceeds q raises rather than being clipped "
+                         "(default: 1.0, nothing is ever lost)")
+    cs.add_argument("--floor", action="store_true",
+                    help="give every allotype the donor's pool can supply one unit before the free "
+                         "slots are filled. A manufacturing constraint, not an objective term")
+    cs.add_argument("--max-share", type=float, metavar="F",
+                    help="no allotype may hold more than this share of the cassette (0.4 at k=20 "
+                         "caps each at 8 units). Refuses rather than relaxing when the share and "
+                         "the floor cannot both hold")
+    cs.add_argument("--universe", metavar="LIST",
+                    help="the donor's DISTINCT allotypes, comma-separated -- the denominator "
+                         "coverage is reported against, so an allotype holding zero units is "
+                         "visible. Also sets the floor. Without it, coverage is taken over the "
+                         "labels the cassette happens to carry and cannot see one it missed")
+    cs.add_argument("--selectivity", type=float, default=0.0, metavar="W",
+                    help="expected responding units per log2-fold of tumour-over-normal abundance, "
+                         "charged to the objective as w*(expr_lvl - expr_norm) and NEVER to p. A "
+                         "stated design preference like --gamma: the shipped model fits both "
+                         "expression terms POSITIVE because it was fitted on `will this respond`, "
+                         "and `high in tumour, low in normal` is a different question (default: 0)")
     cs.add_argument("--score-column", default="score", metavar="COL",
                     help="which column holds the aggregate log-odds (default: score; `rank` writes "
                          "`aggregate`)")
@@ -2225,6 +2293,10 @@ def main(argv=None):
     cq.add_argument("--block-live", type=float, default=1.0, metavar="Q",
                     help="how often each block is live. A unit whose marginal p exceeds it raises "
                          "rather than being clipped (default: 1.0)")
+    cq.add_argument("--universe", metavar="LIST",
+                    help="the donor's DISTINCT allotypes, comma-separated. Without it `coverage` is "
+                         "computed over the labels the cassette carries, so an allotype holding "
+                         "zero units is invisible -- which is the inequality the index exists for")
     cq.add_argument("--target", type=int, default=1, metavar="M",
                     help="report P(at least M responses) (default: 1)")
     cq.add_argument("--score-column", default="score", metavar="COL")

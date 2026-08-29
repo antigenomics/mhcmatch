@@ -425,7 +425,9 @@ class Proteome:
         corpus, **356,387 of 695,811 rows (51.2%) and 5,205 of 5,833 positives (89.2%)** carried no
         deposited symbol; on the VACCIMEL screen ``expr_norm`` had standard deviation **exactly
         0.0000** and AUROC **exactly 0.5000** while carrying the largest positive coefficient of the
-        shipped EPIC v10 artifact, **+0.4950** log-odds per standard deviation.
+        then-shipped EPIC v10 artifact, **+0.4950** log-odds per standard deviation. Repairing
+        the symbol is what took that term to **+0.2155** in v11, on a measurement rather than a
+        constant.
 
         Three choices, all load-bearing:
 

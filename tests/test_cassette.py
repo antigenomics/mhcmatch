@@ -593,3 +593,179 @@ def test_select_beats_a_sort_on_the_objective_it_optimises():
         top = list(np.argsort(-s, kind="stable")[:10])
         assert CA.energy(h, J, c.index) >= CA.energy(h, J, top) - 1e-9
         assert float(p[top].sum()) >= float(p[c.index].sum()) - 1e-9   # the sort wins on its own
+
+
+# ------------------------------------------------------- HLA loss, coverage, and selectivity
+def test_the_loss_coupling_is_exactly_the_covariance_a_lost_allotype_implies():
+    """The one claim `block_live` makes, checked against the arithmetic rather than against itself.
+
+    Under ``R_i = B_b eps_i`` with ``B_b ~ Bern(q)``, two units on one allotype covary by
+    ``(1 - q) p_i p_j / q`` and two on different allotypes not at all. If the coupling were a
+    *heuristic* it could be tuned; because it is that covariance it can be checked, and this is the
+    check. Nothing else in the module has a closed form for a same-allotype pair."""
+    s, peps, alle = pool(n=20)
+    p = 1 / (1 + np.exp(-(s + CA.prob_offset(s, POOL_PREVALENCE))))
+    sim = CA.overlap(peps, alleles=alle, strength=s)
+    q, g = 0.65, 0.8
+    _, J0 = CA.goal_energy(p, sim, gamma=g)
+    _, J1 = CA.goal_energy(p, sim, gamma=g, block=alle, block_live=q)
+    same = np.array(alle)[:, None] == np.array(alle)[None, :]
+    want = g * (1 - q) / q * np.outer(p, p) * same
+    np.fill_diagonal(want, 0.0)
+    assert np.allclose(J1 - J0, want, atol=1e-12)
+    assert np.allclose((J1 - J0)[~same], 0.0)              # nothing crosses an allotype
+
+
+def test_pricing_hla_loss_is_inert_at_q_one():
+    """`block_live=1.0` is "nothing is ever lost", so it has to reproduce every cassette built
+    before the parameter existed. Bit-identical, not merely close: this is the merge gate."""
+    s, peps, alle = pool(n=40)
+    a = CA.select(s, peps, alle, k=10)
+    b = CA.select(s, peps, alle, k=10, block_live=1.0, universe=None, max_share=None,
+                  selectivity=0.0)
+    assert a.index == b.index and a.energy == b.energy and a.lam == b.lam
+    _, J0 = CA.goal_energy(np.linspace(0.05, 0.5, 6), np.zeros((6, 6)))
+    _, J1 = CA.goal_energy(np.linspace(0.05, 0.5, 6), np.zeros((6, 6)),
+                           block=list("AABBCC"), block_live=1.0)
+    assert np.array_equal(J0, J1)
+
+
+def test_pricing_hla_loss_spreads_the_cassette_off_one_allotype():
+    """The behaviour the parameter exists for: with a lower ``q`` the objective stops stacking one
+    allotype, because two units on it are lost together. Measured as the share of pairs sharing an
+    allotype, which is what `score` already reports as ``rho_hla``."""
+    worse = 0
+    for seed in range(6):
+        s, peps, alle = pool(n=60, seed=seed)
+        lo = CA.select(s, peps, alle, k=12, block_live=0.85)
+        hi = CA.select(s, peps, alle, k=12)
+        r_lo = CA.pair_stats([peps[i] for i in lo.index], [alle[i] for i in lo.index])["rho_hla"]
+        r_hi = CA.pair_stats([peps[i] for i in hi.index], [alle[i] for i in hi.index])["rho_hla"]
+        worse += r_lo <= r_hi + 1e-12
+    assert worse >= 5, "pricing HLA loss should not concentrate the cassette on fewer allotypes"
+
+
+def test_select_raises_rather_than_clipping_a_unit_that_outlives_its_allotype():
+    """A unit cannot respond more often than its own allotype survives. Clipping there would
+    understate the marginal for exactly the strongest units, so `select` raises the same named
+    error `portfolio` does -- and the message says how far ``q`` has to move."""
+    s, peps, alle = pool(n=15)
+    with pytest.raises(PF.MarginalExceedsBlock, match="block-live probability"):
+        CA.select(s + 8.0, peps, alle, k=5, block_live=0.2)
+
+
+def test_size_for_asks_for_more_units_when_an_allotype_can_be_lost():
+    """`size_for` evaluated the block model with ``q`` pinned at 1.0 from the day it was written,
+    so the one failure mode the model exists to represent could not reach it. Below 1 the same
+    donor needs strictly more units for the same confidence."""
+    _, peps, alle = pool(n=60, seed=3)
+    s = np.linspace(-2.0, -0.5, 60)          # flat enough that no single unit carries the cassette
+    ks = [CA.size_for(s, peps, alle, confidence=0.90, k_max=40, block_live=q)
+          for q in (1.0, 0.9, 0.8, 0.7)]
+    assert [r["k"] for r in ks] == sorted(r["k"] for r in ks)
+    assert ks[0]["k"] < ks[2]["k"], "a losable allotype must cost units"
+    # The ceiling is an answer about the donor, not a search bound: at q = 0.7 this pool cannot
+    # reach 0.90 in 40 units and says so rather than rounding into a cassette that claims it.
+    assert ks[-1]["reached"] is False and ks[-1]["k"] == 40
+    assert ks[2]["curve"][ks[0]["k"] - 1] < ks[0]["curve"][ks[0]["k"] - 1]
+
+
+def test_the_coverage_floor_seeds_every_allotype_the_pool_can_supply():
+    """`universe` gives each allotype a unit before the free slots are filled, and an allotype the
+    pool cannot supply is skipped rather than raising -- that is a fact about the donor's
+    candidates, and it shows up in the coverage rather than as an exception."""
+    s, peps, alle = pool(n=40, seed=1)
+    uni = sorted(set(alle)) + ["B*44:02"]                  # one allotype with no candidate at all
+    c = CA.select(s, peps, alle, k=6, universe=uni)
+    chosen = {alle[i] for i in c.index}
+    assert chosen == set(alle), "every allotype the pool can supply must hold a unit"
+    assert c.coverage["n_allotypes"] == 4 and c.coverage["n_covered"] == 3
+    # Without the universe the missing allotype is invisible, which is the whole reason to pass it.
+    assert CA.select(s, peps, alle, k=6).coverage["n_allotypes"] == 3
+
+
+def test_the_share_cap_holds_and_an_impossible_floor_refuses():
+    """`max_share` is a manufacturing constraint, so it binds in `greedy` **and** survives the swap
+    pass. An infeasible pair raises with the arithmetic rather than quietly returning a cassette
+    that breaks one of the two."""
+    s, peps, alle = pool(n=60, seed=2)
+    c = CA.select(s, peps, alle, k=12, max_share=0.5)      # 6 units per allotype at k = 12
+    counts = {}
+    for i in c.index:
+        counts[alle[i]] = counts.get(alle[i], 0) + 1
+    assert max(counts.values()) <= 6
+    with pytest.raises(ValueError, match="caps each allotype"):
+        CA.select(s, peps, alle, k=12, max_share=0.1)      # 2 x 3 allotypes cannot fill 12
+    with pytest.raises(ValueError, match="does not fit a cassette"):
+        CA.select(s, peps, alle, k=2, universe=sorted(set(alle)))
+
+
+def test_selectivity_is_charged_to_the_objective_and_never_to_p():
+    """``p`` is a calibrated marginal `survival` reads literally, so the stated preference moves the
+    chosen set and the energy and leaves every reported probability alone. A weight that discounted
+    ``p`` would silently restate the response model as well as the preference."""
+    s, peps, alle = pool(n=50, seed=4)
+    rng = np.random.default_rng(11)
+    lvl, nrm = rng.uniform(0, 8, 50), rng.uniform(0, 8, 50)
+    off = CA.prob_offset(s, POOL_PREVALENCE)
+    base = CA.select(s, peps, alle, k=10)
+    tilt = CA.select(s, peps, alle, k=10, selectivity=0.05, expr_lvl=lvl, expr_norm=nrm)
+    assert tilt.index != base.index
+    assert tilt.offset == base.offset                       # p is the same map for both
+    for i, pi in zip(tilt.index, tilt.p):
+        assert pi == pytest.approx(1 / (1 + np.exp(-(s[i] + off))))
+    d = CA.selectivity_delta(lvl, nrm)
+    assert d[tilt.index].mean() > d[base.index].mean()
+
+
+def test_selectivity_is_inert_at_zero_and_treats_a_missing_term_as_no_preference():
+    """``w = 0`` is bit-identical, and a candidate missing either expression term takes 0 rather
+    than ``nan`` -- ``nan`` would reach the argmax and delete the candidate, where 0 leaves it
+    ranked on everything else."""
+    s, peps, alle = pool(n=30, seed=5)
+    lvl, nrm = np.full(30, 3.0), np.full(30, 1.0)
+    lvl[:5] = np.nan
+    assert CA.select(s, peps, alle, k=8, selectivity=0.0, expr_lvl=lvl,
+                     expr_norm=nrm).index == CA.select(s, peps, alle, k=8).index
+    d = CA.selectivity_delta(lvl, nrm)
+    assert np.isfinite(d).all() and (d[:5] == 0.0).all() and (d[5:] == 2.0).all()
+    assert len(CA.select(s, peps, alle, k=8, selectivity=1.0, expr_lvl=lvl,
+                         expr_norm=nrm).index) == 8
+
+
+def test_score_names_the_worst_allotype_to_lose():
+    """``yield_loh`` is the worst case and not an average, because LOH takes a specific allele. It
+    is a level in the same units as ``yield``, so their ratio is the share of expected response
+    that does not depend on any one allotype."""
+    s, peps, alle = pool(n=40, seed=6)
+    c = CA.select(s, peps, alle, k=10)
+    out = CA.score(s, peps, alle, chosen=c.index, offset=c.offset)
+    p = np.asarray(c.p)
+    lab = np.array([alle[i] for i in c.index])
+    assert out["yield_loh"] == pytest.approx(min(p[lab != b].sum() for b in set(lab)))
+    assert out["lost_allotype"] in set(lab)
+    assert 0.0 <= out["yield_loh"] < out["yield"]
+    assert CA.score(s, peps, chosen=c.index, offset=c.offset)["yield_loh"] is None
+
+
+def test_cli_select_prices_hla_loss_and_reports_the_selectivity_trade(tmp_path, capsys):
+    """The four new flags reach the library and the run says what it traded. A stated weight that
+    does not report its own cost is a knob, not a preference."""
+    from mhcmatch.cli import main
+    s, peps, alle = pool(n=40, seed=8)
+    rng = np.random.default_rng(2)
+    src = tmp_path / "pool.tsv"
+    src.write_text("donor\tpeptide\tallele\tscore\texpr_lvl\texpr_norm\n" + "".join(
+        f"D1\t{q}\t{a}\t{v:.6f}\t{x:.4f}\t{y:.4f}\n"
+        for q, a, v, x, y in zip(peps, alle, s, rng.uniform(0, 8, 40), rng.uniform(0, 8, 40))))
+    out = tmp_path / "cass.tsv"
+    main(["cassette", "select", "--candidates", str(src), "-k", "9", "-vv",
+          "--block-live", "0.7", "--max-share", "0.5", "--selectivity", "0.05",
+          "--universe", ",".join(sorted(set(alle)) + ["B*44:02"]), "--out", str(out)])
+    err = capsys.readouterr().err
+    assert "HLA loss priced at q = 0.7" in err
+    assert "traded yield" in err and "log2-fold" in err
+    head, *rows = out.read_text().strip().split("\n")
+    cols = head.split("\t")
+    assert {"block_live", "selectivity", "n_covered", "n_allotypes"} <= set(cols)
+    assert rows[0].split("\t")[cols.index("n_allotypes")] == "4"      # the empty allotype counts

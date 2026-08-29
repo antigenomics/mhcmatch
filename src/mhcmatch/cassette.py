@@ -76,6 +76,7 @@ import numpy as np
 __all__ = [
     "KMER", "KAPPA", "GAMMA", "RHO_ASSAYED", "MAX_POOL",
     "prob_offset", "group_offsets", "overlap", "pair_stats", "risk_aversion",
+    "selectivity_delta",
     "goal_energy", "greedy", "refine", "log_ek", "lam",
     "Cassette", "select", "size_for", "score",
 ]
@@ -313,11 +314,58 @@ def risk_aversion(k: int, rho: float = RHO_ASSAYED, gamma: float = GAMMA) -> flo
     return float(gamma) / (1.0 + float(rho) * max(int(k) - 1, 0))
 
 
-def goal_energy(p, sim, rho: float = RHO_ASSAYED, gamma: float = GAMMA):
+def _block_q(block, block_live):
+    """``(codes, q)`` --- integer block index per unit, and each unit's own block-live probability.
+
+    ``block_live`` is a scalar or a ``{block label: q}`` mapping, so ``HLA-B`` can carry a different
+    loss rate from ``HLA-C``. A label absent from the mapping takes ``1.0`` --- never lost, so an
+    incomplete map cannot silently invent a loss for an allotype nobody measured one for.
+    """
+    keys, codes = np.unique(np.asarray([str(x) for x in block]), return_inverse=True)
+    if isinstance(block_live, dict):
+        q = np.array([float(block_live.get(k, 1.0)) for k in keys])
+    else:
+        q = np.full(keys.size, float(block_live))
+    if np.any((q <= 0.0) | (q > 1.0)):
+        raise ValueError(f"block_live must lie in (0, 1]; got {q.min():.4g} .. {q.max():.4g}")
+    return codes, q[codes]
+
+
+def _q_array(labels, block_live):
+    """``q`` per block in ``np.unique`` order --- the layout :func:`mhcmatch.portfolio.survival`
+    indexes its ``q`` with. A scalar passes through untouched."""
+    if not isinstance(block_live, dict):
+        return float(block_live)
+    keys = np.unique(np.asarray([str(x) for x in labels]))
+    return np.array([float(block_live.get(k, 1.0)) for k in keys])
+
+
+def goal_energy(p, sim, rho: float = RHO_ASSAYED, gamma: float = GAMMA,
+                block=None, block_live=1.0):
     """The mean-variance objective as a field and a coupling: ``H(S) = sum h - sum_{i<j} J``.
 
     See the module docstring for the derivation. ``h_i = p_i - (gamma/2) s_i^2`` and
     ``J_ij = gamma rho_ij s_i s_j`` with ``s_i = sqrt(p_i (1 - p_i))``.
+
+    **``block_live`` prices HLA loss, and its coupling is derived rather than fitted.** Under the
+    response model :func:`mhcmatch.portfolio.survival` already uses, a unit responds only if its
+    allotype is live *and* its own term fires --- ``R_i = B_b eps_i`` with ``B_b ~ Bern(q_b)``, so
+    ``p_i = q_b r_i``. Two units on the same allotype therefore covary by
+
+        Cov(R_i, R_j) = q_b r_i r_j - q_b^2 r_i r_j = (1 - q_b) p_i p_j / q_b
+
+    and units on different allotypes do not covary at all. So losing an allele contributes exactly
+    ``gamma (1 - q_b) p_i p_j / q_b`` to ``J_ij`` on same-block pairs and nothing anywhere else. No
+    ``rho``, no overlap heuristic, and no parameter that is not the stated loss rate.
+
+    That is worth entering as itself rather than as a channel. :func:`overlap` returns the **mean**
+    of two or three channels, so with all three populated a same-allotype pair reaches ``J`` at one
+    third weight, diluted by whether the two peptides happen to share 3-mers. The loss rate is a
+    number a designer states; it enters at full strength or not at all. The sequence and dominance
+    channels keep carrying the residual ``rho`` exactly as before.
+
+    **At ``block_live = 1`` the added term is identically zero**, so every cassette built before this
+    existed is reproduced bit for bit.
 
     **Where ``rho_ij`` comes from, and why it is not a fit.** The scalar ``rho`` is the measured mean
     intra-cassette correlation (:data:`RHO_ASSAYED`). It is spread over pairs in proportion to
@@ -330,6 +378,10 @@ def goal_energy(p, sim, rho: float = RHO_ASSAYED, gamma: float = GAMMA):
     p    : per-unit response probability, one entry per candidate.
     sim  : symmetric ``n x n`` overlap in ``[0, 1]``; the diagonal is ignored.
     rho  : mean intra-cassette response correlation.
+    block: what a unit is lost *with* --- the allotype, one label per candidate. Required for
+           ``block_live``; ignored without it.
+    block_live : ``q``, how often each block survives. A scalar, or ``{label: q}`` for a per-locus
+           loss rate. ``1.0`` (the default) is "nothing is ever lost".
 
     Returns
     -------
@@ -348,7 +400,17 @@ def goal_energy(p, sim, rho: float = RHO_ASSAYED, gamma: float = GAMMA):
     n = o.shape[0]
     mean_o = o.sum() / max(n * (n - 1), 1)
     o = o / mean_o if mean_o > 0 else o             # off-diagonal mean 1, so rho is literally rho
-    return p - 0.5 * gamma * s * s, gamma * rho * o * np.outer(s, s)
+    J = gamma * rho * o * np.outer(s, s)
+    if block is not None:
+        codes, q = _block_q(block, block_live)
+        if np.any(q < 1.0):
+            # Same block only: the covariance above is zero across blocks, so the mask IS the
+            # model rather than a simplification of it. `q_i == q_j` on every unmasked pair, so
+            # the geometric mean is exact and needs no branch.
+            c = np.sqrt((1.0 - q) / q)
+            J = J + gamma * (codes[:, None] == codes[None, :]) * np.outer(c * p, c * p)
+            np.fill_diagonal(J, 0.0)
+    return p - 0.5 * gamma * s * s, J
 
 
 def energy(h, J, sel) -> float:
@@ -359,28 +421,68 @@ def energy(h, J, sel) -> float:
     return float(np.asarray(h)[idx].sum() - np.asarray(J)[np.ix_(idx, idx)].sum() / 2.0)
 
 
-def greedy(h, J, k: int) -> list:
+def _under_cap(live, codes, counts, cap):
+    """``live`` with every block already holding ``cap`` units masked out. ``cap=None`` is a no-op."""
+    if cap is None or codes is None:
+        return live
+    full = np.flatnonzero(counts >= cap)
+    return live & ~np.isin(codes, full) if full.size else live
+
+
+def greedy(h, J, k: int, codes=None, cap: int | None = None, must=()) -> list:
     """Argmax of ``H`` over size-``k`` subsets, greedily. Monotone submodular where ``J >= 0``.
 
     One pass per step over a running marginal, so selecting ``k`` of ``n`` is ``O(kn)`` rather than
     ``O(C(n, k))`` --- about 4,000 operations for twenty of two hundred. Ties broken by index, so the
     result is a function of the data alone and two runs agree.
+
+    ``codes`` is an integer block index per candidate and turns on the two **manufacturing
+    constraints**, which are deliberately not objective terms --- the coupling already prefers
+    spread, and a second diversity term inside ``H`` double-counts unless it is meant (the argument
+    :func:`mhcmatch.portfolio.compose` already makes for ``weight_evenness``):
+
+    * ``cap`` --- no block may hold more than this many units. A feasibility mask on the same loop,
+      not a second search.
+    * ``must`` --- block codes that each get one unit **before** the free slots are filled, where the
+      pool supplies one. A block the pool cannot supply is skipped rather than raising: that is a
+      fact about the donor's candidates, and the caller can read it off the coverage.
+
+    Both default off, and with ``codes=None`` this is the loop it always was.
     """
     h = np.asarray(h, dtype=float)
     J = np.asarray(J, dtype=float)
     n = h.size
+    codes = None if codes is None else np.asarray(codes, dtype=int)
+    counts = np.zeros((int(codes.max()) + 1) if codes is not None and codes.size else 1, dtype=int)
     taken, marg = [], h.copy()
     live = np.ones(n, dtype=bool)
-    for _ in range(min(k, n)):
-        cand = np.where(live, marg, -np.inf)
-        i = int(np.argmax(cand))
+
+    def _take(i):
         taken.append(i)
         live[i] = False
+        if codes is not None:
+            counts[codes[i]] += 1
+
+    for b in (must or ()):
+        if codes is None or len(taken) >= k:
+            break
+        elig = live & (codes == int(b))
+        if not elig.any():
+            continue
+        i = int(np.argmax(np.where(elig, marg, -np.inf)))
+        _take(i)
+        marg = marg - J[i]
+    while len(taken) < min(k, n):
+        elig = _under_cap(live, codes, counts, cap)
+        if not elig.any():
+            break
+        i = int(np.argmax(np.where(elig, marg, -np.inf)))
+        _take(i)
         marg = marg - J[i]
     return taken
 
 
-def refine(h, J, sel, rounds: int = 4) -> list:
+def refine(h, J, sel, rounds: int = 4, codes=None, cap: int | None = None, must=()) -> list:
     """Improve a chosen set by single swaps until no swap raises ``H``, or ``rounds`` are spent.
 
     Greedy is one pass and commits its early slots before it has seen what they cost later. A swap
@@ -389,12 +491,19 @@ def refine(h, J, sel, rounds: int = 4) -> list:
     bounded 2-opt :func:`mhcmatch.vector.order` runs after its greedy layout, and for the same
     reason.
 
+    ``codes`` / ``cap`` / ``must`` are the same manufacturing constraints :func:`greedy` takes, and
+    they are enforced here too --- a swap pass that quietly violated the floor the greedy respected
+    would be worse than not having one.
+
     ``O(rounds * k * n)``. On the pools this is used at that is a few hundred thousand operations.
     """
     h = np.asarray(h, dtype=float)
     J = np.asarray(J, dtype=float)
     cur = list(sel)
     n = h.size
+    codes = None if codes is None else np.asarray(codes, dtype=int)
+    nb = (int(codes.max()) + 1) if codes is not None and codes.size else 0
+    must = [int(b) for b in (must or ()) if codes is not None and (codes == int(b)).any()]
     for _ in range(max(rounds, 0)):
         moved = False
         live = np.ones(n, dtype=bool)
@@ -404,7 +513,18 @@ def refine(h, J, sel, rounds: int = 4) -> list:
             rest = [u for u in cur if u != out_i]
             # Marginal of adding any unlisted unit to `rest`, all candidates at once.
             base = h - J[rest].sum(0) if rest else h.copy()
-            gain = np.where(live, base, -np.inf)
+            allowed = live
+            if codes is not None:
+                cnt = np.bincount(codes[rest], minlength=nb) if rest else np.zeros(nb, dtype=int)
+                allowed = _under_cap(allowed, codes, cnt, cap)
+                gone = [b for b in must if cnt[b] == 0]
+                if len(gone) > 1:
+                    continue                 # dropping out_i uncovers two blocks; no swap repairs it
+                if gone:
+                    allowed = allowed & (codes == gone[0])
+            gain = np.where(allowed, base, -np.inf)
+            if not np.isfinite(gain).any():
+                continue
             best = int(np.argmax(gain))
             if gain[best] > base[out_i] + 1e-12:
                 cur[slot] = best
@@ -487,6 +607,15 @@ class Cassette:
     trimmed: int = 0
     swaps: int = 0
     channels: tuple = ()
+    #: ``q``, the stated per-block survival probability the objective priced HLA loss at. ``1.0``
+    #: is "nothing is ever lost", which is what every cassette built before this existed assumed.
+    block_live: float | dict = 1.0
+    #: :func:`mhcmatch.portfolio.coverage` of the chosen units against ``universe`` --- so an
+    #: allotype carrying **zero** units is visible, which is the whole inequality a floor exists to
+    #: catch and which a coverage taken over the cassette's own labels cannot see.
+    coverage: dict = field(default_factory=dict)
+    #: The stated tumour-over-normal exchange rate charged to the field. ``0.0`` is off.
+    selectivity: float = 0.0
 
     @property
     def yield_(self) -> float:
@@ -494,9 +623,81 @@ class Cassette:
         return float(np.sum(self.p))
 
 
+def selectivity_delta(expr_lvl, expr_norm) -> np.ndarray:
+    """``expr_lvl - expr_norm``: tumour-over-normal selectivity in log2-fold, **0 where unknown**.
+
+    Both terms are ``log2(1 + TPM/c)`` on one floor (:func:`mhcmatch.rank.expr_level` and
+    :func:`mhcmatch.rank.expr_norm_level`), so their difference is a log2 ratio and a unit of it is
+    one doubling of tumour abundance over the same gene's healthy-tissue median.
+
+    A row missing either term takes **0**, not ``nan``. ``nan`` would propagate into the argmax and
+    silently delete the candidate; 0 is what "no information about this candidate's selectivity"
+    actually means, and it leaves the unit ranked on everything else. How many rows took it is a
+    number the caller should report -- ``np.isnan(...).sum()`` on the inputs -- rather than absorb.
+    """
+    a = np.asarray(expr_lvl, dtype=float)
+    b = np.asarray(expr_norm, dtype=float)
+    d = a - b
+    return np.where(np.isfinite(d), d, 0.0)
+
+
+def _constraints(alle, k, universe, max_share):
+    """``(codes, cap, must)`` for :func:`greedy` --- the manufacturing floor, resolved to indices.
+
+    Raises rather than relaxing when the two constraints cannot both hold: a cassette silently
+    smaller than its floor, or one that quietly exceeded its cap, is the failure this exists to
+    prevent.
+    """
+    if alle is None:
+        if universe or max_share is not None:
+            raise ValueError("universe / max_share need per-unit allotypes; pass `alleles`")
+        return None, None, ()
+    keys, codes = np.unique(np.asarray([str(x) for x in alle]), return_inverse=True)
+    cap = None if max_share is None else max(1, int(math.ceil(float(max_share) * k)))
+    must = ()
+    if universe:
+        want = [str(u) for u in universe]
+        must = tuple(int(np.flatnonzero(keys == u)[0]) for u in want if (keys == u).any())
+        if len(must) > k:
+            raise ValueError(
+                f"the coverage floor asks for one unit on each of {len(must)} allotype(s) the pool "
+                f"can supply, which does not fit a cassette of {k}. Raise k, or shorten `universe`.")
+        if cap is not None and cap * len(must) < k:
+            raise ValueError(
+                f"max_share={max_share} caps each allotype at {cap} unit(s), so {len(must)} "
+                f"allotype(s) hold at most {cap * len(must)} of the {k} slots asked for. Raise "
+                f"max_share to at least {1.0 / len(must):.4g} of the cassette, or lower k.")
+    elif cap is not None and cap * keys.size < k:
+        raise ValueError(
+            f"max_share={max_share} caps each allotype at {cap} unit(s), and the pool carries "
+            f"{keys.size} allotype(s) -- at most {cap * keys.size} of the {k} slots asked for.")
+    return codes, cap, must
+
+
+def _check_live(p, alle, block_live) -> None:
+    """Raise :class:`mhcmatch.portfolio.MarginalExceedsBlock` where a unit outlives its own block.
+
+    **Checked on the units that were chosen, never on the pool.** ``p_i <= q_b`` is what makes
+    ``eps_i = p_i / q_b`` a probability, and only :func:`mhcmatch.portfolio.survival` needs that ---
+    the loss coupling is well defined for any ``p``. A pool candidate hot enough to break the model
+    and never picked is not a reason to refuse a donor; the same candidate *in the cassette* is,
+    because that is the number about to be reported.
+    """
+    if alle is None or (not isinstance(block_live, dict) and float(block_live) >= 1.0):
+        return
+    from . import portfolio as PF
+    _, q = _block_q([str(x) for x in alle], block_live)
+    over = p > q
+    if over.any():
+        j = int(np.argmax(p - q))
+        raise PF.MarginalExceedsBlock(int(over.sum()), int(p.size), p[j], q[j])
+
+
 def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
            prevalence: float | None = None, rho: float = RHO_ASSAYED, gamma: float | None = None,
-           rounds: int = 4, max_pool: int = MAX_POOL) -> Cassette:
+           rounds: int = 4, max_pool: int = MAX_POOL, block_live=1.0, universe=None,
+           max_share: float | None = None, selectivity: float = 0.0,
+           expr_lvl=None, expr_norm=None) -> Cassette:
     """Choose ``k`` units (within ``tol``) from one donor's candidate pool, maximising ``H``.
 
     ``scores`` are aggregate log-odds --- what :func:`mhcmatch.rank.aggregate_score` returns --- for
@@ -529,6 +730,45 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
     A pool smaller than ``k`` returns the whole pool rather than raising --- there is nothing to
     choose, and refusing would delete the donor from a cohort-scale run for a fact the caller can
     read off ``pool_n``.
+
+    **Four optional parameters, all off by default and all bit-identical at their defaults.**
+
+    ``block_live``
+        ``q``, how often each allotype survives --- the HLA-loss rate, scalar or ``{allele: q}``.
+        It reaches the objective as the exact covariance a lost allele implies
+        (:func:`goal_energy`), and a unit whose marginal ``p`` exceeds its own block's ``q`` raises
+        :class:`mhcmatch.portfolio.MarginalExceedsBlock` rather than being clipped --- clipping
+        there would understate the marginal for exactly the strongest units.
+
+    ``universe``
+        the donor's **distinct** allotypes. Two jobs: every one of them that the pool can supply
+        gets a unit before the free slots are filled, and :attr:`Cassette.coverage` is computed
+        against it, so an allotype holding **zero** units is visible. Without it, coverage is taken
+        over the labels the cassette happens to carry and cannot see an allotype it missed.
+
+    ``max_share``
+        no allotype may hold more than this share of the cassette --- ``0.4`` at ``k = 20`` caps
+        each at eight units. A manufacturing constraint, deliberately not an objective term: the
+        loss coupling already prefers spread, and a second diversity term inside ``H``
+        double-counts unless it is meant.
+
+    ``selectivity``
+        a **stated** exchange rate, in expected responding units per log2-fold of tumour-over-normal
+        abundance, charged to the field as ``h_i += selectivity * (expr_lvl_i - expr_norm_i)``.
+        ``expr_lvl`` and ``expr_norm`` are the two columns ``mhcmatch rank`` already emits.
+
+        **Charged to the objective, never to ``p``.** ``p`` is a calibrated marginal that
+        :func:`mhcmatch.portfolio.survival` reads literally, so discounting it would silently
+        restate the response model as well as the preference --- the rule
+        :func:`mhcmatch.portfolio.compose` already follows for ``weight_cost``. It is stated rather
+        than fitted for the same reason ``gamma`` is: the shipped EPIC model fits both terms *positive*
+        --- v11 puts ``expr_lvl`` at **+0.5180** and ``expr_norm`` at **+0.2155** log-odds per
+        standard deviation, and ``mhcmatch rank --coefficients`` prints what an install actually
+        carries --- because it was fitted on *will this respond* and a gene transcribed
+        everywhere responds more often. "High in tumour, low in
+        normal" is a different question --- a safety preference the designer declares --- and
+        imposing it on the fit would assert an answer the data rejects. Both coefficients stay as
+        measured and both terms stay reported.
     """
     from .rank import POOL_PREVALENCE
     prevalence = POOL_PREVALENCE if prevalence is None else prevalence
@@ -558,36 +798,52 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
     alle = None if alleles is None else [list(alleles)[i] for i in keep]
     p = _p(ss, b)
 
+    # 0 where either term is missing, so a candidate with no expression is ranked on everything
+    # else rather than deleted by a NaN reaching the argmax.
+    bonus = (selectivity * selectivity_delta(np.asarray(expr_lvl, dtype=float)[keep],
+                                             np.asarray(expr_norm, dtype=float)[keep])
+             if selectivity and expr_lvl is not None and expr_norm is not None else 0.0)
+
+    def _cov(idx):
+        from . import portfolio as PF
+        return {} if alle is None else PF.coverage([alle[i] for i in idx], universe)
+
     chans = ("sequence",) + (("allotype",) if alle is not None else ()) + ("dominance",)
     if keep.size <= k:
         sel = list(range(keep.size))
-        h = p.copy()
+        _check_live(p[sel], None if alle is None else [alle[i] for i in sel], block_live)
+        h = p + bonus
         return Cassette(index=[int(keep[i]) for i in sel], p=[float(p[i]) for i in sel],
                         energy=float(h[sel].sum()), lam=0.0, offset=float(b), rho=float(rho),
                         gamma=float(gamma), k=len(sel), pool_n=pool_n, trimmed=trimmed,
-                        channels=chans)
+                        channels=chans, block_live=block_live, coverage=_cov(sel),
+                        selectivity=float(selectivity))
 
     sim = overlap(peps, alleles=alle, strength=ss)
-    h, J = goal_energy(p, sim, rho=rho, gamma=gamma)
+    h, J = goal_energy(p, sim, rho=rho, gamma=gamma, block=alle, block_live=block_live)
+    h = h + bonus
+    codes, cap, must = _constraints(alle, k, universe, max_share)
 
     upper = min(k + tol, keep.size)
-    first = greedy(h, J, upper)
+    first = greedy(h, J, upper, codes=codes, cap=cap, must=must)
     best, best_h, best_sw = None, -np.inf, 0
     for size in range(max(k - tol, 1), upper + 1):
-        cand = refine(h, J, first[:size], rounds=rounds)
+        cand = refine(h, J, first[:size], rounds=rounds, codes=codes, cap=cap, must=must)
         e = energy(h, J, cand)
         if e > best_h + 1e-12:
             best, best_h = cand, e
             best_sw = sum(1 for a, bb in zip(sorted(first[:size]), cand) if a != bb)
+    _check_live(p[best], None if alle is None else [alle[i] for i in best], block_live)
     return Cassette(index=[int(keep[i]) for i in best], p=[float(p[i]) for i in best],
                     energy=float(best_h), lam=lam(h, best, len(best)), offset=float(b),
                     rho=float(rho), gamma=float(gamma), k=len(best), pool_n=pool_n,
-                    trimmed=trimmed, swaps=best_sw, channels=chans)
+                    trimmed=trimmed, swaps=best_sw, channels=chans, block_live=block_live,
+                    coverage=_cov(best), selectivity=float(selectivity))
 
 
 def size_for(scores, peptides, alleles=None, *, target: int = 1, confidence: float = 0.90,
              k_max: int = 40, prevalence: float | None = None, rho: float = RHO_ASSAYED,
-             gamma: float | None = None, max_pool: int = MAX_POOL) -> dict:
+             gamma: float | None = None, max_pool: int = MAX_POOL, block_live=1.0) -> dict:
     """The smallest cassette that reaches ``P(>= target responses) >= confidence`` for **this donor**.
 
     A fixed ``k`` asks every donor the same question and gets a different answer. A donor whose best
@@ -605,6 +861,12 @@ def size_for(scores, peptides, alleles=None, *, target: int = 1, confidence: flo
     inside it the ceiling is returned with ``reached = False`` and ``p_at_least`` says how far it
     got. That is a real answer about the donor and it must not be silently rounded into a smaller
     cassette that claims the target.
+
+    ``block_live`` is the HLA-loss rate, and it is what this function was always missing: the block
+    model it evaluates has priced a lost allotype since it was written, and this call site pinned
+    ``q`` at ``1.0``. Below 1 a donor needs **more** units to reach the same confidence, because
+    some of the ones they have can be lost together --- which is the question a designer asking to
+    be protected from losing HLA is actually asking.
 
     Returns ``k`` · ``reached`` · ``p_at_least`` at that ``k`` · ``target`` · ``confidence`` ·
     ``curve``, the confidence at every size from 1 to the one returned.
@@ -634,14 +896,15 @@ def size_for(scores, peptides, alleles=None, *, target: int = 1, confidence: flo
     if upper < 1:
         raise ValueError("size_for: an empty pool has no cassette size")
     g = risk_aversion(upper, rho) if gamma is None else float(gamma)
-    h, J = goal_energy(p, overlap(peps, alleles=alle, strength=ss), rho=rho, gamma=g)
+    h, J = goal_energy(p, overlap(peps, alleles=alle, strength=ss), rho=rho, gamma=g,
+                       block=alle, block_live=block_live)
     order = greedy(h, J, upper)
 
     blk = np.zeros(upper, dtype=int) if alle is None else np.asarray([alle[i] for i in order])
     curve = []
     for k in range(1, upper + 1):
         idx = order[:k]
-        c = PF.p_at_least(p[idx], blk[:k], 1.0, k=target)
+        c = PF.p_at_least(p[idx], blk[:k], _q_array(blk[:k], block_live), k=target)
         curve.append(float(c))
         if c >= confidence:
             return dict(k=k, reached=True, p_at_least=float(c), target=target,
@@ -652,7 +915,8 @@ def size_for(scores, peptides, alleles=None, *, target: int = 1, confidence: flo
 
 def score(scores, peptides, alleles=None, chosen=None, *, pool_scores=None, pool_peptides=None,
           offset: float | None = None, prevalence: float | None = None, rho: float = RHO_ASSAYED,
-          gamma: float | None = None, block=None, block_live: float = 1.0, target: int = 1) -> dict:
+          gamma: float | None = None, block=None, block_live=1.0, target: int = 1,
+          universe=None) -> dict:
     """Score a cassette that already exists, on axes that survive changing donor and changing ``k``.
 
     Two ways to call it. Pass the cassette alone (``scores``, ``peptides``) with an ``offset`` fitted
@@ -668,7 +932,21 @@ def score(scores, peptides, alleles=None, chosen=None, *, pool_scores=None, pool
     under the block model · ``n_effective`` how many independent shots the cassette is worth ·
     ``lam`` nats above a uniform subset of the donor's pool, ``None`` without a pool ·
     ``rho_hla`` / ``rho_seq`` / ``rho_dom`` the three pairwise statistics ·
-    ``coverage`` allotype counts, Gini and entropy share, when ``alleles`` is given.
+    ``coverage`` allotype counts, Gini and entropy share, when ``alleles`` is given ·
+    ``yield_loh`` / ``lost_allotype`` the expected responding units left after the **worst single**
+    allotype is lost, and which one that is.
+
+    **``yield_loh`` is the worst case, not an average, and that is the point.** A designer asking to
+    be protected from losing HLA is asking about the bad draw: LOH takes a specific allele, and a
+    cassette whose expected count survives it is a different object from one whose average over
+    losses looks acceptable. It is a level in the same units as ``yield``, so ``yield_loh / yield``
+    reads directly as the share of expected response that does not depend on any one allotype.
+
+    **Pass ``universe``** --- the donor's **distinct** allotypes --- or ``coverage`` is computed over
+    the labels the cassette happens to carry and an allotype holding **zero** units is invisible,
+    which is exactly the inequality the index exists to report. A patient homozygous at *B* has five
+    distinct class-I allotypes, not six, so passing it is also what stops a genotype being scored as
+    a design flaw.
 
     **``H`` is deliberately not reported here.** :func:`goal_energy` renormalises the overlap so
     the set it is handed averages to ``rho``, and the dominance channel of :func:`overlap` is scaled
@@ -706,19 +984,30 @@ def score(scores, peptides, alleles=None, chosen=None, *, pool_scores=None, pool
 
     blk = list(alleles) if block is None and alleles is not None else block
     blk = np.zeros(k, dtype=int) if blk is None else np.asarray(blk)
+    q = _q_array(blk, block_live)
     out = {
         "k": int(k),
         "yield": float(p.sum()),
         "p_mean": float(p.mean()),
-        "p_at_least": PF.p_at_least(p, blk, block_live, k=target),
+        "p_at_least": PF.p_at_least(p, blk, q, k=target),
         "offset": float(offset),
         "rho": float(rho),
     }
     out["n_effective"] = PF.n_effective(p, out["p_at_least"] if target == 1
-                                        else PF.p_at_least(p, blk, block_live, k=1))
+                                        else PF.p_at_least(p, blk, q, k=1))
     out.update(pair_stats(peptides, alleles=alleles, strength=s))
+    # The worst single block, over whatever the cassette was blocked on -- the allotype by default,
+    # which is what HLA loss takes. `None` rather than `yield` when there is nothing to lose: a
+    # cassette with no labels has not been shown to survive anything.
+    keys = np.unique(blk)
+    if alleles is None and block is None:
+        out["yield_loh"], out["lost_allotype"] = None, None
+    else:
+        left = np.array([float(p[blk != b].sum()) for b in keys])
+        j = int(np.argmin(left))
+        out["yield_loh"], out["lost_allotype"] = float(left[j]), str(keys[j])
     if alleles is not None:
-        out["coverage"] = PF.coverage(list(alleles))
+        out["coverage"] = PF.coverage(list(alleles), universe)
 
     if pool_scores is not None:
         ps = np.asarray(pool_scores, dtype=float)

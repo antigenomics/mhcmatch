@@ -188,7 +188,12 @@ per cassette:
 ``rho_hla`` /
 ``rho_seq`` /
 ``rho_dom``          the three pairwise statistics, each by its exact closed form
-``coverage``         allotype counts, Gini, and share of maximum entropy
+``yield_loh`` /
+``lost_allotype``    expected responding units left after the **worst single** allotype is lost,
+                     and which one that is. ``yield_loh / yield`` is the share of expected response
+                     that does not depend on any one allotype
+``coverage``         allotype counts, Gini, and share of maximum entropy --- against ``--universe``
+                     when given, which is what makes an allotype holding zero units visible
 ===================  =====================================================================
 
 ``lam`` is the one that crosses donors **and** sizes
@@ -219,6 +224,139 @@ donors: a cassette built by sorting the candidate list on the ranker scores a me
    that spent expected count on non-overlapping units would score identically to one that did not.
    To compare two rules on the objective, build ``(h, J)`` once over the pool and evaluate both index
    sets with :func:`~mhcmatch.cassette.energy`. That is five lines and it is exact.
+
+
+Allotype coverage, and why it is the HLA-loss question
+------------------------------------------------------
+
+``coverage`` looks like a tidiness metric and is not. It is the readout of the one failure mode that
+takes a whole group of units at once.
+
+**What it measures.** Given the units' allotype labels, :func:`~mhcmatch.portfolio.coverage` returns
+the per-allotype counts, a Gini index (0 = every allotype equally covered, → 1 = every unit on one),
+the share of maximum entropy, and ``n_covered`` of ``n_allotypes``.
+
+**Pass ``--universe`` --- the donor's *distinct* allotypes --- or the index answers a different
+question.** Computed over the labels the cassette happens to carry, an allotype holding **zero**
+units is invisible, and a zero is exactly the inequality the index exists to report. The same
+argument runs the other way for a homozygous donor: a patient homozygous at *B* has five distinct
+class-I allotypes, not six, so an even cassette over five is perfectly even and scoring it against a
+denominator of six would report a genotype as a design flaw.
+
+.. code-block:: bash
+
+   mhcmatch cassette select --candidates pool.tsv -k 20 \
+       --universe "$HLA" --block-live 0.8 --max-share 0.5 --out cassette.tsv
+
+Why it matters: an allotype is a group of units that fail together
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Every unit credited to one class-I molecule shares that molecule's presentation, its precursor
+niche, and its fate. If the tumour loses the allele --- or downregulates it, or the typing was
+wrong --- **all of them go at once**. A cassette of twenty units on two allotypes is two shots, not
+twenty, and no per-unit score can see that, because it is a property of the set.
+
+:func:`~mhcmatch.portfolio.survival` has modelled this since it was written: a unit responds only if
+its block is live *and* its own term fires, :math:`R_i = B_b \varepsilon_i` with
+:math:`B_b \sim \mathrm{Bern}(q_b)`. ``--block-live`` is that :math:`q`. What it buys the objective
+is not a heuristic but a covariance --- for two units on one allotype,
+
+.. math::
+
+   \mathrm{Cov}(R_i, R_j) = q_b r_i r_j - q_b^2 r_i r_j = (1 - q_b)\, p_i p_j / q_b
+
+and zero across allotypes. So losing an allele contributes exactly
+:math:`\gamma (1 - q_b) p_i p_j / q_b` to :math:`J_{ij}` and nothing anywhere else. No ``rho``, no
+overlap channel, and no parameter that is not the loss rate the designer stated. At
+:math:`q = 1` the term is identically zero and every cassette built before it existed is reproduced
+bit for bit.
+
+That is worth entering as itself. :func:`~mhcmatch.cassette.overlap` returns the *mean* of its two
+or three channels, so with all three populated a same-allotype pair reaches :math:`J` at one third
+weight, diluted by whether the two peptides happen to share 3-mers.
+
+What it is worth, measured
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+On the six TESLA donors (605 nominated candidates, 37 validated-immunogenic, pools 73–144) at
+*k* = 20, scored genotype-free through the identical path ``cassette_select.md`` uses so the only
+difference between arms is the selection rule:
+
+==============  ==========  ================  ===========
+arm             captured    ``captured_loh``  ``rho_hla``
+==============  ==========  ================  ===========
+``sort``        7           **1**             0.457
+``select``      8           2                 0.305
+``select+loh``  **10**      **4**             0.290
+==============  ==========  ================  ===========
+
+``captured`` is validated units in the cassette, pooled over the six donors; ``captured_loh`` is how
+many are left after the **worst single allotype** is lost. The worst case rather than an average
+over losses, because LOH takes a specific allele and a designer asking to be protected is asking
+about the bad draw. Ranking the list and taking the head keeps **1 of its 7** captured units through
+that draw; pricing the loss at :math:`q = 0.8` keeps **4 of 10**. Full table, per donor and at
+*k* = 5/10/20, in ``bench/results/cassette_tesla_donors.md``.
+
+.. note::
+
+   ``select`` already spread without being told to --- ``rho_hla`` 0.305 against the sort's 0.457 ---
+   because the allotype channel of the overlap was always one of the three. Naming the loss rate is
+   what turns that from a side effect into a stated design parameter with a number on it.
+
+The floor is a constraint, not an objective term
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``--max-share`` caps any one allotype's share of the cassette and ``--universe`` gives every
+allotype the pool can supply a unit before the free slots are filled. Both are **manufacturing
+constraints** and are deliberately outside :math:`H`: the loss coupling already prefers spread, and
+stacking a second diversity term inside the objective double-counts unless you mean it --- the
+argument :func:`~mhcmatch.portfolio.compose` already makes for ``weight_evenness``. An infeasible
+pair (a share cap too tight to fill *k* across the allotypes the floor demands) raises with the
+arithmetic rather than quietly returning a cassette that breaks one of the two.
+
+An allotype the pool cannot supply is skipped rather than raising. That is a fact about the donor's
+candidates, and it shows up as ``n_covered`` below ``n_allotypes`` where a caller can act on it.
+
+
+Tumour selectivity: a stated preference, not a refit
+-----------------------------------------------------
+
+"High in the tumour, low in healthy tissue" is a design goal, and the shipped ranker does not share
+it. EPIC fits **both** expression terms positive --- v11 puts ``expr_lvl`` at **+0.5180** and
+``expr_norm`` at **+0.2155** log-odds per standard deviation, the first being the largest
+coefficient after presentation itself --- so *as fitted, high normal-tissue expression is
+rewarded*. (``mhcmatch rank --coefficients`` prints the set an install actually scores with.) That is not a defect: the model was fitted on **will this respond**, and a gene
+transcribed everywhere responds more often. Selectivity is a different question, and it is a
+**safety** question.
+
+So it enters as a declared exchange rate, the way ``gamma`` does:
+
+.. math::
+
+   h_i = p_i - \tfrac{\gamma}{2} s_i^2 + w \,(\mathrm{expr\_lvl}_i - \mathrm{expr\_norm}_i)
+
+``w`` is in expected responding units per **log2-fold** of tumour-over-normal abundance --- both
+terms are :math:`\log_2(1 + \mathrm{TPM}/c)` on one floor, so their difference is a log2 ratio.
+
+.. code-block:: bash
+
+   mhcmatch rank fasta windows.fa --alleles "$HLA" --out ranked.tsv   # emits both terms
+   mhcmatch cassette select --candidates ranked.tsv -k 20 --selectivity 0.05 -v
+
+Three properties, and each is the reason for a design choice:
+
+* **Charged to the objective, never to** ``p``. ``p`` is a calibrated marginal that
+  :func:`~mhcmatch.portfolio.survival` reads literally, so discounting it would silently restate the
+  response model as well as the preference. Same rule ``compose``'s ``weight_cost`` follows.
+* **Nothing is asserted about the fit.** Both coefficients stay as measured and both terms stay
+  reported. Imposing the tumour/normal *ratio* on the model --- equal and opposite coefficients ---
+  would assert an answer the data rejects.
+* **The run reports its own trade**: what the same pool would have built at ``w = 0``, the expected
+  units given up, and the mean log2-fold bought. A stated weight that does not report its cost is a
+  knob, not a preference.
+
+A candidate missing either term takes a delta of **0**, not ``nan`` --- ``nan`` would reach the
+argmax and delete the candidate, where 0 leaves it ranked on everything else.
 
 
 The calibration offset decides *what is being reported*

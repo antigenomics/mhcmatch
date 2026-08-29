@@ -1545,7 +1545,8 @@ def panel_sha(store, cls) -> str:
 
 
 class RoutedAnchorModel:
-    """Two fitted :class:`AnchorModel`s, one per allele-frequency stratum, dispatched per query.
+    """Two fitted :class:`AnchorModel` instances, one per allele-frequency stratum, dispatched
+    per query.
 
     `bench/results/mhc2_register_frequency_gate.md` §5 established that the class-II rare and frequent
     optima are **incompatible inside one fitted model**. Gating everything a rare allele borrows --

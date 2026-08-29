@@ -60,6 +60,48 @@ versioning is [SemVer](https://semver.org).
 
   `mhcmatch genes table.tsv --out annotated.tsv` carries every input column through and appends
   `gene`; `--peptide-col`, `--species` (a name or a FASTA path), `--max-subs` and `--threads`.
+- **`cassette.select(block_live=q)` -- HLA loss enters the objective, and its coupling is derived
+  rather than fitted.** `portfolio.survival` has modelled a block going dead since it was written,
+  and the one call site that used it -- `cassette.size_for` -- pinned `q` at `1.0`, so the failure
+  mode that takes a whole allotype's units at once could not reach the selection rule. Under
+  `R_i = B_b eps_i` with `B_b ~ Bern(q_b)`, two units on one allotype covary by
+  `(1 - q_b) p_i p_j / q_b` and two on different allotypes not at all, so the contribution to
+  `J_ij` is exactly `gamma (1 - q_b) p_i p_j / q_b` -- no `rho`, no overlap heuristic, and no
+  parameter that is not the stated loss rate. That matters because `overlap` returns the **mean** of
+  its three channels, so the allotype signal previously reached `J` at one third weight, diluted by
+  whether two peptides happened to share 3-mers. Measured on the six TESLA donors at *k* = 20
+  (605 nominated candidates, 37 validated): ranking the list and taking the head captures 7
+  validated units and keeps **1** through the loss of its worst allotype; pricing the loss at
+  `q = 0.8` captures **10** and keeps **4**. `q = 1.0` is bit-identical.
+  `bench/results/cassette_tesla_donors.md`.
+- **A coverage floor: `select(universe=, max_share=)` and `--universe` / `--max-share` /
+  `--floor`.** Every allotype the donor's pool can supply gets a unit before the free slots are
+  filled, and no allotype may exceed a stated share of the cassette. Both bind inside `greedy`
+  **and** survive the swap pass, and an infeasible pair raises with the arithmetic rather than
+  quietly breaking one of the two. Manufacturing constraints, deliberately outside `H`: the loss
+  coupling already prefers spread and a second diversity term inside the objective double-counts.
+- **`cassette score` reports `yield_loh` and `lost_allotype`** -- expected responding units left
+  after the **worst single** allotype is lost, and which one that is. The worst case rather than an
+  average over losses, because LOH takes a specific allele.
+- **`coverage` can finally see an allotype holding zero units.** `portfolio.coverage` has taken a
+  `universe` argument since it was written and no call path passed one, so the index was computed
+  over the labels the cassette happened to carry -- which cannot report a missing allotype, the one
+  inequality it exists for. `select`, `score` and both CLIs now take it.
+- **`cassette.selectivity_delta` and `select(selectivity=w, ...)` / `--selectivity`** -- a stated
+  tumour-over-normal preference, `h_i += w (expr_lvl_i - expr_norm_i)`, in expected responding units
+  per log2-fold. **Charged to the objective and never to `p`**, which is a calibrated marginal
+  `survival` reads literally. It is stated rather than fitted for the reason `gamma` is: the shipped
+  model fits `expr_lvl` **+0.5180** and `expr_norm` **+0.2155** log-odds per standard deviation ---
+  both positive, and the first the largest coefficient after presentation itself --- because it was
+  fitted on *will this respond*, and a gene transcribed
+  everywhere responds more often. "High in tumour, low in normal" is a safety question the designer
+  declares; imposing it on the fit would assert an answer the data rejects. Both coefficients stay
+  as measured, both terms stay reported, and `--selectivity` prints the trade it made -- what the
+  same pool would have built at `w = 0`, the expected units given up, and the log2-fold bought.
+- **`docs/cassette.rst`: "Allotype coverage, and why it is the HLA-loss question"** -- what coverage
+  measures, why `universe` is the denominator (a homozygous donor is not a design flaw, and a zero
+  is the whole point), the derived coupling, and the measured TESLA table.
+
 - **`AnchorModel(reverse="auto")` -- a per-allele reverse-binding prior learned from the corpus.**
   A blanket `reverse=p` was measured neutral-to-negative because it pays the reverse channel's cost
   on every allele to reach a mode most alleles do not have: MixMHC2pred fits a reverse specificity
