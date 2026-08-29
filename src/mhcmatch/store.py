@@ -392,7 +392,12 @@ class Store:
             raise FileNotFoundError(
                 f"pmhc table not found: {path!r}. Pass tier='shortlist'|'full' (auto-fetched "
                 "from HF, cached) or set $MHCMATCH_PMHC to a dir holding pmhc_<tier>.tsv.gz.")
-        sp = _SPECIES.get(species) if species else None
+        # Subscript, not `.get`: an unrecognised species used to return None, which is the same
+        # thing as "no species filter" -- so `species=("human", "mouse")`, which three benchmark
+        # sites pass and two of which build the shipped `affinity_potts_mhc2.npz`, silently loaded
+        # the whole panel instead of raising. `_CLASS[c]` on the next line has always raised for an
+        # unknown class; a fail-open and a fail-closed lookup inside one function is the asymmetry.
+        sp = _SPECIES[species] if species else None
         keep = {_CLASS[c] for c in classes}
         csv.field_size_limit(10 ** 7)
         op = gzip.open if str(path).endswith(".gz") else open

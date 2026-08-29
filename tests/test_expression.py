@@ -252,6 +252,50 @@ def test_both_fitted_expression_terms_are_emitted_columns():
     for f in R.AGGREGATE_FEATURES:
         assert f in cols or f in ("log10a",), f          # log10a == logit10 of emitted `occupancy`
     assert "expr_lvl" not in R.columns(score="gate")     # gate does not fit them
+    # the floor the two terms divided by is reported beside them: the value alone cannot say where
+    # it came from -- GTEx Liver's floor is 0.1800 TPM against the artifact's pooled 0.180005
+    assert "expr_floor" in cols and "expr_floor_pooled" in cols
+
+
+def test_an_unresolvable_tumour_reaches_the_caller_and_the_row_names_the_floor(monkeypatch):
+    """`resolve_context` raises `ValueError` to stop an unrecognised context becoming the pooled
+    reference. `rank._finish` caught it, so `rank table --tumor <unlisted>` on a gene-less input
+    scored `expr_lvl` -- a fitted term -- against the artifact's pooled 0.180005 TPM while the eight
+    fitted screens' own floors span 0.140003-0.239999, and nothing on the output row said which had
+    been used. Both halves are pinned here: the guard propagates, and every row records its floor.
+    """
+    from mhcmatch import rank as R
+    from mhcmatch.rank import Ranked, _finish
+
+    chan = {"C_corpus_thymus": 1.2e-3, "C_corpus_self": 2.9e-4, "C_corpus_viral": 2.0e-4}
+
+    def rows():
+        # no gene, so `expr_norm_level` short-circuits and no deposit is read
+        return [Ranked(peptide="SIINFEKL", allele="H2-Kb", presentation=2.0, binder=2.0,
+                       occupancy=0.9, physchem=1.5, expression=3.0, components=dict(chan))]
+
+    def raising(exc):
+        def f(**kw):
+            raise exc
+        return f
+
+    monkeypatch.setattr(EX, "context_floor", raising(ValueError("resolve_context: 'Wilms' is not")))
+    with pytest.raises(ValueError, match="resolve_context"):
+        _finish(rows(), None, tumor="Wilms")
+
+    # a *staging* failure is a different fact and still falls back -- a missing download is not a
+    # reason to refuse to rank -- but the row then says the floor it used was the pooled one
+    pooled = R.aggregate()["expression"]["floor_pooled"]
+    monkeypatch.setattr(EX, "context_floor", raising(OSError("expression matrix not staged")))
+    out, = _finish(rows(), None, tumor="SKCM")
+    assert out.components["expr_floor"] == pytest.approx(pooled)
+    assert out.components["expr_floor_pooled"] == 1.0
+
+    # and a context that does resolve reports its own floor, flagged as not the fallback
+    monkeypatch.setattr(EX, "context_floor", lambda **kw: {"floor": 0.160003, "pooled": False})
+    out, = _finish(rows(), None, tumor="SKCM")
+    assert out.components["expr_floor"] == pytest.approx(0.160003)
+    assert out.components["expr_floor_pooled"] == 0.0
 
 
 @pytest.mark.hfdata

@@ -80,10 +80,15 @@ AGGREGATE_COLUMNS: tuple = ("C_phys_buried", "C_phys_charge",
 #: ``expr_norm`` is a reference lookup the row does not otherwise report. ``log10a`` is not here for
 #: the opposite reason: it is exactly ``log10(occ/(1-occ))`` on the emitted ``occupancy``.
 #:
+#: ``expr_floor`` is that floor, in TPM, and ``expr_floor_pooled`` is 1 when it is the artifact's
+#: pooled fallback rather than the context's own. Both are reported, never fitted: the two terms
+#: are only comparable across runs that divided by the same number, and the number alone does not
+#: identify itself -- GTEx Liver's floor is 0.1800 TPM against a pooled 0.180005.
+#:
 #: Separate from :data:`AGGREGATE_COLUMNS`, which is also the *required-input* check for the
 #: recognition channels a caller must supply. These are computed inside the ranker, so a row that
 #: has not reached that point simply has no value and gets an empty cell.
-EXPR_COLUMNS: tuple = ("expr_lvl", "expr_norm")
+EXPR_COLUMNS: tuple = ("expr_lvl", "expr_norm", "expr_floor", "expr_floor_pooled")
 #: The subset of :data:`AGGREGATE_COLUMNS` that ``channels()`` has to return. The ``C_phys`` pair is
 #: not in it: the library can always compute them, so making the caller pass them would be ceremony.
 CHANNEL_COLUMNS: tuple = ("C_corpus_thymus", "C_corpus_self", "C_corpus_viral")
@@ -922,7 +927,7 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
         # the caller passes one for this tumour type from `mhcmatch.expression.context_floor`; it
         # is never taken from the batch, because a batch floor tracks the donor's mutational burden
         # rather than the assay.
-        _floor_cache: list = []
+        _floor_cache: list = []                          # [(floor TPM, is the pooled fallback)]
 
         def _floor(ex):
             """The floor both expression terms divide by, resolved once.
@@ -932,21 +937,30 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
             the pooled value puts the term about a unit low. Falls back to the artifact's recorded
             pooled floor when the expression deposit is not staged, because a missing download is
             not a reason to refuse to rank. Cached so `expr_lvl` and `expr_norm` cannot land on
-            two different floors."""
-            if _floor_cache:
-                return _floor_cache[0]
-            c = expr_floor
-            if c is None and (tumor or tissue):
-                try:
-                    from . import expression as EX
-                    c = float(EX.context_floor(tumor=tumor, tissue=tissue,
-                                               q=ex.get("floor_quantile", 0.25)))
-                except (ValueError, OSError, ImportError, KeyError):
-                    c = None                             # unresolvable or offline: pooled below
-            if c is None:
-                c = ex.get("floor_pooled")
-            _floor_cache.append(c)
-            return c
+            two different floors.
+
+            **A `ValueError` from `context_floor` is not caught, deliberately.**
+            `mhcmatch.expression.resolve_context` raises it precisely to stop an unrecognised
+            tumour or tissue becoming the pooled reference, and catching it here put that guard
+            back where it started: `--tumor <unlisted>` scored `expr_lvl` -- a fitted term -- on
+            the artifact's pooled 0.180005 TPM while the eight fitted screens' own floors span
+            0.140003-0.239999 TPM, and no column on the row said which had been used. Only a
+            *staging* failure falls back: no deposit on disk, no numpy, an artifact with no
+            `floor_quantile`."""
+            if not _floor_cache:
+                c, pooled = expr_floor, False
+                if c is None and (tumor or tissue):
+                    try:
+                        from . import expression as EX
+                        d = EX.context_floor(tumor=tumor, tissue=tissue,
+                                             q=ex.get("floor_quantile", 0.25), detail=True)
+                        c, pooled = float(d["floor"]), bool(d["pooled"])
+                    except (OSError, ImportError, KeyError):
+                        c = None                         # deposit not staged or offline
+                if c is None:
+                    c, pooled = ex.get("floor_pooled"), True
+                _floor_cache.append((c, pooled))
+            return _floor_cache[0][0]
 
         if "expr_lvl" in a["features"]:
             ex = a.get("expression", {})
@@ -971,6 +985,16 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
             cols["expr_norm"] = expr_norm_level(rows, c, tumor=tumor, tissue=tissue)
             for r, v in zip(rows, cols["expr_norm"]):
                 r.components["expr_norm"] = float(v)
+        # The floor the two terms divided by, on the row that was scored with it. The value alone
+        # cannot say where it came from -- GTEx Liver's floor is 0.1800 TPM and the artifact's
+        # pooled fallback is 0.180005 -- so the flag is what tells `--tissue Liver` apart from a
+        # context that could not be resolved. Written only when a floor was actually resolved; an
+        # artifact fitting neither term gets empty cells rather than a fabricated 0.
+        if _floor_cache:
+            c, pooled = _floor_cache[0]
+            for r in rows:
+                r.components["expr_floor"] = float(c)
+                r.components["expr_floor_pooled"] = 1.0 if pooled else 0.0
         # Each C_phys column is a matrix product against a published residue vector -- free, and
         # needing no reference deposit, so the library computes them rather than making the caller
         # pass them. See PHYS_COLUMNS.

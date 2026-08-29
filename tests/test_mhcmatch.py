@@ -1612,6 +1612,28 @@ def test_class2_report_compares_like_with_like():
         class2_report(dr1, "gene")
 
 
+def test_from_pmhc_rejects_a_species_it_does_not_know(tmp_path):
+    """An unrecognised species used to fail *open*. `_SPECIES.get(species)` returned None, which is
+    the same object `species=None` produces and therefore means "no species filter", so
+    `species=("human", "mouse")` -- the form three benchmark sites pass, two of which build the
+    shipped `affinity_potts_mhc2.npz` -- loaded the whole panel instead of raising. `_CLASS[c]` on
+    the next line has always raised for an unknown class, and a fail-open and a fail-closed lookup
+    inside one function is the asymmetry this pins."""
+    tsv = tmp_path / "pmhc_full.tsv"
+    tsv.write_text("epitope\tmhc_a\tmhc_class\tmhc_species\n"
+                   "SIINFEKL\tH2-Kb\tMHCI\tMusMusculus\n"
+                   "GILGFVFTL\tHLA-A*02:01\tMHCI\tHomoSapiens\n")
+
+    for bad in (("human", "mouse"), "martian", "HomoSapiens"):
+        with pytest.raises(KeyError):
+            Store.from_pmhc(str(tsv), species=bad, classes=("mhc1",))
+
+    # and the two the table does know still filter, so the guard costs nothing that worked
+    assert len(Store.from_pmhc(str(tsv), species="human", classes=("mhc1",))) == 1
+    assert len(Store.from_pmhc(str(tsv), species="mouse", classes=("mhc1",))) == 1
+    assert len(Store.from_pmhc(str(tsv), classes=("mhc1",))) == 2      # None is still "every one"
+
+
 def test_package_data_stays_visible_to_git_but_bytecode_does_not(tmp_path):
     """`.gitignore` carries `*.fasta` for fetched proteomes, and the `!src/mhcmatch/data/**`
     negation is the only thing keeping a shipped model file out of that glob. Without it a model

@@ -1067,8 +1067,16 @@ def annotate(peptides, pmhc_dir=None, cls: str = "mhc1", max_subs: int = 2) -> l
              "known": best.get(p, miss)[0] == 0} for p in peptides]
 
 
-def safety(scores, tumor: str | None = None, top: int = 5, symbols=None) -> list[dict]:
+def safety(scores, top: int = 5, symbols=None) -> list[dict]:
     """Where the self/thymus mimics are expressed -- the autoimmunity read-out, made actionable.
+
+    **There is no tumour argument, and there used to be one that did nothing.** ``tumor`` sat at
+    positional #2 through 1.4.0 and was never read -- :func:`mhcmatch.expression.safety_profile`
+    conditions on no context at all -- so ``safety(scores, "SKCM")`` returned the pooled profile
+    while reading as if it had been conditioned. On a read-out whose job is to say which tissue you
+    cannot afford to damage, a caller believing they narrowed the question is the dangerous
+    direction. Removed rather than accepted-and-ignored; add it back only when ``safety_profile``
+    can actually take one.
 
     A ``self`` or ``thymus`` hit says the candidate resembles a peptide the body presents; the
     decision it feeds is *whether the tissue presenting it is one you can afford to damage*. That

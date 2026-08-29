@@ -394,6 +394,19 @@ def test_safety_reports_only_the_tolerance_side():
     assert out["hits"] == []
 
 
+def test_safety_takes_no_tumour_argument():
+    """`safety` accepted `tumor` at positional #2 through 1.4.0 and never read it, because
+    `expression.safety_profile` conditions on no context at all. `safety(scores, "SKCM")` therefore
+    returned the pooled tolerance profile while reading as if it had been narrowed to melanoma --
+    on the read-out whose job is to say which tissue you cannot afford to damage, that is the
+    dangerous direction. The parameter is gone; #2 is `top`."""
+    import inspect
+
+    params = list(inspect.signature(mimicry.safety).parameters)
+    assert "tumor" not in params, "a tumour argument that nothing reads must not be accepted"
+    assert params == ["scores", "top", "symbols"]
+
+
 # ------------------------------------------------------------------ the calibrated read-out
 def test_probability_is_in_the_unit_interval_and_monotone_in_the_logodds():
     """`probability` maps the aggregate log-odds against a *named* corpus. Whatever the corpus, the
