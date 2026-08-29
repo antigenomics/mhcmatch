@@ -280,7 +280,10 @@ def tile(seq: str, lengths) -> list:
 #: released version*, so a background cached before those and one cached after shared a key and the
 #: stale one was served. Same discipline as the EPIC model version -- an int, moved deliberately.
 #:
-#: 1 = pre-1.3.0 heads. 2 = length-aware Potts + extrapolated %rank tail.
+#: 1 = pre-1.3.0 heads. 2 = length-aware Potts + extrapolated %rank tail. 3 = canonical allele keys
+#: (`H-2Kb` / `H2-Kb` / `H-2-Kb` collapsed to one molecule, so a cached background is no longer
+#: keyed on which spelling the caller typed). 4 = the `background="ligand"` null leaves the queried
+#: allele out.
 SCORER_EPOCH = 4
 
 

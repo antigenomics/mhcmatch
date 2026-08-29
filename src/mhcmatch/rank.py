@@ -626,8 +626,11 @@ class Ranked:
     #: calibrated physicochemical log-probability of immunogenicity.
     physchem: float = float("nan")
     #: :attr:`expression`'s percentile within the scored batch, in (0, 1); ``0.5`` where there is
-    #: no value. **This is the fitted expression term**, not :attr:`expression` itself -- see
-    #: :func:`expr_percentile`.
+    #: no value -- see :func:`expr_percentile`. **Emitted, not fitted.** It was the fitted
+    #: expression term once and this line went on saying so after the fit moved: the shipped
+    #: artifact's ``features`` list has carried ``expr_lvl`` and ``expr_norm`` since v9, and
+    #: ``expr_pct`` appears in neither. Being batch-relative it is also not comparable across runs,
+    #: which is the reason it is not fitted.
     expr_pct: float = 0.5
     #: log1p(TPM), observed if the input carried one, else the tissue/tumour reference median.
     expression: float = float("nan")

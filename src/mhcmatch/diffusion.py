@@ -73,8 +73,12 @@ _MIX_ALPHA = 1.0
 _MIX_PASSES = 3
 
 # Human proteome amino-acid frequencies (UniProt UP000005640). The log-odds NULL: with
-# ``background="ligand"`` (default) the denominator is the pooled-ligand anchor marginal, so the
-# score measures allele *specificity* (this allele vs the average presented ligand) -- best for the
+# ``background="ligand"`` (default) the denominator is the anchor marginal over **every other
+# allele's** ligands -- leave-one-allele-out since 1.5.0 -- so the score measures allele
+# *specificity* (this allele vs the average other presented ligand). Before 1.5.0 the pool included
+# the queried allele, which on a skewed panel made the null the allele's own motif: `H-2-IAb` is
+# 6,483 of 6,705 mouse class-II ligands, and its benchmark AUROC read 0.322. ``"ligand-pooled"``
+# reproduces the old behaviour -- best for the
 # restriction problem and other-allele discrimination. With ``background="proteome"`` the denominator
 # is this proteome marginal, so the score is a *presentation* log-odds ``log(theta_A / p_proteome)``
 # -- it recovers the ligand-vs-random "presentability" factor and is far better at separating real

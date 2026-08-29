@@ -4,11 +4,12 @@
 - [`ROADMAP.md`](ROADMAP.md) — the agent contract: what mhcmatch is, phase status, open loops.
 - `../../manuscripts/2026-mhcmatch/appendix/mhcmatch.tex` — the method/statistics spec (manuscript repo).
 - `../../manuscripts/2026-mhcmatch/results/CURRENT.md` — every published number and which artifact
-  it belongs to; `issues_major.md` beside it holds the decisions that are the author's, and
-  `issues_minor.md` the repairs already applied.
+  it belongs to. `../../manuscripts/2026-mhcmatch/issues.md` — one file since 2026-08-27, holding
+  what is **open**, what is **withheld** from the published documents, and **where a rival is
+  ahead**. It replaced `issues_major.md` / `issues_minor.md` / `caveats.md`, none of which exist.
 
 **The shipped scorer is artifact version 10 in library 1.4.0** — nine fitted terms, `binder` as the
-fitted presentation term (`issues_major.md` M1 and M12, both taken by the author on 2026-08-25). Its
+fitted presentation term (recorded in `issues.md`; both taken by the author on 2026-08-25). Its
 own `verdict` block reads `"ship": false`, which is worth knowing before quoting it: v10 was shipped
 on the author's word on 2026-08-28 *against* that bar, over two thin regressions (IEDB_neoag and
 ITSNdb, the latter near chance under v9 too). Do not replace
