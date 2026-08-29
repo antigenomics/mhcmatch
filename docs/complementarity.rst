@@ -145,12 +145,8 @@ Each answers something the block above it cannot express.
 
    **What the three columns buy.** Added on top of ``phys+role+pot`` under the same peptide-grouped
    folds and the same linear head, the block gains AUROC on **all eight corpus arms**, median
-   ``+0.0060``, and AUPRC on all eight as well (.. note::
-
-   ``bench/results/...`` paths on this page resolve in the benchmark repository,
-   `2026-mhcmatch-benchmark <https://github.com/antigenomics/2026-mhcmatch-benchmark>`_, not in the
-   library repo.
-   ``tsv/complement_cv.tsv``):
+   ``+0.0060``, and AUPRC on all eight as well (``bench/results/complementarity.md`` §1 in the
+   benchmark repository, read from ``tsv/complement_cv.tsv``):
 
    .. list-table::
       :header-rows: 1

@@ -1622,8 +1622,13 @@ def cmd_cassette_select(a):
             # `-k` becomes the manufacturing ceiling and the donor's own pool sets the size. A
             # donor whose head of list is weak needs more units to reach the same confidence, and
             # the ceiling is where that answer gets reported rather than silently rounded down.
+            # `block_live` too: the probe asks how many units reach a confidence, and a cassette
+            # that can lose a whole allotype at once needs more of them. Without it `--confidence`
+            # sized every donor as if `--block-live` were 1.0 while `select` below honoured it, so
+            # the two flags did not compose and the size came out low.
             probe = CA.size_for([r["_score"] for r in g], [r["peptide"] for r in g], alleles,
                                 target=a.target, confidence=a.confidence, k_max=a.size,
+                                block_live=(a.block_live if alleles is not None else 1.0),
                                 **{k: v for k, v in kw.items() if k != "gamma"})
             size, tol = probe["k"], 0
             say(f"{donor}: {size} unit(s) for P(>= {a.target}) >= {a.confidence:.2f}"

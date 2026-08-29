@@ -154,15 +154,9 @@ exactly *k*, which is what a fixed manufacturing budget wants.
 **When the budget is a confidence rather than a count, ask for the size.**
 :func:`~mhcmatch.cassette.size_for` returns the smallest cassette reaching
 :math:`\Pr(\ge m \text{ responses}) \ge C` for one donor's own pool, and ``--confidence C`` ---
-In src/mhcmatch/cli.py, cmd_cassette_select, forward the loss rate to the probe:
-
-            probe = CA.size_for([r["_score"] for r in g], [r["peptide"] for r in g], alleles,
-                                target=a.target, confidence=a.confidence, k_max=a.size,
-                                block_live=(a.block_live if alleles is not None else 1.0),
-                                **{k: v for k, v in kw.items() if k != "gamma"})
-
-If the pass is documentation-only, the reviewer's caveat at docs/cassette.rst:149 is an acceptable
-stopgap, but the code change is what makes the two flags compose as the page implies.
+with ``-k`` read as the manufacturing ceiling --- asks for it from the command line.
+``--block-live`` reaches the probe as well as the selection, so a cassette that can lose a
+whole allotype at once is sized for that rather than against it.
 
 .. code-block:: bash
 
