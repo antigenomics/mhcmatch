@@ -6,6 +6,30 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [1.6.1] --- 2026-08-30
+
+### Fixed
+
+- **`cassette.select(k=, tol=)` swept trial sizes the coverage floor forbids.** The window started at
+  `k - tol`, and a size below `len(must)` cannot hold the units the floor requires --- so `refine`
+  spent every swap round on a window that could not satisfy the constraint it was handed. The lower
+  bound is `max(k - tol, len(must), 1)`.
+
+### Changed
+
+- **`cassette.lam` records what it is measured against.** It is computed on whatever field it is
+  given, so a `select` run carrying a `selectivity` weight reports nats above a uniform subset *of
+  the tilted* objective. That is the coherent reading, and it means two runs at different `w` are no
+  more on one axis than two runs at different `gamma` are.
+- Documentation only, but 168 corrections of it: README, the fifteen docs pages, `skills/mhcmatch/SKILL.md`,
+  `ROADMAP.md`, `CHANGELOG.md`, the notebooks and the Nextflow module. The recurring defect was prose
+  written against an older artifact and never re-read --- "eight terms" on five surfaces for a model
+  that has fitted nine since v9, pre-v11 coefficients quoted as current, and the CLI counted three
+  ways (twenty, twenty-one, twenty-two) against 22 subcommands. No scored value moved;
+  `predict.SCORER_EPOCH` is unchanged at 4.
+- `ROADMAP.md` absorbs the three retired sibling roadmaps (§9 the benchmark repo's two, §10 the
+  manuscript's). The roadmap now lives in this repo and only here.
+
 ## [1.6.0] --- 2026-08-29
 
 ### Changed

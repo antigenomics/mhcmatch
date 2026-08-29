@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
-ARG MHCMATCH_VERSION=1.6.0
+ARG MHCMATCH_VERSION=1.6.1
 RUN pip install --no-cache-dir "mhcmatch==${MHCMATCH_VERSION}"
 
 # Bootstrap the reference ligand panel from the public HF dataset (both tiers, ~12 MB + ~4 MB) into

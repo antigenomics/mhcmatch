@@ -368,7 +368,8 @@ data. Each is a milestone whose spec is its appendix subsection:
 
 Analysis, benchmarks and the full milestone list live in
 `2026-mhcmatch-benchmark` (remote `repseq/2026-mhcmatch-code`, private) on `master`,
-`ROADMAP_immuno.md`. This section records only what lands **in the library**.
+`ROADMAP_immuno.md`, both retired on 2026-08-30 --- their live bullets are §9 below. This section
+records only what lands **in the library**.
 
 ### What this is trying to overturn
 
@@ -1570,3 +1571,466 @@ NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2)
 - Theory & derivations: `../../manuscripts/2026-mhcmatch/appendix/mhcmatch.tex` (manuscript repo).
 - Substrate contract & E-value theory: `../seqtree/ROADMAP.md` §3, `../seqtree/appendix/evalue.tex`.
 - Validated reverse-problem benchmark: `../seqtree/bench/bench_mhc_guess.py`.
+
+## 9. Carried over from the retired benchmark roadmaps (2026-08-30)
+
+`2026-mhcmatch-benchmark` carried a `ROADMAP.md` and a `ROADMAP_immuno.md`. Both are deleted: the
+roadmap lives here and only here, and both had gone stale at the head (the first opened on artifact
+v9 over 342,432 rows / 741 positives / 8 datasets, two versions and one corpus rule behind the
+shipped v11 at 339,599 / 597 / 7). What follows is every bullet of theirs that was **still live and
+recorded nowhere else**, grouped by the section of this file it belongs beside. Everything not here
+was either landed, superseded, or already stated above.
+
+**Nothing internal crossed.** The two files carried infrastructure and contract detail --- an
+internal host, a cluster path, a contract deliverable and its due date, a controlled-access table
+path. This repo is public, so those stay in the private project repo; only the scientific open
+loops are below.
+
+### The through-line
+
+**What makes some epitopes immunodominant, and how are they chosen from a protein?** That is the
+question the library is built toward; cancer-cohort performance is one validation among several, not
+the objective. Presentation answers *can this peptide be shown*; `complement` and `mimicry` answer
+*is it the kind of thing a receptor engages*; `precursor` answers *does a T cell for it exist*; and
+the response-threshold question (§5f) -- *will a response mount* -- is the one term still unbuilt.
+Carried over from the benchmark repo's `ROADMAP.md` when that file was retired on 2026-08-30; the
+per-direction state and every recorded number stay in `bench/results/*.md`.
+
+### Beside §5a. Immunogenicity
+
+**Reproduction gates -- two passed with a generator, three never run.** The Chowell 2015 gates
+reproduce through `bench/immuno/chowell_gates.py` -> `bench/results/chowell_gates.md`: the
+amino-acid probability ratio against Kyte-Doolittle at Spearman **+0.7125** (P = 4.24e-4, n = 20
+residues) and against Grantham polarity at **-0.7773** (P = 5.52e-5), where the paper reports -0.77.
+The previously recorded -0.7708 was back-derived from the paper's own P value under the
+t-approximation and no scale in the library reproduces it; measured, the gate passes by more, not
+less. Still open, all three from Calis et al. 2013 (PMID 24204222): **A1**, 3-fold CV AUC 0.65 on
+`Dataset_S1.xls` (2,508 rows); **A2**, AUC 0.61 on binding-affinity-matched sets; **A3**, AUC 0.69 on
+the Dengue murine independent set -- **blocked**, Dataset S2 (the Weiskopf sets) is not held and
+must be fetched. Note also that **Chowell and Pogorelyy are not independent evidence**: Pogorelyy
+2018 uses Chowell's labels, so passing both is one piece of evidence, not two.
+
+**Three published quantities in the physicochemical literature cannot be reproduced in principle,
+and one of them invites a fabricated number.** Recorded so no future pass promises them:
+
+- **Chowell 2015 reports no AUC anywhere.** Its epitope result is a rank / hit-rate statement (42 of
+  43 epitopes in the top 20). Any "Chowell AUC" would be invented -- state that gate in rank terms,
+  or mark a new metric explicitly as ours.
+- **Chowell's ANN-Hydro is not reproducible**: the weights were never published and the outputs are
+  averaged over 60 random initialisations. Gates built on it are unreachable; do not schedule them.
+- **Calis's Table S1** -- the per-amino-acid log-enrichment vector `E` -- is a separate TIF that is
+  absent from the PDF, so **the published Calis score cannot be reimplemented from the files we
+  hold.** Any comparison against it is a comparison against our own reconstruction and must say so.
+
+**Every immunogenicity number on TESLA-608 and NCI in this section is measured against a corpus the
+model has partly seen, and the overlap is measured rather than assumed.** Generator
+`bench/immuno/label_overlap.py` -> `bench/results/label_overlap.log`; the run-time guard is
+`composite_train.train_eval_overlap`, which prints the train-holdout peptide overlap on every run.
+Against the CEDAR training slice (20,580 peptides): of NCI's 336,830 holdout peptides 915 overlap,
+and **85 of its 171 positive peptides (49.7%) sit inside the training corpus**; of TESLA's 605
+peptides 598 overlap and **37 of 37 positives** do, so **dropping the overlap leaves TESLA with zero
+positives and no disjoint TESLA number can be computed at all** -- that is the finding, not an
+omission. Frozen and re-scored with the overlap dropped, every ranker loses 0.006-0.020 AUROC and
+the ordering is unchanged (NetMHCpan %rank 0.975 -> 0.969, PRIME 0.969 -> 0.958, mhcmatch binding
+%rank 0.927 -> 0.907, the frozen composite 0.892 -> 0.878), so the recorded negative is not an
+artefact of the overlap. **Consequences that outlive the composite:** quote the `NCI-disjoint`
+figure as the headline for any claim on these corpora, state retained-vs-dropped counts, and say
+plainly that no disjoint TESLA comparison exists on this corpus. Making a TESLA holdout genuinely
+independent needs a **study-level (`reference_id`) exclusion, not a peptide-level one**, because
+CEDAR is an IEDB aggregation.
+
+**Open on the precursor thread, carried over from the benchmark roadmap (2026-08-30).** The module
+ships and its estimators are measured (`bench/results/precursor_estimators.md`,
+`precursor_event_ratio.md`, `precursor_validation_measured.md`); what is not settled is what the
+correlation against measured frequencies means.
+
+1. **The cognate-set-size confound.** VDJdb cognate-set size alone correlates with Kristensen's
+   measured frequency at Spearman +0.469 (TRB, 42 epitopes) and +0.550 (TRA, 32 epitopes), and
+   partialling it out collapses every estimator to about zero. Either it is database attention or it
+   is a proxy for the truth -- more circulating cells, more sequenced cognates -- and correlation
+   cannot separate them at n = 42 epitopes.
+2. **The spike-in recovery arm is what settles (1).** Spike VDJdb cognates into a real background at
+   1e-7 to 1e-4, recover blind, and plot recovered against true: ground truth by construction, with
+   no database-attention term in it. `bench/precursor/SOURCES.md` lists `spikein.parquet` and
+   nothing writes it -- verified 2026-08-30, that SOURCES row is the only mention in the repo.
+3. **More epitopes.** The 42 TRB / 32 TRA epitopes come from requiring >=10 QC junctions.
+   `~/hf/airr_covid19` (1,258 TRA+TRB) and `~/hf/airr_covid19_vacc` (2,103) are present and unused.
+
+**Two external anchors the precursor thread was specified against and has never been run on.**
+Neither appears in `bench/results/` nor in the manuscript repo's `literature/` as of 2026-08-30.
+
+- **Schober 2020 -- more than 180,000 single-epitope TCRs across 25 replicate mice.** The union over
+  mice approximates truth and a single mouse is a subsample, which makes it the rare case of a
+  missing-mass estimator with a measurable ground truth. Held-out-mouse recovery -- estimate from
+  one mouse against the 25-mouse union -- was the *primary* stated criterion for
+  `coverage_corrected_mass` and `ball_mass`, ahead of VDJdb self-consistency.
+- **Alanio et al. 2010 (*Blood*) -- the human naive-precursor reference range, 0.6e-6 to 1.3e-4.**
+  The deep-tier estimate was specified to land within one order of magnitude of it and of Blattman
+  2002's 1 in 2e5 for H-2Db GP33-41. Retrieve the record before citing either bound.
+
+**Two derivations Appendix B still owes.** Derive the bias of the observed-mass bound
+`sum_{omega in S_e} Pgen(omega)` explicitly -- VDJdb samples the cognate set `C_e` size-biased by
+Pgen, so the bound's bias does *not* shrink with more studies at the same sequencing depth -- and
+state the radius-`r` ball as an inclusion-exclusion identity, which is what justifies
+enumeration-plus-dedup as the exact computation rather than an approximation.
+`mhcmatch.precursor.ball_mass` already implements the deduplicated union.
+
+**Traps on the Pgen and repertoire-background paths that `mhcmatch.precursor` sits on.** Each fails
+silently rather than raising.
+
+- **Use `.ntvj`, not `.aa`, for any nucleotide-level background.** Collapsing to amino acids inflates
+  apparent enrichment **18.7x against 1.3x**, because convergent recombination concentrates on
+  exactly the public sequences a specificity database holds.
+- **Uniform-sample the control repertoire, never take the head** -- 5.11% against 0.14% VDJdb
+  exact-match rate, a roughly 36x inflation of the null. Related: `~/hf/airr_control` tables are
+  sorted by count descending, so a row cap selects the most expanded clones rather than subsampling.
+- `pgen_aa` **raises** on gene-level V/J by design; never wrap it in a bare `except`.
+  `pgen_aa(m, seq)` marginalises over V/J while `pgen_aa(m, seq, v, j)` is the joint (3.59e-08
+  against 6.56e-09 on one junction) -- never mix them in one comparison. Degenerate residues score
+  0.0 rather than acting as a wildcard.
+- **Mouse Pgen is `source="arda"` only, TRA/TRB only**, and `source="learned"` must not be used for
+  any Pgen-null work: 68 of 89 TRB V alleles have P(V) = 0 under it.
+- The Poisson E-value is **overdispersed** on real reference sets (observed 0.153 against a predicted
+  0.405 at k = 1) because reference neighbours cluster by convergent recombination.
+
+**Deposited supplementary tables that do not reconcile with their own papers -- quote the source you
+actually counted.** Every count regenerates through `bench/immuno/chowell_gates.py` ->
+`bench/results/chowell_gates.md` from files in the manuscript repo's `literature/`, which are
+untracked and gitignored there because the material is copyrighted supplementary data.
+
+- **Calis `Dataset_S1.xls` against its own Figure 1:** the HLA-restricted stratum is short by **52
+  immunogenic and 19 non-immunogenic** peptides (file 1,619 / 272 against figure 1,671 / 291). The
+  H-2-restricted stratum matches exactly. The deposited file is the pre-redundancy, pre-9-mer table.
+- **Chowell's Table S3 stratum, 301 against 306, is unverified**: the SI table is an epitope *list*,
+  not a stratum count, and no single-column, allele x length or species x length grouping of
+  `sd01.xls` yields either number. Treat it as unverified until whoever wrote it states the stratum.
+- **Chowell's HLA-A2 hit rate disagrees with itself** (54 of 64 in the main text against 53 of 62 in
+  SI Table S5), and its bulkiness rho = 0.35 is a figure-panel annotation with **no P value anywhere
+  in the paper** -- a one-sided gate at best.
+
+**Two peptides are excluded from every immunogenicity corpus and every contact analysis, and the
+rule is cited from code.** `SLLMWITQV` and `KLGGALQAK` are artefactual / artificial and are dropped
+everywhere (`bench/ipred/corpus.py`, `bench/contacts/analyze_loop_profile.py`, and
+`bench/results/contacts_cdr_loops.md`, all of which cite this rule). Corroborating evidence that they
+are database artefacts rather than biology: `KLGGALQAK` and `NLVPMVATV` carry *exactly* 24,639 VDJdb
+slim records each.
+
+### Beside §5b. Complementarity and the ranker
+
+5. **Whether `complement` refits and ships on `chowell_iedb_full` is an open decision, not a
+   refresh.** The rebuilt corpus is 854,519 rows over 779,417 peptides with 31,480 immunogenic
+   (human 24,293 / mouse 7,187), against 511,301 rows / 19,866 immunogenic for the shipped arm --
+   2.2x the rows -- and its negatives can be **measured** rather than inferred from elution: 56,229
+   T-cell-negative rows exist, for mouse as well as human. Swapping the negative definition changes
+   what every recorded AUROC on these corpora means, so it is an author decision under the
+   model-version rule, not a rebuild. `bench/results/corpus_arms.md` holds the corpus and its filter
+   cascade.
+
+6. **The paratope terms are recorded as not working *additively*, and the interaction was never
+   tried.** Adding the three repertoire-marginalised TCRen terms to the frozen five-term GLM makes
+   three of four holdouts worse (`bench/results/paratope_basis.md`, `paratope_sweep.md`). The
+   `2026-tcren` claim is that TCR:peptide and peptide:MHC are in interplay, so the term to fit is
+   the **interaction** `paratope x presentation` rather than two additive main effects -- the
+   per-cohort complementarity already recorded is what an interaction looks like when it is forced
+   through a main effect. Then per-allele strata, where TESLA's 37 positives stop being the binding
+   constraint.
+
+### Beside §5b-4. The safety screen
+
+**Still open in the screen: the tissue join is nearly a no-op, and specificity comes from elsewhere.**
+35,712 genes clear 0.25 TPM in some essential tissue, and the floor has to be that low to catch
+MAGE-A12 at 0.33 TPM -- so the conjunction's discriminating power sits entirely in the self-origin
+test, not in the tissue filter. The v0.26.0 re-derivation narrowed clause 1 to `isoform` / `cnv` /
+wild-type targets, which removes the 88.2% over-withdrawal, but it does not make the tissue term
+selective. Worth revisiting with a **tissue-specificity statistic** -- tau, or GTEx enrichment
+against a whole-body baseline -- rather than a flat TPM floor.
+
+### Beside §5b-6. Class II and EPIC
+
+**And the face is open on class I too, not only class II.** Everything recorded about `C_phys` is
+measured on the **TCR face**: `burial` sums its scale over `L - 5` TCR-facing positions, and both
+shipped chemistry columns (`C_phys_buried`, `C_phys_charge`) are read there. The retired `ipred`
+summed the same chemistry over the **whole peptide, anchors included**, and that construction is the
+only one with a recorded per-cohort win over complementarity -- VACCIMEL AUROC 0.6324 against 0.5774
+and Gfeller GBM 0.6450 against 0.6186, on 27 and 26 positives respectively
+(`bench/results/neoag_cohort_scan.md`). The anchor-face and whole-peptide variants still need a
+`counts` key and remain unmeasured, so a result about the TCR face is a result about one face.
+
+### Beside §5d. Cassette assembly
+
+**Open in `vector`: junction screening is one-sided.** `order` / `scan_junctions` scans every
+junction for *binders*, and the same `risk` callable that `screen` uses would scan those junctions
+for *self-mimicry* -- a junction-spanning register is a peptide the construct creates and no variant
+carries, so nothing upstream has judged it. It needs the layout, so it runs after `order` and is not
+wired. `epitope_map` already emits junction-spanning epitopes with `unit=0` and no gene, which is
+the row a junction risk call would attach to.
+
+**Two results from the applied per-donor arms are general and belong in the open record.** The runs
+themselves read private donor data and stay in the Gamaleya project repo; nothing below is keyed to
+a donor.
+
+- **The spacer choice is genotype-dependent, so a global linker default cannot be right.** On one
+  donor, switching spacer cut weak junctional binders in the designed cassette from 3.76 to 2.49 per
+  100 registers; on a second donor, homozygous at every classical class-I locus, no spacer beat the
+  shipped one. That is the concrete argument for `order` trying `None` first and for the
+  class-conditional default of §5d V1.
+- **The safety conjunction needs a budget, not a threshold.** It flags on the order of 130 (peptide,
+  allele) pairs per unit, so any fixed cutoff rejects every candidate. The shipped answer is the
+  veto/report split of §5b-4; anything wanting a looser radius needs a per-register significance
+  against a length-matched background first.
+
+### Beside §5e. Cassette design
+
+### 5f. Response threshold and bistability --- designed, nothing measured
+
+`F(e)` (`mhcmatch.precursor`) answers *does a T cell exist*. It does **not** answer *will a response
+mount*. The picture the programme is aiming at is a bistable system: a small antigen-specific
+population either falls back to homeostasis, the common outcome, or crosses a separatrix into clonal
+expansion. Peak vaccine-response numbers originate there.
+
+**State: designed. Nothing is derived and nothing is measured**, and the literature salvage the
+benchmark roadmap recorded (160 PMIDs / 192 titles from a failed sweep, unvetted) was never
+committed -- `bench/threshold/` does not exist in `2026-mhcmatch-benchmark` at `e8e8b2b` and is not
+tracked. Treat the salvage as lost, not as an input.
+
+**Next:** state the threshold condition in evaluable form and name which of its terms we already
+measure (`F(e)`, presentation %rank, affinity, expression TPM) against which we do not. Then the two
+clinical questions: whether a response can be ignited in a non-conditioned individual and in an
+immunosuppressed one, and which term of the system checkpoint blockade moves.
+
+**Open in the portfolio layer, carried over from the benchmark roadmap (2026-08-30).**
+
+1. **The mechanism corner is assigned, not inferred.** A candidate's block is taken as the axis it
+   ranks highest on within its own patient -- a proxy for a latent variable, not the variable.
+   Inferring the blocks rather than assigning them is the next step, and it is exactly what
+   `compose.goal_energy`'s equal prior over the three mechanisms currently stands in for.
+2. **Class II is absent from every portfolio arm.** `self_help` from `vector.epitope_map` -- whether
+   a unit's class-II epitope contains one of its own class-I epitopes, the Kissick configuration --
+   is computable today and no arm reads it.
+3. **The unreachable-positive count is measured on the compendium's own `pred_*` columns, not on
+   mhcmatch's own axes.** 45 of 161 Pareto-efficient positives are first under no non-negative
+   weighting (exact LP), and 47 of the 65 a fitted linear score misses at m = 30 are recoverable
+   under some other weighting. Repeating that arm on our axes needs the emitted-column set checked
+   first: the benchmark roadmap recorded that four of the nine `BOECRT` axes are never populated on
+   the shipped `rank` path and pointed at *this* file for the detail, where it was never written
+   down. Check it against `rank._finish` before quoting either count as ours.
+
+**Open in the cassette arm: the TCGA deposit is primary-tumour-only, and re-calling from MC3 is what
+fixes it.** 2,244,179 of the deposit's rows are sample type `01` against 600 on `06`, so TCGA-SKCM
+contributes 101 donors of 467 and melanoma is the thinnest tumour type in the whole arm. Re-calling
+neoantigens from the **public** MC3 MAF -- already downloaded and parsed by
+`bench/cassette/annotate.py` -- would recover those 366 donors, put EPIC end to end rather than
+inheriting the deposit's own binder calls, and drop the deposit as a dependency. Not blocked on
+anything.
+
+**Two known limits of the cassette Hamiltonian, both recorded and neither closed.** (i) Four fitted
+field terms have **no exact pairwise form** -- `prob_atleastone`, `expr_pct_iqr`, `epic_max`,
+`epic_min` -- so they sit outside `H(S) = sum_i h_i - sum_{i<j} J_ij` rather than being approximated
+into it; the three that *are* exactly pairwise (the allotype-occupancy, redundancy and Gini families)
+each reduce to one pass over occupancy counts and agree with the brute-force pair sum to 1e-9.
+(ii) **Greedy carries the 1 - 1/e guarantee only where every coupling is repulsive, and `rho_dom` is
+fitted attractive**, so the greedy maximum has no bound on that term; a comparison against exact
+optimisation is tractable only on small pools and has not been run.
+
+**Open on the derived objective (`compose.goal_energy`).** Two things it assumes rather than
+measures. (i) `rho_ij` is spread over pairs by mechanistic overlap under an **equal prior over the
+three mechanisms** and renormalised so the pool's mean pair correlation is exactly the measured
+`rho`; fitting that split on the pooled trial corpus is the open work. The calibration itself is a
+measurement and now has four points -- `rho` = 0.124 (Sahin TNBC), 0.091 (IVAC MUTANOME, 13 patients
+/ 125 units, likelihood-ratio D = 3.2 against the binomial with the null on the parameter boundary,
+P = 3.7e-2, variance 1.8x the binomial), 0.024 (TESLA) and 0.010 (HiTIDE). (ii) `H_goal` has never
+been scored against the cohort-fitted `H` on TCGA, where both are computable and the fitted one
+already has a recorded normalised log-likelihood.
+
+### 5g. Functional HLA divergence --- shipped as a capability, unrun where it would count
+
+`AnchorModel` plus `Pseudoseq.shrink` produce an **anchor-motif divergence for an allele with no
+immunopeptidomics at all**, and that is the deployable part of the design-space work
+(`bench/results/anchor_space.md`, `zeroshot_divergence.md`; published in the manuscript's results).
+Leave-one-allele-out over 89 human class-I allotypes with >=1,000 distinct 9-mers, the held-out
+allele's ligands deleted entirely: median per-fold Spearman against presented-set overlap is
+**-0.720** zero-shot against **-0.822** with the allele's own ligands and **-0.381** for a groove
+sequence distance -- so the zero-shot metric recovers 88% of what the allele's own ligands buy and
+nearly doubles the sequence distance.
+
+**Open, and it is the whole point of the metric: run it where HED is used.** Same patients, same
+endpoint, anchor divergence against Grantham HED on checkpoint-blockade survival (Chowell et al.
+2019, PMID 31700181) and on HIV control (Viard et al. 2024, PMID 38236978). Nothing in the method is
+missing; the blocking dependency is **cohort access**. Litchfield et al. 2021 (PMID 33508232) --
+where HED failed to reach pan-cancer significance against clonal TMB -- is why this is worth the
+effort rather than a formality, and is also the harmonised cohort the manuscript roadmap already
+names for the composition arm.
+
+**Also open in §5g: population tiling, descriptive only.** Weight the per-position between-allele
+geometry and the per-locus overlap asymmetry by population allele frequencies
+(allelefrequencies.net, **not yet in the benchmark repo's `SOURCES.md`**) and report the
+anchor-space coverage of a drawn genotype. **Descriptive only, and stated that way on purpose:** any
+"against a random genotype" version of this is a null model and needs the author's go-ahead before
+it is run.
+
+### Beside §6b. Open items
+
+- **The residual class-II frequent gap is plausibly a hypothesis-class limit, and the named lever is
+  the Potts energy.** An independent-position PWM cannot express pocket-pocket cooperativity by
+  construction, whatever its register model. `PottsAffinity` already carries peptide x pocket
+  couplings but is fitted on measured IC50 for *affinity*; refitting that energy on the ligandome
+  for *presentation* is the obvious next lever and is training-free in the same sense the mixture EM
+  is -- EM on the shipped corpus, no external labels. Unrun. Related and separate: whether the
+  affinity head should adopt the shipped `n_motifs=3` class-II oracle is still open (see §6c).
+
+- **Screening-budget metrics: `ISSR_X` is specified and implemented nowhere.** PredIG states
+  outright that ROCAUC mostly does not associate with success rates among top-scored candidates,
+  which is the regime a screen actually operates in. `bench/compare/metrics.py` already emits AUPRC,
+  PPV@P and AUC0.1 on both holdouts, so adding ISSR_X for X in {10, 25, 50, 100, 200, 400, 1000} is
+  arithmetic over outputs that already exist -- and the **joint TESLA + NCI top-k leaderboard on a
+  matched allele set does not exist anywhere in the literature.** Verified 2026-08-30: no `ISSR` in
+  `bench/results/` or `bench/compare/`.
+
+- **Self vs nonself: the discriminative arm is specified, harnessed and unrun.** Composition alone
+  does not separate host from pathogen cleanly -- all 15 pathogen proteomes sit under 1 bit per
+  9-mer from human -- but they are **20x to 158x further than mouse is**, so "nearly identical"
+  holds on the uniform-distribution scale and not on the second-proteome scale. The arm that would
+  say whether the separation is compositional or structural (composition, against + adjacent pairs,
+  against + distance-dependent pairs, whole proteomes held out, folds grouping homologous proteomes)
+  is fully specified in `bench/selfnonself/SOURCES.md` and **neither output file exists on disk**.
+
+### Beside §6c. Known issues
+
+- **Two arguments that look live and are not, both reachable from a one-line call.**
+  `Store.decompose(peptide, allele=...)` **accepts `allele` and ignores it** -- the docstring says it
+  is forward-compat for allele-specific learned anchors and that v0 uses class-default positions,
+  but a caller passing an allele gets a class-default decomposition with no warning. And
+  `infer_class` (`store.py:94`) is a **bare length cut at 11**, so a 12-mer class-I ligand silently
+  becomes MHC-II and is scored against the wrong groove; `from_pmhc` admits 37,327 such 12-mers on
+  the class-I side. Pass `cls=` explicitly on any programmatic path.
+
+## 10. Carried over from the retired manuscript roadmap (2026-08-30)
+
+`2026-mhcmatch` carried a `ROADMAP.md` too; it is deleted for the same reason, and its status header
+had gone stale in the same way (artifact v9, 342,432 rows / 741 positives / 8 datasets). What it
+held that is still live is below, verbatim. `results/CURRENT.md` remains the authoritative per-claim
+number record and `issues.md` remains the list of what is open, withheld, or behind a rival; neither
+is duplicated here.
+
+**Numbers still flow one way: benchmark -> manuscript.** A row below with no benchmark table is a
+row that cannot be written yet, however confident the argument is.
+
+### Specified and unrun
+
+#### 1. Outcome integration: OS and PFS on external cohorts
+
+**What it would buy.** The TCGA arm is pre-checkpoint-blockade by construction, and the transfer arm
+on 525 treated patients carries directional analogues rather than the composition terms themselves.
+The Discussion already names the missing thing: *checkpoint-blockade cohorts released with HLA
+typing*, so that a designed cassette can be scored on treated patients and read against their own
+overall and progression-free survival.
+
+**The requirement, stated so a cohort can be checked against it.** A usable cohort carries all four:
+somatic variant calls, bulk RNA-seq (so `expr_pct` is the cohort's own measurement rather than a
+reference), class-I HLA typing, and an outcome with a time and a 0/1 event. Response category alone
+is not enough — `cassette.score` produces a continuous yield and the estimand is a hazard ratio.
+
+**Candidates, in order of what each would supply.** Records retrieved from PubMed; nothing here is
+quoted from memory.
+
+| resource | what it carries | why it is first / what is missing |
+|---|---|---|
+| Litchfield et al., *Cell* 2021 — [10.1016/j.cell.2021.01.002](https://doi.org/10.1016/j.cell.2021.01.002), PMID 33508232 | whole-exome **and** transcriptomic data for **>1,000 checkpoint-treated patients across seven tumour types**, under one bioinformatics workflow and one clinical-outcome definition | **the single highest-value resource on this list.** It is the harmonisation the field already agreed on, so a result computed on it is comparable to published ones. It also reports *clonal* TMB as the strongest predictor of response, which is the clonality composition variable this project has not yet entered |
+| Snyder et al., *PLoS Med* 2017 — [10.1371/journal.pmed.1002309](https://doi.org/10.1371/journal.pmed.1002309), PMID 28552987 | IMvigor210 urothelial: whole-exome, RNA-seq **and** TCR-seq on the same pre-treatment tumours, with PFS and OS | 29 patients — too small to carry a hazard ratio on its own, but the only one with a matched repertoire, so it is the cohort where a corpus-similarity channel could be read against an actual receptor set |
+| Jiang et al., *Front Immunol* 2021 — [10.3389/fimmu.2021.813331](https://doi.org/10.3389/fimmu.2021.813331), PMID 35003141 | a combinatorial checkpoint-response signature validated on an independent NSCLC checkpoint cohort with PFS and response | expression-side only as published; the value is the assembled public cohort list rather than the signature |
+| Motzer et al., *Nat Commun* 2022 — [10.1038/s41467-022-33555-8](https://doi.org/10.1038/s41467-022-33555-8), PMID 36216827 | S-TRAC renal cell, 171 patients post-nephrectomy, genomic **and** transcriptomic, disease-free survival | anti-angiogenic adjuvant rather than checkpoint, so it tests the observational hypothesis under a different treatment — a different question, worth stating as such |
+
+**Checked and not usable.** Zhou et al., *Transl Lung Cancer Res* 2024 —
+[10.21037/tlcr-24-349](https://doi.org/10.21037/tlcr-24-349), PMID 39263018 — is a 6,253-patient
+postoperative-survival study of family history in lung cancer. It has OS, PFS and lung-cancer-
+specific survival, and **no molecular deposit at all**: no exome, no expression, no HLA. It cannot
+supply expression or epitopes and is recorded here so it is not looked at twice.
+
+**Constraint on provenance.** The Methods state that every dataset in this work is public and that
+no clinical-collaboration data enters it. A cohort located through any private mirror enters through
+its **own public deposit and accession** or it does not enter; `SOURCES.md` records the accession,
+not the mirror.
+
+#### 2. Composition variables the TCGA arm has not entered
+
+Each is one stage on the existing pool, and each is a hypothesis about *why* a well-composed
+cassette should matter rather than a further sweep of the same axes.
+
+| idea | what it predicts | cost |
+|---|---|---|
+| **antigen-presentation machinery as a covariate and an interaction** | a cassette can only be worth anything in a tumour that still presents; the composition terms should carry more where the class-I pathway is intact. **Built** as `bench/cassette/apm.py` on the NLRC5/CITA gene set (Yoshihama 2016, PMID 27162338), scored by the same rule as the Danaher and Ayers panels | one stage, run |
+| **driver-gene prioritisation** | a cassette built on clonal driver mutations should be more durable than one built on passengers. `is_cgc`, `oncokb` and `hotspot3d` and their three composition fractions **already exist** in `bench/cassette/annotate.py`; nothing reads them in the survival arm | one stage, no new data |
+| **expression-first, then rank** | order candidates on `expr_pct` before the composition objective sees them, so a highly expressed source protein cannot be displaced by a marginally better-scoring rare one | one selection-rule arm |
+| **presentation machinery inside the Hamiltonian** | make the per-unit field depend on the donor's own class-I expression rather than only on the peptide, so a donor with silenced B2M is scored as one | a library change to `cassette.compose`, not a benchmark stage |
+| **a Łuksza-style fitness arm on the TCGA pool** | cross-reactivity to known epitopes times amplitude times clonal frequency, on donors rather than on datasets. `bench/neoag/luksza_r.py` already fits both shape parameters by profile likelihood and reports which sit at a grid edge | one stage, the estimator exists |
+
+#### 3. Ranking cassettes that were actually manufactured
+
+Every comparison the paper makes between the composition objective and a plain sort is on cassettes
+**this pipeline designed**. The falsifiable version is on cassettes **somebody built**: a clinical
+mRNA vaccine deposits both the construct and a per-unit ELISpot read-out, so a published cassette
+can be scored as a set by `mhcmatch cassette score` and ranked by the fraction of its units that
+responded.
+
+| step | what it needs | cost |
+|---|---|---|
+| assemble the deposited constructs | the unit list, the restricting genotype and the per-unit read-out for each published cassette. The adjuvant trial of Sahin et al. already gives 216 assayed units over 13 patients with 41 responders; the others need transcribing from supplementary tables | one curation stage, no compute |
+| score each as a set | `cassette score` on the deposited unit list, giving $H(S)$, $\rho_{\mathrm{hla}}$, allotype count and $P(\text{at least one responds})$ per construct | one stage |
+| rank | Spearman of each set statistic against the observed responding fraction, clustered on trial | arithmetic |
+
+**What it decides.** Whether the objective orders *real* cassettes better than the per-unit score
+does. A null here is informative in a way the designed-cassette comparison is not, and it is the one
+comparison in this programme where a null would be worth writing up — ask before doing so.
+
+**What it does not need.** No refit, no new corpus, no vaccinated cohort beyond what is already
+published.
+
+### The vector chapter (`06-vector.tex`) — planned, still unwritten
+
+Not to be confused with `08-portfolio.tex`, which is written and covers the *selection* layer —
+which units go in the set. That chapter says explicitly that it sits **before assembly**. This one
+is assembly: which unit is joined to which, in what order, by what linker.
+
+Covers `mhcmatch.vector`: the four assembly questions — what to withdraw, how many units, in what
+order, joined by what — and why each gets a different amount of machinery. Sources, in order of
+precedence:
+
+1. **Library plan and evidence base:** `~/vcs/code/mhcmatch/design/vector_roadmap.md`,
+   `design/vector_evidence.md`, `design/vector_audit.md`. The evidence file tiers every claim
+   experimental / observational / in-silico-only / open and is the chapter's citation spine.
+2. **Benchmark tables:** `bench/results/vector_safety_screen.md`, `vector_screen_radius.md`, and
+   `bench/results/vector_*.md` in the benchmark repo (its `ROADMAP.md` §10 / §10a is retired; see §9).
+
+**The chapter's argument, and what still has to be recorded before each part can be written:**
+
+| claim | writable now? | blocking table |
+|---|---|---|
+| The safety screen's specificity budget is spent at `max_subs=0`, and the tissue floor is nearly a no-op | **yes** | `vector_screen_radius.md` — recorded |
+| Selection and assembly are separate because assembly depends on the *set*, not the candidate | **yes** | argued from the objective, no table needed |
+| Ordering is constraint satisfaction, not optimisation — clean layouts are abundant and undistinguished | **yes**, as a literature synthesis | PMID 20033850, PMID 7521933, PMID 36820900 |
+| Spacer defaults must be class-conditional (alanine for class I, `GPGPG` for class II) | **yes**, as a literature synthesis | PMID 36820900 vs PMID 12023344 — but see the gap below |
+| CD4 and CD8 payloads belong in one molecule | **yes** | PMID 15270727, PMID 21810614 |
+| `AAY` versus `AAA` | **no** | nobody has run it — the alanine assay compared alanine-based against `GGGS` |
+| Mixed class-I/class-II junction interaction | **no** | needs library V1, then a benchmark table |
+| `n0`, per-allotype capacity | **no**, and say so | no N-vs-2N trial at matched dose exists anywhere |
+
+**Two things the chapter must state rather than bury**, because they are the reason the module is
+built the way it is:
+
+- **The linker literature is largely convention, not evidence.** `AAY`/`GPGPG`/`KK`/`EAAAK` recur
+  across dozens of design papers that do not compare their linker to an alternative. The chapter
+  should carry the in-silico-only tier explicitly rather than citing those papers as support.
+- **`n0` is unfitted by design.** It is per-allotype capacity, nothing in the public record fits it,
+  and the module refuses to default it. A methods paper that quietly supplied a number here would be
+  inventing the one quantity the field has never measured.
+
+### Blockers named, not scheduled
+
+- **A class-II fitting corpus is the one named blocker.** `neoantigens_tested_peptides.tsv.gz` is
+  423,085 rows and every one is a class-I CD8⁺ screen, which is why the three corpus-similarity
+  channels sit at chance on CD4⁺ units and why recomputing them in the class-II geometry does not
+  help. Abundance and TCR-facing charge are the two terms that transfer.
+- Four vaccine trials are staged and unparsed (NeoVax ×3, GBM PPV, PGV001); pooled cassette size
+  across the compendium already runs 5 to 30 units, which no single trial contains.
+- `\subsubsection{Presentation}` and `\subsubsection{Integration}` still carry their old one-word
+  titles; they read oddly next to the descriptive titles in `sec:functions`.

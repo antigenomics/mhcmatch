@@ -8,7 +8,7 @@
   what is **open**, what is **withheld** from the published documents, and **where a rival is
   ahead**. It replaced `issues_major.md` / `issues_minor.md` / `caveats.md`, none of which exist.
 
-**The shipped scorer is artifact version 11 in library 1.6.0** — nine fitted terms, `binder` as the
+**The shipped scorer is artifact version 11 in library 1.6.1** — nine fitted terms, `binder` as the
 fitted presentation term (recorded in `issues.md`; both taken by the author on 2026-08-25). Its
 own `verdict` block still reads `"ship": false`, which is worth knowing before quoting it: v11 was
 shipped on the author's word on 2026-08-29 *against* that bar, over two thin regressions

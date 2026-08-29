@@ -5,4 +5,4 @@ dependencies:
   - pip
   - pip:
       # mhcmatch pulls its seqtree C++ core (ARM/x86_64 wheels on PyPI) as a dependency -- no extra.
-      - mhcmatch==1.6.0
+      - mhcmatch==1.6.1
