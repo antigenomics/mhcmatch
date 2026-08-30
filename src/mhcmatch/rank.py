@@ -481,6 +481,12 @@ def aggregate_score(features, imputed_out: list | None = None) -> "np.ndarray":
     training mean -- the same convention the fit used, so a candidate that lacks a wild type or a
     gene expression value is scored on the terms it does have rather than dropped. Higher is better.
 
+    ``imputed_out``, when given, is filled with one list per candidate naming the features that
+    fell back to the training mean -- ``["expr_lvl", "expr_norm"]`` for a peptide whose gene symbol
+    the expression reference does not carry. Pass ``[]``; it is grown to length. **A row that names
+    a feature here was scored without it**, which is the difference between "this gene is silent"
+    and "we have never heard of this gene", and only this list tells them apart.
+
     Two things the caller owns, because getting them wrong is silent:
 
     * **Compute each feature the way the fit did.** ``binder`` is ``-log10`` of the calibrated
@@ -525,6 +531,12 @@ def aggregate_score(features, imputed_out: list | None = None) -> "np.ndarray":
         if bad.any():
             z = np.where(bad, 0.0, z)          # 0 on the z scale IS the training mean
             if imputed_out is not None:
+                # Grow it here rather than requiring the caller to pre-size it. An external caller
+                # reads `imputed_out: list` and passes `[]`, which used to raise IndexError -- and
+                # only on the rows that had something to report, so the call worked until a gene
+                # failed to resolve and then crashed on exactly the candidates it exists to name.
+                while len(imputed_out) < n:
+                    imputed_out.append([])
                 for i in np.flatnonzero(bad):
                     imputed_out[int(i)].append(name)
         out += coef * z

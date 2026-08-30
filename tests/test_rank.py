@@ -648,3 +648,28 @@ def test_finish_supplies_every_feature_the_artifact_declares():
     assert "expr_lvl" in R.AGGREGATE_FEATURES and "expr_norm" in R.AGGREGATE_FEATURES
     assert "expr_pct" not in R.AGGREGATE_FEATURES and "expr_pct" in done[0].__dict__
     assert done[0].expr_pct == 0.5
+
+
+def test_aggregate_score_grows_an_empty_imputed_out():
+    """`imputed_out=[]` is the documented call and must not need pre-sizing.
+
+    It used to raise IndexError -- and only once a value was actually missing, so the call worked
+    until a gene failed to resolve and then crashed on exactly the rows the list exists to name.
+    """
+    import math
+
+    import mhcmatch.rank as RK
+
+    f = {name: [0.0, 0.0] for name in RK.AGGREGATE_FEATURES}
+    f["expr_lvl"] = [float("nan"), 0.0]
+    imputed: list = []
+    out = RK.aggregate_score(f, imputed_out=imputed)
+    assert imputed == [["expr_lvl"], []]
+    assert all(math.isfinite(v) for v in out)
+    # A non-finite term is the training MEAN, not zero. `mu["expr_lvl"]` is 5.1264 on v11, so
+    # substituting a literal 0.0 for an unresolved gene is a -1.47 sigma penalty invented out of a
+    # missing symbol -- the failure this test pins down.
+    a = RK.aggregate()
+    mu = dict(zip(a["features"], a["mu"]))
+    assert out[0] == RK.aggregate_score({**f, "expr_lvl": [mu["expr_lvl"], 0.0]})[0]
+    assert out[0] > RK.aggregate_score({**f, "expr_lvl": [0.0, 0.0]})[0]
