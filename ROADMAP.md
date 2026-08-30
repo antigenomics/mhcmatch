@@ -1825,6 +1825,34 @@ the reference before citing it" (now fixed); and `bench/neoag/ingest_tested.py` 
 Surgery Branch screening set". Writing to the HuggingFace mirror is a deliberate act and needs the
 author's word.
 
+**The head-to-head has been run, and what it needs next is a genotype rather than a rival.**
+`bench/results/compare_per_unit.md` scores EPIC against NeoRanking's released weights and against
+netMHCpan, MixMHCpred and PRIME on the three screening cohorts. EPIC leads every scorable rival on
+the two nominated lists -- TESLA **0.8659** against 0.8164 / 0.7843 / 0.7932, HiTIDE **0.7089**
+against 0.6699 / 0.5851 / 0.6035 -- and the paired per-patient differences against NeoRanking are
++0.0940 (-0.0024 to +0.1916) and +0.0560 (-0.0529 to +0.1276), consistent in direction and
+unresolvable on eight and nine patients. On NCI-test everything saturates and NeoRanking is ahead by
+0.0126 (-0.0248 to -0.0041), the only difference that resolves, on its own training cohort's test
+split and on the least stringent candidate list of the three.
+
+**Nothing in that table is held out of EPIC, so none of it is a like-for-like win.** The comparison
+that would be one is on a cohort in neither corpus, and there are three candidates. **All three are
+blocked on the same thing: an HLA genotype.** Without one, EPIC runs on five of its nine features --
+`binder` (+0.7569, its largest coefficient) and `log10a` at the training mean -- so a number from
+such a cohort measures the handicap and not the model. This was learned by producing two of them:
+IVAC 0.4373 and Sahin 0.4188, both below chance, neither interpretable, neither committed.
+
+| cohort | what it would give | what is missing | how to unblock |
+|---|---|---|---|
+| **IVAC MUTANOME** (Sahin, *Nature* 2017, PMID 28678784) | 125 manufactured units over 13 patients, **every one assayed** -- 75 responders and 50 *measured* negatives. No patient in EPIC's fit; 2 of 125 units share an 8-11mer with it | no per-patient HLA. Neither `vaccines/ivac_mutanome_units.parquet` nor `vaccines/SOURCES.md` carries one, and Supplementary Table 1 gives only a **"Predicted HLA restriction" per unit** -- the trial's own prediction, so scoring our `binder` on an allele their predictor chose is circular | ask the authors; or check whether the per-unit predicted restriction can be used as a *declared* input with the circularity stated, which is a decision and not a fix |
+| **Weber gene fusions** (Weber et al., *Nat Biotechnol* 2022;40(8):1276-1284, [doi:10.1038/s41587-022-01247-9](https://doi.org/10.1038/s41587-022-01247-9)) | **54 fusions with a CD4 and a CD8 call each, and 272 tested overlapping peptides** with per-peptide labels. Junctions are deposited with the breakpoint marked, so units need no reconstruction. Carries its own netMHCpan-4.0 affinity and %rank as a built-in rival. In nobody's corpus -- every SNV screen here and all three of NeoRanking's are SNV-only. **The only fusion cohort anywhere in this project**, which is the `nonconventional` arm the cassette quota holds a slot for | no HLA in the supplement. Methods say alleles came from **seq2HLA v2.2 on each patient's RNA-seq** | re-run seq2HLA against **SRA PRJNA607061**, which is public. One download and one pipeline, and it unblocks the only fusion arena we have |
+| **Sahin TNBC** (Sahin et al., *Nature* 2026, PMID 41708868) | 251 vaccinated targets over 14 patients, ex-vivo ELISpot on every one. Published after every model here was frozen; contributes **0 rows** to EPIC's fit | HLA for only **three** of fourteen patients, in Extended Data Fig. 8 | already usable on those three: `bench/neoag/cohort_report.py::sahin_row` scores their **53 targets** genotype-aware and the `neoag` family reaches **0.6786** there, **0.7329** BRCA-tissue-matched. **Those are the `neoag` GLM (`BECR`/`B`), not EPIC** -- do not quote them as EPIC's. The open run is EPIC on the same 53 targets by the same expansion, which is the one neutral-arena number available today |
+
+**Order of value.** Sahin's three patients cost nothing and are the only neutral number reachable
+now, but 53 targets is thin. The fusion cohort is the largest prize and the clearest path -- public
+SRA, a named tool, and a substrate nothing else in this project covers. IVAC has the best labels of
+the three and the worst prospects, because its genotype was never published.
+
 **Quantify the leakage before any head-to-head.** Its two external screens are very likely the
 sources behind our own `TESLA` and `HiTIDE` slices of
 `neoantigens/neoantigens_tested_peptides.tsv.gz`, and TESLA and HiTIDE are two of EPIC's seven
