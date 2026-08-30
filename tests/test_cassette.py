@@ -769,3 +769,209 @@ def test_cli_select_prices_hla_loss_and_reports_the_selectivity_trade(tmp_path, 
     cols = head.split("\t")
     assert {"block_live", "selectivity", "n_covered", "n_allotypes"} <= set(cols)
     assert rows[0].split("\t")[cols.index("n_allotypes")] == "4"      # the empty allotype counts
+
+
+# ------------------------------------------- feature couplings, promiscuity, and their identities
+def test_feature_channels_are_inert_when_no_feature_is_passed():
+    """The merge gate for the whole feature-coupling change: with nothing passed, every cassette
+    built before it existed reproduces bit for bit.
+
+    Checked at both layers, because they can fail apart -- `overlap` could keep its channel mean
+    while `select` silently reorders the trim, or the reverse. Bit-identical on the index, the
+    energy and `lam`, not merely close."""
+    s, peps, alle = pool(n=40)
+    o0 = CA.overlap(peps, alleles=alle, strength=s)
+    o1 = CA.overlap(peps, alleles=alle, strength=s, features=None, coexpr=None)
+    assert np.array_equal(o0, o1)
+
+    a = CA.select(s, peps, alle, k=10)
+    b = CA.select(s, peps, alle, k=10, features=None, coexpr=None, presented=None, dominance=True)
+    assert a.index == b.index and a.energy == b.energy and a.lam == b.lam
+    assert a.channels == b.channels == ("sequence", "allotype", "dominance")
+
+
+def test_a_feature_column_is_the_dominance_kernel_on_another_axis():
+    """`features` is not a new kind of channel -- it is the kernel `strength` already used, run on
+    a column that means something. Passing the score itself as a feature column must therefore
+    reproduce the dominance channel exactly, which is what makes the two comparable."""
+    s, peps, alle = pool(n=15)
+    a = CA.overlap(peps, alleles=alle, strength=s)
+    b = CA.overlap(peps, alleles=alle, strength=None, features=np.asarray(s)[:, None])
+    assert np.allclose(a, b, atol=1e-12)
+
+
+def test_dropping_dominance_removes_exactly_one_channel():
+    """`dominance=False` is a channel count, not a re-weighting: the remaining channels keep their
+    own values and the mean is over one fewer of them."""
+    s, peps, alle = pool(n=15)
+    full = CA.overlap(peps, alleles=alle, strength=s)
+    bare = CA.overlap(peps, alleles=alle, strength=None)
+    dom = CA._span_channel(s)
+    np.fill_diagonal(dom, 0.0)
+    assert np.allclose(full * 3.0, bare * 2.0 + dom, atol=1e-12)
+    c = CA.select(s, peps, alle, k=5, dominance=False)
+    assert c.channels == ("sequence", "allotype")
+
+
+def test_a_non_finite_feature_does_not_delete_a_candidate():
+    """A missing measurement is missing information about a pair, not a reason to drop the unit.
+    `nan` reaching the argmax would do the latter silently, which is the failure `selectivity_delta`
+    already refuses -- so the column takes its own median and the unit stays rankable."""
+    s, peps, alle = pool(n=20)
+    f = np.asarray(s, dtype=float).copy()
+    f[3] = np.nan
+    o = CA.overlap(peps, alleles=alle, strength=None, features=f[:, None])
+    assert np.isfinite(o).all()
+    c = CA.select(s, peps, alle, k=6, features=f[:, None], feature_names=("x",), dominance=False)
+    assert len(c.index) == 6 and np.isfinite(c.energy)
+    allnan = np.full((20, 1), np.nan)
+    assert np.array_equal(CA.overlap(peps, features=allnan), CA.overlap(peps) * 0.5)
+
+
+def test_graded_allotype_overlap_reduces_to_the_equality_indicator():
+    """`allotype_overlap` is an extension of `1[a_i == a_j]`, not a replacement for it: on one-hot
+    rows -- every unit presented by exactly one allotype -- the cosine IS the indicator. Anything
+    else would mean the graded channel disagrees with the shipped one where they both apply."""
+    alle = list("ABCAAB")
+    keys, codes = np.unique(alle, return_inverse=True)
+    onehot = np.zeros((len(alle), keys.size))
+    onehot[np.arange(len(alle)), codes] = 1.0
+    want = (np.asarray(alle)[:, None] == np.asarray(alle)[None, :]).astype(float)
+    np.fill_diagonal(want, 0.0)
+    assert np.allclose(CA.allotype_overlap(onehot), want, atol=1e-12)
+
+    # A unit presented by nothing is coupled to nothing: the model does not know how it reaches
+    # the surface, so it cannot claim it is lost with anybody.
+    w = np.array([[1.0, 1.0], [1.0, 0.0], [0.0, 0.0]])
+    o = CA.allotype_overlap(w)
+    assert np.allclose(o[2], 0.0)
+    assert 0.0 < o[0, 1] < 1.0                             # partial share, partially redundant
+
+
+def test_the_promiscuity_loss_coupling_reduces_to_the_single_block_form():
+    """The promiscuity term is the same derivation over sets, so a one-hot `presented` -- every unit
+    on exactly one allotype -- must reproduce the shipped covariance to the last bit. That is what
+    makes it an extension of the published model rather than a second, unreconciled one."""
+    s, peps, alle = pool(n=20)
+    p = 1 / (1 + np.exp(-(s + CA.prob_offset(s, POOL_PREVALENCE))))
+    sim = CA.overlap(peps, alleles=alle, strength=s)
+    keys, codes = np.unique(np.asarray([str(x) for x in alle]), return_inverse=True)
+    onehot = np.zeros((len(alle), keys.size))
+    onehot[np.arange(len(alle)), codes] = 1.0
+    for q in (0.5, 0.8, 0.95):
+        _, J_block = CA.goal_energy(p, sim, block=alle, block_live=q)
+        _, J_pres = CA.goal_energy(p, sim, block=alle, block_live=q, presented=onehot)
+        assert np.allclose(J_block, J_pres, atol=1e-12), q
+
+
+def test_promiscuity_is_inert_at_q_one_and_charges_less_than_one_allotype_would():
+    """Two claims. `q = 1` is "nothing is ever lost", so the term vanishes whatever `presented`
+    says. And a unit with more routes to the surface is charged *less* for HLA loss than the same
+    unit credited to one allotype -- the whole reason the set form exists."""
+    s, peps, alle = pool(n=20)
+    p = 1 / (1 + np.exp(-(s + CA.prob_offset(s, POOL_PREVALENCE))))
+    sim = CA.overlap(peps, alleles=alle, strength=s)
+    keys, codes = np.unique(np.asarray([str(x) for x in alle]), return_inverse=True)
+    onehot = np.zeros((len(alle), keys.size))
+    onehot[np.arange(len(alle)), codes] = 1.0
+
+    _, J0 = CA.goal_energy(p, sim, block=alle, block_live=1.0, presented=onehot)
+    _, J1 = CA.goal_energy(p, sim, block=alle, block_live=1.0)
+    assert np.array_equal(J0, J1)
+
+    broad = np.minimum(onehot + np.roll(onehot, 1, axis=1), 1.0)   # every unit on two allotypes
+    _, J_one = CA.goal_energy(p, sim, block=alle, block_live=0.7, presented=onehot)
+    _, J_two = CA.goal_energy(p, sim, block=alle, block_live=0.7, presented=broad)
+    assert J_two.sum() < J_one.sum()
+
+
+def test_the_marginal_bound_relaxes_under_promiscuity_rather_than_tightening():
+    """`p_i <= Q_i` is what makes `eps_i = p_i / Q_i` a probability. Under promiscuity `Q_i` is the
+    chance *some* presenting allotype survives, which is weakly larger than any single `q_b` -- so
+    a unit the single-block form refused may now be admitted, and no unit it admitted is refused."""
+    alle = ["A", "A", "B"]
+    p = np.array([0.85, 0.4, 0.5])
+    with pytest.raises(PF.MarginalExceedsBlock):
+        CA._check_live(p, alle, 0.8)
+    both = np.array([[1.0, 1.0], [1.0, 0.0], [0.0, 1.0]])     # unit 0 has two routes
+    CA._check_live(p, alle, 0.8, both)                        # 1 - 0.2**2 = 0.96 >= 0.85
+
+
+def test_coexpression_channel_enters_as_a_matrix_and_a_missing_gene_is_a_zero_row():
+    """Co-expression is a property of a pair and cannot be written as `|f_i - f_j|`, which is why it
+    is a matrix argument. A gene the panel does not carry contributes nothing rather than `nan`."""
+    s, peps, alle = pool(n=10)
+    c = np.zeros((10, 10))
+    c[0, 1] = c[1, 0] = 1.0
+    o_off = CA.overlap(peps, alleles=alle, strength=s)
+    o_on = CA.overlap(peps, alleles=alle, strength=s, coexpr=c)
+    assert o_on[0, 1] > o_off[0, 1]
+    assert np.allclose(o_on[2:, 2:] * 4.0, o_off[2:, 2:] * 3.0, atol=1e-12)
+    with pytest.raises(ValueError):
+        CA.overlap(peps, coexpr=np.zeros((3, 3)))
+    cas = CA.select(s, peps, alle, k=4, coexpr=c)
+    assert "coexpr" in cas.channels
+
+
+def test_a_trimmed_pool_trims_every_per_unit_input_with_it():
+    """`MAX_POOL` trims by score, and a feature row that did not move with it would describe a
+    different candidate. Silent, and wrong for exactly the strongest units, so it is pinned: the
+    cassette chosen from a trimmed pool must equal the one chosen from the pre-trimmed pool."""
+    s, peps, alle = pool(n=40)
+    f = np.arange(40, dtype=float)[:, None]
+    keep = np.argsort(-np.asarray(s), kind="stable")[:25]
+    keep.sort()
+    full = CA.select(s, peps, alle, k=6, features=f, feature_names=("x",), max_pool=25)
+    sub = CA.select([s[i] for i in keep], [peps[i] for i in keep], [alle[i] for i in keep],
+                    k=6, features=f[keep], feature_names=("x",))
+    assert full.trimmed == 15
+    assert [keep[i] for i in sub.index] == full.index
+
+
+def test_the_graded_allotype_channel_replaces_the_equality_one_rather_than_joining_it():
+    """They are two readings of one mechanism -- how a pair shares presentation -- so averaging both
+    would count presentation twice against sequence and dominance. The channel count is therefore
+    unchanged when the graded form is switched on, and on one-hot rows the *values* are unchanged
+    too, which is the reduction that makes the swap safe."""
+    s, peps, alle = pool(n=20)
+    keys, codes = np.unique(np.asarray([str(x) for x in alle]), return_inverse=True)
+    onehot = np.zeros((len(alle), keys.size))
+    onehot[np.arange(len(alle)), codes] = 1.0
+
+    hard = CA.overlap(peps, alleles=alle, strength=s)
+    graded = CA.overlap(peps, alleles=alle, strength=s,
+                        allotype_graded=CA.allotype_overlap(onehot))
+    assert np.allclose(hard, graded, atol=1e-12)
+
+    a = CA.select(s, peps, alle, k=6)
+    b = CA.select(s, peps, alle, k=6, presented=onehot, presented_alleles=keys,
+                  graded_allotype=True)
+    assert a.index == b.index                                  # one-hot changes nothing
+    # `promiscuity` records that the LOSS coupling ran on a set rather than a label; it is not a
+    # similarity channel. The similarity ones are unchanged in number -- graded replaces equality.
+    assert b.channels == ("sequence", "allotype_graded", "dominance", "promiscuity")
+    assert [c for c in b.channels if c != "promiscuity"] == ["sequence", "allotype_graded",
+                                                             "dominance"]
+
+    with pytest.raises(ValueError):
+        CA.select(s, peps, alle, k=6, graded_allotype=True)     # nothing to grade
+
+
+def test_a_wider_genotype_than_the_credited_alleles_is_the_normal_case():
+    """A donor carries more allotypes than their candidates are credited to -- 4.6 per patient on
+    TESLA and 5.4 on HiTIDE against a handful of credited labels -- so `presented` has more columns
+    than `block` has distinct labels. Unnamed columns cannot be lined up by guessing, so that
+    raises; named ones resolve their own loss rate."""
+    s, peps, alle = pool(n=12)
+    keys = np.unique(np.asarray([str(x) for x in alle]))
+    wide = np.zeros((12, keys.size + 2))                       # two allotypes nobody is credited to
+    for i, a in enumerate(alle):
+        wide[i, int(np.flatnonzero(keys == str(a))[0])] = 1.0
+    with pytest.raises(ValueError, match="presented_alleles"):
+        CA.goal_energy(np.full(12, 0.2), np.zeros((12, 12)), block=alle, block_live=0.7,
+                       presented=wide)
+    names = list(keys) + ["Z1", "Z2"]
+    _, J = CA.goal_energy(np.full(12, 0.2), np.zeros((12, 12)), block=alle, block_live=0.7,
+                          presented=wide, presented_alleles=names)
+    _, J1 = CA.goal_energy(np.full(12, 0.2), np.zeros((12, 12)), block=alle, block_live=0.7)
+    assert np.allclose(J, J1, atol=1e-12)      # the empty columns carry no unit, so nothing moves

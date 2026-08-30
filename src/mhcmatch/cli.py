@@ -1617,6 +1617,26 @@ def cmd_cassette_select(a):
             sel_kw.update(selectivity=a.selectivity,
                           expr_lvl=[_f(r["expr_lvl"]) for r in g],
                           expr_norm=[_f(r["expr_norm"]) for r in g])
+        if a.no_dominance:
+            sel_kw["dominance"] = False
+        if a.feature_column:
+            missing = [c for c in a.feature_column if c not in g[0]]
+            if missing:
+                raise SystemExit(
+                    f"--feature-column names {' and '.join(missing)}, which the candidate table "
+                    f"does not carry. `mhcmatch rank --score aggregate` emits expr_lvl, expr_norm, "
+                    f"C_phys_buried and C_phys_charge. Found: {sorted(g[0])}")
+            sel_kw.update(features=np.array([[_f(r[c]) for c in a.feature_column] for r in g]),
+                          feature_names=tuple(a.feature_column))
+        if a.coexpr_gtex:
+            if "gene" not in g[0]:
+                raise SystemExit("--coexpr-gtex needs the `gene` column; `mhcmatch rank` emits it")
+            from . import expression as EX
+            genes = [r.get("gene", "") for r in g]
+            sel_kw["coexpr"] = EX.coexpression(genes)
+            known = sum(1 for x in genes if x)
+            say(f"{donor}: GTEx co-expression over {known} of {len(genes)} unit(s) with a gene "
+                "symbol; the rest contribute no pair information", level=2)
         size, tol = a.size, a.tol
         if a.confidence is not None:
             # `-k` becomes the manufacturing ceiling and the donor's own pool sets the size. A
@@ -2269,6 +2289,22 @@ def main(argv=None):
                          "stated design preference like --gamma: the shipped model fits both "
                          "expression terms POSITIVE because it was fitted on `will this respond`, "
                          "and `high in tumour, low in normal` is a different question (default: 0)")
+    cs.add_argument("--feature-column", action="append", metavar="COL",
+                    help="add a coupling channel on this per-unit column, so two units alike on it "
+                         "cost each other. Repeatable. `rank --score aggregate` emits the four "
+                         "worth trying: C_phys_buried, C_phys_charge, expr_lvl, expr_norm. Unlike "
+                         "--selectivity this changes what a PAIR costs, not what a unit is worth "
+                         "(default: none, and the objective sees only the score)")
+    cs.add_argument("--coexpr-gtex", action="store_true",
+                    help="couple two units whose source genes share a GTEx tissue profile, so a "
+                         "cassette does not spend two slots on one transcriptional programme. "
+                         "Reads the `gene` column; a gene the panel does not carry contributes no "
+                         "pair information rather than being dropped")
+    cs.add_argument("--no-dominance", action="store_true",
+                    help="drop the score-dominance channel, leaving only mechanism-based ones. It "
+                         "is the one channel built from the score rather than from biology, and "
+                         "the statistic it corresponds to fits ATTRACTIVE on the observational "
+                         "arm, where the greedy 1-1/e guarantee does not hold")
     cs.add_argument("--score-column", default="score", metavar="COL",
                     help="which column holds the aggregate log-odds (default: score; `rank` writes "
                          "`aggregate`)")

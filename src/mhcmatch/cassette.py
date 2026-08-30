@@ -222,39 +222,140 @@ def _kmer_matrix(peptides, k: int) -> np.ndarray:
     return A
 
 
-def overlap(peptides, alleles=None, strength=None, kmer: int = KMER) -> np.ndarray:
+def _span_channel(z) -> np.ndarray:
+    """``1 - |z_i - z_j| / span`` --- closeness on one numeric axis, in ``[0, 1]``.
+
+    The kernel the ``strength`` channel has always used, factored out so a chemistry or expression
+    column is scored the same way rather than a second way. It is **range-relative**: the value of a
+    pair depends on the spread of the set it is handed, which is why :func:`score` refuses to report
+    ``H`` for a cassette scored without its pool.
+
+    Non-finite entries take the column's own median before the span is taken, so one missing
+    measurement cannot delete a candidate through the argmax. ``0`` on the difference scale is what
+    "no information about this pair" means; ``nan`` would propagate.
+    """
+    z = np.asarray(z, dtype=float)
+    bad = ~np.isfinite(z)
+    if bad.all():
+        return np.zeros((z.size, z.size))
+    if bad.any():
+        z = np.where(bad, float(np.median(z[~bad])), z)
+    span = float(z.max() - z.min()) if z.size else 0.0
+    return 1.0 - np.abs(z[:, None] - z[None, :]) / max(span, 1e-9)
+
+
+def overlap(peptides, alleles=None, strength=None, features=None, coexpr=None,
+            allotype_graded=None, kmer: int = KMER) -> np.ndarray:
     """Mechanistic pair overlap in ``[0, 1]``: how much two units share a way of failing.
 
-    The mean of whichever of three channels the caller can populate. Which channels were available
-    is part of the result and should be reported with it --- a trial that publishes no per-patient
-    genotype has two, not three.
+    The mean of whichever channels the caller can populate. Which channels were available is part
+    of the result and should be reported with it --- a trial that publishes no per-patient genotype
+    has one fewer than one that does.
 
     * **allotype** (``alleles``) --- 1 if two units are restricted by the same class-I molecule.
       Two units on one molecule compete for the same presentation and the same precursor niche, and
-      are lost together if that allele is.
+      are lost together if that allele is. Pass ``allotype_graded`` --- an ``(n, n)`` matrix from
+      :func:`allotype_overlap` --- to use the **graded** form instead: overlap between the two
+      units' presented-allele vectors rather than equality of one credited label. It *replaces*
+      this channel rather than joining it, because they are two readings of one mechanism and
+      averaging them would count presentation twice.
     * **sequence** (always) --- shared distinct ``kmer``-mers, in units of :data:`KAPPA`, clipped at
       1. Two units that look alike draw on one repertoire, so the second buys less than its score
       claims.
-    * **dominance** (``strength``) --- closeness on the score axis, ``1 - |z_i - z_j| / span``.
-      A cassette of one strong unit and nineteen weak ones is one shot, not twenty.
+    * **dominance** (``strength``) --- closeness on the score axis. **This is the score talking to
+      itself**: two units are coupled for scoring alike, which is not a mechanism, and the pairwise
+      statistic it corresponds to (``rho_dom``) fits *attractive* on the observational arm --- where
+      :func:`greedy` loses its ``1 - 1/e`` guarantee, which holds only for repulsive couplings. It
+      is kept, and it is now optional rather than unconditional: pass ``strength=None`` to drop it.
+    * **features** --- an ``(n, d)`` array of per-unit scalars, one channel per column, each on the
+      same ``1 - |f_i - f_j| / span`` kernel as ``dominance``. This is how chemistry and expression
+      reach the pair term: ``C_phys_buried``, ``C_phys_charge``, ``expr_lvl``, ``expr_norm`` and the
+      selectivity delta are all per-unit scalars the ranker already computes and the objective has
+      never seen. A column that is entirely non-finite contributes a zero channel rather than
+      raising.
+    * **coexpr** --- a symmetric ``(n, n)`` matrix already in ``[0, 1]``, averaged in as one further
+      channel. Co-expression is a property of a *pair* of source genes and cannot be written as
+      ``|f_i - f_j|`` on any per-unit scalar, which is why it enters as a matrix;
+      :func:`mhcmatch.expression.coexpression` builds one from the GTEx tissue panel.
 
     Vectorised: the sequence channel is one ``float32`` matmul over a k-mer incidence matrix rather
     than ``n^2`` set intersections.
+
+    **At ``features=None, coexpr=None`` the result is bit-identical to every cassette built before
+    they existed**, because the mean is then over exactly the channels it was over before.
+
+    >>> import numpy as np
+    >>> o = overlap(["AAAAAAAAA", "CCCCCCCCC"], features=np.array([[0.0], [1.0]]))
+    >>> float(o[0, 1])
+    0.0
     """
     n = len(peptides)
     A = _kmer_matrix(peptides, kmer)
     o = np.minimum((A @ A.T).astype(float) / KAPPA, 1.0)
     chans = [o]
-    if alleles is not None:
+    if allotype_graded is not None:
+        g = np.asarray(allotype_graded, dtype=float)
+        if g.shape != (n, n):
+            raise ValueError(f"overlap: allotype_graded is {g.shape}, expected ({n}, {n})")
+        chans.append(np.clip(np.nan_to_num(g, nan=0.0), 0.0, 1.0))
+    elif alleles is not None:
         a = np.asarray(alleles)
         chans.append((a[:, None] == a[None, :]).astype(float))
     if strength is not None:
-        z = np.asarray(strength, dtype=float)
-        span = float(z.max() - z.min()) if z.size else 0.0
-        chans.append(1.0 - np.abs(z[:, None] - z[None, :]) / max(span, 1e-9))
+        chans.append(_span_channel(strength))
+    if features is not None:
+        f = np.asarray(features, dtype=float)
+        if f.ndim == 1:
+            f = f[:, None]
+        if f.shape[0] != n:
+            raise ValueError(f"overlap: {f.shape[0]} feature rows against {n} peptides")
+        for j in range(f.shape[1]):
+            chans.append(_span_channel(f[:, j]))
+    if coexpr is not None:
+        c = np.asarray(coexpr, dtype=float)
+        if c.shape != (n, n):
+            raise ValueError(f"overlap: coexpr is {c.shape}, expected ({n}, {n})")
+        chans.append(np.clip(np.nan_to_num(c, nan=0.0), 0.0, 1.0))
     out = np.mean(chans, axis=0)
     np.fill_diagonal(out, 0.0)
     return np.clip(out, 0.0, 1.0)
+
+
+def allotype_overlap(presented, alleles=None) -> np.ndarray:
+    """Graded allotype overlap: cosine between two units' presented-allele weight vectors.
+
+    ``presented`` is ``(n, A)`` --- one row per unit, one column per allotype of the donor, holding
+    that allotype's presentation weight for that unit (``0`` where it does not present). Build it
+    from :meth:`mhcmatch.store.Store.percent_ranks`, which returns ``{allele: %rank}`` per peptide
+    and skips the neighbour tally ``restriction`` spends 79.5% of its time on.
+
+    **Why this rather than ``1[a_i == a_j]``.** A unit presented by three of a donor's six class-I
+    allotypes is one unit with three routes to the surface. The equality indicator credits it to one
+    label, so two units that share their strongest allele and differ on every other are scored as
+    fully redundant, and two that share a second-choice allele as not redundant at all. Neither is
+    what the block model means.
+
+    **It reduces to the indicator exactly** when every unit presents on one allotype: the rows are
+    then one-hot and their cosine is ``1`` iff the allotype is the same. ``alleles`` is accepted so
+    a caller can assert that reduction on its own data; it is not otherwise used.
+
+    A unit presented by nothing gets a zero row, hence zero overlap with everything --- it is not
+    lost with anything because the model does not know how it is presented at all.
+
+    >>> import numpy as np
+    >>> float(allotype_overlap(np.array([[1.0, 0.0], [1.0, 0.0]]))[0, 1])
+    1.0
+    >>> float(allotype_overlap(np.array([[1.0, 0.0], [0.0, 1.0]]))[0, 1])
+    0.0
+    """
+    w = np.asarray(presented, dtype=float)
+    w = np.nan_to_num(w, nan=0.0, posinf=0.0, neginf=0.0)
+    norm = np.sqrt((w * w).sum(1))
+    norm = np.where(norm > 0, norm, 1.0)
+    u = w / norm[:, None]
+    out = np.clip(u @ u.T, 0.0, 1.0)
+    np.fill_diagonal(out, 0.0)
+    return out
 
 
 def pair_stats(peptides, alleles=None, strength=None, kmer: int = KMER) -> dict:
@@ -331,6 +432,44 @@ def _block_q(block, block_live):
     return codes, q[codes]
 
 
+def _presented_q(block, block_live, presented, presented_alleles):
+    """``q`` per **column** of ``presented`` --- one loss rate per allotype the caller named.
+
+    A donor's genotype is wider than the set of allotypes their candidates are credited to: TESLA
+    and HiTIDE carry 4.6 and 5.4 alleles per patient against the handful any one pool actually uses.
+    So ``presented`` cannot be assumed to have one column per distinct ``block`` label, and naming
+    the columns is the difference between a loss rate landing on the right allotype and landing on
+    whichever one sorted into that position.
+
+    With ``presented_alleles`` the columns are resolved by name, exactly as ``block_live``'s mapping
+    already works and with the same "absent means never lost" default. Without it the columns must
+    line up with ``np.unique(block)``, which is the only order that can be inferred rather than
+    guessed, and a mismatched width raises rather than broadcasting.
+    """
+    a = np.asarray(presented)
+    if a.ndim != 2:
+        raise ValueError(f"presented must be 2-D (n units x n allotypes); got shape {a.shape}")
+    if presented_alleles is None:
+        keys = np.unique(np.asarray([str(x) for x in block]))
+        if a.shape[1] != keys.size:
+            raise ValueError(
+                f"presented has {a.shape[1]} columns against {keys.size} distinct block label(s). "
+                "Pass `presented_alleles` to name the columns -- a donor's genotype is normally "
+                "wider than the allotypes their candidates are credited to.")
+    else:
+        keys = np.asarray([str(x) for x in presented_alleles])
+        if a.shape[1] != keys.size:
+            raise ValueError(
+                f"presented has {a.shape[1]} columns against {keys.size} presented_alleles")
+    if isinstance(block_live, dict):
+        q = np.array([float(block_live.get(k, 1.0)) for k in keys])
+    else:
+        q = np.full(keys.size, float(block_live))
+    if np.any((q <= 0.0) | (q > 1.0)):
+        raise ValueError(f"block_live must lie in (0, 1]; got {q.min():.4g} .. {q.max():.4g}")
+    return q, keys
+
+
 def _q_array(labels, block_live):
     """``q`` per block in ``np.unique`` order --- the layout :func:`mhcmatch.portfolio.survival`
     indexes its ``q`` with. A scalar passes through untouched."""
@@ -341,7 +480,7 @@ def _q_array(labels, block_live):
 
 
 def goal_energy(p, sim, rho: float = RHO_ASSAYED, gamma: float = GAMMA,
-                block=None, block_live=1.0):
+                block=None, block_live=1.0, presented=None, presented_alleles=None):
     """The mean-variance objective as a field and a coupling: ``H(S) = sum h - sum_{i<j} J``.
 
     See the module docstring for the derivation. ``h_i = p_i - (gamma/2) s_i^2`` and
@@ -364,8 +503,26 @@ def goal_energy(p, sim, rho: float = RHO_ASSAYED, gamma: float = GAMMA,
     number a designer states; it enters at full strength or not at all. The sequence and dominance
     channels keep carrying the residual ``rho`` exactly as before.
 
+    **Promiscuity, when the caller can supply it.** The block form above credits each unit to one
+    allotype, so it charges a unit presented by three of a donor's six the full loss of one. Pass
+    ``presented`` --- an ``(n, A)`` 0/1 matrix of which allotypes present each unit, columns in the
+    order :func:`_block_q` returns ``q`` --- and the same derivation runs over sets. Unit ``i`` has a
+    live route iff any allotype in ``A_i`` survives, so with ``L_a ~ Bern(q_a)`` independent
+
+        Q_i          = 1 - prod_{a in A_i} (1 - q_a)
+        P(S_i, S_j)  = 1 - prod_{A_i}(1-q) - prod_{A_j}(1-q) + prod_{A_i union A_j}(1-q)
+        Cov(R_i,R_j) = (p_i p_j / (Q_i Q_j)) [P(S_i, S_j) - Q_i Q_j]
+
+    which is exact, closed-form and still costs no parameter that is not the stated loss rate.
+
+    **It reduces to the single-block form exactly.** With ``A_i = A_j = {b}``: ``Q = q_b`` and
+    ``P(S_i, S_j) = q_b``, so ``Cov = (p_i p_j / q_b^2)(q_b - q_b^2) = (1 - q_b) p_i p_j / q_b`` ---
+    the expression above, term for term. So ``presented`` is an extension of the shipped model and
+    not a second one, and a one-hot ``presented`` reproduces ``block``.
+
     **At ``block_live = 1`` the added term is identically zero**, so every cassette built before this
-    existed is reproduced bit for bit.
+    existed is reproduced bit for bit --- with or without ``presented``, since every ``Q_i`` is then
+    1 and the bracket vanishes.
 
     **Where ``rho_ij`` comes from, and why it is not a fit.** The scalar ``rho`` is the measured mean
     intra-cassette correlation (:data:`RHO_ASSAYED`). It is spread over pairs in proportion to
@@ -380,6 +537,11 @@ def goal_energy(p, sim, rho: float = RHO_ASSAYED, gamma: float = GAMMA,
     rho  : mean intra-cassette response correlation.
     block: what a unit is lost *with* --- the allotype, one label per candidate. Required for
            ``block_live``; ignored without it.
+    presented : optional ``(n, A)`` 0/1 matrix, "does allotype ``a`` present unit ``i``", columns in
+           ``np.unique`` order over ``block``. Supersedes the one-label-per-unit reading of
+           ``block`` for the loss coupling only; ``block`` still supplies the labels and the ``q``
+           lookup. A unit whose row is all zero is taken to be presented by its ``block`` label
+           alone, which is the pre-promiscuity reading and never a silent zero-survival unit.
     block_live : ``q``, how often each block survives. A scalar, or ``{label: q}`` for a per-locus
            loss rate. ``1.0`` (the default) is "nothing is ever lost".
 
@@ -404,13 +566,97 @@ def goal_energy(p, sim, rho: float = RHO_ASSAYED, gamma: float = GAMMA,
     if block is not None:
         codes, q = _block_q(block, block_live)
         if np.any(q < 1.0):
-            # Same block only: the covariance above is zero across blocks, so the mask IS the
-            # model rather than a simplification of it. `q_i == q_j` on every unmasked pair, so
-            # the geometric mean is exact and needs no branch.
-            c = np.sqrt((1.0 - q) / q)
-            J = J + gamma * (codes[:, None] == codes[None, :]) * np.outer(c * p, c * p)
+            if presented is None:
+                # Same block only: the covariance above is zero across blocks, so the mask IS the
+                # model rather than a simplification of it. `q_i == q_j` on every unmasked pair, so
+                # the geometric mean is exact and needs no branch.
+                c = np.sqrt((1.0 - q) / q)
+                J = J + gamma * (codes[:, None] == codes[None, :]) * np.outer(c * p, c * p)
+            else:
+                qa, keys = _presented_q(block, block_live, presented, presented_alleles)
+                J = J + gamma * _loss_cov(p, qa, keys, block, presented)
             np.fill_diagonal(J, 0.0)
     return p - 0.5 * gamma * s * s, J
+
+
+def _fill_unpresented(P, keys, block):
+    """Give every unit with an all-zero ``presented`` row its own credited allotype.
+
+    A row of zeros means *no presentation information* --- the caller's band admitted nothing for
+    this unit --- not "presented by nothing". Reading it the second way would set ``Q_i = 0`` and
+    make ``p_i / Q_i`` infinite, so the unit falls back to the one-allotype reading every cassette
+    used before promiscuity existed, which is exactly what ``block`` already says.
+
+    The unit's credited allotype has to be one of the named columns for that fallback to mean
+    anything, and in the deployment case it always is: ``block`` is the allele a candidate was
+    credited to and ``presented_alleles`` is the donor's genotype, which contains it. Where it does
+    not, this raises rather than inventing a private allotype nothing else can be lost with.
+    """
+    empty = P.sum(1) == 0
+    if not empty.any():
+        return P
+    pos = {k: j for j, k in enumerate(keys)}
+    lab = np.asarray([str(x) for x in block])
+    missing = sorted({l for l in lab[empty] if l not in pos})
+    if missing:
+        raise ValueError(
+            f"{int(empty.sum())} unit(s) have no presenting allotype, and the allotype they are "
+            f"credited to is not among the presented columns: {', '.join(missing[:5])}"
+            f"{'...' if len(missing) > 5 else ''}. Include every credited allele in "
+            "`presented_alleles`, or drop those units from the pool.")
+    P = P.copy()
+    P[np.flatnonzero(empty), [pos[l] for l in lab[empty]]] = 1.0
+    return P
+
+
+def _loss_cov(p, q, keys, block, presented) -> np.ndarray:
+    """``Cov(R_i, R_j)`` under set-valued presentation --- the promiscuity form in :func:`goal_energy`.
+
+    Write ``f_a = 1 - q_a`` for the chance allotype ``a`` is lost, ``d_i = prod_{a in A_i} f_a`` for
+    the chance every one of unit ``i``'s allotypes is lost, and ``Q_i = 1 - d_i``. Then
+
+        Cov(R_i, R_j) = (p_i / Q_i)(p_j / Q_j) [1 - d_i - d_j + d_ij - Q_i Q_j]
+
+    with ``d_ij`` the same product over the **union** ``A_i union A_j``. The union is never
+    materialised: on a 0/1 indicator ``max(P_i, P_j) = P_i + P_j - P_i P_j``, so in logs
+
+        log d_ij = log d_i + log d_j - sum_a P_ia P_ja log f_a
+
+    which is one matmul against ``P^T``, not an ``(n, n, A)`` tensor. At ``n = 2,000`` and six
+    allotypes that is the difference between two 32 MB matrices and a 192 MB one.
+
+    ``f_a = 0`` --- an allotype the caller has declared is *never* lost, ``q_a = 1`` --- is an
+    absorbing zero rather than a ``log(0)``: any unit presenting it has ``d_i = 0`` and ``Q_i = 1``,
+    and any pair either of whose units presents it has ``d_ij = 0``. Carried as a boolean mask so
+    the arithmetic never produces ``-inf + inf``.
+
+    >>> import numpy as np
+    >>> # one allotype, both units on it: the single-block form (1 - q) p_i p_j / q
+    >>> P = np.ones((2, 1)); q = np.array([0.8]); pp = np.array([0.3, 0.4])
+    >>> c = _loss_cov(pp, q, np.array(["A"]), ["A", "A"], P)
+    >>> bool(abs(c[0, 1] - (1 - 0.8) * 0.3 * 0.4 / 0.8) < 1e-12)
+    True
+    """
+    p = np.asarray(p, dtype=float)
+    P = _fill_unpresented((np.asarray(presented, dtype=float) > 0).astype(float), keys, block)
+
+    f = 1.0 - np.asarray(q, dtype=float)               # chance this allotype IS lost
+    safe = f > 0
+    lf = np.zeros_like(f)
+    lf[safe] = np.log(f[safe])
+    # Presenting any never-lost allotype makes the product zero, whatever the rest of the set is.
+    never = P[:, ~safe].sum(1) > 0 if (~safe).any() else np.zeros(P.shape[0], dtype=bool)
+
+    li = P @ lf                                        # log d_i, over the f > 0 allotypes only
+    d = np.where(never, 0.0, np.exp(li))
+    inter = (P * lf) @ P.T                             # sum_a P_ia P_ja log f_a
+    dij = np.exp(li[:, None] + li[None, :] - inter)
+    dij = np.where(never[:, None] | never[None, :], 0.0, dij)
+
+    Q = 1.0 - d
+    cov = 1.0 - d[:, None] - d[None, :] + dij - np.outer(Q, Q)
+    scale = np.divide(p, Q, out=np.zeros_like(p), where=Q > 0)
+    return np.outer(scale, scale) * cov
 
 
 def energy(h, J, sel) -> float:
@@ -679,7 +925,7 @@ def _constraints(alle, k, universe, max_share):
     return codes, cap, must
 
 
-def _check_live(p, alle, block_live) -> None:
+def _check_live(p, alle, block_live, presented=None, presented_alleles=None) -> None:
     """Raise :class:`mhcmatch.portfolio.MarginalExceedsBlock` where a unit outlives its own block.
 
     **Checked on the units that were chosen, never on the pool.** ``p_i <= q_b`` is what makes
@@ -691,18 +937,34 @@ def _check_live(p, alle, block_live) -> None:
     if alle is None or (not isinstance(block_live, dict) and float(block_live) >= 1.0):
         return
     from . import portfolio as PF
-    _, q = _block_q([str(x) for x in alle], block_live)
-    over = p > q
+    codes, q = _block_q([str(x) for x in alle], block_live)
+    if presented is None:
+        bound = q
+    else:
+        # The bound is P(some presenting allotype survives), not P(the credited one does). It is
+        # weakly larger, so promiscuity can only ever admit a unit the single-block form refused --
+        # which is the point: that unit was refused for a loss it does not actually suffer.
+        qa, keys = _presented_q(alle, block_live, presented, presented_alleles)
+        P = _fill_unpresented((np.asarray(presented, dtype=float) > 0).astype(float), keys, alle)
+        f = 1.0 - qa
+        safe = f > 0
+        lf = np.zeros_like(f)
+        lf[safe] = np.log(f[safe])
+        never = P[:, ~safe].sum(1) > 0 if (~safe).any() else np.zeros(P.shape[0], dtype=bool)
+        bound = 1.0 - np.where(never, 0.0, np.exp(P @ lf))
+    over = p > bound
     if over.any():
-        j = int(np.argmax(p - q))
-        raise PF.MarginalExceedsBlock(int(over.sum()), int(p.size), p[j], q[j])
+        j = int(np.argmax(p - bound))
+        raise PF.MarginalExceedsBlock(int(over.sum()), int(p.size), p[j], bound[j])
 
 
 def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
            prevalence: float | None = None, rho: float = RHO_ASSAYED, gamma: float | None = None,
            rounds: int = 4, max_pool: int = MAX_POOL, block_live=1.0, universe=None,
            max_share: float | None = None, selectivity: float = 0.0,
-           expr_lvl=None, expr_norm=None) -> Cassette:
+           expr_lvl=None, expr_norm=None, features=None, feature_names=(),
+           coexpr=None, presented=None, presented_alleles=None,
+           graded_allotype: bool = False, dominance: bool = True) -> Cassette:
     """Choose ``k`` units (within ``tol``) from one donor's candidate pool, maximising ``H``.
 
     ``scores`` are aggregate log-odds --- what :func:`mhcmatch.rank.aggregate_score` returns --- for
@@ -758,6 +1020,44 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
         each at eight units. A manufacturing constraint, deliberately not an objective term: the
         loss coupling already prefers spread, and a second diversity term inside ``H``
         double-counts unless it is meant.
+
+    **Five further optional parameters carry the feature-based couplings**, all off by default and
+    all bit-identical when unset.
+
+    ``features`` / ``feature_names``
+        an ``(n, d)`` array of per-unit scalars, one coupling channel per column, and the names to
+        record on :attr:`Cassette.channels`. This is how chemistry and expression reach the pair
+        term: ``C_phys_buried``, ``C_phys_charge``, ``expr_lvl``, ``expr_norm`` and the selectivity
+        delta are per-unit scalars ``mhcmatch rank`` already emits and the objective has never seen.
+        Rows are indexed by the same pool order as ``scores``, and are trimmed with it.
+
+    ``coexpr``
+        a symmetric ``(n, n)`` pool-order matrix in ``[0, 1]``, one further channel.
+        :func:`mhcmatch.expression.coexpression` builds one over the GTEx tissue panel, so two units
+        whose source genes are on in the same tissues are coupled --- a mechanism no per-unit scalar
+        can express.
+
+    ``presented``
+        an ``(n, A)`` 0/1 matrix, "does allotype ``a`` present unit ``i``", columns in
+        ``np.unique`` order over ``alleles``. It changes the **loss coupling** from
+        one-allotype-per-unit to the exact set form (:func:`goal_energy`), so a unit with three
+        routes to the surface is not charged the loss of one. Build it from
+        :meth:`mhcmatch.store.Store.percent_ranks`. ``presented_alleles`` names its columns; pass
+        it whenever the donor's genotype is wider than the allotypes their candidates are credited
+        to, which it normally is.
+
+    ``graded_allotype``
+        ``True`` additionally swaps the equality **similarity** channel for
+        :func:`allotype_overlap` on the same ``presented`` matrix, so two units sharing their
+        strongest allele and differing on every other stop being scored as fully redundant. Needs
+        ``presented``; the two are separate switches because they answer different questions --- one
+        is how much a pair shares, the other is what a pair loses.
+
+    ``dominance``
+        ``False`` drops the score-dominance channel from :func:`overlap`. It is the one channel
+        built from the score rather than from a mechanism, and the pairwise statistic it corresponds
+        to fits *attractive* on the observational arm, where :func:`greedy` carries no bound. Kept
+        ``True`` by default so nothing moves without being asked.
 
     ``selectivity``
         a **stated** exchange rate, in expected responding units per log2-fold of tumour-over-normal
@@ -815,10 +1115,31 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
         from . import portfolio as PF
         return {} if alle is None else PF.coverage([alle[i] for i in idx], universe)
 
-    chans = ("sequence",) + (("allotype",) if alle is not None else ()) + ("dominance",)
+    # Every optional per-unit input is trimmed by the same `keep` the scores were, so a pool that
+    # exceeded MAX_POOL cannot land a feature row against the wrong candidate.
+    feats = names = None
+    if features is not None:
+        f = np.asarray(features, dtype=float)
+        feats = (f[:, None] if f.ndim == 1 else f)[keep]
+        names = tuple(feature_names) or tuple(f"feature{j}" for j in range(feats.shape[1]))
+        if len(names) != feats.shape[1]:
+            raise ValueError(f"select: {len(names)} feature_names against {feats.shape[1]} columns")
+    cox = None if coexpr is None else np.asarray(coexpr, dtype=float)[np.ix_(keep, keep)]
+    pres = None if presented is None else np.asarray(presented)[keep]
+    if graded_allotype and pres is None:
+        raise ValueError("graded_allotype needs `presented`; there is nothing to grade without it")
+    grad = allotype_overlap(pres) if graded_allotype else None
+
+    chans = (("sequence",)
+             + (("allotype_graded",) if grad is not None
+                else ("allotype",) if alle is not None else ())
+             + (("dominance",) if dominance else ()) + (names or ())
+             + (("coexpr",) if cox is not None else ())
+             + (("promiscuity",) if pres is not None else ()))
     if keep.size <= k:
         sel = list(range(keep.size))
-        _check_live(p[sel], None if alle is None else [alle[i] for i in sel], block_live)
+        _check_live(p[sel], None if alle is None else [alle[i] for i in sel], block_live,
+                    None if pres is None else pres[sel], presented_alleles)
         h = p + bonus
         return Cassette(index=[int(keep[i]) for i in sel], p=[float(p[i]) for i in sel],
                         energy=float(h[sel].sum()), lam=0.0, offset=float(b), rho=float(rho),
@@ -826,8 +1147,10 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
                         channels=chans, block_live=block_live, coverage=_cov(sel),
                         selectivity=float(selectivity))
 
-    sim = overlap(peps, alleles=alle, strength=ss)
-    h, J = goal_energy(p, sim, rho=rho, gamma=gamma, block=alle, block_live=block_live)
+    sim = overlap(peps, alleles=alle, strength=ss if dominance else None,
+                  features=feats, coexpr=cox, allotype_graded=grad)
+    h, J = goal_energy(p, sim, rho=rho, gamma=gamma, block=alle, block_live=block_live,
+                       presented=pres, presented_alleles=presented_alleles)
     h = h + bonus
     codes, cap, must = _constraints(alle, k, universe, max_share)
 
@@ -842,7 +1165,8 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
         if e > best_h + 1e-12:
             best, best_h = cand, e
             best_sw = sum(1 for a, bb in zip(sorted(first[:size]), cand) if a != bb)
-    _check_live(p[best], None if alle is None else [alle[i] for i in best], block_live)
+    _check_live(p[best], None if alle is None else [alle[i] for i in best], block_live,
+                None if pres is None else pres[best], presented_alleles)
     return Cassette(index=[int(keep[i]) for i in best], p=[float(p[i]) for i in best],
                     energy=float(best_h), lam=lam(h, best, len(best)), offset=float(b),
                     rho=float(rho), gamma=float(gamma), k=len(best), pool_n=pool_n,
