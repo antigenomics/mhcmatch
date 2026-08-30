@@ -125,7 +125,25 @@ one number measured on published per-unit assays, `gamma` is a stated preference
 variance traded for one expected unit, **per unit of the cassette**: a correlated count's mean is
 linear in `k` and its variance quadratic, so `gamma` is divided by the design effect `1 + rho(k-1)`
 to mean the same trade at every size). `rho_ij` spreads `rho` over pairs by how much two units share
-a way of failing: the same allotype, the same 3-mers, the same place on the dominance axis.
+a way of failing.
+
+**`--rule v2` poses the same problem the other way round, and it is the one to read first.** `p_i`
+is a probability, so the number of units that respond is a *random variable* and many size-*k* sets
+are indistinguishable in it. A sort already maximises the expected count; the sets it cannot tell
+apart are not a nuisance, they are the design freedom. So:
+
+> **mhcmatch returns, among all cassettes that are — with stated probability — no worse than the
+> ranked list, the one whose units share the fewest ways of failing.**
+
+Four ways of failing, all smooth except one: the restricting **allotype** (discrete, because HLA
+is), the source gene's **expression** across tissues, TCR-facing **chemistry**, and BLOSUM-graded
+**sequence** similarity of the TCR face. `--not-worse 1.0` returns the sort exactly; lower values
+buy diversity and say how often you are willing to be wrong. It is a **per-donor** guarantee — a
+cohort-level count needs a tighter floor than intuition suggests.
+
+```bash
+mhcmatch cassette select --candidates pool.tsv -k 20 --rule v2 --not-worse 0.7
+```
 
 ```bash
 mhcmatch cassette select --candidates pool.tsv -k 20 --tol 3 --out cassette.tsv

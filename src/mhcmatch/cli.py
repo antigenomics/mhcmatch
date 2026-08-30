@@ -1619,6 +1619,8 @@ def cmd_cassette_select(a):
                           expr_norm=[_f(r["expr_norm"]) for r in g])
         if a.no_dominance:
             sel_kw["dominance"] = False
+        if a.rule == "v2":
+            sel_kw.update(rule="v2", pi=a.not_worse, how=a.diversity)
         if a.feature_column:
             missing = [c for c in a.feature_column if c not in g[0]]
             if missing:
@@ -1682,6 +1684,8 @@ def cmd_cassette_select(a):
                         "energy": f"{c.energy:.6f}", "lam": f"{c.lam:.6f}",
                         "rho": c.rho, "gamma": c.gamma, "channels": "+".join(c.channels),
                         "block_live": c.block_live, "selectivity": c.selectivity,
+                        "rule": c.rule, "pi": c.pi, "not_worse": f"{c.not_worse:.4f}",
+                        "diversity": f"{c.diversity:.4f}",
                         "n_covered": c.coverage.get("n_covered", ""),
                         "n_allotypes": c.coverage.get("n_allotypes", "")})
         # A tolerance that is spent is a result, not a detail: the objective has an internal
@@ -1691,6 +1695,10 @@ def cmd_cassette_select(a):
             say(f"{donor}: {c.k} units, not {size} -- the objective peaks there inside the "
                 f"tolerance (adding the next unit costs more variance than it buys in mean)",
                 level=1)
+        if c.rule == "v2":
+            say(f"{donor}: v2 moved {c.swaps} of {c.k} slot(s) off the sort for diversity "
+                f"{c.diversity:.4f} ({c.how}), keeping P(not worse) = {c.not_worse:.3f} "
+                f"against the stated floor {c.pi:.2f}", level=1)
         cov = c.coverage
         say(f"{donor}: {c.k} of {c.pool_n}, yield {c.yield_:.3f} unit(s), lam {c.lam:+.3f} nats"
             + (f", {cov['n_covered']}/{cov['n_allotypes']} allotype(s) covered, "
@@ -2289,6 +2297,21 @@ def main(argv=None):
                          "stated design preference like --gamma: the shipped model fits both "
                          "expression terms POSITIVE because it was fitted on `will this respond`, "
                          "and `high in tumour, low in normal` is a different question (default: 0)")
+    cs.add_argument("--rule", choices=("v1", "v2"), default="v1",
+                    help="v1 maximises the mean-variance objective. v2 takes the plain sort as a "
+                         "floor and spends the slack on diversity: because p is a probability, "
+                         "many size-k sets are indistinguishable in how many units respond, and v2 "
+                         "returns the most diverse set that is still, with probability at least "
+                         "--not-worse, no worse than sorting (default: v1)")
+    cs.add_argument("--not-worse", type=float, default=0.5, metavar="P",
+                    help="v2 only: the floor on P(this cassette catches at least as much as the "
+                         "top-k sort). 1.0 returns the sort itself; lower buys more diversity and "
+                         "says how often you are willing to be wrong (default: 0.5)")
+    cs.add_argument("--diversity", choices=("minmax", "mean"), default="minmax",
+                    help="v2 only: how diversity is aggregated over the four axes. `minmax` "
+                         "maximises the WORST-covered axis, since a cassette is undone by its worst "
+                         "shared failure mode; `mean` averages them, which dilutes any single axis "
+                         "that separates (default: minmax)")
     cs.add_argument("--feature-column", action="append", metavar="COL",
                     help="add a coupling channel on this per-unit column, so two units alike on it "
                          "cost each other. Repeatable. `rank --score aggregate` emits the four "

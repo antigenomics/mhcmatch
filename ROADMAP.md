@@ -1781,6 +1781,32 @@ a donor.
 
 ### Beside §5e. Cassette design
 
+**NeoRanking is the full-cycle benchmark we do not yet run, and it is the one worth the stage.**
+Müller M, Huber F, Arnaud M, Kraemer AI, Altimiras ER, Michaux J, Taillandier-Coindard M,
+Chiffelle J, Murgues B, Gehret T, Auger A, Stevenson BJ, Coukos G, Harari A, Bassani-Sternberg M.
+"Machine learning methods and harmonized datasets improve immunogenic neoantigen prediction."
+*Immunity* 2023;**56**(11):2650-2663.e6.
+doi:[10.1016/j.immuni.2023.09.002](https://doi.org/10.1016/j.immuni.2023.09.002) ·
+PMID [37816353](https://pubmed.ncbi.nlm.nih.gov/37816353/). Code:
+<https://github.com/bassanilab/NeoRanking>.
+
+What it carries: **131 patients** (120 reprocessed from two external large-scale immunogenicity
+screens plus 11 in-house), **46,017 somatic SNVs**, **1,781,445 neo-peptides**, of which **212
+mutations and 178 neo-peptides are immunogenic**. It reports improving neoantigen ranking by up to
+30%, and the reason to run against it is not the AUC: it publishes **harmonised datasets built for
+benchmarking companion algorithms**, which is the one thing a full-cycle comparison needs and which
+nobody else deposits. It is also the second independent method to name **binding promiscuity** as
+predictive -- the axis `bench/results/cassette_couplings.md` measures a ceiling on -- alongside
+HLA presentation hotspots and the oncogenicity of the mutated gene.
+
+**Quantify the leakage before any head-to-head.** Its two external screens are very likely the
+sources behind our own `TESLA` and `HiTIDE` slices of
+`neoantigens/neoantigens_tested_peptides.tsv.gz`, and TESLA and HiTIDE are two of EPIC's seven
+fitted screens. Overlap with the fitting corpus has to be counted by patient *and* by peptide and
+carried as a column, exactly as `neoantigens/nci_parkhurst_gi.parquet` carries `in_epic_fit`. A
+number quoted against a harmonised set that contains our training data is worse than no number.
+
+
 ### 5f. Response threshold and bistability --- designed, nothing measured
 
 `F(e)` (`mhcmatch.precursor`) answers *does a T cell exist*. It does **not** answer *will a response

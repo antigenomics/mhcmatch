@@ -75,6 +75,7 @@ import numpy as np
 
 __all__ = [
     "KMER", "KAPPA", "GAMMA", "RHO_ASSAYED", "MAX_POOL",
+    "tcr_face", "sequence_overlap", "not_worse", "diversity", "normalise_axes", "swap_for_diversity", "build_axes",
     "prob_offset", "group_offsets", "overlap", "pair_stats", "risk_aversion",
     "selectivity_delta",
     "goal_energy", "greedy", "refine", "log_ek", "lam",
@@ -220,6 +221,117 @@ def _kmer_matrix(peptides, k: int) -> np.ndarray:
     for i, cols in enumerate(rows):
         A[i, cols] = 1.0
     return A
+
+
+def tcr_face(peptide: str, cls: str = "mhc1", register: int | None = None) -> str:
+    """The peptide with its MHC-facing positions deleted --- the residues a TCR can actually read.
+
+    Delegates the split to :func:`mhcmatch.mimicry.masks`, so the face is the same one every other
+    channel in the package uses: :data:`mhcmatch.complement.ANCHORS` for class I, and the floating
+    9-mer core's P1/P4/P6/P9 for class II. It is deliberately *not* seqtree's
+    ``layout.DEFAULTS["mhc1"]``, which masks P2 and POmega only.
+
+    **Deleting the columns is what makes a masked alignment possible at all.** No aligner in the
+    stack scores a masked dense matrix -- ``seqtree``'s ``PositionalMatrix`` reaches only the search
+    engine, only with zero indels, and is silently ignored when its width does not equal the query
+    length. In an ungapped comparison masking a position and deleting it are the same operation, so
+    slicing first and aligning after is exact rather than an approximation.
+
+    >>> tcr_face("SIINFEKLL")        # anchors P1-P3 and POmega-1, POmega removed
+    'NFEK'
+    """
+    idx = mimicry_masks(len(peptide), cls, peptide, register)["tcr"]
+    return "".join(peptide[i] for i in idx)
+
+
+def mimicry_masks(length, cls, peptide, register):
+    """:func:`mhcmatch.mimicry.masks`, imported lazily so ``cassette`` stays importable alone."""
+    from .mimicry import masks
+    return masks(length, cls, peptide, register)
+
+
+def sequence_overlap(peptides, cls: str = "mhc1", registers=None, mask: str = "face",
+                     h: float | None = None, threads: int = 0) -> np.ndarray:
+    """BLOSUM-graded pairwise sequence similarity in ``[0, 1]``, one ``(n, n)`` matrix.
+
+    **This replaces a channel that was measured to be a duplicate detector.** Counting *exactly*
+    shared 3-mers is zero on almost every real pair: over the eight TESLA and eleven HiTIDE donors,
+    only **4,053 of 150,994 within-donor pairs (2.68%)** share any 3-mer at all, and **17.6% of
+    those that do are the same peptide window**. A channel that is zero on 97% of pairs cannot
+    order them, which is why ``rho_seq`` does not hold its sign across cassette sizes. It is also
+    blind to chemistry: ``GILGFVFTL`` against ``GILGFVFTV`` and against ``GILGFVFTW`` share the same
+    six 3-mers, though one substitution is conservative and the other is not. Here they score 6 and
+    19 on the BLOSUM distance.
+
+    Built on :func:`seqtree.pairwise.dist_matrix`, which returns the sequence-level Gram transform
+    ``d(a, b) = s(a,a) + s(b,b) - 2 s(a,b)`` -- **non-negative, symmetric and zero on the
+    diagonal**, so it is a distance rather than a raw score. That symmetry is not decoration:
+    :func:`goal_energy` halves the pair sum assuming it, and the obvious alternative
+    (:func:`mhcmatch.mimicry.blosum62_kernel` at ``normalise=True``) subtracts the *query's*
+    self-score and is therefore asymmetric.
+
+    ``mask="face"`` compares TCR faces (:func:`tcr_face`); ``"full"`` compares whole peptides.
+    Gaps are handled by the aligner, so units of different length are compared rather than scored
+    zero -- which matters, since only **38% of TESLA and 46% of HiTIDE within-donor pairs are of
+    equal length**.
+
+    ``h`` is the bandwidth of ``sim = exp(-d / h)``, defaulting to the median off-diagonal distance.
+    **It needs no calibration and never did:** :func:`goal_energy` divides the off-diagonal mean to
+    1, so any global scale cancels and only the pair ordering survives. That is also why swapping
+    this channel in leaves :data:`KAPPA`, :data:`RHO_ASSAYED` and :data:`GAMMA` untouched.
+
+    Speed is not a consideration at cassette scale: 26.1 M pairs/s measured on the HiTIDE pool
+    (1,558 units, 92.9 ms for the whole matrix), in C++ with the GIL released.
+
+    **A dense matrix is the right shape here, and a thresholded index search is not** --- measured,
+    because the opposite is the natural guess. Building a ``seqtree.Index`` over the faces and
+    batch-querying is 20x faster (4.3 ms against 92.9 ms on that pool), but at ``max_subs=2`` it
+    returns **0.65% of pairs**, which is the same near-binary channel this function exists to
+    replace. The reason is the distance distribution: on one donor's 151 units the off-diagonal
+    BLOSUM distances run **min 8, median 65, max 120**, so *every* pair sits within 2x the median
+    and carries similarity above 0.05, with half above ``exp(-1)``. A trie prunes nothing against a
+    threshold loose enough to be faithful. The index is the right tool at pool-wide or TCGA scale,
+    where ``n`` is 10^5 and the dense matrix cannot be formed at all; it is the wrong one here.
+
+    >>> import numpy as np
+    >>> o = sequence_overlap(["GILGFVFTL", "GILGFVFTL", "NLVPMVATV"])
+    >>> float(o[0, 1])            # identical peptides
+    1.0
+    >>> bool(o[0, 2] < o[0, 1])   # unrelated scores lower
+    True
+    """
+    import seqtree
+    from seqtree import pairwise
+
+    peps = [str(x).strip().upper() for x in peptides]
+    n = len(peps)
+    if mask == "face":
+        regs = [None] * n if registers is None else list(registers)
+        seqs = [tcr_face(p, cls, regs[i]) for i, p in enumerate(peps)]
+        empty = [peps[i] for i, f in enumerate(seqs) if not f]
+        if empty:
+            raise ValueError(
+                f"{len(empty)} peptide(s) have no TCR-facing residue once the anchors are removed, "
+                f"e.g. {empty[0]!r} at length {len(empty[0])}. Class-I anchors take five positions, "
+                "so a unit must be at least six residues to carry a face; pass mask='full' to "
+                "compare whole peptides instead.")
+    elif mask == "full":
+        seqs = peps
+    else:
+        raise ValueError(f"mask must be 'face' or 'full'; got {mask!r}")
+
+    d = np.asarray(pairwise.dist_matrix(seqs, seqs, seqtree.SubstitutionMatrix.blosum62(),
+                                        mode="global", threads=threads), dtype=float)
+    if n > 1:
+        off = d[~np.eye(n, dtype=bool)]
+        # The median, not the mean: one near-duplicate pair at distance 0 and one unrelated pair at
+        # 100 should not move the bandwidth the other C(n,2) - 2 pairs are read on.
+        scale = float(np.median(off)) if h is None else float(h)
+    else:
+        scale = 1.0
+    out = np.exp(-d / max(scale, 1e-9))
+    np.fill_diagonal(out, 0.0)
+    return np.clip(out, 0.0, 1.0)
 
 
 def _span_channel(z) -> np.ndarray:
@@ -659,12 +771,305 @@ def _loss_cov(p, q, keys, block, presented) -> np.ndarray:
     return np.outer(scale, scale) * cov
 
 
+def not_worse(sel, ref, p, J, exact_max: int = 24) -> float:
+    """``P(B(S) >= B(R))`` --- the chance this cassette catches at least as much as the reference.
+
+    **This is the constraint the v2 objective is posed under.** ``p_i`` is a probability, so the
+    number of units that respond is a random variable and many size-*k* sets are indistinguishable
+    in it. That degeneracy is the design freedom: rather than trading expected responders away for
+    variance, the rule keeps every set that is, with stated probability, no worse than simply
+    sorting, and spends what is left on diversity.
+
+    **Units in both sets cancel exactly**, because they are the same random variable and not merely
+    identically distributed. With ``A = S \\ R`` and ``C = R \\ S``,
+
+        D = B(S) - B(R) = B(A) - B(C)
+
+    so only the **symmetric difference** carries any variance at all. That is not an approximation
+    and it is what makes this cheap: the objective shares 17 of 20 slots with the sort on the TESLA
+    pools, so the difference is usually three units against three.
+
+    ``E[D] = sum_A p_i - sum_C p_j`` and ``Var[D] = Var[B(A)] + Var[B(C)] - 2 Cov(B(A), B(C))``,
+    every covariance read off the same ``J`` the coupling already carries --- including the exact
+    HLA-loss term when ``block_live`` priced one. So the correlation structure still enters, as the
+    **scale of the slack** rather than as a penalty subtracted from the yield.
+
+    Two evaluators, and which one ran is reported by the caller rather than guessed at. Up to
+    ``exact_max`` units in the symmetric difference the Poisson-binomial is convolved exactly under
+    an independence approximation *within* each side; beyond that a normal approximation with a
+    continuity correction is used. Both read the same first two moments.
+
+    Returns 1.0 when the two sets are equal --- nothing has been given up, so the guarantee is
+    total.
+
+    >>> import numpy as np
+    >>> p = np.array([0.5, 0.5, 0.5, 0.5])
+    >>> J = np.zeros((4, 4))
+    >>> float(not_worse([0, 1], [0, 1], p, J))          # the same set
+    1.0
+    >>> bool(not_worse([2, 3], [0, 1], p, J) > 0.4)     # a swap between equals
+    True
+    """
+    S, R = set(int(i) for i in sel), set(int(i) for i in ref)
+    if S == R:
+        return 1.0
+    A = sorted(S - R)
+    C = sorted(R - S)
+    p = np.asarray(p, dtype=float)
+    J = np.asarray(J, dtype=float)
+
+    mean = float(p[A].sum() - p[C].sum()) if A or C else 0.0
+    var = _sum_var(p, J, A) + _sum_var(p, J, C)
+    if A and C:
+        # Cov(B(A), B(C)) = sum_{i in A, j in C} Cov(R_i, R_j), and J holds gamma * that covariance
+        # for every pair the coupling models. Subtracted twice: a candidate unit correlated with the
+        # reference unit it displaces moves the difference less, not more.
+        var -= 2.0 * float(J[np.ix_(A, C)].sum())
+    if var <= 0.0:
+        return 1.0 if mean >= 0.0 else 0.0
+
+    if len(A) + len(C) <= exact_max:
+        return _poisson_binomial_ge(p[A], p[C])
+    from math import erf, sqrt
+    z = (mean + 0.5) / sqrt(var)                  # continuity correction: D is integer-valued
+    return 0.5 * (1.0 + erf(z / sqrt(2.0)))
+
+
+def _sum_var(p, J, idx) -> float:
+    """``Var[sum_{i in idx} R_i]`` --- the Bernoulli variances plus every modelled pair covariance.
+
+    ``J`` is ``gamma`` times the covariance, and ``gamma`` divides out of the comparison because it
+    scales both sides of ``D`` identically; what matters is that the same ``J`` prices both.
+    """
+    if not len(idx):
+        return 0.0
+    q = np.asarray(p, dtype=float)[idx]
+    return float((q * (1.0 - q)).sum() + np.asarray(J)[np.ix_(idx, idx)].sum())
+
+
+def _poisson_binomial_ge(pa, pc) -> float:
+    """``P(sum Bern(pa) >= sum Bern(pc))`` by exact convolution over both sides.
+
+    Independence *within* each side is the one approximation; the exact cancellation of the shared
+    units has already happened above, which is where the correlation actually mattered. Both
+    distributions are short --- the symmetric difference is a handful of units --- so the two
+    convolutions are a few hundred multiplications.
+    """
+    def pmf(ps):
+        d = np.ones(1)
+        for x in ps:
+            d = np.convolve(d, [1.0 - x, x])
+        return d
+    fa, fc = pmf(np.asarray(pa, dtype=float)), pmf(np.asarray(pc, dtype=float))
+    # P(A >= C) = sum_c fc[c] * P(A >= c)
+    tail = np.cumsum(fa[::-1])[::-1]              # tail[c] = P(A >= c)
+    tot = 0.0
+    for c, w in enumerate(fc):
+        tot += w * (tail[c] if c < tail.size else 0.0)
+    return float(min(max(tot, 0.0), 1.0))
+
+
+def diversity(sim, sel, how: str = "minmax") -> float:
+    """How little a chosen set shares, given per-axis ``(n, n)`` similarities. Higher is better.
+
+    ``sim`` is a mapping ``{axis name: (n, n) matrix}`` --- allotype, expression, chemistry,
+    sequence. Each axis is reduced to its mean pair similarity over the chosen set, and then:
+
+    * ``"minmax"`` --- ``1 - max`` over axes. A cassette is undone by its **worst** shared failure
+      mode, not its average one, and averaging is measured to dilute: seven channels
+      (``feature-only``) lost to two (``select-dom``) on the same pools, because every axis added
+      makes every existing axis count for less.
+    * ``"mean"`` --- ``1 - mean`` over axes. What the v1 overlap did.
+
+    **Each axis is standardised to unit off-diagonal mean over the pool before the reduction.** A
+    max over axes on different scales reads whichever axis has the largest raw spread rather than
+    the one that is actually shared, and the axes here are a 0/1 indicator, a log2 abundance, a Rose
+    propensity and a BLOSUM kernel. ``"mean"`` needs it less and gets it too, so the two aggregations
+    are compared on one normalisation rather than on two.
+
+    >>> import numpy as np
+    >>> a = {"x": np.array([[0.0, 1.0], [1.0, 0.0]]), "y": np.zeros((2, 2))}
+    >>> float(diversity(a, [0, 1], "minmax"))   # the worst axis is fully shared
+    0.0
+    >>> float(diversity(a, [0, 1], "mean"))
+    0.5
+    """
+    idx = np.asarray(sorted(int(i) for i in sel), dtype=int)
+    if idx.size < 2:
+        return 1.0
+    per = []
+    for m in sim.values():
+        m = np.asarray(m, dtype=float)
+        sub = m[np.ix_(idx, idx)]
+        k = idx.size
+        per.append(float(sub.sum() / (k * (k - 1))))       # diagonal is zero by construction
+    if not per:
+        return 1.0
+    if how not in ("minmax", "mean"):
+        raise ValueError(f"how must be 'minmax' or 'mean'; got {how!r}")
+    worst = max(per) if how == "minmax" else float(np.mean(per))
+    # **Not clipped, deliberately.** The axes arrive on unit off-diagonal mean over the pool
+    # (:func:`normalise_axes`), so a typical set scores about 1 and a clip to [0, 1] would pin every
+    # cassette at 0 and delete the gradient the swap loop reads -- which it did, silently, until the
+    # first end-to-end run returned the sort at every stated tolerance. Read the value as a
+    # *contrast* against a random pair from the same pool: 0 is exactly as shared as chance,
+    # positive is less shared, negative is more.
+    return float(1.0 - worst)
+
+
+def normalise_axes(sim: dict) -> dict:
+    """Each axis divided by its own off-diagonal mean, so a max over axes is not a scale contest."""
+    out = {}
+    for name, m in sim.items():
+        a = np.array(m, dtype=float, copy=True)
+        np.fill_diagonal(a, 0.0)
+        n = a.shape[0]
+        mean = a.sum() / max(n * (n - 1), 1)
+        out[name] = a / mean if mean > 0 else a
+    return out
+
+
 def energy(h, J, sel) -> float:
     """``H`` of one chosen set. The pair sum is halved because ``J`` is symmetric."""
     idx = np.asarray(sel, dtype=int)
     if idx.size == 0:
         return 0.0
     return float(np.asarray(h)[idx].sum() - np.asarray(J)[np.ix_(idx, idx)].sum() / 2.0)
+
+
+def build_axes(peptides, alleles=None, expression=None, physchem=None, coexpr=None,
+               presented=None, cls: str = "mhc1", registers=None, mask: str = "face") -> dict:
+    """The four ways a pair of units can share a failure, as ``{axis: (n, n)}``, normalised.
+
+    One matrix per **mechanism**, not per column: ``expression`` and ``physchem`` are ``(n, d)``
+    blocks whose columns are averaged into one axis each, because ``expr_lvl`` and ``expr_norm`` are
+    two readings of one thing and counting them separately would let the number of columns decide
+    how much abundance matters. That is the dilution :func:`diversity` is built to avoid, and it
+    should not be reintroduced one level up.
+
+    * **allotype** --- ``1[a_i = a_j]``, or the graded presented-allele overlap when ``presented``
+      is given (:func:`allotype_overlap`). The one axis that is discrete, because HLA is.
+    * **expression** --- ``(n, d)``; the source gene's abundance, its healthy-tissue level and their
+      difference. ``coexpr`` is folded in here rather than made its own axis: GTEx tissue-profile
+      similarity is a statement about abundance, and :func:`mhcmatch.expression.coexpression`
+      already returns it as a matrix.
+    * **physchem** --- ``(n, d)``; TCR-face burial and charge.
+    * **sequence** --- :func:`sequence_overlap`, BLOSUM-graded over the TCR face.
+
+    Every axis is put on unit off-diagonal mean by :func:`normalise_axes` before it is returned, so
+    a ``minmax`` reduction compares shared-ness rather than scale. An axis the caller cannot supply
+    is simply absent, and which axes were built is part of the result.
+    """
+    peps = [str(x).strip().upper() for x in peptides]
+    n = len(peps)
+    out = {}
+    if alleles is not None or presented is not None:
+        if presented is not None:
+            out["allotype"] = allotype_overlap(presented)
+        else:
+            a = np.asarray(alleles)
+            m = (a[:, None] == a[None, :]).astype(float)
+            np.fill_diagonal(m, 0.0)
+            out["allotype"] = m
+    for name, block in (("expression", expression), ("physchem", physchem)):
+        if block is None:
+            continue
+        f = np.asarray(block, dtype=float)
+        if f.ndim == 1:
+            f = f[:, None]
+        if f.shape[0] != n:
+            raise ValueError(f"build_axes: {name} has {f.shape[0]} rows against {n} peptides")
+        cols = [_span_channel(f[:, j]) for j in range(f.shape[1])]
+        m = np.mean(cols, axis=0)
+        np.fill_diagonal(m, 0.0)
+        out[name] = m
+    if coexpr is not None:
+        c = np.clip(np.nan_to_num(np.asarray(coexpr, dtype=float), nan=0.0), 0.0, 1.0)
+        np.fill_diagonal(c, 0.0)
+        out["expression"] = np.mean([out["expression"], c], axis=0) if "expression" in out else c
+    out["sequence"] = sequence_overlap(peps, cls=cls, registers=registers, mask=mask)
+    return normalise_axes(out)
+
+
+def swap_for_diversity(sim: dict, p, J, ref, pi: float = 0.5, how: str = "minmax",
+                       rounds: int = 8, codes=None, cap: int | None = None, must=()) -> list:
+    """The v2 rule: start from the ranked list, then trade slots for diversity while it stays safe.
+
+    ``ref`` is the reference cassette --- the top-*k* sort, which maximises the expected number of
+    responding units by construction. Every step swaps one chosen unit for one unchosen one, taking
+    the exchange that raises :func:`diversity` most among those keeping
+    ``not_worse(S, ref) >= pi``. It stops when no admissible swap improves diversity.
+
+    **The sort is therefore the floor, not the rival.** The rule cannot wander into a set that is
+    probably worse than sorting, because ``pi`` is checked against ``ref`` itself at every step
+    rather than against the previous iterate --- checking against the iterate would let a chain of
+    individually-safe steps drift arbitrarily far.
+
+    The diversity scan is vectorised and exact. For one axis, writing ``c_i = sum_{j in S} M[ij]``
+    (one matrix-vector product per pass), swapping ``u`` out for ``v`` in changes that axis's pair
+    sum by ``c_v - c_u - M[v, u]``, so the whole ``k x (n - k)`` table of deltas is an outer
+    difference rather than ``k(n-k)`` submatrix sums.
+
+    ``not_worse`` is evaluated **lazily**, in descending order of the diversity it would buy, and
+    the first admissible candidate is taken. Most passes evaluate it once or twice: the probability
+    constraint is slack near the sort and only binds once several slots have moved.
+
+    ``codes`` / ``cap`` / ``must`` are the manufacturing constraints :func:`greedy` already takes,
+    applied here as a feasibility mask on the same scan.
+    """
+    sel = sorted(int(i) for i in ref)
+    ref = list(sel)
+    n = len(p)
+    mats = [np.asarray(m, dtype=float) for m in sim.values()]
+    if not mats:
+        return sel
+    codes = None if codes is None else np.asarray(codes, dtype=int)
+
+    def axis_sums(cur):
+        ind = np.zeros(n)
+        ind[cur] = 1.0
+        return [M @ ind for M in mats]
+
+    for _ in range(max(int(rounds), 0)):
+        cur = np.array(sel, dtype=int)
+        inside = np.zeros(n, dtype=bool)
+        inside[cur] = True
+        outside = np.flatnonzero(~inside)
+        if not outside.size:
+            break
+        cs = axis_sums(cur)
+        k = cur.size
+        base = [float(c[cur].sum() / 2.0) for c in cs]           # pair sum of the current set
+        # delta[a][u_pos, v_pos] -- the change in axis a's pair sum from swapping cur[u] for
+        # outside[v]. Exact, and one broadcast per axis rather than k(n-k) submatrix reductions.
+        cand = []
+        for a, M in enumerate(mats):
+            d = cs[a][outside][None, :] - cs[a][cur][:, None] - M[np.ix_(cur, outside)]
+            cand.append((base[a] + d) / (k * (k - 1) / 2.0))     # mean pair similarity after
+        stacked = np.stack(cand)                                  # (axes, k, n-k)
+        worst = stacked.max(0) if how == "minmax" else stacked.mean(0)
+        gain = (1.0 - worst) - diversity(sim, sel, how)
+
+        if codes is not None:
+            # A swap may not empty a `must` block, nor overfill one past `cap`.
+            counts = np.bincount(codes[cur], minlength=int(codes.max()) + 1)
+            ok_out = np.array([counts[codes[u]] > 1 or codes[u] not in must for u in cur])
+            ok_in = np.array([cap is None or counts[codes[v]] < cap for v in outside])
+            gain = np.where(ok_out[:, None] & ok_in[None, :], gain, -np.inf)
+
+        order = np.argsort(-gain, axis=None)
+        moved = False
+        for flat in order:
+            u_pos, v_pos = np.unravel_index(flat, gain.shape)
+            if not np.isfinite(gain[u_pos, v_pos]) or gain[u_pos, v_pos] <= 1e-12:
+                break                                             # nothing left that improves
+            trial = sorted(set(sel) - {int(cur[u_pos])} | {int(outside[v_pos])})
+            if not_worse(trial, ref, p, J) >= pi:
+                sel, moved = trial, True
+                break
+        if not moved:
+            break
+    return sel
 
 
 def _under_cap(live, codes, counts, cap):
@@ -867,6 +1272,17 @@ class Cassette:
     coverage: dict = field(default_factory=dict)
     #: The stated tumour-over-normal exchange rate charged to the field. ``0.0`` is off.
     selectivity: float = 0.0
+    #: Which selection rule produced this set --- ``"v1"`` the mean-variance objective, ``"v2"`` the
+    #: degeneracy rule. Recorded because a number cites the rule that produced it.
+    rule: str = "v1"
+    #: v2 only: the stated floor on ``P(this set catches at least as much as the sort)``.
+    pi: float = 0.0
+    #: v2 only: how diversity was aggregated over axes --- ``"minmax"`` or ``"mean"``.
+    how: str = ""
+    #: v2 only: the realised ``P(not worse than the sort)``, which sits at or just above ``pi``.
+    not_worse: float = 0.0
+    #: v2 only: the diversity actually reached, on the same scale ``how`` defines.
+    diversity: float = 0.0
 
     @property
     def yield_(self) -> float:
@@ -964,7 +1380,9 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
            max_share: float | None = None, selectivity: float = 0.0,
            expr_lvl=None, expr_norm=None, features=None, feature_names=(),
            coexpr=None, presented=None, presented_alleles=None,
-           graded_allotype: bool = False, dominance: bool = True) -> Cassette:
+           graded_allotype: bool = False, dominance: bool = True,
+           rule: str = "v1", pi: float = 0.5, how: str = "minmax", axes=None,
+           reference=None) -> Cassette:
     """Choose ``k`` units (within ``tol``) from one donor's candidate pool, maximising ``H``.
 
     ``scores`` are aggregate log-odds --- what :func:`mhcmatch.rank.aggregate_score` returns --- for
@@ -1020,6 +1438,19 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
         each at eight units. A manufacturing constraint, deliberately not an objective term: the
         loss coupling already prefers spread, and a second diversity term inside ``H``
         double-counts unless it is meant.
+
+    **``rule="v2"`` selects on the degeneracy instead of on a mean-variance trade.** ``p_i`` is a
+    probability, so the number of units that respond is a random variable and many size-*k* sets are
+    indistinguishable in it. v2 takes the top-*k* sort as its reference, then swaps slots to raise
+    :func:`diversity` while :func:`not_worse` against that reference stays at or above ``pi`` --- so
+    the sort is a floor the rule cannot fall below by more than a stated probability, and what it
+    buys is spread across the four axes :func:`build_axes` returns. ``pi = 1.0`` returns the sort
+    exactly. ``how`` picks the aggregation over axes (``"minmax"`` or ``"mean"``), and ``axes``
+    overrides the built ones. ``gamma``, ``rho``, ``block_live`` and the feature channels below all
+    still apply --- they build the ``J`` whose covariances ``not_worse`` reads.
+
+    ``rule="v1"`` (the default, and what every recorded result was computed under) is the
+    mean-variance objective and is untouched.
 
     **Five further optional parameters carry the feature-based couplings**, all off by default and
     all bit-identical when unset.
@@ -1153,6 +1584,32 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
                        presented=pres, presented_alleles=presented_alleles)
     h = h + bonus
     codes, cap, must = _constraints(alle, k, universe, max_share)
+
+    if rule == "v2":
+        ax = axes if axes is not None else build_axes(
+            peps, alleles=alle, expression=feats if feats is not None else None,
+            coexpr=cox, presented=pres, cls="mhc1")
+        # The anchor is the top-k sort unless the caller names a better one. It matters more than
+        # it looks: v2 only ever trades capture away from its reference, so the reference is a
+        # *floor* on what the rule can achieve and never a rival it can beat. Anchoring on a rule
+        # that already out-captures the sort therefore keeps that gain and spends only what is left.
+        ref = (sorted(int(i) for i in reference) if reference is not None
+               else sorted(np.argsort(-ss, kind="stable")[:k].tolist()))
+        best = swap_for_diversity(ax, p, J, ref, pi=pi, how=how,
+                                  codes=codes, cap=cap, must=must)
+        _check_live(p[best], None if alle is None else [alle[i] for i in best], block_live,
+                    None if pres is None else pres[best], presented_alleles)
+        return Cassette(index=[int(keep[i]) for i in best], p=[float(p[i]) for i in best],
+                        energy=energy(h, J, best), lam=lam(h, best, len(best)),
+                        offset=float(b), rho=float(rho), gamma=float(gamma), k=len(best),
+                        pool_n=pool_n, trimmed=trimmed,
+                        swaps=len(set(best) - set(ref)), channels=tuple(ax),
+                        block_live=block_live, coverage=_cov(best),
+                        selectivity=float(selectivity), rule="v2", pi=float(pi), how=how,
+                        not_worse=not_worse(best, ref, p, J),
+                        diversity=diversity(ax, best, how))
+    if rule != "v1":
+        raise ValueError(f"rule must be 'v1' or 'v2'; got {rule!r}")
 
     upper = min(k + tol, keep.size)
     first = greedy(h, J, upper, codes=codes, cap=cap, must=must)

@@ -975,3 +975,125 @@ def test_a_wider_genotype_than_the_credited_alleles_is_the_normal_case():
                           presented=wide, presented_alleles=names)
     _, J1 = CA.goal_energy(np.full(12, 0.2), np.zeros((12, 12)), block=alle, block_live=0.7)
     assert np.allclose(J, J1, atol=1e-12)      # the empty columns carry no unit, so nothing moves
+
+
+# --------------------------------------------- v2: the degeneracy rule and the smooth sequence axis
+def test_the_blosum_sequence_axis_grades_what_shared_kmers_cannot():
+    """The defect the axis replaces, stated as a test rather than as prose.
+
+    `GILGFVFTL` against `GILGFVFTV` and against `GILGFVFTW` share the same six 3-mers, so the v1
+    channel scores them identically -- but L->V is conservative and L->W is not. The BLOSUM axis has
+    to separate them, and it has to be symmetric, because `goal_energy` halves the pair sum assuming
+    it and the obvious alternative kernel is not."""
+    peps = ["GILGFVFTL", "GILGFVFTV", "GILGFVFTW", "NLVPMVATV"]
+    o = CA.sequence_overlap(peps, mask="full")
+    assert np.allclose(o, o.T, atol=1e-12)
+    assert np.allclose(np.diag(o), 0.0)
+    assert o[0, 1] > o[0, 2] > o[0, 3]                      # conservative > radical > unrelated
+
+    A = CA._kmer_matrix(peps, CA.KMER)
+    v1 = np.minimum((A @ A.T).astype(float) / CA.KAPPA, 1.0)
+    assert v1[0, 1] == v1[0, 2]                             # v1 cannot tell them apart
+    assert o[0, 1] != o[0, 2]                               # v2 can
+
+    ident = CA.sequence_overlap(["SIINFEKLL", "SIINFEKLL"], mask="full")
+    assert abs(float(ident[0, 1]) - 1.0) < 1e-12
+
+
+def test_the_sequence_axis_masks_the_anchors_and_needs_a_face():
+    """The face is the same one every other channel uses -- five class-I pockets, not seqtree's two
+    -- and a peptide too short to carry one raises rather than being silently compared whole."""
+    assert CA.tcr_face("SIINFEKLL") == "NFEK"
+    assert CA.tcr_face("GILGFVFTL") == "GFVF"
+    masked = CA.sequence_overlap(["SIINFEKLL", "AIINFEKLA"], mask="face")
+    full = CA.sequence_overlap(["SIINFEKLL", "AIINFEKLA"], mask="full")
+    assert masked[0, 1] > full[0, 1]        # the two differ only at anchors, so the face is identical
+    with pytest.raises(ValueError, match="TCR-facing"):
+        CA.sequence_overlap(["SIINF", "AIINF"], mask="face")
+
+
+def test_not_worse_is_one_on_the_same_set_and_matches_the_convolution():
+    """`P(B(S) >= B(R))` is the whole v2 constraint, so it is checked against a direct simulation
+    rather than against itself. Shared units cancel exactly -- they are the same random variable,
+    not merely identically distributed -- so an identical set has to return exactly 1."""
+    rng = np.random.default_rng(7)
+    n = 12
+    p = rng.uniform(0.05, 0.9, n)
+    J = np.zeros((n, n))
+    assert CA.not_worse([1, 2, 3], [3, 2, 1], p, J) == 1.0
+
+    for _ in range(4):
+        sel = sorted(rng.choice(n, 5, replace=False).tolist())
+        ref = sorted(rng.choice(n, 5, replace=False).tolist())
+        draws = rng.random((200_000, n)) < p
+        mc = float((draws[:, sel].sum(1) >= draws[:, ref].sum(1)).mean())
+        assert abs(CA.not_worse(sel, ref, p, J) - mc) < 0.01
+        assert abs(CA.not_worse(sel, ref, p, J, exact_max=0) - mc) < 0.02   # the normal branch
+
+
+def test_the_degeneracy_rule_returns_the_sort_when_no_slack_is_allowed():
+    """`pi = 1.0` says "never accept a set that might catch less", and only the sort itself clears
+    that, so the rule must return it. This is the identity that makes `pi` interpretable: it is the
+    probability the design is willing to be wrong, and at 1 there is no design freedom at all."""
+    s, peps, alle = pool(n=40)
+    a = CA.select(s, peps, alle, k=10, rule="v2", pi=1.0)
+    top = sorted(np.argsort(-np.asarray(s), kind="stable")[:10].tolist())
+    assert sorted(a.index) == top
+    assert a.rule == "v2" and a.not_worse == 1.0 and a.swaps == 0
+
+
+def test_relaxing_the_band_buys_diversity_and_never_costs_the_guarantee():
+    """Monotone in the stated tolerance: a looser `pi` can only reach a weakly more diverse set,
+    because the admissible region grows. And the realised guarantee never drops below what was
+    asked, which is what makes the number reportable rather than decorative."""
+    s, peps, alle = pool(n=60)
+    seen = []
+    for pi in (1.0, 0.7, 0.5, 0.3):
+        c = CA.select(s, peps, alle, k=10, rule="v2", pi=pi, how="mean")
+        assert c.not_worse >= pi - 1e-9
+        seen.append(c.diversity)
+    assert seen == sorted(seen)                            # weakly increasing as the band opens
+
+
+def test_minmax_never_reports_more_diversity_than_the_mean():
+    """`1 - max` over axes is bounded by `1 - mean` for the same set, by construction. Worth pinning
+    because the two are compared as arms: if the ordering ever inverted, the comparison would be
+    reading a bug rather than a design difference."""
+    rng = np.random.default_rng(3)
+    n = 10
+    ax = {k: np.abs(rng.normal(size=(n, n))) for k in ("a", "b", "c")}
+    for m in ax.values():
+        m += m.T
+        np.fill_diagonal(m, 0.0)
+    ax = CA.normalise_axes(ax)
+    sel = [0, 2, 4, 6, 8]
+    assert CA.diversity(ax, sel, "minmax") <= CA.diversity(ax, sel, "mean") + 1e-12
+
+
+def test_v1_is_the_default_and_v2_does_not_touch_it():
+    """The merge condition. Every recorded cassette number was computed under v1, so v1 has to be
+    what `select` still does when nothing is asked for, bit for bit."""
+    s, peps, alle = pool(n=40)
+    a = CA.select(s, peps, alle, k=10)
+    b = CA.select(s, peps, alle, k=10, rule="v1")
+    assert a.index == b.index and a.energy == b.energy and a.lam == b.lam
+    assert a.rule == "v1" and a.pi == 0.0 and a.how == ""
+    with pytest.raises(ValueError, match="v1"):
+        CA.select(s, peps, alle, k=10, rule="v3")
+
+
+def test_build_axes_gives_one_matrix_per_mechanism_not_per_column():
+    """Two expression columns are two readings of one mechanism. Letting each be its own axis would
+    make the number of columns decide how much abundance weighs against allotype -- the dilution
+    `diversity` exists to avoid, reintroduced one level up."""
+    s, peps, alle = pool(n=12)
+    rng = np.random.default_rng(0)
+    ax = CA.build_axes(peps, alleles=alle,
+                       expression=rng.normal(size=(12, 3)), physchem=rng.normal(size=(12, 2)),
+                       mask="full")
+    assert set(ax) == {"allotype", "expression", "physchem", "sequence"}
+    for name, m in ax.items():
+        n = m.shape[0]
+        off = m[~np.eye(n, dtype=bool)]
+        assert abs(off.mean() - 1.0) < 1e-9, name          # unit off-diagonal mean, every axis
+        assert np.allclose(m, m.T, atol=1e-12), name

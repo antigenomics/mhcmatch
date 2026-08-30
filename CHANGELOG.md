@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased — cassette v2: select on the degeneracy
+
+**The headline objective changed shape.** `p_i` is a probability, so the number of units that
+respond is a random variable and many size-*k* sets are indistinguishable in it. A sort already
+maximises the expected count; the sets it cannot tell apart are the design freedom. `rule="v2"`
+returns, among all cassettes that are — with stated probability — no worse than the ranked list,
+the one whose units share the fewest ways of failing. `rule="v1"` is unchanged and remains the
+default, because every recorded cassette number was computed under it.
+
+- **`not_worse(sel, ref, p, J)`** — `P(B(S) >= B(R))`, the v2 constraint. Exact for a reason worth
+  knowing: units in both sets are the *same random variable*, not merely identically distributed,
+  so they cancel and only the symmetric difference carries variance. Poisson-binomial convolution
+  up to `exact_max` units, normal approximation with a continuity correction beyond. Validated
+  against Monte Carlo to <0.001.
+- **`sequence_overlap` / `tcr_face`** — BLOSUM-graded similarity of the TCR face through
+  `seqtree.pairwise.dist_matrix`, replacing exact shared 3-mers. The old channel was zero on
+  **4,053 of 150,994 within-donor pairs — 97.3% — over the nineteen TESLA and HiTIDE donors**, and
+  17.6% of the rest were the same peptide window. It was also blind to chemistry: `GILGFVFTL`
+  against `GILGFVFTV` and `GILGFVFTW` share the same six 3-mers, and score 6 and 19 here. Masking
+  is a column slice, which is exact in a gapless comparison and is the only way to mask at all —
+  no aligner in the stack scores a masked dense matrix. The k-mer form is kept and reachable.
+- **`diversity` / `build_axes` / `normalise_axes` / `swap_for_diversity`** — four axes (allotype,
+  expression, physchem, sequence), one matrix per *mechanism* rather than per column, each on unit
+  off-diagonal mean so a `minmax` reduction is not a scale contest. `how="minmax"` maximises the
+  worst-covered axis; `"mean"` averages.
+- **`select(reference=)`** — v2 only ever trades capture *away* from its anchor, so the anchor is a
+  floor and never a rival. Anchoring on a rule that already out-captures the sort keeps that gain.
+- CLI: `--rule`, `--not-worse`, `--diversity`. `Cassette` records `rule`, `pi`, `how`, `not_worse`
+  and `diversity`.
+- **No artifact changed and `predict.SCORER_EPOCH` is untouched** — this is cassette math only.
+  `mhcmatch build --check` reports 0 stale of 27.
+
+
 All notable changes to `mhcmatch`. Format loosely follows [Keep a Changelog](https://keepachangelog.com);
 versioning is [SemVer](https://semver.org).
 

@@ -80,22 +80,71 @@ Three inputs, and not one of them is an outcome cohort:
 
 :math:`\rho_{ij}` spreads ``rho`` over pairs in proportion to :func:`~mhcmatch.cassette.overlap` —
 the mechanistic similarity of the pair — then renormalises so the pool's mean pair correlation is
-exactly ``rho``. The overlap is the mean of whichever of three channels the data supports:
+exactly ``rho``. The overlap is the mean of whichever channels the data supports:
 
 =================  ==========================================================================
 channel            what it says two units share
 =================  ==========================================================================
 **allotype**       the same class-I molecule, so the same presentation and the same precursor
-                   niche, and they are lost together if that allele is
-**sequence**       distinct 3-mers, in units of :data:`~mhcmatch.cassette.KAPPA` — two units
-                   that look alike draw on one repertoire, so the second buys less than its
-                   score claims
-**dominance**      closeness on the score axis; a cassette of one strong unit and nineteen
-                   weak ones is one shot, not twenty
+                   niche, and they are lost together if that allele is. Graded rather than
+                   binary when ``presented`` is supplied
+                   (:func:`~mhcmatch.cassette.allotype_overlap`)
+**sequence**       BLOSUM-graded similarity of the TCR face
+                   (:func:`~mhcmatch.cassette.sequence_overlap`), so a conservative
+                   substitution reads as more shared than a radical one
+**physchem**       closeness on TCR-face burial and charge, passed as ``features``
+**expression**     closeness on the source gene's abundance, and GTEx tissue-profile
+                   similarity through ``coexpr``
+                   (:func:`mhcmatch.expression.coexpression`)
+**dominance**      closeness on the score axis. **Optional, and off in v2** — it is the one
+                   channel built from the score rather than from a mechanism, and its
+                   pairwise statistic fits *attractive* on the observational arm, where
+                   :func:`~mhcmatch.cassette.greedy` carries no bound
 =================  ==========================================================================
 
 Which channels were available is part of the result. A trial that published no per-patient genotype
-has two, not three, and :attr:`Cassette.channels <mhcmatch.cassette.Cassette>` records it.
+has one fewer, and :attr:`Cassette.channels <mhcmatch.cassette.Cassette>` records it.
+
+.. note::
+
+   **The sequence channel counted exact shared 3-mers until v2, and that was measured to be a
+   duplicate detector rather than a similarity.** Over the eight TESLA and eleven HiTIDE donors only
+   **4,053 of 150,994 within-donor pairs (2.68 %)** share any 3-mer at all, and **17.6 % of those
+   that do are the same peptide window**. It is also blind to chemistry: ``GILGFVFTL`` against
+   ``GILGFVFTV`` and against ``GILGFVFTW`` share the same six 3-mers, though one substitution is
+   conservative and the other is not. :func:`~mhcmatch.cassette.sequence_overlap` scores those two
+   pairs 6 and 19 on the BLOSUM distance. The k-mer form is kept, as
+   ``overlap(..., features=None)`` with :data:`~mhcmatch.cassette.KMER`, so results recorded under
+   it reproduce.
+
+.. _cassette-v2:
+
+Selecting on the degeneracy (``rule="v2"``)
+-------------------------------------------
+
+``p_i`` is a probability, so the number of units that respond is a **random variable**, and many
+size-*k* sets are indistinguishable in it. A sort already maximises the expected count; the sets it
+cannot tell apart are not a nuisance, they are the design freedom.
+
+    ``mhcmatch cassette select --rule v2`` returns, among all cassettes that are — with stated
+    probability — no worse than the ranked list, the one whose units share the fewest ways of
+    failing.
+
+:func:`~mhcmatch.cassette.not_worse` computes that probability, and it is cheap for an exact reason:
+units in both sets are the **same random variable**, not merely identically distributed, so they
+cancel and only the symmetric difference carries variance. ``--not-worse 1.0`` returns the reference
+exactly; lower values buy diversity and say how often you are willing to be wrong.
+
+.. warning::
+
+   **``--not-worse`` is a per-donor guarantee.** It bounds ``P(this donor's cassette catches at
+   least as much as this donor's sort)`` and says nothing about a sum over donors. At ``0.5`` every
+   donor independently accepts a coin-flip, so a cohort-level count is worse than the sort most of
+   the time. A pooled comparison needs a tighter floor than intuition suggests.
+
+The reference is the top-*k* sort unless ``reference=`` names another set. That matters: v2 only
+ever trades capture *away* from its reference, so the reference is a floor the rule cannot fall
+below by more than the stated probability, and never a rival it can beat.
 
 
 ``cassette select``
