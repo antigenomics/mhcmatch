@@ -1799,6 +1799,32 @@ nobody else deposits. It is also the second independent method to name **binding
 predictive -- the axis `bench/results/cassette_couplings.md` measures a ceiling on -- alongside
 HLA presentation hotspots and the oncogenicity of the mutated gene.
 
+**Its harmonised dataset is already our corpus, and that was not known when this entry was
+written.** `raw/immunogenicity/NCI_dataset_only_tested.txt` -- the file
+`neoantigens_tested_peptides.tsv.gz` is built from, and the corpus EPIC is fitted and evaluated on
+-- **is the tested subset of NeoRanking's `Neopep_data_org.txt`**. Identified by construction: its
+58 columns are exactly `NeoRanking/Utils/GlobalParameters.py::features_neopep` plus seven
+sequence/allele columns, its `dataset` / `train_test` / `response_type` vocabularies are
+NeoRanking's, and the per-cohort CD8 counts **NCI 103 / TESLA 34 / HiTIDE 41 = 178** match that
+paper's Table 1 to the digit. `dataset_origin == "Neopep"` is their file name. So there is nothing
+to download and no cohort to harmonise: **TESLA and HiTIDE are two of NeoRanking's three cohorts**,
+and every one of its features is already deposited under a `pred_` prefix -- including
+`pred_mutant_other_significant_alleles`, which is its promiscuity term, and the five ipMSDB
+presentation-hotspot features.
+
+That changes the shape of the comparison. It is not a new benchmark to acquire; it is a **rival to
+run on rows we already hold**, and its trained models ship as sklearn pickles and XGBoost boosters
+consuming a fixed 31-column frame, so it can be re-run rather than only cited. Its three strongest
+Shapley features -- `mutant_rank` (MixMHCpred), `mutant_rank_netMHCpan`, `mutant_rank_PRIME` -- are
+deposited values, so no binary has to be installed.
+
+**Fix the attribution first, in three places that currently disclaim it**:
+`~/hf/pmhc_data/neoantigens/SOURCES.md` lists `Neopep` under "not yet verified, and deliberately not
+written out"; `2026-mhcmatch-benchmark/SOURCES.md` said "no primary citation is recorded -- confirm
+the reference before citing it" (now fixed); and `bench/neoag/ingest_tested.py` calls it "the NCI
+Surgery Branch screening set". Writing to the HuggingFace mirror is a deliberate act and needs the
+author's word.
+
 **Quantify the leakage before any head-to-head.** Its two external screens are very likely the
 sources behind our own `TESLA` and `HiTIDE` slices of
 `neoantigens/neoantigens_tested_peptides.tsv.gz`, and TESLA and HiTIDE are two of EPIC's seven
