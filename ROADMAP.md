@@ -1848,6 +1848,29 @@ IVAC 0.4373 and Sahin 0.4188, both below chance, neither interpretable, neither 
 | **Weber gene fusions** (Weber et al., *Nat Biotechnol* 2022;40(8):1276-1284, [doi:10.1038/s41587-022-01247-9](https://doi.org/10.1038/s41587-022-01247-9)) | **54 fusions with a CD4 and a CD8 call each, and 272 tested overlapping peptides** with per-peptide labels. Junctions are deposited with the breakpoint marked, so units need no reconstruction. Carries its own netMHCpan-4.0 affinity and %rank as a built-in rival. In nobody's corpus -- every SNV screen here and all three of NeoRanking's are SNV-only. **The only fusion cohort anywhere in this project**, which is the `nonconventional` arm the cassette quota holds a slot for | no HLA in the supplement. Methods say alleles came from **seq2HLA v2.2 on each patient's RNA-seq** | re-run seq2HLA against **SRA PRJNA607061**, which is public. One download and one pipeline, and it unblocks the only fusion arena we have |
 | **Sahin TNBC** (Sahin et al., *Nature* 2026, PMID 41708868) | 251 vaccinated targets over 14 patients, ex-vivo ELISpot on every one. Published after every model here was frozen; contributes **0 rows** to EPIC's fit | HLA for only **three** of fourteen patients, in Extended Data Fig. 8 | already usable on those three: `bench/neoag/cohort_report.py::sahin_row` scores their **53 targets** genotype-aware and the `neoag` family reaches **0.6786** there, **0.7329** BRCA-tissue-matched. **Those are the `neoag` GLM (`BECR`/`B`), not EPIC** -- do not quote them as EPIC's. The open run is EPIC on the same 53 targets by the same expansion, which is the one neutral-arena number available today |
 
+**Portability is itself a result, and it is measured: 12 of NeoRanking's 31 features are
+obtainable on a cohort outside its corpus.** The nineteen that are not span **eight** separate
+external dependencies -- ipMSDB (5 features, their in-house 547,476-peptide immunopeptidome, a
+figshare deposit of its own), MixMHCpred (3), IntOGen (3), netMHCstabpan (2), VAF+purity (2), PRIME
+(1), CScape (1) and netchop (1, Linux-only binary). Installed here: netMHCpan-4.2 and MixMHC2pred
+(class II). Absent: MixMHCpred, PRIME, netMHCstabpan, ipMSDB, IntOGen, CScape.
+
+EPIC scores a new cohort from **sequence, gene symbol and an optional genotype**, with every
+artifact vendored in the wheel. That difference is a property of the two designs and belongs in the
+comparison rather than in a footnote about ours. It also bounds what any head-to-head outside their
+three cohorts can mean: a NeoRanking column there is a **12/31-feature** model missing two of its
+three strongest terms, and must be labelled with that count rather than as "NeoRanking".
+
+**The partial genotypes both vaccine trials publish are outcome-conditioned in coverage, and the
+cohort-wide panel is the way around it.** Sahin's Extended Data Fig. 8 types three patients --
+P01 B*07:02/B*58:01, P12 A*03:01/C*03:03, P13 A*68:01/A*02:01/B*14:02 -- two or three class-I
+alleles each of six, and they appear because a CD8 TCR was validated on them. IVAC's Extended Data
+Fig. c is the same shape. Scoring each unit against **the union of alleles observed across the whole
+trial** removes the conditioning entirely, since every unit then meets the identical allele set; it
+measures "presentable by this cohort's panel" rather than "by this patient's genotype", and it
+restores `binder` so EPIC runs on 7 of 9 features instead of 5. IVAC's panel is
+A*02:01, A*11:01, A*31:01, B*07:02, B*37:01, B*39:06, B*44:02, B*57:01, B*68:01.
+
 **Order of value.** Sahin's three patients cost nothing and are the only neutral number reachable
 now, but 53 targets is thin. The fusion cohort is the largest prize and the clearest path -- public
 SRA, a named tool, and a substrate nothing else in this project covers. **IVAC has the best labels
