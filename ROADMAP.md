@@ -16,6 +16,63 @@ the build plan. Phase sections marked _(TBD)_ await detail.
 > tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
 > below resolve there, not here.
 
+## Where this stands, 2026-08-30 — the per-unit arena is closed and reproducible
+
+**One command regenerates every head-to-head number:
+`./bench/run_per_unit.sh` in `2026-mhcmatch-benchmark`** (4 stages, 81 s warm), writing
+`bench/results/compare_per_unit.md`, `compare_vaccine_arena.md` and the main-text
+`tables/per_unit.tex`. Five cohorts, `\Cref{tab:per-unit}` in `sec:compare`:
+
+| cohort | units | resp. | EPIC | NeoRanking | netMHCpan | MixMHCpred | PRIME |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| TESLA | 736 | 34 | **0.8659** | 0.7759 | 0.8164 | 0.7843 | 0.7932 |
+| HiTIDE | 1,563 | 41 | **0.7091** | 0.5737 | 0.6699 | 0.5851 | 0.6035 |
+| NCI-test | 123,485 | 21 | 0.9847 | **0.9966** | 0.9773 | 0.9771 | 0.9493 |
+| IVAC MUTANOME (CD8+) | 124 | 31 | **0.6157** | N/A | N/A | N/A | N/A |
+| Sahin TNBC | 53 | 21 | **0.6845** | N/A | N/A | N/A | N/A |
+
+**The two vaccine cohorts are open now, and both were unblocked by the author's reading of the
+supplements** — the trials filtered candidate epitopes against each donor's own HLA list, so the
+alleles they print are outcome-independent. IVAC Supplementary Table 1 proves it by naming a
+restriction for a **non-responder** (P04-DICER1-P627S, HLA-B\*07:02).
+
+- **Sahin is scored on the established 53-target population**, the three patients with published
+  class-I typing, each against its own alleles. Scoring all 187 reconstructable units against a
+  cohort-wide 7-allele panel instead read 0.5081 — chance — because eleven untyped patients entered
+  with alleles they may not carry and each typed patient was scored best-of-seven instead of
+  best-of-two, which lifts negatives as readily as positives.
+- **IVAC reports CD8+ only.** 60 of its 75 responding units raised CD4+ and EPIC is class-I; on the
+  mixed label everything sits at chance including the trial's own score (0.4948).
+- **Both numbers are floors and the gap is measured.** Cutting IVAC's 9-allele panel one allele at a
+  time moves EPIC's within-patient AUROC monotonically **0.5530 (k=1) → 0.6364 (k=9), +0.0104 per
+  allele, no flattening at the top** — and 9 alleles stand in for 78 genotype slots. Sahin shows the
+  same ordering per patient: `binder` 0.5500 (two alleles, one locus) → 0.7222 (two) → **0.9231**
+  (three, two loci).
+
+**Two defects found by this, both fixed.** `rank.aggregate_score(..., imputed_out=[])` raised
+`IndexError` and did so *only once a value was missing*, i.e. on exactly the rows the list exists to
+name (branch `imputed-out`). And `per_unit.py` had been deduplicating on `peptide` alone where
+`fig5_compare.sh` uses `(peptide, wt_peptide, allele)` — the coarser key its own comment warns
+about — which read HiTIDE at 0.7089 against the published `\HitideEpic` 0.7091 on an identical
+1,563-row population.
+
+**On Sahin, `binder` alone (0.7344) still beats the nine-term composite (0.6845), and that is a
+property of the cohort.** `bench/results/compare_sahin_decompose.md` has the term-by-term arm: both
+expression terms rank these targets *below chance* on their own (`expr_lvl` 0.4115, `expr_norm`
+0.3817) while `expr_lvl` carries EPIC's second-largest coefficient (+0.5180). Seven of nine terms
+raise the score when removed. The older `neoag` family collapses identically on the same targets —
+`neoag_cohorts.md` row 17, 0.7329 (`B`) → 0.6577 (`BDECRT`) — because the trial had already selected
+these targets for expression before manufacturing them. **Not acted on:** the shipped model is
+unchanged and this is recorded, not a refit. Revisit only with the fitted screens in the frame.
+
+**Open, deliberately parked:** the Weber gene-fusion cohort. Its immunogenicity PBMCs come from the
+same phase I study as IVAC (NCT02035956) or RB_T002, so its donors overlap — but IVAC published no
+genotype either and Weber's own typing came from seq2HLA v2.2 on RNA-seq whose calls were never
+deposited (Suppl. Table 7 has affinity and %rank, no allele column). Unblocking it means running
+seq2HLA against EGA **EGAS00001004877** / **EGAD00001004455**, not reading a supplement.
+
+**Next: cassette optimisation.** §5e is where the work goes now.
+
 ## Where this stands, 2026-08-29 — 1.6.0, EPIC v11, and the cassette stage
 
 **Shipped scorer: EPIC artifact version 11, nine fitted terms, `binder` as the presentation term.**
