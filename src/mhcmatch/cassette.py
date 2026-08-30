@@ -271,6 +271,13 @@ def sequence_overlap(peptides, cls: str = "mhc1", registers=None, mask: str = "f
     self-score and is therefore asymmetric.
 
     ``mask="face"`` compares TCR faces (:func:`tcr_face`); ``"full"`` compares whole peptides.
+
+    **The face is the default because the full peptide is confounded by HLA**, and by how much is
+    measured rather than argued: on one TESLA donor's 83 units the correlation between this channel
+    and "these two units share an allele" is **+0.0437 on the face against +0.3297 on the whole
+    peptide**. Anchor residues are what the allele selects for, so aligning them makes the sequence
+    axis a second reading of the allotype axis --- and the whole point of having four axes is that
+    they fail independently.
     Gaps are handled by the aligner, so units of different length are compared rather than scored
     zero -- which matters, since only **38% of TESLA and 46% of HiTIDE within-donor pairs are of
     equal length**.
@@ -357,7 +364,7 @@ def _span_channel(z) -> np.ndarray:
 
 
 def overlap(peptides, alleles=None, strength=None, features=None, coexpr=None,
-            allotype_graded=None, kmer: int = KMER) -> np.ndarray:
+            allotype_graded=None, sequence=None, kmer: int = KMER) -> np.ndarray:
     """Mechanistic pair overlap in ``[0, 1]``: how much two units share a way of failing.
 
     The mean of whichever channels the caller can populate. Which channels were available is part
@@ -373,7 +380,10 @@ def overlap(peptides, alleles=None, strength=None, features=None, coexpr=None,
       averaging them would count presentation twice.
     * **sequence** (always) --- shared distinct ``kmer``-mers, in units of :data:`KAPPA`, clipped at
       1. Two units that look alike draw on one repertoire, so the second buys less than its score
-      claims.
+      claims. **Pass ``sequence`` --- an ``(n, n)`` matrix, normally from
+      :func:`sequence_overlap` --- to use the BLOSUM-graded TCR-face form instead.** The exact-3-mer
+      count is zero on 97.3% of real within-donor pairs and cannot grade a conservative substitution
+      against a radical one; it is kept as the default only so recorded results reproduce.
     * **dominance** (``strength``) --- closeness on the score axis. **This is the score talking to
       itself**: two units are coupled for scoring alike, which is not a mechanism, and the pairwise
       statistic it corresponds to (``rho_dom``) fits *attractive* on the observational arm --- where
@@ -402,8 +412,14 @@ def overlap(peptides, alleles=None, strength=None, features=None, coexpr=None,
     0.0
     """
     n = len(peptides)
-    A = _kmer_matrix(peptides, kmer)
-    o = np.minimum((A @ A.T).astype(float) / KAPPA, 1.0)
+    if sequence is not None:
+        o = np.asarray(sequence, dtype=float)
+        if o.shape != (n, n):
+            raise ValueError(f"overlap: sequence is {o.shape}, expected ({n}, {n})")
+        o = np.clip(np.nan_to_num(o, nan=0.0), 0.0, 1.0)
+    else:
+        A = _kmer_matrix(peptides, kmer)
+        o = np.minimum((A @ A.T).astype(float) / KAPPA, 1.0)
     chans = [o]
     if allotype_graded is not None:
         g = np.asarray(allotype_graded, dtype=float)
@@ -1382,7 +1398,8 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
            coexpr=None, presented=None, presented_alleles=None,
            graded_allotype: bool = False, dominance: bool = True,
            rule: str = "v1", pi: float = 0.5, how: str = "minmax", axes=None,
-           reference=None) -> Cassette:
+           reference=None, sequence: str = "kmer",
+           sequence_mask: str = "face") -> Cassette:
     """Choose ``k`` units (within ``tol``) from one donor's candidate pool, maximising ``H``.
 
     ``scores`` are aggregate log-odds --- what :func:`mhcmatch.rank.aggregate_score` returns --- for
@@ -1560,8 +1577,12 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
     if graded_allotype and pres is None:
         raise ValueError("graded_allotype needs `presented`; there is nothing to grade without it")
     grad = allotype_overlap(pres) if graded_allotype else None
+    if sequence not in ("kmer", "blosum"):
+        raise ValueError(f"sequence must be 'kmer' or 'blosum'; got {sequence!r}")
+    seq = (sequence_overlap(peps, cls="mhc1", mask=sequence_mask)
+           if sequence == "blosum" else None)
 
-    chans = (("sequence",)
+    chans = (("sequence_blosum" if seq is not None else "sequence",)
              + (("allotype_graded",) if grad is not None
                 else ("allotype",) if alle is not None else ())
              + (("dominance",) if dominance else ()) + (names or ())
@@ -1579,7 +1600,7 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
                         selectivity=float(selectivity))
 
     sim = overlap(peps, alleles=alle, strength=ss if dominance else None,
-                  features=feats, coexpr=cox, allotype_graded=grad)
+                  features=feats, coexpr=cox, allotype_graded=grad, sequence=seq)
     h, J = goal_energy(p, sim, rho=rho, gamma=gamma, block=alle, block_live=block_live,
                        presented=pres, presented_alleles=presented_alleles)
     h = h + bonus
