@@ -96,11 +96,38 @@ channel            what it says two units share
 **expression**     closeness on the source gene's abundance, and GTEx tissue-profile
                    similarity through ``coexpr``
                    (:func:`mhcmatch.expression.coexpression`)
+**profile**        how much two units owe their scores to the **same terms**, from the fitted
+                   model's own decomposition (:func:`~mhcmatch.rank.aggregate_terms`,
+                   :func:`~mhcmatch.cassette.profile_overlap`). Pass ``terms`` and
+                   ``terms_cov`` to :func:`~mhcmatch.cassette.select`, with
+                   ``dominance=False``
 **dominance**      closeness on the score axis. **Optional, and off in v2** — it is the one
                    channel built from the score rather than from a mechanism, and its
                    pairwise statistic fits *attractive* on the observational arm, where
                    :func:`~mhcmatch.cassette.greedy` carries no bound
 =================  ==========================================================================
+
+.. note::
+
+   **The profile channel is what dominance was reaching for.** Dominance couples two units for
+   *scoring alike*; this one couples them for scoring alike **because of the same thing**. A row of
+   :func:`~mhcmatch.rank.aggregate_terms` is a unit's score broken into one contribution per fitted
+   term, so two rows pointing the same way name the same failure mode — both carried by
+   presentation, both carried by abundance — and the cosine between them is non-negative by
+   construction, which keeps :func:`~mhcmatch.cassette.greedy` inside its ``1 - 1/e`` bound.
+
+   **Whiten against the cohort, never against the pool.** Whitening ``n`` points against a
+   covariance estimated from those same ``n`` points sends them to the vertices of a regular
+   simplex, where every pairwise cosine is exactly ``-1/(n-1)`` whatever the data said — the
+   coupling then carries no information and carries it silently.
+   :func:`~mhcmatch.cassette.epic_axes` raises below
+   :data:`~mhcmatch.cassette.SELF_COV_MIN` rows per column rather than let that happen, and
+   :func:`~mhcmatch.cassette.select` refuses a pool too small to estimate its own.
+
+   On the two labelled donor pools the channel is informative — off-diagonal mean 0.136, sd 0.20
+   over TESLA's eight donors — and it does not out-catch the arms already there. It ships because
+   it is the coupling the objective's derivation asks for and because a cohort with more donors can
+   test it; it is not claimed to catch more units.
 
 Which channels were available is part of the result. A trial that published no per-patient genotype
 has one fewer, and :attr:`Cassette.channels <mhcmatch.cassette.Cassette>` records it.

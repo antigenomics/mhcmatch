@@ -346,6 +346,73 @@ def _(CA, fetch_file, np, pl):
 @app.cell
 def _(mo):
     mo.md(r"""
+    ## 7. Coupling on *why* a unit scores
+
+    `rank.aggregate_terms` returns the score unsummed: one row per candidate, one column per fitted
+    term, holding what that term contributed. Two rows pointing the same way name the same failure
+    mode, and `cassette.profile_overlap` turns that into a pair coupling — which is what the
+    dominance channel was reaching for, except that dominance couples two units for *scoring alike*
+    rather than for scoring alike **because of the same thing**.
+
+    The whitening is against a covariance estimated over the **cohort**. Whitening `n` points
+    against a covariance taken from those same `n` points sends them to the vertices of a regular
+    simplex, where every pairwise cosine is exactly `-1/(n-1)` whatever the data said, so
+    `epic_axes` raises rather than returning it.
+    """)
+    return
+
+
+@app.cell
+def _(CA, RK, K, np, pl, scored):
+    _feats = {f: (scored[f].to_numpy().astype(float) if f in scored.columns
+                  else np.full(scored.height, np.nan)) for f in RK.AGGREGATE_FEATURES}
+    _T = RK.aggregate_terms(_feats)
+    print(f"terms matrix {_T.shape}: one row per candidate, one column per fitted term")
+    print(f"rows sum to `aggregate_score` to "
+          f"{np.abs(_T.sum(axis=1) - RK.aggregate_score(_feats)).max():.2e}\n")
+    _live = [(f, float(c)) for f, c in zip(RK.AGGREGATE_FEATURES, _T.std(axis=0)) if c > 0]
+    print("contribution spread over the corpus, by term:")
+    for _f, _sd in sorted(_live, key=lambda x: -x[1]):
+        print(f"  {_f:18s} {_sd:.4f}")
+
+    # one covariance for the whole corpus, held; a donor's pool cannot estimate its own
+    _Tc = _T - _T.mean(axis=0, keepdims=True)
+    _cov = (_Tc.T @ _Tc) / max(1, _T.shape[0] - 1)
+    try:
+        CA.epic_axes(_T[:12])
+    except ValueError as _e:
+        print(f"\nself-whitening a 12-row pool is refused: {str(_e).split('.')[0]}.")
+
+    _rows = []
+    for (_pat,), _g in scored.group_by("patient", maintain_order=True):
+        if _g.height < K + 2:
+            continue
+        _ix = np.array(_g["_i"].to_list()) if "_i" in _g.columns else None
+        _sub = {f: (_g[f].to_numpy().astype(float) if f in _g.columns
+                    else np.full(_g.height, np.nan)) for f in RK.AGGREGATE_FEATURES}
+        _Td = RK.aggregate_terms(_sub)
+        _P = CA.profile_overlap(_Td, cov=_cov)
+        _off = _P[~np.eye(_P.shape[0], dtype=bool)]
+        _s = _g["epic"].to_numpy().astype(float)
+        _peps = _g["mt_seq"].to_list()
+        _base = CA.select(_s, _peps, None, k=K)
+        _prof = CA.select(_s, _peps, None, k=K, dominance=False, terms=_Td, terms_cov=_cov)
+        _rows.append({"patient": _pat, "pool_n": _g.height,
+                      "coupling_mean": float(_off.mean()), "coupling_sd": float(_off.std()),
+                      "shared": len(set(_base.index) & set(_prof.index)),
+                      "channels": ";".join(_prof.channels)})
+    prof = pl.DataFrame(_rows)
+    print(f"\nprofile coupling over {prof.height} donor pools: off-diagonal mean "
+          f"{prof['coupling_mean'].mean():.3f}, sd {prof['coupling_sd'].mean():.3f}")
+    print(f"units shared with the default rule: {prof['shared'].min()} to {prof['shared'].max()} "
+          f"of {K}")
+    print(f"channels recorded on the cassette: {prof['channels'][0]}")
+    return (prof,)
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
     ## What to take away
 
     - **Give `select` the whole pool.** Presentation and the two expression terms carry the largest
@@ -360,6 +427,9 @@ def _(mo):
       sizes without any shared calibration.
     - **Decide which offset you want.** A batch offset gives a level; a per-donor offset gives an
       enrichment. Both are useful and they are not the same number.
+    - **Whiten the profile coupling against the cohort.** A donor's own pool is far too small to
+      estimate a nine-by-nine covariance, and self-whitening returns a constant wearing the data's
+      name rather than an error.
     """)
     return
 
