@@ -364,7 +364,7 @@ def _span_channel(z) -> np.ndarray:
 
 
 def overlap(peptides, alleles=None, strength=None, features=None, coexpr=None,
-            allotype_graded=None, sequence=None, kmer: int = KMER) -> np.ndarray:
+            allotype_graded=None, sequence=None, profile=None, kmer: int = KMER) -> np.ndarray:
     """Mechanistic pair overlap in ``[0, 1]``: how much two units share a way of failing.
 
     The mean of whichever channels the caller can populate. Which channels were available is part
@@ -395,6 +395,11 @@ def overlap(peptides, alleles=None, strength=None, features=None, coexpr=None,
       selectivity delta are all per-unit scalars the ranker already computes and the objective has
       never seen. A column that is entirely non-finite contributes a zero channel rather than
       raising.
+    * **profile** (``profile``) --- a symmetric ``(n, n)`` matrix from :func:`profile_overlap`:
+      how much two units owe their scores to the same fitted terms. It is the one channel that
+      reads the model's own decomposition rather than a proxy for it, and it subsumes
+      **dominance** --- pass ``strength=None`` with it, or the same idea enters twice, once as a
+      mechanism and once as the score talking to itself.
     * **coexpr** --- a symmetric ``(n, n)`` matrix already in ``[0, 1]``, averaged in as one further
       channel. Co-expression is a property of a *pair* of source genes and cannot be written as
       ``|f_i - f_j|`` on any per-unit scalar, which is why it enters as a matrix;
@@ -403,8 +408,9 @@ def overlap(peptides, alleles=None, strength=None, features=None, coexpr=None,
     Vectorised: the sequence channel is one ``float32`` matmul over a k-mer incidence matrix rather
     than ``n^2`` set intersections.
 
-    **At ``features=None, coexpr=None`` the result is bit-identical to every cassette built before
-    they existed**, because the mean is then over exactly the channels it was over before.
+    **At ``features=None, coexpr=None, profile=None`` the result is bit-identical to every cassette
+    built before they existed**, because the mean is then over exactly the channels it was over
+    before.
 
     >>> import numpy as np
     >>> o = overlap(["AAAAAAAAA", "CCCCCCCCC"], features=np.array([[0.0], [1.0]]))
@@ -439,6 +445,11 @@ def overlap(peptides, alleles=None, strength=None, features=None, coexpr=None,
             raise ValueError(f"overlap: {f.shape[0]} feature rows against {n} peptides")
         for j in range(f.shape[1]):
             chans.append(_span_channel(f[:, j]))
+    if profile is not None:
+        pm = np.asarray(profile, dtype=float)
+        if pm.shape != (n, n):
+            raise ValueError(f"overlap: profile is {pm.shape}, expected ({n}, {n})")
+        chans.append(np.clip(np.nan_to_num(pm, nan=0.0), 0.0, 1.0))
     if coexpr is not None:
         c = np.asarray(coexpr, dtype=float)
         if c.shape != (n, n):
@@ -447,6 +458,101 @@ def overlap(peptides, alleles=None, strength=None, features=None, coexpr=None,
     out = np.mean(chans, axis=0)
     np.fill_diagonal(out, 0.0)
     return np.clip(out, 0.0, 1.0)
+
+
+#: Rows per column required before :func:`epic_axes` will estimate its own covariance. Below it the
+#: whitened configuration is a regular simplex and the coupling is a constant wearing the data's
+#: name; a cohort covariance has no such floor because it is not estimated on the points it whitens.
+SELF_COV_MIN = 10
+
+
+def epic_axes(contributions, cov=None, ridge: float = 1e-6) -> np.ndarray:
+    r"""Unit-length rows of a **whitened** ``(n, d)`` contribution matrix: *why* each unit scores.
+
+    ``contributions`` is what :func:`mhcmatch.rank.aggregate_terms` returns --- one row per unit,
+    one column per fitted term, holding that term's signed contribution to that unit's score. Two
+    units whose rows point the same way owe their scores to the same terms.
+
+    ``cov`` is the ``(d, d)`` covariance the columns are whitened against, and it must be estimated
+    over the **cohort** rather than the donor. This is not a preference. Whitening ``n`` points
+    against a covariance estimated from those same ``n`` points sends them to the vertices of a
+    regular simplex, where **every** pairwise cosine is exactly ``-1/(n-1)`` whatever the data
+    said -- the coupling then carries no information at all, and carries it silently. ``None``
+    self-estimates and is correct only for a pooled matrix with many more rows than columns;
+    :data:`SELF_COV_MIN` rows per column are required and fewer raises.
+
+    **Why whiten at all.** The terms are correlated --- ``expr_lvl`` with ``expr_norm``,
+    ``C_corpus_self`` with ``C_corpus_thymus`` --- so a raw inner product counts a shared axis once
+    per correlated column and reads two units as alike for owing their scores to one thing twice.
+    Whitening measures agreement in the coordinates where the terms are independent, which is the
+    coordinate system in which "the same reason" means one reason.
+
+    ``ridge`` is added to the covariance diagonal before inversion, as a fraction of its mean
+    variance, so a term that is constant on this cohort --- a screen pre-filtered on expression,
+    a genotype-free pool where presentation is the training mean --- does not make the whitening
+    singular. It is a numerical floor and not a tuned parameter.
+
+    >>> import numpy as np
+    >>> c = np.array([[1.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+    >>> u = epic_axes(c, cov=np.eye(2))
+    >>> bool(abs(float(u[0] @ u[1]) - 1.0) < 1e-9)      # same reason
+    True
+    """
+    C = np.asarray(contributions, dtype=float)
+    if C.ndim != 2:
+        raise ValueError(f"epic_axes: contributions is {C.shape}, expected (n, d)")
+    C = np.where(np.isfinite(C), C, 0.0)
+    n, d = C.shape
+    if cov is None and n < SELF_COV_MIN * d:
+        raise ValueError(
+            f"epic_axes: {n} rows against {d} columns is too few to estimate their own covariance "
+            f"({SELF_COV_MIN} per column is the floor). Self-whitening {n} points puts them on a "
+            f"regular simplex at cosine {-1.0 / max(n - 1, 1):.3f} regardless of the data, so the "
+            "coupling would be uninformative without being empty. Pass `cov=` estimated over the "
+            "cohort -- one covariance for every donor, which is what makes two donors comparable.")
+    X = C - C.mean(axis=0, keepdims=True)
+    S = np.asarray(cov, dtype=float) if cov is not None else (
+        X.T @ X / max(1, X.shape[0] - 1))
+    if S.shape != (C.shape[1], C.shape[1]):
+        raise ValueError(f"epic_axes: cov is {S.shape}, expected "
+                         f"({C.shape[1]}, {C.shape[1]})")
+    S = S + np.eye(S.shape[0]) * ridge * max(float(np.mean(np.diag(S))), 1e-12)
+    w, V = np.linalg.eigh(S)
+    W = V @ np.diag(1.0 / np.sqrt(np.maximum(w, 1e-300))) @ V.T
+    U = X @ W
+    nrm = np.linalg.norm(U, axis=1, keepdims=True)
+    return np.divide(U, nrm, out=np.zeros_like(U), where=nrm > 0)
+
+
+def profile_overlap(contributions, cov=None, ridge: float = 1e-6) -> np.ndarray:
+    r"""``(n, n)`` in ``[0, 1]``: how much two units owe their scores to the **same terms**.
+
+    The positive part of the cosine between whitened contribution rows (:func:`epic_axes`), so two
+    units carried by presentation are coupled, two carried by presentation and by abundance are
+    not, and a unit that is average in every term is coupled to nothing.
+
+    **This is the pair term the objective always wanted.** ``overlap``'s three original channels are
+    proxies for one idea --- two units that fail for the same reason fail together. Shared allotype
+    is the presentation reason, shared k-mer content the recognition reason, and score dominance is
+    not a reason at all: it couples two units for *scoring alike* rather than for scoring alike
+    **because of the same thing**, which is why it fits attractive on the observational corpus and
+    costs :func:`greedy` its ``1 - 1/e`` guarantee. This channel names the reason directly, over
+    every term the model has, and is non-negative by construction so the guarantee holds.
+
+    Negative cosines are clipped rather than kept. Two units good for *opposite* reasons are not
+    redundant, and a negative coupling would pay the optimiser to take both --- which is a
+    diversification bonus the mean--variance objective already expresses through the field.
+
+    >>> import numpy as np
+    >>> c = np.array([[1.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+    >>> o = profile_overlap(c, cov=np.eye(2))
+    >>> bool(o[0, 1] > 0.99 and o[0, 2] < 0.01)
+    True
+    """
+    U = epic_axes(contributions, cov, ridge)
+    out = np.clip(U @ U.T, 0.0, 1.0)
+    np.fill_diagonal(out, 0.0)
+    return out
 
 
 def allotype_overlap(presented, alleles=None) -> np.ndarray:
@@ -1395,7 +1501,7 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
            rounds: int = 4, max_pool: int = MAX_POOL, block_live=1.0, universe=None,
            max_share: float | None = None, selectivity: float = 0.0,
            expr_lvl=None, expr_norm=None, features=None, feature_names=(),
-           coexpr=None, presented=None, presented_alleles=None,
+           coexpr=None, presented=None, presented_alleles=None, terms=None, terms_cov=None,
            graded_allotype: bool = False, dominance: bool = True,
            rule: str = "v1", pi: float = 0.5, how: str = "minmax", axes=None,
            reference=None, sequence: str = "kmer",
@@ -1573,6 +1679,26 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
         if len(names) != feats.shape[1]:
             raise ValueError(f"select: {len(names)} feature_names against {feats.shape[1]} columns")
     cox = None if coexpr is None else np.asarray(coexpr, dtype=float)[np.ix_(keep, keep)]
+    # `terms` is the (n, d) contribution matrix over the **whole pool**, so its covariance is
+    # estimated before the trim and the channel is the same geometry however deep the pool was.
+    prof = None
+    if terms is not None:
+        T = np.asarray(terms, dtype=float)
+        if T.ndim != 2 or T.shape[0] != len(scores):
+            raise ValueError(f"select: terms is {T.shape}, expected ({len(scores)}, d) -- one row "
+                             "per candidate in the pool handed in, before any trim")
+        if terms_cov is not None:
+            cv = np.asarray(terms_cov, dtype=float)
+        elif T.shape[0] >= SELF_COV_MIN * T.shape[1]:
+            Tc = np.where(np.isfinite(T), T, 0.0)
+            Tc = Tc - Tc.mean(axis=0, keepdims=True)
+            cv = (Tc.T @ Tc) / max(1, T.shape[0] - 1)
+        else:
+            raise ValueError(
+                f"select: a {T.shape[0]}-candidate pool cannot estimate the {T.shape[1]}-column "
+                "covariance its own profile coupling is whitened against. Pass `terms_cov=` "
+                "computed once over the cohort; see `cassette.epic_axes`.")
+        prof = profile_overlap(T[keep], cov=cv)
     pres = None if presented is None else np.asarray(presented)[keep]
     if graded_allotype and pres is None:
         raise ValueError("graded_allotype needs `presented`; there is nothing to grade without it")
@@ -1586,6 +1712,7 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
              + (("allotype_graded",) if grad is not None
                 else ("allotype",) if alle is not None else ())
              + (("dominance",) if dominance else ()) + (names or ())
+             + (("profile",) if prof is not None else ())
              + (("coexpr",) if cox is not None else ())
              + (("promiscuity",) if pres is not None else ()))
     if keep.size <= k:
@@ -1600,7 +1727,7 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
                         selectivity=float(selectivity))
 
     sim = overlap(peps, alleles=alle, strength=ss if dominance else None,
-                  features=feats, coexpr=cox, allotype_graded=grad, sequence=seq)
+                  features=feats, coexpr=cox, allotype_graded=grad, sequence=seq, profile=prof)
     h, J = goal_energy(p, sim, rho=rho, gamma=gamma, block=alle, block_live=block_live,
                        presented=pres, presented_alleles=presented_alleles)
     h = h + bonus

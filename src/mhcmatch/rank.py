@@ -521,11 +521,51 @@ def aggregate_score(features, imputed_out: list | None = None) -> "np.ndarray":
             f"features and {len(missing)} were not supplied: {', '.join(missing)}. "
             "A model scores on the features it declares or not at all; supplying a subset would "
             "score a different model under this one's coefficients.")
+    terms = aggregate_terms(features, imputed_out)
     out = np.zeros(n, dtype=float)
-    for name, coef, mu, sg in zip(a["features"], a["coef"], a["mu"], a["sigma"]):
+    for j in range(terms.shape[1]):        # sequential, in feature order, as this always summed
+        out += terms[:, j]
+    return out
+
+
+def aggregate_terms(features, imputed_out: list | None = None) -> "np.ndarray":
+    """The same score, **not summed**: ``(n, d)`` of ``coef * z``, one column per fitted feature.
+
+    Column ``j`` is what feature ``j`` contributed to candidate ``i``'s score, in the units the
+    score is in, so a row sums to exactly what :func:`aggregate_score` returns for that candidate
+    and a row *is* the decomposition of it. Columns are in :func:`aggregate`'s ``features`` order.
+
+    This is the matrix every "why did this rank here" question needs, and three separate benchmark
+    stages had each rebuilt it from the artifact by hand. It is also what the cassette objective
+    couples on: two units whose contribution vectors point the same way are good for the same
+    reason and therefore fail together (:func:`mhcmatch.cassette.profile_overlap`).
+
+    ``imputed_out`` behaves exactly as it does for :func:`aggregate_score` -- one list per
+    candidate, naming the features that fell back to the training mean.
+
+    >>> full = {f: [0.0, 0.0] for f in AGGREGATE_FEATURES}
+    >>> full["pres"] = [2.0, 0.1]
+    >>> t = aggregate_terms(full)
+    >>> bool(abs(t.sum(axis=1) - aggregate_score(full)).max() < 1e-12)
+    True
+    """
+    import numpy as np
+
+    a = aggregate()
+    n = max((len(v) for v in features.values()), default=0)
+    missing = [f for f in a["features"] if f not in features]
+    if missing:
+        raise ValueError(
+            f"aggregate_terms: {a.get('model', 'the model')} declares {len(a['features'])} "
+            f"features and {len(missing)} were not supplied: {', '.join(missing)}. "
+            "A model scores on the features it declares or not at all; supplying a subset would "
+            "score a different model under this one's coefficients.")
+    out = np.zeros((n, len(a["features"])), dtype=float)
+    for j, (name, coef, mu, sg) in enumerate(
+            zip(a["features"], a["coef"], a["mu"], a["sigma"])):
         v = np.asarray(features[name], dtype=float)
         if v.size != n:
-            raise ValueError(f"aggregate_score: feature {name!r} has {v.size} values, expected {n}")
+            raise ValueError(f"aggregate_terms: feature {name!r} has {v.size} values, expected {n}")
         z = (v - mu) / (sg or 1.0)
         bad = ~np.isfinite(z)
         if bad.any():
@@ -539,7 +579,7 @@ def aggregate_score(features, imputed_out: list | None = None) -> "np.ndarray":
                     imputed_out.append([])
                 for i in np.flatnonzero(bad):
                     imputed_out[int(i)].append(name)
-        out += coef * z
+        out[:, j] = coef * z
     return out
 
 

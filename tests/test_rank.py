@@ -673,3 +673,48 @@ def test_aggregate_score_grows_an_empty_imputed_out():
     mu = dict(zip(a["features"], a["mu"]))
     assert out[0] == RK.aggregate_score({**f, "expr_lvl": [mu["expr_lvl"], 0.0]})[0]
     assert out[0] > RK.aggregate_score({**f, "expr_lvl": [0.0, 0.0]})[0]
+
+
+def _np():
+    import numpy
+    return numpy
+
+
+# ------------------------------------------------- the score, decomposed into its own nine terms
+
+def test_aggregate_terms_rows_sum_to_the_score_they_decompose():
+    """A row of `aggregate_terms` is the whole answer to "why did this candidate rank here", so it
+    has to add up to the score itself and not to something near it."""
+    rng = _np().random.default_rng(0)
+    f = {name: rng.normal(size=25) for name in R.AGGREGATE_FEATURES}
+    t = R.aggregate_terms(f)
+    assert t.shape == (25, len(R.AGGREGATE_FEATURES))
+    assert _np().abs(t.sum(axis=1) - R.aggregate_score(f)).max() < 1e-12
+
+
+def test_aggregate_terms_puts_each_coefficient_in_its_own_column_in_the_fitted_order():
+    """Columns follow `aggregate()["features"]`, so a caller can name a column without guessing."""
+    a = R.aggregate()
+    f = {name: [0.0] for name in R.AGGREGATE_FEATURES}
+    for j, (name, coef, mu, sg) in enumerate(zip(a["features"], a["coef"], a["mu"], a["sigma"])):
+        assert abs(R.aggregate_terms(f)[0, j] - coef * (0.0 - mu) / sg) < 1e-12, name
+
+
+def test_aggregate_terms_names_the_same_imputed_features_the_score_does():
+    """Both entry points answer "which terms did this row not have" identically, because there is
+    one implementation of it and the score now reads it from the decomposition."""
+    f = {name: [1.0, 1.0] for name in R.AGGREGATE_FEATURES}
+    f["expr_lvl"] = [float("nan"), 1.0]
+    a, b = [], []
+    R.aggregate_terms(f, a)
+    R.aggregate_score(f, b)
+    assert a == b == [["expr_lvl"], []]
+
+
+def test_an_imputed_term_contributes_exactly_zero_to_the_decomposition():
+    """The training mean is z = 0, so its contribution is 0 -- which is what makes a row of this
+    matrix readable as "these are the terms that carried it"."""
+    f = {name: [1.0] for name in R.AGGREGATE_FEATURES}
+    f["expr_lvl"] = [float("nan")]
+    j = R.AGGREGATE_FEATURES.index("expr_lvl")
+    assert R.aggregate_terms(f)[0, j] == 0.0

@@ -1097,3 +1097,80 @@ def test_build_axes_gives_one_matrix_per_mechanism_not_per_column():
         off = m[~np.eye(n, dtype=bool)]
         assert abs(off.mean() - 1.0) < 1e-9, name          # unit off-diagonal mean, every axis
         assert np.allclose(m, m.T, atol=1e-12), name
+
+
+# ------------------------------------ the profile coupling: two units good for the same reason
+
+def test_two_units_good_for_the_same_reason_couple_and_two_good_for_different_ones_do_not():
+    """The whole content of the channel. Rows of `aggregate_terms` say *why* a unit scores; two
+    that point the same way share a failure mode and the second buys less than its score claims."""
+    c = np.array([[3.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 2.0]])
+    o = CA.profile_overlap(c, cov=np.eye(3))
+    assert o[0, 1] > 0.9                       # both carried by term 0
+    assert o[0, 2] < 0.34 and o[0, 3] < 0.34   # carried by different terms
+    assert np.allclose(o, o.T) and np.all(np.diag(o) == 0.0)
+
+
+def test_the_profile_coupling_is_never_negative_so_greedy_keeps_its_guarantee():
+    """`greedy` is within 1 - 1/e of the exact optimum only where every J is repulsive. A cosine
+    is signed; clipping it at zero is what keeps that bound, and two units good for *opposite*
+    reasons are not redundant anyway."""
+    rng = np.random.default_rng(3)
+    o = CA.profile_overlap(rng.normal(size=(40, 9)), cov=np.eye(9))
+    assert o.min() >= 0.0 and o.max() <= 1.0
+
+
+def test_whitening_stops_one_correlated_pair_of_terms_being_counted_twice():
+    """Two perfectly correlated columns are one axis. Without whitening a unit carried by that axis
+    reads as agreeing with itself twice and swamps a unit carried by the independent third."""
+    x = np.array([1.0, 0.9, -1.0, -0.9, 0.2, -0.3])
+    c = np.column_stack([x, x, np.array([-1.0, 1.0, 0.4, -0.2, 0.9, -0.8])])
+    raw = c / np.linalg.norm(c, axis=1, keepdims=True)
+    assert CA.profile_overlap(c, cov=np.cov(c.T))[0, 1] < float(raw[0] @ raw[1])
+
+
+def test_a_unit_average_in_every_term_couples_to_nothing():
+    """`epic_axes` centres before whitening, so the pool's own mean unit has a zero row -- it is
+    not distinctive on any axis, so it shares no *reason* with anything."""
+    c = np.array([[2.0, 0.0], [0.0, 2.0], [-2.0, 0.0], [0.0, -2.0], [0.0, 0.0]])
+    assert np.all(CA.profile_overlap(c, cov=np.eye(2))[4] == 0.0)
+
+
+def test_epic_axes_takes_the_cohort_covariance_when_one_is_given():
+    """A twenty-candidate pool cannot estimate a nine-by-nine covariance, so the geometry comes
+    from the cohort. Passing one must actually change the answer, or the argument is decoration."""
+    rng = np.random.default_rng(5)
+    pool = rng.normal(size=(8, 4))
+    cohort = rng.normal(size=(4000, 4)) @ np.diag([9.0, 1.0, 1.0, 1.0])
+    assert not np.allclose(CA.epic_axes(pool, cov=np.eye(4)),
+                           CA.epic_axes(pool, cov=np.cov(cohort.T)))
+    with pytest.raises(ValueError, match="regular simplex"):
+        CA.epic_axes(pool)                    # 8 rows cannot estimate a 4x4 covariance
+
+
+def test_the_profile_channel_is_absent_from_a_cassette_that_was_handed_no_terms():
+    """Which channels were available is part of the result, so it is recorded and not implied."""
+    s, peps, alle = pool(n=24)
+    assert "profile" not in CA.select(s, peps, alle, k=6).channels
+    assert "profile" in CA.select(s, peps, alle, k=6, dominance=False,
+                                  terms=np.random.default_rng(0).normal(size=(24, 9)),
+                                  terms_cov=np.eye(9)).channels
+
+
+def test_select_refuses_the_second_copy_of_one_reason_before_an_equally_scoring_third():
+    """The behaviour the channel exists for, end to end: given two units that score alike *for the
+    same reason* and a third that scores slightly lower for a different one, a set of two takes the
+    third. A plain sort cannot express this -- top-m by any pointwise score is modular."""
+    s, peps, alle = pool(n=3)
+    s = np.array([4.0, 4.0, 3.6])
+    terms = np.array([[4.0, 0.0], [4.0, 0.0], [0.0, 3.6]])
+    got = CA.select(s, peps, alle, k=2, dominance=False, terms=terms, terms_cov=np.eye(2),
+                    gamma=40.0).index
+    assert sorted(got) in ([0, 2], [1, 2]), got
+    assert sorted(CA.select(s, peps, alle, k=2, dominance=False).index) == [0, 1]
+
+
+def test_select_refuses_a_terms_matrix_that_is_not_one_row_per_candidate():
+    s, peps, alle = pool(n=10)
+    with pytest.raises(ValueError, match="one row per candidate"):
+        CA.select(s, peps, alle, k=3, terms=np.zeros((9, 9)), terms_cov=np.eye(9))
