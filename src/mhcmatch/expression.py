@@ -43,7 +43,7 @@ __all__ = ["REFERENCE_FILE", "REFERENCE_TOIL_FILE", "MATRIX_FILE", "FLOORS_FILE"
            "matched_tissues", "resolve_context",
            "fetch_reference", "fetch_matrix", "fetch_synonyms", "load", "lookup", "impute", "tissues",
            "tumor_types", "safety_profile",
-           "context_floor", "gene_level", "batch_scale"]
+           "context_floor", "gene_level", "batch_scale", "coexpression"]
 
 #: Path inside the HF dataset repo.
 REFERENCE_FILE = "expression/reference_expression.tsv.gz"
@@ -437,6 +437,64 @@ def _matrix(path: str | None = None) -> tuple:
     gi = {str(g): i for i, g in enumerate(z["genes"])}
     ci = {str(c): i for i, c in enumerate(z["contexts"])}
     return gi, ci, z["values"], z["n_samples"]
+
+
+def coexpression(genes, path: str | None = None, absolute: bool = False):
+    """Pairwise similarity of GTEx tissue profile, ``(n, n)`` in ``[0, 1]``, one row per gene given.
+
+    **What this is, exactly.** Each gene is taken as its vector of median TPM over the **53 GTEx
+    tissues** of the Toil recompute (:func:`_matrix`), put on ``log2(1 + TPM)``, centred and scaled,
+    and correlated with every other. It is therefore *similarity of tissue-specificity profile
+    across tissue medians* --- two genes that are on in the same organs and off in the same organs
+    score high. It is **not** co-regulation within one tumour, which would need per-sample
+    expression the deposit does not carry, and it should not be described as such.
+
+    **What it is for.** Two cassette units whose source genes are on together are lost together
+    when that transcriptional programme is silenced, and that is a way of failing that no per-unit
+    scalar can express --- which is why :func:`mhcmatch.cassette.overlap` takes it as a matrix
+    rather than as a feature column.
+
+    A gene the matrix does not carry, or one flat across every tissue, gets a **zero row**: no
+    information about its pairs, which leaves the unit coupled to nothing and ranked on everything
+    else. It is never ``nan``, which would propagate into an argmax and delete the candidate.
+    ``genes`` may repeat and may be empty strings; the result is positionally aligned with it.
+
+    ``absolute`` takes ``|r|``, so a gene pair that is reciprocally regulated counts as related.
+    The default keeps the sign and clips at 0, because the mechanism claimed is *on together*.
+
+    >>> import numpy as np                                     # doctest: +SKIP
+    >>> c = coexpression(["TP53", "MDM2", "TP53"])             # doctest: +SKIP
+    >>> float(c[0, 2])                                         # same gene twice  # doctest: +SKIP
+    1.0
+    """
+    import numpy as np
+
+    gi, ci, values, _ = _matrix(path)
+    cols = [i for c, i in ci.items() if c.startswith("toil_gtex|")]
+    if not cols:
+        raise ValueError("coexpression: the matrix carries no toil_gtex contexts")
+    idx = [gi.get(str(g).strip()) for g in genes]
+    n = len(idx)
+    out = np.zeros((n, n), dtype=float)
+    have = [j for j, i in enumerate(idx) if i is not None]
+    if not have:
+        return out
+
+    x = np.log2(1.0 + np.asarray(values[np.ix_([idx[j] for j in have], cols)], dtype=float))
+    x = x - x.mean(1, keepdims=True)
+    sd = np.sqrt((x * x).sum(1))
+    # A gene flat across all 53 tissues has no profile to correlate; it stays a zero row rather
+    # than dividing by zero into a spurious correlation of 1 with every other flat gene.
+    live = sd > 0
+    x[live] /= sd[live, None]
+    x[~live] = 0.0
+    r = x @ x.T
+    if absolute:
+        r = np.abs(r)
+    sub = np.clip(r, 0.0, 1.0)
+    out[np.ix_(have, have)] = sub
+    np.fill_diagonal(out, 0.0)
+    return out
 
 
 def _gtex_contexts(path: str | None = None) -> dict:

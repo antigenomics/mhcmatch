@@ -1838,6 +1838,111 @@ a donor.
 
 ### Beside §5e. Cassette design
 
+**NeoRanking is the full-cycle benchmark we do not yet run, and it is the one worth the stage.**
+Müller M, Huber F, Arnaud M, Kraemer AI, Altimiras ER, Michaux J, Taillandier-Coindard M,
+Chiffelle J, Murgues B, Gehret T, Auger A, Stevenson BJ, Coukos G, Harari A, Bassani-Sternberg M.
+"Machine learning methods and harmonized datasets improve immunogenic neoantigen prediction."
+*Immunity* 2023;**56**(11):2650-2663.e6.
+doi:[10.1016/j.immuni.2023.09.002](https://doi.org/10.1016/j.immuni.2023.09.002) ·
+PMID [37816353](https://pubmed.ncbi.nlm.nih.gov/37816353/). Code:
+<https://github.com/bassanilab/NeoRanking>.
+
+What it carries: **131 patients** (120 reprocessed from two external large-scale immunogenicity
+screens plus 11 in-house), **46,017 somatic SNVs**, **1,781,445 neo-peptides**, of which **212
+mutations and 178 neo-peptides are immunogenic**. It reports improving neoantigen ranking by up to
+30%, and the reason to run against it is not the AUC: it publishes **harmonised datasets built for
+benchmarking companion algorithms**, which is the one thing a full-cycle comparison needs and which
+nobody else deposits. It is also the second independent method to name **binding promiscuity** as
+predictive -- the axis `bench/results/cassette_couplings.md` measures a ceiling on -- alongside
+HLA presentation hotspots and the oncogenicity of the mutated gene.
+
+**Its harmonised dataset is already our corpus, and that was not known when this entry was
+written.** `raw/immunogenicity/NCI_dataset_only_tested.txt` -- the file
+`neoantigens_tested_peptides.tsv.gz` is built from, and the corpus EPIC is fitted and evaluated on
+-- **is the tested subset of NeoRanking's `Neopep_data_org.txt`**. Identified by construction: its
+58 columns are exactly `NeoRanking/Utils/GlobalParameters.py::features_neopep` plus seven
+sequence/allele columns, its `dataset` / `train_test` / `response_type` vocabularies are
+NeoRanking's, and the per-cohort CD8 counts **NCI 103 / TESLA 34 / HiTIDE 41 = 178** match that
+paper's Table 1 to the digit. `dataset_origin == "Neopep"` is their file name. So there is nothing
+to download and no cohort to harmonise: **TESLA and HiTIDE are two of NeoRanking's three cohorts**,
+and every one of its features is already deposited under a `pred_` prefix -- including
+`pred_mutant_other_significant_alleles`, which is its promiscuity term, and the five ipMSDB
+presentation-hotspot features.
+
+That changes the shape of the comparison. It is not a new benchmark to acquire; it is a **rival to
+run on rows we already hold**, and its trained models ship as sklearn pickles and XGBoost boosters
+consuming a fixed 31-column frame, so it can be re-run rather than only cited. Its three strongest
+Shapley features -- `mutant_rank` (MixMHCpred), `mutant_rank_netMHCpan`, `mutant_rank_PRIME` -- are
+deposited values, so no binary has to be installed.
+
+**Fix the attribution first, in three places that currently disclaim it**:
+`~/hf/pmhc_data/neoantigens/SOURCES.md` lists `Neopep` under "not yet verified, and deliberately not
+written out"; `2026-mhcmatch-benchmark/SOURCES.md` said "no primary citation is recorded -- confirm
+the reference before citing it" (now fixed); and `bench/neoag/ingest_tested.py` calls it "the NCI
+Surgery Branch screening set". Writing to the HuggingFace mirror is a deliberate act and needs the
+author's word.
+
+**The head-to-head has been run, and what it needs next is a genotype rather than a rival.**
+`bench/results/compare_per_unit.md` scores EPIC against NeoRanking's released weights and against
+netMHCpan, MixMHCpred and PRIME on the three screening cohorts. EPIC leads every scorable rival on
+the two nominated lists -- TESLA **0.8659** against 0.8164 / 0.7843 / 0.7932, HiTIDE **0.7089**
+against 0.6699 / 0.5851 / 0.6035 -- and the paired per-patient differences against NeoRanking are
++0.0940 (-0.0024 to +0.1916) and +0.0560 (-0.0529 to +0.1276), consistent in direction and
+unresolvable on eight and nine patients. On NCI-test everything saturates and NeoRanking is ahead by
+0.0126 (-0.0248 to -0.0041), the only difference that resolves, on its own training cohort's test
+split and on the least stringent candidate list of the three.
+
+**Nothing in that table is held out of EPIC, so none of it is a like-for-like win.** The comparison
+that would be one is on a cohort in neither corpus, and there are three candidates. **All three are
+blocked on the same thing: an HLA genotype.** Without one, EPIC runs on five of its nine features --
+`binder` (+0.7569, its largest coefficient) and `log10a` at the training mean -- so a number from
+such a cohort measures the handicap and not the model. This was learned by producing two of them:
+IVAC 0.4373 and Sahin 0.4188, both below chance, neither interpretable, neither committed.
+
+| cohort | what it would give | what is missing | how to unblock |
+|---|---|---|---|
+| **IVAC MUTANOME** (Sahin, *Nature* 2017, PMID 28678784) | 125 manufactured units over 13 patients, **every one assayed** -- 75 responders and 50 *measured* negatives. No patient in EPIC's fit; 2 of 125 units share an 8-11mer with it | **no per-patient genotype is published anywhere, and the paper's own materials have now been checked rather than assumed.** Extended Data Fig. c gives a real HLA restriction beside a real minimal class-I epitope, but for **14 rows only -- the validated CD8 epitopes**, over 8 of the 13 patients. Supplementary Table 1 gives a *predicted* restriction on **13 of 67** rows. The patient-characteristics table (Extended Data Fig. a) has no HLA column | **the obvious shortcut is circular and must not be taken.** Unioning Extended Data Fig. c's alleles per patient would give a partial genotype for 8 patients -- but an allele appears there *exactly because* an epitope validated on it, so the allele set is a function of the outcome, and scoring the 50 measured negatives against it manufactures a win in the direction we are testing. Only a published or author-supplied typing unblocks this cohort |
+| **Weber gene fusions** (Weber et al., *Nat Biotechnol* 2022;40(8):1276-1284, [doi:10.1038/s41587-022-01247-9](https://doi.org/10.1038/s41587-022-01247-9)) | **54 fusions with a CD4 and a CD8 call each, and 272 tested overlapping peptides** with per-peptide labels. Junctions are deposited with the breakpoint marked, so units need no reconstruction. Carries its own netMHCpan-4.0 affinity and %rank as a built-in rival. In nobody's corpus -- every SNV screen here and all three of NeoRanking's are SNV-only. **The only fusion cohort anywhere in this project**, which is the `nonconventional` arm the cassette quota holds a slot for | no HLA in the supplement. Methods say alleles came from **seq2HLA v2.2 on each patient's RNA-seq** | re-run seq2HLA against **SRA PRJNA607061**, which is public. One download and one pipeline, and it unblocks the only fusion arena we have |
+| **Sahin TNBC** (Sahin et al., *Nature* 2026, PMID 41708868) | 251 vaccinated targets over 14 patients, ex-vivo ELISpot on every one. Published after every model here was frozen; contributes **0 rows** to EPIC's fit | HLA for only **three** of fourteen patients, in Extended Data Fig. 8 | already usable on those three: `bench/neoag/cohort_report.py::sahin_row` scores their **53 targets** genotype-aware and the `neoag` family reaches **0.6786** there, **0.7329** BRCA-tissue-matched. **Those are the `neoag` GLM (`BECR`/`B`), not EPIC** -- do not quote them as EPIC's. The open run is EPIC on the same 53 targets by the same expansion, which is the one neutral-arena number available today |
+
+**Portability is itself a result, and it is measured: 12 of NeoRanking's 31 features are
+obtainable on a cohort outside its corpus.** The nineteen that are not span **eight** separate
+external dependencies -- ipMSDB (5 features, their in-house 547,476-peptide immunopeptidome, a
+figshare deposit of its own), MixMHCpred (3), IntOGen (3), netMHCstabpan (2), VAF+purity (2), PRIME
+(1), CScape (1) and netchop (1, Linux-only binary). Installed here: netMHCpan-4.2 and MixMHC2pred
+(class II). Absent: MixMHCpred, PRIME, netMHCstabpan, ipMSDB, IntOGen, CScape.
+
+EPIC scores a new cohort from **sequence, gene symbol and an optional genotype**, with every
+artifact vendored in the wheel. That difference is a property of the two designs and belongs in the
+comparison rather than in a footnote about ours. It also bounds what any head-to-head outside their
+three cohorts can mean: a NeoRanking column there is a **12/31-feature** model missing two of its
+three strongest terms, and must be labelled with that count rather than as "NeoRanking".
+
+**The partial genotypes both vaccine trials publish are outcome-conditioned in coverage, and the
+cohort-wide panel is the way around it.** Sahin's Extended Data Fig. 8 types three patients --
+P01 B*07:02/B*58:01, P12 A*03:01/C*03:03, P13 A*68:01/A*02:01/B*14:02 -- two or three class-I
+alleles each of six, and they appear because a CD8 TCR was validated on them. IVAC's Extended Data
+Fig. c is the same shape. Scoring each unit against **the union of alleles observed across the whole
+trial** removes the conditioning entirely, since every unit then meets the identical allele set; it
+measures "presentable by this cohort's panel" rather than "by this patient's genotype", and it
+restores `binder` so EPIC runs on 7 of 9 features instead of 5. IVAC's panel is
+A*02:01, A*11:01, A*31:01, B*07:02, B*37:01, B*39:06, B*44:02, B*57:01, B*68:01.
+
+**Order of value.** Sahin's three patients cost nothing and are the only neutral number reachable
+now, but 53 targets is thin. The fusion cohort is the largest prize and the clearest path -- public
+SRA, a named tool, and a substrate nothing else in this project covers. **IVAC has the best labels
+of the three and is the one to stop working on**: its genotype was never published, its supplement
+and all three extended-data figures have been checked, and the only genotype recoverable from them
+is one the outcome defines.
+
+**Quantify the leakage before any head-to-head.** Its two external screens are very likely the
+sources behind our own `TESLA` and `HiTIDE` slices of
+`neoantigens/neoantigens_tested_peptides.tsv.gz`, and TESLA and HiTIDE are two of EPIC's seven
+fitted screens. Overlap with the fitting corpus has to be counted by patient *and* by peptide and
+carried as a column, exactly as `neoantigens/nci_parkhurst_gi.parquet` carries `in_epic_fit`. A
+number quoted against a harmonised set that contains our training data is worse than no number.
+
+
 ### 5f. Response threshold and bistability --- designed, nothing measured
 
 `F(e)` (`mhcmatch.precursor`) answers *does a T cell exist*. It does **not** answer *will a response

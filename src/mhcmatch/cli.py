@@ -1617,6 +1617,28 @@ def cmd_cassette_select(a):
             sel_kw.update(selectivity=a.selectivity,
                           expr_lvl=[_f(r["expr_lvl"]) for r in g],
                           expr_norm=[_f(r["expr_norm"]) for r in g])
+        if a.no_dominance:
+            sel_kw["dominance"] = False
+        if a.rule == "v2":
+            sel_kw.update(rule="v2", pi=a.not_worse, how=a.diversity)
+        if a.feature_column:
+            missing = [c for c in a.feature_column if c not in g[0]]
+            if missing:
+                raise SystemExit(
+                    f"--feature-column names {' and '.join(missing)}, which the candidate table "
+                    f"does not carry. `mhcmatch rank --score aggregate` emits expr_lvl, expr_norm, "
+                    f"C_phys_buried and C_phys_charge. Found: {sorted(g[0])}")
+            sel_kw.update(features=np.array([[_f(r[c]) for c in a.feature_column] for r in g]),
+                          feature_names=tuple(a.feature_column))
+        if a.coexpr_gtex:
+            if "gene" not in g[0]:
+                raise SystemExit("--coexpr-gtex needs the `gene` column; `mhcmatch rank` emits it")
+            from . import expression as EX
+            genes = [r.get("gene", "") for r in g]
+            sel_kw["coexpr"] = EX.coexpression(genes)
+            known = sum(1 for x in genes if x)
+            say(f"{donor}: GTEx co-expression over {known} of {len(genes)} unit(s) with a gene "
+                "symbol; the rest contribute no pair information", level=2)
         size, tol = a.size, a.tol
         if a.confidence is not None:
             # `-k` becomes the manufacturing ceiling and the donor's own pool sets the size. A
@@ -1662,6 +1684,8 @@ def cmd_cassette_select(a):
                         "energy": f"{c.energy:.6f}", "lam": f"{c.lam:.6f}",
                         "rho": c.rho, "gamma": c.gamma, "channels": "+".join(c.channels),
                         "block_live": c.block_live, "selectivity": c.selectivity,
+                        "rule": c.rule, "pi": c.pi, "not_worse": f"{c.not_worse:.4f}",
+                        "diversity": f"{c.diversity:.4f}",
                         "n_covered": c.coverage.get("n_covered", ""),
                         "n_allotypes": c.coverage.get("n_allotypes", "")})
         # A tolerance that is spent is a result, not a detail: the objective has an internal
@@ -1671,6 +1695,10 @@ def cmd_cassette_select(a):
             say(f"{donor}: {c.k} units, not {size} -- the objective peaks there inside the "
                 f"tolerance (adding the next unit costs more variance than it buys in mean)",
                 level=1)
+        if c.rule == "v2":
+            say(f"{donor}: v2 moved {c.swaps} of {c.k} slot(s) off the sort for diversity "
+                f"{c.diversity:.4f} ({c.how}), keeping P(not worse) = {c.not_worse:.3f} "
+                f"against the stated floor {c.pi:.2f}", level=1)
         cov = c.coverage
         say(f"{donor}: {c.k} of {c.pool_n}, yield {c.yield_:.3f} unit(s), lam {c.lam:+.3f} nats"
             + (f", {cov['n_covered']}/{cov['n_allotypes']} allotype(s) covered, "
@@ -2269,6 +2297,37 @@ def main(argv=None):
                          "stated design preference like --gamma: the shipped model fits both "
                          "expression terms POSITIVE because it was fitted on `will this respond`, "
                          "and `high in tumour, low in normal` is a different question (default: 0)")
+    cs.add_argument("--rule", choices=("v1", "v2"), default="v1",
+                    help="v1 maximises the mean-variance objective. v2 takes the plain sort as a "
+                         "floor and spends the slack on diversity: because p is a probability, "
+                         "many size-k sets are indistinguishable in how many units respond, and v2 "
+                         "returns the most diverse set that is still, with probability at least "
+                         "--not-worse, no worse than sorting (default: v1)")
+    cs.add_argument("--not-worse", type=float, default=0.5, metavar="P",
+                    help="v2 only: the floor on P(this cassette catches at least as much as the "
+                         "top-k sort). 1.0 returns the sort itself; lower buys more diversity and "
+                         "says how often you are willing to be wrong (default: 0.5)")
+    cs.add_argument("--diversity", choices=("minmax", "mean"), default="minmax",
+                    help="v2 only: how diversity is aggregated over the four axes. `minmax` "
+                         "maximises the WORST-covered axis, since a cassette is undone by its worst "
+                         "shared failure mode; `mean` averages them, which dilutes any single axis "
+                         "that separates (default: minmax)")
+    cs.add_argument("--feature-column", action="append", metavar="COL",
+                    help="add a coupling channel on this per-unit column, so two units alike on it "
+                         "cost each other. Repeatable. `rank --score aggregate` emits the four "
+                         "worth trying: C_phys_buried, C_phys_charge, expr_lvl, expr_norm. Unlike "
+                         "--selectivity this changes what a PAIR costs, not what a unit is worth "
+                         "(default: none, and the objective sees only the score)")
+    cs.add_argument("--coexpr-gtex", action="store_true",
+                    help="couple two units whose source genes share a GTEx tissue profile, so a "
+                         "cassette does not spend two slots on one transcriptional programme. "
+                         "Reads the `gene` column; a gene the panel does not carry contributes no "
+                         "pair information rather than being dropped")
+    cs.add_argument("--no-dominance", action="store_true",
+                    help="drop the score-dominance channel, leaving only mechanism-based ones. It "
+                         "is the one channel built from the score rather than from biology, and "
+                         "the statistic it corresponds to fits ATTRACTIVE on the observational "
+                         "arm, where the greedy 1-1/e guarantee does not hold")
     cs.add_argument("--score-column", default="score", metavar="COL",
                     help="which column holds the aggregate log-odds (default: score; `rank` writes "
                          "`aggregate`)")
