@@ -6,6 +6,28 @@ versioning is [SemVer](https://semver.org).
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
 
+## [Unreleased]
+
+### Fixed
+
+- **`rank.aggregate_score(..., imputed_out=[])` raised `IndexError`.** The signature reads
+  `imputed_out: list | None` and the list was indexed without being grown, so it silently required a
+  caller to pre-size it to one empty list per candidate --- which the library's own caller does and
+  no external caller could know. Worse, it raised **only once a value was actually missing**, so the
+  call worked until a gene symbol failed to resolve and then crashed on exactly the candidates the
+  list exists to name. It is grown in place now; `[]` is the documented call.
+
+### Documentation
+
+- **`aggregate_score` says what `imputed_out` is for.** A candidate whose gene the expression
+  reference does not carry is scored with `expr_lvl` and `expr_norm` at the **training mean**, and
+  the only thing that distinguishes it from a gene that is genuinely silent is its entry in this
+  list. Scoring a missing gene at a literal `0.0` instead is a **-1.47 sigma penalty** on `expr_lvl`
+  (v11 `mu` is 5.1264) --- invented out of an unresolved symbol. The library has always imputed to
+  the mean; this documents the contract so a caller building the feature dict itself does not
+  reinvent the penalty. Measured in the benchmark repo, where a harness did exactly that: it cost
+  0.0565 AUROC on the 53 Sahin TNBC targets, 0.6280 against 0.6845.
+
 ## [1.6.1] --- 2026-08-30
 
 ### Fixed
