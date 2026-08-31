@@ -16,6 +16,42 @@ the build plan. Phase sections marked _(TBD)_ await detail.
 > tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
 > below resolve there, not here.
 
+## Where this stands, 2026-08-31 — two library additions, and the vaccine rows moved
+
+**`rank.aggregate_terms`** returns the score unsummed: `(n, d)` of `coef * z`, one column per fitted
+term, so a row is the decomposition of a candidate's score and sums to exactly what
+`aggregate_score` returns. `aggregate_score` now reads it, summing sequentially in feature order as
+it always did — 726 tests pass unchanged. Three benchmark stages had each rebuilt this matrix from
+the artifact by hand.
+
+**`cassette.profile_overlap`** is the pair channel that matrix affords: the positive part of the
+cosine between whitened contribution rows, so two units carried by presentation are coupled and two
+carried by presentation and by abundance are not. It is what the dominance channel was reaching for
+— dominance couples two units for *scoring alike* rather than for scoring alike **because of the
+same thing** — and it is non-negative by construction, so `greedy` keeps its `1 − 1/e` bound.
+`select` takes `terms=` and `terms_cov=`; `overlap(profile=None)` is bit-identical to every cassette
+built before the channel existed.
+
+> **The one trap, and it is silent.** Whitening `n` points against a covariance estimated from those
+> same `n` points sends them to the vertices of a regular simplex, where every pairwise cosine is
+> exactly `−1/(n−1)` whatever the data said. `epic_axes` raises below `SELF_COV_MIN = 10` rows per
+> column rather than return a constant wearing the data's name, and `select` refuses a pool too small
+> to estimate its own. **Whiten against the cohort.**
+
+**Measured, and reported as measured:** the coupling is informative — off-diagonal mean 0.136, sd
+0.20 over TESLA's eight donor pools — and it does **not** raise capture. Every paired interval spans
+zero. It ships because it is the coupling the derivation asks for and because a cohort with more
+donors can test it; it is not claimed to catch more units (`issues.md` W20).
+
+**The version stays at 1.6.1.** Bumping it makes `mhcmatch build --check` demand a regeneration of
+the four vendored artifacts, and that rebuild is a release-time step and the author's to take.
+
+**The two vaccine rows moved, and no in-corpus row did.** Two repairs in the benchmark harness, both
+label-free and neither touching the artifact: a window of a vaccine construct that spans no
+substitution is not a neoantigen (4,346 of IVAC's 9,010 windows, 48.2 %), and both trials deposit
+their own abundance where a public tumour-type median was being used. IVAC 0.6157 → **0.6330**,
+Sahin 0.6845 → **0.7054**; TESLA, HiTIDE and NCI-test byte-identical.
+
 ## Where this stands, 2026-08-30 — the per-unit arena is closed and reproducible
 
 **One command regenerates every head-to-head number:
@@ -28,8 +64,8 @@ the build plan. Phase sections marked _(TBD)_ await detail.
 | TESLA | 736 | 34 | **0.8659** | 0.7759 | 0.8164 | 0.7843 | 0.7932 |
 | HiTIDE | 1,563 | 41 | **0.7091** | 0.5737 | 0.6699 | 0.5851 | 0.6035 |
 | NCI-test | 123,485 | 21 | 0.9847 | **0.9966** | 0.9773 | 0.9771 | 0.9493 |
-| IVAC MUTANOME (CD8+) | 124 | 31 | **0.6157** | N/A | N/A | N/A | N/A |
-| Sahin TNBC | 53 | 21 | **0.6845** | N/A | N/A | N/A | N/A |
+| IVAC MUTANOME (CD8+) | 124 | 31 | **0.6330** | N/A | N/A | N/A | N/A |
+| Sahin TNBC | 53 | 21 | **0.7054** | N/A | N/A | N/A | N/A |
 
 **The two vaccine cohorts are open now, and both were unblocked by the author's reading of the
 supplements** — the trials filtered candidate epitopes against each donor's own HLA list, so the
@@ -44,8 +80,8 @@ restriction for a **non-responder** (P04-DICER1-P627S, HLA-B\*07:02).
 - **IVAC reports CD8+ only.** 60 of its 75 responding units raised CD4+ and EPIC is class-I; on the
   mixed label everything sits at chance including the trial's own score (0.4948).
 - **Both numbers are floors and the gap is measured.** Cutting IVAC's 9-allele panel one allele at a
-  time moves EPIC's within-patient AUROC monotonically **0.5530 (k=1) → 0.6364 (k=9), +0.0104 per
-  allele, no flattening at the top** — and 9 alleles stand in for 78 genotype slots. Sahin shows the
+  time moves EPIC's within-patient AUROC monotonically **0.5031 (k=1) → 0.6193 (k=9), +0.0145 per
+  allele, rising at every one of the nine steps** — and 9 alleles stand in for 78 genotype slots. Sahin shows the
   same ordering per patient: `binder` 0.5500 (two alleles, one locus) → 0.7222 (two) → **0.9231**
   (three, two loci).
 
