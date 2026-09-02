@@ -77,11 +77,31 @@ header of the first was applied to the rows of the second and every field past t
 two. It did not error; it produced a `gene_name` holding `A`/`C`/`G`/`T`. Project to the columns the
 next step actually needs, resolved by name **per file**, and never paste whole tables together.
 
-**`--some_flag false` on a Nextflow command line is the string `"false"`, which is truthy.** So
-`params.x ? '--flag' : ''` passes the flag a user just tried to disable. Coerce every boolean param
-once in `nextflow.config` after its default is set. The direction that matters is the reverse one:
-a user who believes they enabled `--mhcmatch_vector_screen` and did not gets a cassette with no
-safety check and no error.
+**`--some_flag false` on a Nextflow command line is the string `"false"`, which is truthy**, so
+`params.x ? '--flag' : ''` passes the flag a user just tried to disable. **And it cannot be fixed in
+`nextflow.config`**: a config statement is evaluated when the config is parsed, which is BEFORE
+Nextflow applies `--param` from the command line, so a coercion written there is silently overwritten
+by the very value it exists to coerce. (The `x = x ?: default` idiom this module leans on elsewhere
+reads as if config statements see CLI values; for a *default* they effectively do, since an unset
+param is null either way, but for coercing one a caller actually set they do not.) Coerce at the
+point of USE -- `main.nf`'s `isOn()`, and inline inside the resource closures, which are evaluated
+per task. The direction that matters is the reverse one: a user who believes they enabled
+`--mhcmatch_vector_screen` and did not gets a cassette with no safety check and no error.
+
+**A DSL2 process may be invoked once per run, so the second arm aliases** -- and then every
+`withName:` selector must match both spellings, or it sizes one arm and silently misses the other.
+`subworkflows/denovo.nf` includes the shared tail as `MHCMATCH_*_DN`. Selectors that set `ext.prefix`
+or `ext.verb` are qualified by ARM (`.*MHCMATCH_RERANK_ARM:...`), because `subworkflows/mhcmatch.nf`
+runs the same processes under the same names and must keep its own filenames and its own `build`.
+
+**Two checkouts, one repo: `cd` back to the worktree before every write and every push.** This
+session put two commits on `oocorpus-renorm` -- another session's branch -- because the shell cwd
+resets to the main checkout between commands and a *relative* path then resolves there. It also
+pushed the main checkout's `main.nf` to the cluster, which failed as `MHCMATCH_ALLELES is not
+defined` three processes later. Neither is detectable from the edit itself: the write succeeds, the
+grep that follows reads the same wrong file and agrees, and `git status` in the worktree is clean
+because the change is not there. **Use absolute paths for anything that leaves the worktree**, and
+check `git log --oneline -1` on the branch you think you are on before believing a commit landed.
 
 **`--block-live` is two different knobs under one flag name.** P(a block is live) on
 `cassette build --quota`, default 0.5; the HLA-loss rate on `cassette select`, default 1.0. Wiring

@@ -31,6 +31,23 @@
 //  * **Species follows `params.genome`**, mapped in nextflow.config via ext.args exactly as the ARDA
 //    module does, so there is no extra parameter to configure.
 
+//: Is a boolean parameter on?
+//:
+//: **`--some_flag false` on the command line arrives as the STRING "false", which is truthy in
+//: Groovy**, so the plain `params.x ? '--flag' : ''` idiom passes the flag a user just tried to
+//: disable. And it cannot be fixed in `nextflow.config`: a config statement is evaluated when the
+//: config is parsed, which is BEFORE Nextflow applies `--param` from the command line, so a
+//: coercion written there is silently overwritten by the very value it exists to coerce. It has to
+//: happen at the point of use -- here, and inside the resource closures in the two config files,
+//: which are evaluated per task and therefore late enough.
+//:
+//: The direction that matters is the reverse one: somebody who believes they enabled
+//: `--mhcmatch_vector_screen` and did not gets a cassette with no safety check and no error.
+def isOn(v) {
+    v != null && !(v.toString().toLowerCase() in ['false', '0', 'no', ''])
+}
+
+
 process MHCMATCH_PREDICT {
     tag "${meta.id}:${cls}"
     label 'process_medium'
@@ -60,7 +77,7 @@ process MHCMATCH_PREDICT {
     def prefix = task.ext.prefix ?: "${meta.id}"
     def tier   = params.mhcmatch_tier ?: 'full'
     def rank   = params.mhcmatch_rank_threshold ?: 2.0
-    def core   = params.mhcmatch_predict_core ? '--core ' : ''
+    def core   = isOn(params.mhcmatch_predict_core) ? '--core ' : ''
     """
     mhcmatch predict ${fasta} \\
         --alleles '${alleles}' \\
@@ -124,9 +141,9 @@ process MHCMATCH_RANK {
     // list, not a model output, so it is a pipeline parameter rather than a default buried in a
     // process. Left unset, the CLI uses TESLA's 37 of 615.
     def prev   = params.mhcmatch_prevalence ? "--prevalence ${params.mhcmatch_prevalence} " : ''
-    def extra  = (params.mhcmatch_rank_extended ? '--extended ' : '') +
-                 (params.mhcmatch_rank_annotate ? '--annotate ' : '') +
-                 (params.mhcmatch_rank_core     ? '--core '     : '')
+    def extra  = (isOn(params.mhcmatch_rank_extended) ? '--extended ' : '') +
+                 (isOn(params.mhcmatch_rank_annotate) ? '--annotate ' : '') +
+                 (isOn(params.mhcmatch_rank_core)     ? '--core '     : '')
     """
     mhcmatch rank ${mode} ${input} \\
         --alleles '${alleles}' \\
@@ -143,10 +160,10 @@ process MHCMATCH_RANK {
 
     stub:
     def prefix = task.ext.prefix ?: "${meta.id}"
-    def ext    = params.mhcmatch_rank_extended ? 'True' : 'False'
-    def ann    = params.mhcmatch_rank_annotate ? 'True' : 'False'
+    def ext    = isOn(params.mhcmatch_rank_extended) ? 'True' : 'False'
+    def ann    = isOn(params.mhcmatch_rank_annotate) ? 'True' : 'False'
     def sc     = params.mhcmatch_rank_score ?: 'aggregate'
-    def cor    = params.mhcmatch_rank_core ? 'True' : 'False'
+    def cor    = isOn(params.mhcmatch_rank_core) ? 'True' : 'False'
     """
     python -c "from mhcmatch import rank; print('\\t'.join(rank.columns(extended=${ext}, annotate=${ann}, score='${sc}', core=${cor})))" \\
         > ${prefix}.${cls}.mhcmatch.ranked.tsv
@@ -180,7 +197,7 @@ process MHCMATCH_NEOAG {
     def args   = task.ext.args ?: ''
     def prefix = task.ext.prefix ?: "${meta.id}"
     def subs   = params.mhcmatch_neoag_max_subs ?: 2
-    def core   = params.mhcmatch_neoag_core ? '--core ' : ''
+    def core   = isOn(params.mhcmatch_neoag_core) ? '--core ' : ''
     """
     mhcmatch neoag --peptides ${peptides} --cls ${cls} --max-subs ${subs} ${core}${args} \\
         --out ${prefix}.${cls}.mhcmatch.neoag.tsv
@@ -193,7 +210,7 @@ process MHCMATCH_NEOAG {
 
     stub:
     def prefix = task.ext.prefix ?: "${meta.id}"
-    def cor    = params.mhcmatch_neoag_core ? 'True' : 'False'
+    def cor    = isOn(params.mhcmatch_neoag_core) ? 'True' : 'False'
     """
     python -c "
 from mhcmatch.mimicry import NEOAG_COLUMNS
@@ -228,7 +245,7 @@ process MHCMATCH_MIMICRY {
     script:
     def args   = task.ext.args ?: ''
     def prefix = task.ext.prefix ?: "${meta.id}"
-    def ann    = params.mhcmatch_mimicry_annotate ? '--annotate' : ''
+    def ann    = isOn(params.mhcmatch_mimicry_annotate) ? '--annotate' : ''
     """
     mhcmatch mimicry --peptides ${peptides} --cls ${cls} ${ann} ${args} \\
         --out ${prefix}.${cls}.mhcmatch.mimicry.tsv
@@ -293,7 +310,7 @@ process MHCMATCH_CASSETTE {
     // rule IS its answer to "how many units".
     def verb   = task.ext.verb ?: 'build'
     def n0     = params.mhcmatch_vector_n0
-    def screen = params.mhcmatch_vector_screen ? '--screen' : ''
+    def screen = isOn(params.mhcmatch_vector_screen) ? '--screen' : ''
     def ctx    = context.name != 'NO_FILE' ? "--context ${context}" : ''
     // The long window WITHOUT a context FASTA: a reranked candidate table already carries it in a
     // column (`epitope_context`, 27 aa, which is `--unit-length` exactly). `--context` is for the
@@ -314,7 +331,7 @@ process MHCMATCH_CASSETTE {
     // and the process says so on stderr.
     def m2list = params.mhcmatch_vector_map_alleles_mhc2 ?: params.alleles_mhc2
     def map2   = m2list ? "--map-alleles-mhc2 '${m2list}'" : ''
-    def mapArg = params.mhcmatch_vector_map
+    def mapArg = isOn(params.mhcmatch_vector_map)
                      ? "--map ${prefix}.cassette.map.tsv --map-json ${prefix}.cassette.map.json " +
                        "--map-threshold ${params.mhcmatch_vector_map_threshold ?: 2.0} ${map2}" : ''
     // Quota composition: fill declared slot budgets so that at least k of each arm is expected to
@@ -410,7 +427,7 @@ process MHCMATCH_CASSETTE_SCORE {
     def args = task.ext.args ?: ''
     def prev = params.mhcmatch_prevalence ? "--prevalence ${params.mhcmatch_prevalence}" : ''
     def rho  = params.mhcmatch_cassette_rho ? "--rho ${params.mhcmatch_cassette_rho}" : ''
-    def per  = params.mhcmatch_cassette_per_donor_offset ? '--per-donor-offset' : ''
+    def per  = isOn(params.mhcmatch_cassette_per_donor_offset) ? '--per-donor-offset' : ''
     def pool = pools.name != 'NO_FILE' ? "--pool cohort.pool.tsv" : ''
     // Which column carries the aggregate. `_cassette_rows` resolves `score` / `aggregate` / `epic`
     // when not told, and on the rerank arm the POOL is the caller's own table, which has a `score`
@@ -580,9 +597,9 @@ process MHCMATCH_RERANK {
     def tumor  = params.mhcmatch_tumor ? "--tumor ${params.mhcmatch_tumor}" : ''
     def prev   = params.mhcmatch_prevalence ? "--prevalence ${params.mhcmatch_prevalence} " : ''
     def ctx    = context.name != 'NO_FILE' ? "--context ${context}" : ''
-    def extra  = (params.mhcmatch_rank_extended ? '--extended ' : '') +
-                 (params.mhcmatch_rank_annotate ? '--annotate ' : '') +
-                 (params.mhcmatch_rank_core     ? '--core '     : '')
+    def extra  = (isOn(params.mhcmatch_rank_extended) ? '--extended ' : '') +
+                 (isOn(params.mhcmatch_rank_annotate) ? '--annotate ' : '') +
+                 (isOn(params.mhcmatch_rank_core)     ? '--core '     : '')
     """
     mhcmatch rank pairs ${table} \\
         --cls ${cls} \\
@@ -600,9 +617,9 @@ process MHCMATCH_RERANK {
     stub:
     def prefix = task.ext.prefix ?: "${meta.id}"
     def pre    = params.mhcmatch_rerank_prefix ?: 'mm_'
-    def ext    = params.mhcmatch_rank_extended ? 'True' : 'False'
-    def ann    = params.mhcmatch_rank_annotate ? 'True' : 'False'
-    def cor    = params.mhcmatch_rank_core ? 'True' : 'False'
+    def ext    = isOn(params.mhcmatch_rank_extended) ? 'True' : 'False'
+    def ann    = isOn(params.mhcmatch_rank_annotate) ? 'True' : 'False'
+    def cor    = isOn(params.mhcmatch_rank_core) ? 'True' : 'False'
     """
     # The caller's columns lead and a stub cannot know them, so it types what the command ADDS --
     # asked of the library, never copied, so `-stub-run` cannot drift from the real shape.
