@@ -305,3 +305,38 @@ def test_an_empty_gene_column_does_not_win_over_a_populated_alias(tmp_path):
     p.write_text("epitope\tgene\tmm_gene\tmm_score\nGILGFVFTL\t\tMYGENE\t2.5\n")
     rows, _ = cli._cassette_rows(str(p), "mm_score")
     assert rows[0]["gene"] == "MYGENE"
+
+
+# ---------------------------------------------------------------- the panel's spelling vs ours
+
+
+@pytest.mark.hfdata
+@pytest.mark.parametrize("species,alleles,peptide", [
+    ("human", ["HLA-A*02:01", "HLA-A02:01", "A*02:01", "A0201"], "GILGFVFTL"),
+    ("mouse", ["H2-K*d", "H-2Kd", "H-2-Kd"], "SYTSYIMAI"),
+])
+def test_the_panel_accepts_every_spelling_we_emit(species, alleles, peptide):
+    """**The panel and the pseudosequence tables do not spell an allele the same way.**
+
+    The panel writes `HLA-A*02:01` and `H-2Kd`; `resolve_allele` -- and therefore `mhcmatch
+    alleles`, and every caller who took its output -- returns `HLA-A02:01` and `H-2-Kd`. A plain
+    `a in panel.freq` matched neither and dropped them **silently**, so `restriction` returned no
+    presenting allele at all, which reads as "nothing is presented" rather than "I did not
+    recognise that name". It is why the cassette map came back empty: zero predicted epitopes over
+    540 aa of peptides that had just been selected as strong binders.
+    """
+    from mhcmatch import Store
+    from mhcmatch import vector as V
+    store = Store.from_pmhc(tier="full", species=species, classes=("mhc1",))
+    hits = [V.store_ranker(store, [a], cls="mhc1")([peptide])[0] for a in alleles]
+    assert all(h for h in hits), f"{species}: a spelling resolved to nothing: {list(zip(alleles, hits))}"
+    # ...and all of them to the SAME panel entry, so two spellings are never two calibrators.
+    assert len({h[0][0] for h in hits}) == 1
+
+
+@pytest.mark.hfdata
+def test_an_unknown_allele_still_resolves_to_nothing():
+    from mhcmatch import Store
+    from mhcmatch import vector as V
+    store = Store.from_pmhc(tier="full", species="human", classes=("mhc1",))
+    assert V.store_ranker(store, ["NOT-AN-ALLELE"], cls="mhc1")(["GILGFVFTL"])[0] == []

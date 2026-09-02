@@ -56,6 +56,20 @@ caller's -- so the rerank arm selected on their ranking while looking like it se
 The rule that falls out: **resolve by name, from a short ordered list, and SAY which one answered.**
 `_cassette_rows` does; that is why the last two were found in one run instead of four.
 
+**The panel and the pseudosequence tables do not spell an allele the same way, and `_allele_set`
+required the panel's.** The panel writes `HLA-A*02:01` and `H-2Kd`; `pseudoseq.resolve_allele` --
+and therefore `mhcmatch alleles`, and every caller who took its output -- returns `HLA-A02:01` and
+`H-2-Kd`. A plain `a in panel.freq` matched neither and dropped them **silently**, so
+`store.restriction(alleles=...)` returned no presenting allele at all: not an error, and not
+"unknown name", but the same shape as "nothing is presented". The tell was a cassette **map with
+zero predicted epitopes over 540 aa of peptides that had just been selected as strong binders** --
+and the reason nobody noticed sooner is that `predict.binder_ranks`, which is what `rank` uses,
+resolves properly, so scoring worked while every `restriction`-based path returned nothing.
+`_allele_set` now folds both sides through `normalize_allele` and falls back to the full resolver.
+**Two vocabularies for one molecule is the recurring hazard in this package** -- see the `H2-Kb`
+fold in 1.4.0 and the G-group trim above; each time, the layer below drops what it cannot match
+without a word.
+
 **A concatenation of per-sample tables assumes one schema, and `--passthrough` makes that false by
 construction.** The caller's own columns travel with each sample, and two samples can come from
 different upstream runs -- measured on two mouse lines whose tables differed by two columns, so the

@@ -336,6 +336,7 @@ class Store:
     def __init__(self):
         self._panel = {"mhc1": _Panel("mhc1"), "mhc2": _Panel("mhc2")}
         self._am = {}  # cls -> AnchorModel (lazy, for diffuse=True)
+        self._spell = {}  # id(panel) -> {normalised name: the panel's own spelling}
         self._rc = {}  # cls -> RankCalibrator (lazy, for calibrated=True)
 
     # -- construction ---------------------------------------------------------
@@ -442,12 +443,53 @@ class Store:
         return list(self._panel[cls].panel)
 
     # -- forward problem: restriction / presentation --------------------------
-    def _allele_set(self, panel, alleles):
+    def _panel_spelling(self, panel):
+        """``normalised name -> the panel's own spelling``, built once per panel.
+
+        **The panel and the pseudosequence tables do not spell an allele the same way**, and until
+        2026-09-02 this method required the panel's. The panel writes ``HLA-A*02:01`` and ``H-2Kd``;
+        :func:`mhcmatch.pseudoseq.resolve_allele` -- and therefore ``mhcmatch alleles``, and every
+        caller who took its output -- returns ``HLA-A02:01`` and ``H-2-Kd``. A plain ``a in
+        panel.freq`` then matched neither, and dropped them **silently**: ``restriction`` returned
+        no presenting allele at all, which reads as "nothing is presented" rather than as "I did not
+        recognise the name you gave me". The cassette map was empty for exactly this reason -- zero
+        predicted epitopes over 540 aa of peptides that had just been selected as strong binders.
+        """
+        key = id(panel)
+        if key not in self._spell:
+            from .pseudoseq import normalize_allele
+            out = {}
+            for a in panel.freq:
+                out.setdefault(normalize_allele(a), a)      # first wins; exact match is tried first
+            self._spell[key] = out
+        return self._spell[key]
+
+    def _allele_set(self, panel, alleles, missing: list | None = None):
+        """The queried alleles, in the panel's own spelling. Unknown names go to ``missing``.
+
+        Any spelling :func:`mhcmatch.pseudoseq.normalize_allele` folds is accepted -- ``HLA-A*02:01``
+        and ``HLA-A02:01``, ``H-2Kd`` and ``H2-K*d`` -- because a caller should not have to know
+        which of this package's two vocabularies a given entry point wants.
+        """
         if alleles == "all":
             return panel.panel
         if isinstance(alleles, str):
             alleles = [alleles]
-        return [a for a in alleles if a in panel.freq]
+        from .pseudoseq import normalize_allele, resolve_allele
+        spell, out = self._panel_spelling(panel), []
+        for a in alleles:
+            hit = a if a in panel.freq else spell.get(normalize_allele(a))
+            if hit is None:
+                # Last: the full resolver, which repairs a missing `HLA-` prefix and completes a
+                # short name. Tried only after the cheap lookups, because it walks every key.
+                k, _ = resolve_allele(a, panel.cls if hasattr(panel, "cls") else "mhc1")
+                hit = spell.get(normalize_allele(k)) if k else None
+            if hit is None:
+                if missing is not None:
+                    missing.append(a)
+            elif hit not in out:
+                out.append(hit)
+        return out
 
     def _anchor_model(self, cls):
         if cls not in self._am:
