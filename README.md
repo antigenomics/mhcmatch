@@ -645,10 +645,20 @@ nextflow run integrations/nextflow/mhcmatch/pipeline.nf \
 | `denovo` | your mutation-window FASTA | **our** table: binding called from scratch, ranked, annotated |
 | `both` | both | both, independently; each arm builds its own cassette |
 
-Both arms end in a cassette: the *k* selected **epitopes** as a TSV (default **k = 20**), the
-assembled construct as amino acids with its linker, the CDS, and the epitope map. The construct
-carries fewer *units* than *k* — several epitopes can share one 27-mer window, and the safety
-screen withdraws some — so read `units=` from the FASTA header rather than assuming *k*.
+Both arms end in a cassette, published as six files per donor and arm:
+
+| file | what |
+|---|---|
+| `<id>.<arm>.vaccine.units.tsv` | the *k* selected **epitopes** (default **k = 20**) — **your own table filtered to what the cassette carries, with nothing removed from the row**: every one of your columns, every `mm_` column, plus the selection's own |
+| `<id>.<arm>.cassette.faa` | the assembled construct, with whichever spacer the junction sweep chose |
+| `<id>.<arm>.cassette.fna` | its CDS, deslipped |
+| `<id>.<arm>.cassette.map.tsv` / `.map.json` | unit / linker / epitope in 1-based coordinates |
+| `<id>.<arm>.cassette.tsv` | the assembly **report** (`section, i, key, value, detail`) — where the safety screen records what it withdrew and why. **Not** the epitope table |
+| `cohort.<arm>.cassette_score.tsv` | one per run and per arm, because `rank` anchors `p_response` on the batch it is handed |
+
+The construct carries no more *units* than *k* and usually fewer — several epitopes can share one
+27-mer window, and the safety screen withdraws some — so read `units=` from the FASTA header rather
+than assuming *k*.
 
 > **The pipeline requires mhcmatch >= 1.7.1.** Its first process calls `mhcmatch alleles` and the
 > rerank arm calls `rank --passthrough`; neither exists in 1.6.0, and 1.6.1 was never published.
