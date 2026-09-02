@@ -445,6 +445,14 @@ alleles is unaffected by the default.
 
 ## Every parameter
 
+**Boolean parameters accept `false` / `0` / `no` on the command line.** That is not free in Nextflow:
+`--some_flag false` arrives as the *string* `"false"`, which is truthy in Groovy, so the plain
+`params.x ? '--flag' : ''` idiom passes the flag a user just tried to disable. Every boolean here is
+coerced once in `nextflow.config` after its default is set. The direction that matters is the
+reverse one — somebody who believes they enabled `--mhcmatch_vector_screen` and did not gets a
+cassette with no safety check and no error.
+
+
 | param | default | what it does |
 |---|---|---|
 | `mhcmatch_tier` | `full` | reference panel tier |
