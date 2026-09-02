@@ -329,8 +329,15 @@ process MHCMATCH_CASSETTE {
     // way: it would have to be a sixth element of this process's input tuple, which is a breaking
     // change to a signature other pipelines include -- so a per-donor run gets a class-I-only map,
     // and the process says so on stderr.
-    def m2list = params.mhcmatch_vector_map_alleles_mhc2 ?: params.alleles_mhc2
-    def map2   = m2list ? "--map-alleles-mhc2 '${m2list}'" : ''
+    // The recipient's class-II allotypes. Without them the map is class I only and `self_help` --
+    // whether a unit's CD8 epitope has CD4 help from the SAME unit -- is not computed at all.
+    //
+    // Set it explicitly. A fallback to `pipeline.nf`'s `--alleles_mhc2` was tried and **does not
+    // work**: that param is not visible inside this module's scope, so the fallback silently
+    // produced nothing -- which is the failure mode this whole module has spent a day removing, so
+    // it is not worth keeping for the convenience. `templates/run_mouse.sbatch` passes it.
+    def map2   = params.mhcmatch_vector_map_alleles_mhc2
+                     ? "--map-alleles-mhc2 '${params.mhcmatch_vector_map_alleles_mhc2}'" : ''
     def mapArg = isOn(params.mhcmatch_vector_map)
                      ? "--map ${prefix}.cassette.map.tsv --map-json ${prefix}.cassette.map.json " +
                        "--map-threshold ${params.mhcmatch_vector_map_threshold ?: 2.0} ${map2}" : ''

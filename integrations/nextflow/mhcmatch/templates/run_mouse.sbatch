@@ -32,6 +32,10 @@ K=20
 # -- `H2-K*d`, `H-2Kb`, `I-Ab` -- so pass whatever your own tables carry.
 ALLELES_MHC1='H2-K*d,H2-D*d,H2-L*d'
 ALLELES_MHC2='H-2-IAd,H-2-IEd'
+                      # ^ passed TWICE below: once as the class-II panel to score against, and once
+                      # as the recipient's allotypes for the cassette map. Without the second the map
+                      # is class I only and `self_help` -- does this unit's CD8 epitope have CD4 help
+                      # from the SAME unit -- is not computed
 # P(an allotype is live) in the response model behind the quota. 0.999 for mouse against 0.95 for
 # human is what the shipped bundles used: a stated design parameter, not a fitted one. Measure your
 # own with mhcmatch.portfolio.betabinom_rho before trusting either.
@@ -61,6 +65,7 @@ conda run -n "$ENV" --no-capture-output nextflow run "$MODULE/pipeline.nf" \
     --genome  GRCm39 \
     --alleles      "$ALLELES_MHC1" \
     --alleles_mhc2 "$ALLELES_MHC2" \
+    --mhcmatch_vector_map_alleles_mhc2 "$ALLELES_MHC2" \
     --mhcmatch_vector_n0         $N0 \
     --mhcmatch_cassette_k        $K \
     --mhcmatch_vector_block_live $BLOCK_LIVE \
