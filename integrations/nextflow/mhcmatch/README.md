@@ -93,7 +93,7 @@ are two different answers and one must not overwrite the other:
 
 | file | what |
 |---|---|
-| `<id>.{rerank,denovo}.vaccine.units.tsv` | the *k* units to manufacture (default **k = 20**, `--mhcmatch_cassette_k`) |
+| `<id>.{rerank,denovo}.vaccine.units.tsv` | one row per **selected epitope** (default *k* = 20, `--mhcmatch_cassette_k`) |
 | `<id>.{rerank,denovo}.cassette.faa` | assembled, with the linker chosen by minimising junctional binding |
 | `<id>.{rerank,denovo}.cassette.fna` | the CDS, deslipped |
 | `<id>.{rerank,denovo}.cassette.map.{tsv,json}` | unit / linker / epitope in 1-based coordinates |
@@ -167,6 +167,21 @@ invoked once per run and `--mode both` would otherwise raise "Process 'X' has be
 Every `withName:` selector in `nextflow.config` **and** `slurm.config` is written to match either
 spelling; a selector written as the bare name would size the rerank arm and silently miss the de
 novo one, which for `MHCMATCH_CASSETTE` means 8 GB instead of 48 and an OOM kill hours in.
+
+### `-k` counts epitopes, not manufactured units
+
+`--mhcmatch_cassette_k 20` selects **twenty epitopes**. The cassette then carries fewer, for two
+reasons that are both the design working:
+
+- **Several epitopes can fall in one 27-mer window.** They are separate presentation events — often
+  on different allotypes, which is what the selector is spending capacity on — but one piece of
+  peptide to synthesise. Measured on one donor: 20 selected → **15 distinct windows**.
+- **The safety screen then withdraws some.** On the same donor, 15 → **11 units**.
+
+Both numbers are reported: one row per selected epitope in the units TSV, `units=N` in the cassette
+FASTA header, and the screen prints what it withdrew and why. If you need exactly *N* units in the
+construct, read `units=` and raise `-k` — no setting guarantees it, because what a screen withdraws
+is a property of the candidates, not of the request.
 
 ### A cassette unit is the long window, and the two arms reach it from opposite sides
 
@@ -483,7 +498,7 @@ cassette with no safety check and no error.
 | `mode` | `both` | `rerank`, `denovo` or `both` |
 | `epitopes` · `windows` · `typing` | from `--indir` | explicit globs, for names that do not follow the convention |
 | `alleles` · `alleles_mhc2` | `null` | one literal allele list for **every** sample, bypassing `MHCMATCH_ALLELES`. The mouse case: an inbred line's haplotype is a property of the line |
-| `mhcmatch_cassette_k` | `20` | how many units are **manufactured**. A different question from `mhcmatch_vector_n0`, which is how many the recipient's allotypes can *carry* |
+| `mhcmatch_cassette_k` | `20` | how many **epitopes are selected**. Different from `mhcmatch_vector_n0` (how many the recipient's allotypes can *carry*) and **not the number of units the cassette ends up with** — see “`-k` counts epitopes” above |
 | `mhcmatch_cassette_tol` | `0` | manufacturing tolerance: the size in `[k-tol, k+tol]` with the largest objective. A spent tolerance is a result — the objective has an internal optimum and it moves with the prevalence and with rho |
 | `mhcmatch_cassette_score_column` | `null` | which column of the pool holds the aggregate. Left null, the **rerank** arm is given `<prefix>score` and the de novo arm resolves `score` / `aggregate` / `epic`. Do not leave this to the fallback on the rerank arm: a pipeline candidate table *has* a `score` column — the caller's own — so the fallback selects on the upstream tool's ranking while looking like it selected on ours |
 | `mhcmatch_cassette_block_live` | `1.0` | the **HLA-loss rate** `cassette select` prices: below 1, two units on one allotype are lost together. **Not `mhcmatch_vector_block_live`** — same flag name, different question, different default (0.5), and passing the quota's value here stops the run, because a unit whose marginal `p` exceeds `q` is not representable |

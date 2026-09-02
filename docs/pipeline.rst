@@ -184,6 +184,20 @@ class-I candidates: **3,090 of the 3,136 missense rows** recover a wild type, ev
 differing at exactly one residue. A frameshift, a fusion, an isoform and an indel stay
 wild-type-less, because they are.
 
+``-k`` counts epitopes, not manufactured units
+----------------------------------------------
+
+``--mhcmatch_cassette_k 20`` selects **twenty epitopes**. The cassette carries fewer, for two
+reasons that are both the design working: several epitopes can fall in one 27-mer window — separate
+presentation events, often on different allotypes, but one piece of peptide to synthesise — and the
+safety screen then withdraws some. Measured on one donor: 20 selected → 15 distinct windows → 11
+units.
+
+Both numbers are reported: one row per selected epitope in the units TSV, ``units=N`` in the
+cassette FASTA header, and the screen prints what it withdrew and why. No setting guarantees *N*
+units in the construct, because what a screen withdraws is a property of the candidates rather than
+of the request.
+
 The cassette unit is the long window, on both arms
 --------------------------------------------------
 
