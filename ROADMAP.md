@@ -31,9 +31,9 @@ zero.** Non-classical loci (HLA-E/F/G) are correctly among the reported drops.
 **`rank --passthrough` makes the caller's table the deliverable.** Every column they sent,
 unchanged and in their order, then ours under `--prefix`, re-sorted by the aggregate. This is not a
 join anyone can do afterwards — `rank` splits a multi-allele cell and the best presenter stands for
-the row, so the output shares neither its length nor its allele column with the input. It replaces
-the 368-line private script (`analysis/all_epitopes/e2_score.py` in `2026-gamaleya-cancer`) that
-had been producing the shipped deliverable, and the 1,948-line chain around it.
+the row, so the output shares neither its length nor its allele column with the input. It replaces the
+368-line private script that had been producing a shipped deliverable, and the 1,948-line chain
+around it.
 
 **`rank pairs --context` recovers the wild type a candidate table cannot carry.** Measured on the
 pipeline schema, the peptide is not a substring of its own `seq`/`ref_seq` columns in **0 of 6,961**
