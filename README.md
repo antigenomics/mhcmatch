@@ -642,8 +642,14 @@ nextflow run integrations/nextflow/mhcmatch/pipeline.nf \
 | `denovo` | your mutation-window FASTA | **our** table: binding called from scratch, ranked, annotated |
 | `both` | both | both, independently; each arm builds its own cassette |
 
-Both arms end in a cassette: the *k* units to manufacture as a TSV (default **k = 20**), the
-assembled construct as amino acids with its linker, the CDS, and the epitope map.
+Both arms end in a cassette: the *k* selected **epitopes** as a TSV (default **k = 20**), the
+assembled construct as amino acids with its linker, the CDS, and the epitope map. The construct
+carries fewer *units* than *k* — several epitopes can share one 27-mer window, and the safety
+screen withdraws some — so read `units=` from the FASTA header rather than assuming *k*.
+
+> **The pipeline requires mhcmatch >= 1.7.0.** Its first process calls `mhcmatch alleles` and the
+> rerank arm calls `rank --passthrough`; neither exists in 1.6.0, and 1.6.1 was never published.
+> `templates/setup.sbatch` pins the version and asserts what it installed.
 
 On a cluster, start from **`integrations/nextflow/mhcmatch/templates/`** — four SLURM scripts
 (`setup.sbatch` once, then `run_human.sbatch` / `run_mouse.sbatch` for a few samples or

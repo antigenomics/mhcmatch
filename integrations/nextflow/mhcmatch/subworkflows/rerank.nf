@@ -62,12 +62,15 @@ workflow MHCMATCH_RERANK_ARM {
 
     // The chosen units carry the caller's columns through `select --passthrough`, so the long
     // window is still there for CASSETTE to build from. `NO_FILE` for context: there is none.
+    // `moduleDir` and not `projectDir`: projectDir is the ENTRY script's directory, so an
+    // integrator who includes this subworkflow from their own pipeline resolves the sentinel
+    // against THEIR repo root, where it does not exist.
     MHCMATCH_CASSETTE(
         MHCMATCH_CASSETTE_SELECT.out.units
             .join( ch_alleles, remainder: true )
             .filter { meta, units, alleles -> units != null }
             .map { meta, units, alleles ->
-                [ meta, units, file("${projectDir}/NO_FILE"), alleles ?: '', 'mhc1' ] }
+                [ meta, units, file("${moduleDir}/../NO_FILE"), alleles ?: '', 'mhc1' ] }
     )
     ch_versions = ch_versions.mix( MHCMATCH_CASSETTE.out.versions.first() )
 

@@ -2620,8 +2620,9 @@ def main(argv=None):
                          "the statistic it corresponds to fits ATTRACTIVE on the observational "
                          "arm, where the greedy 1-1/e guarantee does not hold")
     cs.add_argument("--score-column", default="score", metavar="COL",
-                    help="which column holds the aggregate log-odds (default: score; `rank` writes "
-                         "`aggregate`)")
+                    help="which column holds the aggregate log-odds (default: score, which is "
+                         "what `rank` writes; for a `rank --passthrough --prefix mm_` table "
+                         "pass `mm_score`)")
     cs.add_argument("--no-allele", action="store_true",
                     help="ignore the allele column, so the overlap has no allotype channel. What a "
                          "trial that published no per-patient genotype is left with")

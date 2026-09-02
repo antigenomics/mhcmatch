@@ -4,6 +4,11 @@ Four SLURM scripts. Each has one clearly-marked `EDIT THESE` block near the top 
 cluster-specific below it. Everything they need is in this repository; nothing else has to be
 fetched.
 
+**The only prerequisite is a working `conda`** (miniforge or miniconda). `setup.sbatch` creates
+the environment itself — python 3.12 plus nextflow — installs the pinned mhcmatch release into it,
+and refuses to continue if the version it got is not the one it asked for. You do not need to make
+an env, and you do not need to install nextflow separately.
+
 ```bash
 git clone https://github.com/antigenomics/mhcmatch.git
 cp mhcmatch/integrations/nextflow/mhcmatch/templates/*.sbatch .
@@ -40,7 +45,10 @@ for 8 h under `--screen`, which a 2 h queue cannot give it.
 **`--mhcmatch_vector_n0` has no default on purpose.** Per-allotype capacity is not fitted by
 anything in the public record, so the value is yours to defend — and it is recorded in the output so
 a reader can see which one you chose. It is a different question from `--mhcmatch_cassette_k`:
-`k` is how many units are *manufactured*, `n0` is how many the recipient's allotypes can *carry*.
+`k` is how many **epitopes are selected** — the construct carries fewer *units* than that,
+because several epitopes can share one 27-mer window and the screen withdraws some (20 → 15
+→ 11 on one measured donor; see `-k` counts epitopes, not manufactured units in
+`../README.md`). `n0` is how many the recipient's allotypes can *carry*.
 
 **Two runs cannot share a launch directory.** Nextflow keeps its session cache under the directory
 it was launched from, so `run_human.sbatch` and `run_mouse.sbatch` started side by side would

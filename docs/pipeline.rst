@@ -4,6 +4,13 @@ Running a cohort
 Two arms, one command, from a directory of files. This page is the pipeline; :doc:`cli` is the
 commands it runs and :doc:`cassette` is what the last stage decides.
 
+.. note::
+
+   **Requires mhcmatch >= 1.7.0.** The first process calls ``mhcmatch alleles`` and the rerank arm
+   calls ``rank --passthrough``; neither exists in 1.6.0, and 1.6.1 was never published. An
+   unpinned install on a stale index resolves to a release that cannot run the first process, so
+   ``templates/setup.sbatch`` pins the version and asserts what it got.
+
 .. code-block:: bash
 
    nextflow run integrations/nextflow/mhcmatch/pipeline.nf \
@@ -292,6 +299,7 @@ background 200 times and re-downloads the same references 200 times.
        --mhcmatch_slurm_queue       <partition> \
        --mhcmatch_pmhc_dir          /shared/ref/mhcmatch/pmhc_data \
        --mhcmatch_calibration_cache /shared/ref/mhcmatch/calibration \
+       --mhcmatch_hf_home           /shared/ref/mhcmatch/hf \
        --mhcmatch_vector_n0 8 -resume
 
 ``--mhcmatch_slurm_queue`` **has no safe default.** It falls back to ``normal``, which is a common

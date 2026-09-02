@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — a caller's own table, and the allele step that was failing silently
+## [1.7.0] — 2026-09-02 — a caller's own table, and the allele step that was failing silently
 
 **The library can now be the last stage of somebody else's pipeline, rather than a replacement for
 it.** Four additive changes, each closing a gap a private one-off script had been covering, and one
@@ -156,6 +156,47 @@ versioning is [SemVer](https://semver.org).
 
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
+
+
+### Deployment — the delivery path itself, which had never been exercised end to end
+
+The library changes above were verified; the *documented route to running them* was not, and an
+audit of it found five defects that every local check passes straight through.
+
+- **`1.7.0`, not `1.6.1`.** `1.6.1` was stamped in the tree but never tagged and never published, and
+  39 further commits landed on top of that dated changelog entry — so the string named two different
+  code states and no distribution. Meanwhile `environment.yml`, the `Dockerfile` and
+  `params.mhcmatch_container` all pinned `1.6.1`, and `templates/setup.sbatch` installed unpinned
+  `--upgrade`, which resolves to **1.6.0** — a release with no `mhcmatch alleles` and no
+  `rank --passthrough`, i.e. one that cannot run the first process of the pipeline. Every pin now
+  names 1.7.0, and `setup.sbatch` asserts the version it got rather than discovering the mismatch
+  several minutes later inside a task log.
+
+- **`-profile slurm` did not exist.** `slurm.config` documents how a *calling* pipeline wires the
+  include into its own `profiles` block; nothing defined the profile in the config that
+  `nextflow run pipeline.nf` actually loads, so the cohort template aborted at startup with
+  `Unknown configuration profile: slurm`. `nextflow.config` now declares it.
+
+- **The typing-file id rule was narrower than the glob feeding it.** The glob `*alleles.tsv` admits
+  `<id>_alleles.tsv`, which the strip left as `D1_alleles`; that key joined no sample, the sample
+  lost its allele list, and the de novo arm dropped it — warning about missing alleles, which names
+  the symptom rather than the cause. One permissive suffix strip now covers every spelling the glob
+  admits, and a typing file that joins nothing says so by name.
+
+- **`HF_HOME`, not `MHCMATCH_PMHC_DIR`, decides where the reference data lands.** The latter is a
+  *read* override, consulted first and used when a file is already staged; when it is not, the fetch
+  falls through to `hf_hub_download`, which writes to the HuggingFace cache and never reads it. A
+  cluster run with the shared root correctly set therefore put **249 MB in `$HOME`** — the quota the
+  setting exists to avoid. All four templates and the SLURM `env` block now set `HF_HOME`.
+
+- **`setup.sbatch` assumed the conda environment already existed**, which is true for whoever wrote
+  it and false for its reader. It now creates the env (python 3.12 + nextflow) when absent, so a
+  working `conda` is the single prerequisite. The four templates also no longer write
+  `#SBATCH --output` into a `logs/` directory that nothing creates before Slurm resolves the path.
+
+- `NO_FILE` resolves against `moduleDir` rather than `projectDir`, so an integrator who includes
+  `subworkflows/rerank.nf` from their own pipeline no longer resolves the sentinel against their
+  own repo root.
 
 ## [Unreleased]
 

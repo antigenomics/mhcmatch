@@ -5,6 +5,12 @@ predict` replaces a neoantigen pipeline's binding predictors (MHCflurry class I,
 II); the rest cover the steps that come after and have no incumbent — allele resolution, ranking,
 prior evidence, safety, cassette selection and cassette assembly.
 
+> **Requires mhcmatch >= 1.7.0.** `MHCMATCH_ALLELES` calls `mhcmatch alleles` and the rerank arm
+> calls `rank --passthrough`; neither exists in 1.6.0, and 1.6.1 was stamped in the tree but never
+> published. Every pin in this directory — `environment.yml`, the `Dockerfile`,
+> `params.mhcmatch_container` — names 1.7.0, and `templates/setup.sbatch` asserts the version it
+> installed rather than letting the run discover the mismatch inside a task log.
+
 ```
 integrations/nextflow/mhcmatch/
   pipeline.nf              RUNNABLE from a directory of files: `nextflow run pipeline.nf --indir ...`
@@ -470,12 +476,14 @@ cassette with no safety check and no error.
 
 | param | default | what it does |
 |---|---|---|
-| `mhcmatch_tier` | `full` | reference panel tier |
+| `mhcmatch_tier` | `full` | reference panel tier. Reaches `predict` / `rank` / `neoag` only — `cassette build` and `cassette order` take `_add_vector_opts` and have no `--tier` |
 | `mhcmatch_rank_threshold` | `2.0` | %rank below which `predict` emits a row |
 | `mhcmatch_rank_mode` | `fasta` | `rank` input kind: `fasta` or `table` |
 | `mhcmatch_rank_score` | `aggregate` | which model scores: the fitted aggregate, or `gate` (the pre-0.19.0 product-of-sigmoids) |
 | `mhcmatch_prevalence` | `null` (→ 0.0602) | assumed responding fraction of the candidate pool, the anchor for `p_response`. **A prior about your cohort** |
 | `mhcmatch_rank_core` | `false` | append `core` / `core_offset` / `core_source` |
+| `mhcmatch_predict_core` | `false` | the same for `predict` |
+| `mhcmatch_neoag_core` | `false` | the same for `neoag` |
 | `mhcmatch_tumor` | `null` | TCGA study code for tumour-matched expression — **set this** |
 | `mhcmatch_rank_extended` | `false` | append the six mimicry channels to `ranked.tsv` |
 | `mhcmatch_rank_annotate` | `false` | append nearest-reference and known-neoantigen columns |
@@ -512,20 +520,23 @@ From `slurm.config` only:
 | `mhcmatch_slurm_queue` | `normal` | the partition every mhcmatch task is submitted to |
 | `mhcmatch_pmhc_dir` | `${projectDir}/reference/pmhc_data` | shared reference mirror; pre-stage with `mhcmatch bootstrap --reference` |
 | `mhcmatch_calibration_cache` | `${projectDir}/reference/calibration` | shared per-allele %rank calibration, safe to share under concurrency |
+| `mhcmatch_hf_home` | `${projectDir}/reference/hf` | **the one that decides where reference data physically lands.** `mhcmatch_pmhc_dir` is a *read* override — consulted first, used when the file is already staged; when it is not, the fetch falls through to `hf_hub_download`, which writes to the HuggingFace cache and ignores it. Leave this unset and ~250 MB goes to each node's `$HOME` |
 
 ## Build the image (only for `-profile docker`)
 
 ```zsh
-docker build -t <YOUR_REGISTRY>/mhcmatch:1.6.1 \
-    --build-arg MHCMATCH_VERSION=1.6.1 \
+docker build -t <YOUR_REGISTRY>/mhcmatch:1.7.0 \
+    --build-arg MHCMATCH_VERSION=1.7.0 \
     integrations/nextflow/mhcmatch/
-docker push <YOUR_REGISTRY>/mhcmatch:1.6.1
+docker push <YOUR_REGISTRY>/mhcmatch:1.7.0
 ```
 
 One tag, four files, and they must move together on a release: `Dockerfile`'s
 `ARG MHCMATCH_VERSION`, `environment.yml`'s pin, `nextflow.config`'s
 `params.mhcmatch_container` default, and this block. The container default sat on `1.6.0` while
-the other two were on `1.6.1`, which is the drift this note exists to stop.
+the other two were on `1.6.1`, which is the drift this note exists to stop -- and `1.6.1` was
+itself never published, so every one of those pins named a distribution that did not exist until
+1.7.0 was cut.
 
 No data staging: the build runs `mhcmatch bootstrap --reference`, which fetches the ligand panel
 **and** the known-epitope sets, mimicry references and expression tables (~115 MB total) from the
@@ -587,6 +598,7 @@ Then point the run at them:
 nextflow run . -profile slurm \
     --mhcmatch_pmhc_dir          /shared/ref/mhcmatch/pmhc_data \
     --mhcmatch_calibration_cache /shared/ref/mhcmatch/calibration \
+    --mhcmatch_hf_home           /shared/ref/mhcmatch/hf \
     --mhcmatch_slurm_queue       <partition> \
     --mhcmatch_vector_n0         6 \
     --mhcmatch_tumor             SKCM
@@ -607,7 +619,7 @@ a conda interpreter is enough and is what `-profile conda` sidesteps entirely:
 
 ```bash
 conda create -n mhcmatch -c bioconda python=3.12 nextflow
-conda run -n mhcmatch --no-capture-output pip install mhcmatch==1.6.1
+conda run -n mhcmatch --no-capture-output pip install mhcmatch==1.7.0
 ```
 
 (The `docker build` block above pins the same version and must move with it.)

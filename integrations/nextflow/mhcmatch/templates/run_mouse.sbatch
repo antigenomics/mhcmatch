@@ -3,7 +3,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
 #SBATCH --time=08:00:00
-#SBATCH --output=logs/mhcmatch-mouse-%j.out
+#SBATCH --output=mhcmatch-mouse-%j.out
 #
 #   sbatch --partition <your-partition> run_mouse.sbatch
 #
@@ -42,13 +42,20 @@ ALLELES_MHC2='H-2-IAd,H-2-IEd'
 BLOCK_LIVE=0.999
 # -----------------------------------------------------------------------------
 
+# **`MHCMATCH_PMHC_DIR` is a READ override, not a download destination.** It is consulted first
+# and used when the file is already there; when it is not, the fetch goes through
+# `hf_hub_download`, which writes to the HuggingFace cache and ignores this variable entirely. So
+# `HF_HOME` is the one that decides where ~250 MB of reference data actually lands -- without it
+# that is your home directory, which on a shared cluster is the small quota this block exists to
+# avoid. Measured on one cluster: 249 MB in $HOME with MHCMATCH_PMHC_DIR set and honoured.
+export HF_HOME="$REF/hf"
 export MHCMATCH_PMHC_DIR="$REF/pmhc_data"
 export MHCMATCH_CALIBRATION_CACHE="$REF/calibration"
 export TMPDIR="${TMPDIR:-$REF/tmp}"
 export NXF_ANSI_LOG=false
 export NXF_OPTS='-Xms1g -Xmx4g'
 export NXF_HOME="$REF/.nextflow"
-mkdir -p "$TMPDIR" "$NXF_HOME" logs
+mkdir -p "$HF_HOME" "$TMPDIR" "$NXF_HOME"
 
 # **Each run gets its own launch directory.** Nextflow keeps its session cache under the directory
 # it was launched from, so two runs started from the same one -- human and mouse side by side --
