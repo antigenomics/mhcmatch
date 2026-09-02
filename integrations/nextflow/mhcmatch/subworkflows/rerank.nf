@@ -50,7 +50,13 @@ workflow MHCMATCH_RERANK_ARM {
 
     ch_pool = ch_mhc1.map { meta, cls, tsv -> [ meta, tsv ] }
 
+    // `remainder: true` so a sample with no allele list still reaches the selector (it loses the
+    // allotype channel and its coverage denominator, and says so) -- but the SAME flag also emits
+    // an allele entry that matched no pool, which is a real shape under `--mode both` over a mixed
+    // directory: a donor with a window FASTA and no candidate table has a class-I allele list and
+    // nothing to rerank. Handing that through gives the process a null path, so it is filtered.
     MHCMATCH_CASSETTE_SELECT( ch_pool.join( ch_alleles, remainder: true )
+                                     .filter { meta, tsv, alleles -> tsv != null }
                                      .map { meta, tsv, alleles -> [ meta, tsv, alleles ?: '' ] } )
     ch_versions = ch_versions.mix( MHCMATCH_CASSETTE_SELECT.out.versions.first() )
 
@@ -59,6 +65,7 @@ workflow MHCMATCH_RERANK_ARM {
     MHCMATCH_CASSETTE(
         MHCMATCH_CASSETTE_SELECT.out.units
             .join( ch_alleles, remainder: true )
+            .filter { meta, units, alleles -> units != null }
             .map { meta, units, alleles ->
                 [ meta, units, file("${projectDir}/NO_FILE"), alleles ?: '', 'mhc1' ] }
     )
