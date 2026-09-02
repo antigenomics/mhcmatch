@@ -88,9 +88,16 @@ polars, ours) resolves the duplicate in favour of one of them and the file does 
 | `denovo` | your mutation-window FASTA | `<id>.<cls>.mhcmatch.{scored.csv,native.tsv,ranked.tsv}` | **our** table: binding called from scratch, ranked, annotated |
 | `both` | both | both | both, independently — each arm builds its own cassette |
 
-Both arms end in a cassette: `<id>.vaccine.units.tsv` (the *k* units to manufacture, default
-**k = 20**, `--mhcmatch_cassette_k`), `<id>.cassette.faa` (assembled, with the linker chosen by
-minimising junctional binding), `<id>.cassette.fna` (the CDS, deslipped) and the epitope map.
+Both arms end in a cassette. Under `--mode both` the two are told apart by an infix, because they
+are two different answers and one must not overwrite the other:
+
+| file | what |
+|---|---|
+| `<id>.{rerank,denovo}.vaccine.units.tsv` | the *k* units to manufacture (default **k = 20**, `--mhcmatch_cassette_k`) |
+| `<id>.{rerank,denovo}.cassette.faa` | assembled, with the linker chosen by minimising junctional binding |
+| `<id>.{rerank,denovo}.cassette.fna` | the CDS, deslipped |
+| `<id>.{rerank,denovo}.cassette.map.{tsv,json}` | unit / linker / epitope in 1-based coordinates |
+| `cohort.{rerank,denovo}.cassette_score.tsv` | **one per run and per arm** — see `MHCMATCH_CASSETTE_SCORE` |
 
 ### Why the rerank arm needs the window FASTA too
 

@@ -50,9 +50,25 @@ The two arms
      - both
      - both, independently — each arm builds its own cassette
 
-Both end in a cassette: ``<id>.vaccine.units.tsv`` (the *k* units to manufacture, default
-**k = 20**), ``<id>.cassette.faa`` (assembled, with the linker chosen by minimising junctional
-binding), ``<id>.cassette.fna`` (the CDS, deslipped) and the epitope map.
+Both end in a cassette, and under ``--mode both`` the two are told apart by an infix — they are two
+different answers and one must not overwrite the other:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 48 52
+
+   * - file
+     - what
+   * - ``<id>.{rerank,denovo}.vaccine.units.tsv``
+     - the *k* units to manufacture (default **k = 20**)
+   * - ``<id>.{rerank,denovo}.cassette.faa``
+     - assembled, with the linker chosen by minimising junctional binding
+   * - ``<id>.{rerank,denovo}.cassette.fna``
+     - the CDS, deslipped
+   * - ``<id>.{rerank,denovo}.cassette.map.{tsv,json}``
+     - unit / linker / epitope in 1-based coordinates
+   * - ``cohort.{rerank,denovo}.cassette_score.tsv``
+     - **one per run and per arm**
 
 The file naming is the whole input contract
 -------------------------------------------
