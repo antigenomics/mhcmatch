@@ -26,8 +26,12 @@ MODULE=/path/to/mhcmatch/integrations/nextflow/mhcmatch
 REF=/shared/ref/mhcmatch
 IN=/path/to/mouse_files
 OUT=$PWD/results_mouse
-N0=8
-K=20
+N0=8                               # per-allotype capacity. NOT read on this path -- both arms
+                                   # run `cassette order`, which does not size, and
+                                   # `cassette select` sizes by fixed -k. Only
+                                   # `cassette build` reads it.
+K=20                               # EPITOPES selected -- the construct-size lever here. The
+                                   # cassette carries no more units than this, usually fewer.
 # BALB/c (H-2d) below. C57BL/6 (H-2b) is 'H2-K*b,H2-D*b' and 'H-2-IAb'. All three spellings resolve
 # -- `H2-K*d`, `H-2Kb`, `I-Ab` -- so pass whatever your own tables carry.
 ALLELES_MHC1='H2-K*d,H2-D*d,H2-L*d'
@@ -39,7 +43,11 @@ ALLELES_MHC2='H-2-IAd,H-2-IEd'
 # P(an allotype is live) in the response model behind the quota. 0.999 for mouse against 0.95 for
 # human is what the shipped bundles used: a stated design parameter, not a fitted one. Measure your
 # own with mhcmatch.portfolio.betabinom_rho before trusting either.
-BLOCK_LIVE=0.999
+BLOCK_LIVE=0.999   # P(allotype alive) behind a QUOTA. Inert unless you also set
+                                   # --mhcmatch_vector_quota: MHCMATCH_CASSETTE emits
+                                   # --block-live only alongside --quota, and drops it
+                                   # otherwise. `cassette select` uses the separate
+                                   # --mhcmatch_cassette_block_live (default 1.0).
 # -----------------------------------------------------------------------------
 
 # **`MHCMATCH_PMHC_DIR` is a READ override, not a download destination.** It is consulted first

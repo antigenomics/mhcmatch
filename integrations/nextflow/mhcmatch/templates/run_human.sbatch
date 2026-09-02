@@ -23,10 +23,17 @@ OUT=$PWD/results
 TUMOR=SKCM                         # TCGA study code. `mhcmatch expression --list-contexts` prints
                                    # the 19 TCGA<->GTEx pairings. Leaving it unset answers "is this
                                    # gene expressed anywhere" instead of "in this tumour" -- set it
-N0=8                               # per-allotype capacity. REQUIRED and with no default on
-                                   # purpose: nothing in the public record fits it, so the value is
-                                   # yours to defend and it is recorded in the output
-K=20                               # units manufactured. A different question from N0
+N0=8                               # per-allotype capacity. NOT used on this path: both arms of
+                                   # pipeline.nf run `cassette order`, which does not size, and
+                                   # `cassette select` sizes by fixed -k. It is read only by
+                                   # `cassette build` (subworkflows/mhcmatch.nf). Kept because it
+                                   # has no default there and is the value you must defend if you
+                                   # switch. It has no default there on purpose -- nothing in the
+                                   # public record fits it, so the value is yours to defend, and it
+                                   # is recorded in the output.
+K=20                               # EPITOPES selected -- the construct-size lever on this path.
+                                   # The cassette carries no more units than this and usually
+                                   # fewer. A different question from N0
 # -----------------------------------------------------------------------------
 
 # **`MHCMATCH_PMHC_DIR` is a READ override, not a download destination.** It is consulted first

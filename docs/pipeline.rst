@@ -6,7 +6,7 @@ commands it runs and :doc:`cassette` is what the last stage decides.
 
 .. note::
 
-   **Requires mhcmatch >= 1.7.0.** The first process calls ``mhcmatch alleles`` and the rerank arm
+   **Requires mhcmatch >= 1.7.1.** The first process calls ``mhcmatch alleles`` and the rerank arm
    calls ``rank --passthrough``; neither exists in 1.6.0, and 1.6.1 was never published. An
    unpinned install on a stale index resolves to a release that cannot run the first process, so
    ``templates/setup.sbatch`` pins the version and asserts what it got.
@@ -67,20 +67,35 @@ different answers and one must not overwrite the other:
    * - file
      - what
    * - ``<id>.{rerank,denovo}.vaccine.units.tsv``
-     - the *k* units to manufacture (default **k = 20**)
+     - one row per **selected epitope** (default **k = 20**, ``--mhcmatch_cassette_k``) — your
+       input table filtered to what the cassette carries, with nothing removed from the row: on
+       the rerank arm every one of your own columns and every ``mm_`` column survive, plus the
+       selection's own (``slot``, ``p``, ``k``, ``pool_n``, ``offset``, ``energy``, ``lam``,
+       ``rho``). Measured on one donor: 53 caller + 32 ``mm_`` + 22 selection = 107 columns over
+       20 rows, 0 caller columns dropped. See ``-k`` counts epitopes, not manufactured units below
    * - ``<id>.{rerank,denovo}.cassette.faa``
      - assembled, with the linker chosen by minimising junctional binding
    * - ``<id>.{rerank,denovo}.cassette.fna``
      - the CDS, deslipped
    * - ``<id>.{rerank,denovo}.cassette.map.{tsv,json}``
      - unit / linker / epitope in 1-based coordinates
+   * - ``<id>.{rerank,denovo}.cassette.tsv``
+     - the assembly **report**, long-form (``section, i, key, value, detail``): a ``withdrawn``
+       section naming every unit the safety screen removed and the clause that fired, plus
+       ``unit``, ``junction``, ``allotype``, ``cassette`` and ``sequence``. **Not** the epitope
+       table — that is ``vaccine.units.tsv`` above
    * - ``cohort.{rerank,denovo}.cassette_score.tsv``
-     - **one per run and per arm**
+     - **one per run and per arm**, because ``rank`` anchors ``p_response`` on the batch it is
+       handed: scored per donor, no two donors would be comparable
 
 The file naming is the whole input contract
 -------------------------------------------
 
-The sample id is the filename up to its first dot. A file that does not match is ignored.
+For the epitope and window files the sample id is the filename up to its first dot. For a
+**typing** file it is what remains after stripping the ``[._-]?(norma|normal)?[._-]?alleles.tsv``
+suffix, so ``D1.alleles.tsv``, ``D1_norma.alleles.tsv`` and ``D1_alleles.tsv`` all key to ``D1``.
+A file that does not match is ignored; a typing file that matches but joins no sample is named
+in a warning rather than dropped silently.
 
 .. list-table::
    :header-rows: 1

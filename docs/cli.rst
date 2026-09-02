@@ -18,7 +18,13 @@ Machine-readable output
 -----------------------
 
 Every command whose result is a table takes ``--out FILE`` and writes tab-separated values with a
-header row; progress and provenance go to stderr behind ``#``. ``scan``, ``logo`` and ``expression``
+header row; progress and provenance go to stderr behind ``#``.
+
+``--peptides`` is read two ways, and the difference is not cosmetic. ``complement``, ``mimics`` and
+``source`` take a **bare list**, one peptide per line. ``neoag`` and ``mimicry`` take a **TSV with a
+header**, because they carry every non-``peptide`` column of that file through into their output ---
+so the column naming the peptide has to be identifiable, and it may be spelled ``peptide`` or
+``epitope``. Handing them a bare list fails with ``no `peptide` / `epitope` column``. ``scan``, ``logo`` and ``expression``
 print an aligned, human-readable form by default and switch to TSV under ``--out`` or ``--tsv`` ---
 the aligned form of ``expression`` writes ``median 0.33`` and ``IQR 0.1-0.9`` *inside* cells, which
 reads well and parses badly, and the aligned form of ``logo`` keeps only the top three residues per
@@ -60,11 +66,11 @@ Routine tasks
    * - Why did *this* candidate rank where it did?
      - ``mhcmatch explain PEP --allele 'HLA-A*02:01'``
    * - Has this, or something within 1-2 substitutions, already been tested?
-     - ``mhcmatch neoag --peptides p.txt``
+     - ``mhcmatch neoag --peptides p.tsv``
    * - What self / viral / bacterial peptide does it resemble?
      - ``mhcmatch mimics --peptides p.txt --threads 0``
    * - Does that resemblance raise or lower the risk, and through which channel?
-     - ``mhcmatch mimicry --peptides p.txt``
+     - ``mhcmatch mimicry --peptides p.tsv``
    * - Where in the proteome does it come from?
      - ``mhcmatch source --peptides p.txt --proteome human --threads 0``
    * - Which gene does this candidate come from?

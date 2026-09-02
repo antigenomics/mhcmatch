@@ -24,8 +24,12 @@ QUEUE=                             # REQUIRED. `--mhcmatch_slurm_queue` falls ba
                                    # that does not have it. Check `sinfo`, and check its TIME LIMIT:
                                    # MHCMATCH_CASSETTE asks for 8 h under --screen and a 2 h queue
                                    # cannot give it
-N0=8
-K=20
+N0=8                               # per-allotype capacity. NOT read on this path -- both arms
+                                   # run `cassette order`, which does not size, and
+                                   # `cassette select` sizes by fixed -k. Only
+                                   # `cassette build` reads it.
+K=20                               # EPITOPES selected -- the construct-size lever here. The
+                                   # cassette carries no more units than this, usually fewer.
 TUMOR=SKCM
 # -----------------------------------------------------------------------------
 [ -n "$QUEUE" ] || { echo "set QUEUE: run 'sinfo -o \"%20P %5a %10l %6D %6c %10m\"' first" >&2; exit 2; }

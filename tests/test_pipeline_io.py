@@ -340,3 +340,37 @@ def test_an_unknown_allele_still_resolves_to_nothing():
     from mhcmatch import vector as V
     store = Store.from_pmhc(tier="full", species="human", classes=("mhc1",))
     assert V.store_ranker(store, ["NOT-AN-ALLELE"], cls="mhc1")(["GILGFVFTL"])[0] == []
+
+
+# ---------------------------------------------------------------- the response-probability alias
+#
+# `rank` writes `p_response`; `cassette build`/`order` read `p`. They were two names for one number,
+# and the mismatch made the README's own two-command chain exit 1 -- the error even told the caller
+# to rename the column by hand. Resolved like PEPTIDE_COLUMNS: either spelling is accepted and `p`
+# is what the row carries afterwards.
+
+def _unit_table(tmp_path, pcol):
+    p = tmp_path / f"units_{pcol}.tsv"
+    p.write_text(
+        f"peptide\tgene\tallele\t{pcol}\n"
+        f"GILGFVFTL\tGENEA\tHLA-A*02:01\t0.31\n"
+        f"NLVPMVATV\tGENEB\tHLA-A*02:01\t0.12\n")
+    return p
+
+
+@pytest.mark.parametrize("pcol", ["p", "p_response"])
+def test_context_unit_rows_accept_either_response_column(tmp_path, pcol):
+    from mhcmatch import cli
+    rows = cli._read_unit_rows(str(_unit_table(tmp_path, pcol)))
+    assert [r["peptide"] for r in rows] == ["GILGFVFTL", "NLVPMVATV"]
+    # whichever spelling came in, `p` is what downstream reads
+    assert [r["p"] for r in rows] == ["0.31", "0.12"]
+
+
+def test_a_table_with_neither_response_column_still_names_p(tmp_path):
+    from mhcmatch import cli
+    p = tmp_path / "no_p.tsv"
+    p.write_text("peptide\tgene\tallele\n GILGFVFTL\tGENEA\tHLA-A*02:01\n")
+    with pytest.raises(SystemExit) as e:
+        cli._read_unit_rows(str(p))
+    assert "p" in str(e.value)

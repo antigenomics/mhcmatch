@@ -1,6 +1,9 @@
 # Changelog
 
-## [1.7.0] — 2026-09-02 — a caller's own table, and the allele step that was failing silently
+## [1.7.1] — 2026-09-02 — a caller's own table, and the allele step that was failing silently
+
+*(1.7.0 was tagged and then superseded before it reached PyPI; nothing was ever published
+under that number, so its contents are folded in here rather than split across two entries.)*
 
 **The library can now be the last stage of somebody else's pipeline, rather than a replacement for
 it.** Four additive changes, each closing a gap a private one-off script had been covering, and one
@@ -158,18 +161,55 @@ versioning is [SemVer](https://semver.org).
 > the 0.4.x range.
 
 
+### Documentation, audited against the shipped CLI rather than read
+
+Every fenced command in the README, the module README and the docs was executed against a clean
+install of the built wheel. Three did not run, and the cause was one library mismatch rather than
+three doc defects:
+
+- **`rank` wrote `p_response`; `cassette build`/`order` read `p`.** Two names for one number. The
+  error message told the caller to rename the column by hand, which made the README's own
+  two-command cassette chain exit 1 as written. `cli.RESPONSE_COLUMNS` now resolves either spelling
+  the way `PEPTIDE_COLUMNS` already resolved `peptide`/`epitope`, and `p` is what the row carries
+  afterwards. Verified on real window input: `rank fasta` → 46 candidates → `cassette build
+  --context` → `units=11 spacer=AAY`, 327 aa, both FASTAs written, with no rename step.
+- **`--mhcmatch_tier` never reached `MHCMATCH_CASSETTE`**, although `cassette build`/`order` accept
+  `--tier` — `_add_vector_opts` carries `--pmhc/--tier/--species` alongside the assembly flags. A run
+  set to `shortlist` therefore scored its candidates against one panel and screened its cassette
+  against another. It is passed now; `--tier full` is a no-op, confirmed by re-running the four
+  cassette tasks (`completed=4 cached=26`, outputs unchanged).
+- **`--mhcmatch_vector_n0` is not read on the `pipeline.nf` path at all** — both arms run `cassette
+  order`, which does not size, and `cassette select` sizes by fixed `-k`. It was the headline knob in
+  all three run templates and the Deployment example. `--mhcmatch_cassette_k` is the construct-size
+  commitment there; `--n0` belongs to `cassette build`.
+- **`--mhcmatch_vector_block_live` is emitted only alongside `--mhcmatch_vector_quota`**, so the
+  mouse template passed a value that was silently dropped. Not to be confused with
+  `mhcmatch_cassette_block_live`, which `cassette select` always receives.
+- `MHCMATCH_CASSETTE_SCORE`'s documented input was the `.cassette.tsv` reports — the one wiring that
+  cannot work, and the reason that process never completed. It is the collected `*.vaccine.units.tsv`.
+- The `vaccine.units.tsv` was described only as "one row per selected epitope", never as what it is:
+  **the caller's own table filtered to what the cassette carries, with nothing removed from the row**
+  (53 caller + 32 `mm_` + 22 selection = 107 columns over 20 rows on one donor, 0 caller columns
+  dropped). Both READMEs, the docs and the Russian instructions now say so.
+- Two README table rows were nested inside their own code span and rendered with no command at all;
+  the calibration-cache paragraph contradicted itself 35 lines apart; `MHCMATCH_PREDICT`'s drop-in
+  channel is a 4-tuple, not 3; the sample-id rule is a first-dot split for data files and a suffix
+  strip for typing files; `neoag`/`mimicry` take a TSV with a header where `complement`/`mimics`/
+  `source` take a bare list; and the "no stub types a column header" convention is broken by three
+  stubs, one of which types 9 columns against a real 18.
+
 ### Deployment — the delivery path itself, which had never been exercised end to end
 
 The library changes above were verified; the *documented route to running them* was not, and an
 audit of it found five defects that every local check passes straight through.
 
-- **`1.7.0`, not `1.6.1`.** `1.6.1` was stamped in the tree but never tagged and never published, and
+- **A minor bump, not `1.6.1`.** `1.6.1` was stamped in the tree but never tagged and never published, and
   39 further commits landed on top of that dated changelog entry — so the string named two different
   code states and no distribution. Meanwhile `environment.yml`, the `Dockerfile` and
   `params.mhcmatch_container` all pinned `1.6.1`, and `templates/setup.sbatch` installed unpinned
   `--upgrade`, which resolves to **1.6.0** — a release with no `mhcmatch alleles` and no
   `rank --passthrough`, i.e. one that cannot run the first process of the pipeline. Every pin now
-  names 1.7.0, and `setup.sbatch` asserts the version it got rather than discovering the mismatch
+  names the shipped version, and `setup.sbatch` asserts the version it got rather than discovering the mismatch
   several minutes later inside a task log.
 
 - **`-profile slurm` did not exist.** `slurm.config` documents how a *calling* pipeline wires the

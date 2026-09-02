@@ -355,6 +355,12 @@ process MHCMATCH_CASSETTE {
                        "--evenness ${params.mhcmatch_vector_evenness ?: 0.0}" : ''
     // `order` does not size, so it needs no capacity estimate.
     def n0arg  = verb == 'order' ? '' : "--n0 ${n0}"
+    // The reference panel tier, which `cassette build`/`order` DO accept -- they take
+    // `_add_vector_opts`, and that helper carries `--pmhc/--tier/--species` alongside the assembly
+    // flags. Without this the cassette silently used `full` while `predict`, `rank` and `neoag`
+    // used whatever `--mhcmatch_tier` said, so a run set to `shortlist` scored its candidates
+    // against one panel and screened its cassette against another.
+    def tier   = params.mhcmatch_tier ?: 'full'
     if (verb != 'order' && n0 == null) error "params.mhcmatch_vector_n0 is required and has no default: per-allotype capacity is not fitted by anything in the public record, so the value is yours to set and it is recorded in the output"
     """
     mhcmatch cassette ${verb} \\
@@ -362,6 +368,7 @@ process MHCMATCH_CASSETTE {
         ${n0arg} \\
         --alleles '${alleles}' \\
         --cls ${cls} \\
+        --tier ${tier} \\
         ${screen} ${quota} ${mapArg} ${args} \\
         --fasta ${prefix}.cassette.faa \\
         --fasta-nt ${prefix}.cassette.fna \\

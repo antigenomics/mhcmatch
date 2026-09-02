@@ -31,6 +31,9 @@ pip install mhcmatch
 mhcmatch bootstrap                                   # pre-fetch the panel (optional; ~16 MB)
 ```
 
+The library examples below run on any recent release. **The Nextflow pipeline needs >= 1.7.1** --
+its first process calls `mhcmatch alleles`, which does not exist before then.
+
 **Optional extras.** The base install is `seqtree`, `numpy` and `huggingface_hub` — nothing heavy,
 and every model that ships by default runs on it.
 
@@ -64,10 +67,10 @@ mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor 
 
 | your question | command | Python |
 |---|---|---|
-| Which of these peptides does an allele present? | `| Which of these peptides does an allele present? | `mhcmatch predict f.fasta --alleles 'HLA-A*02:01' --cls mhc1` | `predict.predict_fasta` |` | `predict.predict_fasta` |
+| Which of these peptides does an allele present? | `mhcmatch predict f.fasta --alleles 'HLA-A*02:01' --cls mhc1` | `predict.predict_fasta` |
 | Which allele presents this peptide? | `mhcmatch restriction PEP --calibrated` | `store.restriction` |
 | Is it a binder at all, one number? | `mhcmatch binder PEP` | `store.binder_score` |
-| What is the IC50, and vs its wild type? | `| What is the IC50, and vs its wild type? | `mhcmatch affinity PEP --allele A --wt WTPEP` | `store.affinity_model` |` | `store.affinity_model` |
+| What is the IC50, and vs its wild type? | `mhcmatch affinity PEP --allele A --wt WTPEP` | `store.affinity_model` |
 | Will a T cell respond to it? | `mhcmatch complement --peptides p.txt` | `complement.score` |
 | Rank neoantigen candidates for a donor | `mhcmatch rank fasta ...` | `rank.rank_fasta` |
 | How many of the donor's own allotypes present it? | (a `rank` column) | `predict.Prediction.n_alleles_presenting` |
@@ -239,7 +242,7 @@ fleet to buy nothing.
 The key covers the library version, class, background, footprint, head, panel size, draw count,
 seed and the positives feeding the isotonic fit. A cache keyed on less than that would be worse
 than none, because it would serve a background drawn against a different model as though it were
-this one. Unset the variable and nothing is cached; the directory is disposable.
+this one. Set it to `off` and nothing is cached; leave it unset and entries go to `~/.cache/mhcmatch/calibration`. Either directory is disposable -- and use a fresh one for any run meant to establish a number rather than iterate.
 
 ## Batch and threads — read this before scripting a loop
 
@@ -633,7 +636,7 @@ entry point over a directory of files:
 ```bash
 nextflow run integrations/nextflow/mhcmatch/pipeline.nf \
     --indir donor_files --outdir results --mode both \
-    --mhcmatch_vector_n0 8 --mhcmatch_tumor SKCM
+    --mhcmatch_cassette_k 20 --mhcmatch_tumor SKCM
 ```
 
 | `--mode` | in | the deliverable is |
@@ -647,7 +650,7 @@ assembled construct as amino acids with its linker, the CDS, and the epitope map
 carries fewer *units* than *k* — several epitopes can share one 27-mer window, and the safety
 screen withdraws some — so read `units=` from the FASTA header rather than assuming *k*.
 
-> **The pipeline requires mhcmatch >= 1.7.0.** Its first process calls `mhcmatch alleles` and the
+> **The pipeline requires mhcmatch >= 1.7.1.** Its first process calls `mhcmatch alleles` and the
 > rerank arm calls `rank --passthrough`; neither exists in 1.6.0, and 1.6.1 was never published.
 > `templates/setup.sbatch` pins the version and asserts what it installed.
 
@@ -662,8 +665,10 @@ variant calling, HLA typing and expression quantification should `include` the p
 is unchanged, so an existing include keeps working.
 
 `MHCMATCH_PREDICT` drops in for MHCflurry class I and the class-II binding subworkflow, consuming
-the same `(meta, peptide.fasta, alleles)` channel and emitting a pipeline-compatible 57-column
-`.scored.csv`. No stub types a column header — each asks the installed library for its own schema,
+the same `(meta, peptide.fasta, alleles, cls)` channel — one element more than MHCflurry's,
+because `cls` selects the panel and names the outputs — and emitting a pipeline-compatible
+57-column `.scored.csv`. **Almost** no stub types a column header: each asks the installed
+library for its own schema,
 so `-stub-run` cannot drift from the real shape. The image bootstraps its panel at **build** time,
 so compute nodes need no network.
 

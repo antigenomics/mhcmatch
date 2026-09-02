@@ -163,6 +163,12 @@ def _read_seq(arg):
 #: therefore accepted by `rank` and refused by `neoag`, `mimicry` and `cassette select` in the same
 #: chain. A caller should not have to rename a column between two of our own commands.
 PEPTIDE_COLUMNS: tuple = ("peptide", "epitope")
+#: The per-unit response probability, under either spelling. `rank` writes `p_response`;
+#: `cassette build/order` read `p`. They were two names for one number, and the error message
+#: for the mismatch told the caller to rename the column by hand -- which made the worked
+#: example in the README exit 1 as written. Resolved like :data:`PEPTIDE_COLUMNS`: the first
+#: spelling present wins, and `p` is what the row carries afterwards.
+RESPONSE_COLUMNS: tuple = ("p", "p_response")
 
 
 def _read_peptides(path, inline=()):
@@ -1321,14 +1327,17 @@ def _read_units(path, unit_column: str = "peptide"):
 
     with _open_text(path) as fh:
         cols = fh.readline().rstrip("\n").split("\t")
-        need = (unit_column, "gene", "allele", "p")
-        missing = [c for c in need if c not in cols]
+        pcol = next((c for c in RESPONSE_COLUMNS if c in cols), None)
+        need = (unit_column, "gene", "allele")
+        missing = [c for c in need if c not in cols] + ([] if pcol else ["p"])
         if missing:
             raise SystemExit(f"{path}: missing column(s) {', '.join(missing)}; a unit table needs "
-                             f"{', '.join(need)} (+ optional mutation_index, cls). `rank` gives you "
-                             f"gene, allele and a score -- `{unit_column}` must be the long window "
-                             "around the mutation, not the minimal epitope")
+                             f"{', '.join(need)} and one of {' / '.join(RESPONSE_COLUMNS)} "
+                             f"(+ optional mutation_index, cls). `rank` gives you gene, allele and "
+                             f"a score -- `{unit_column}` must be the long window around the "
+                             "mutation, not the minimal epitope")
         ix = {c: cols.index(c) for c in cols}
+        ix.setdefault("p", ix[pcol])
         units = []
         for line in fh:
             f = line.rstrip("\n").split("\t")
@@ -1356,18 +1365,21 @@ def _read_unit_rows(path):
     """
     with _open_text(path) as fh:
         cols = fh.readline().rstrip("\n").split("\t")
-        need = ("peptide", "gene", "allele", "p")
-        missing = [c for c in need if c not in cols]
+        pcol = next((c for c in RESPONSE_COLUMNS if c in cols), None)
+        need = ("peptide", "gene", "allele")
+        missing = [c for c in need if c not in cols] + ([] if pcol else ["p"])
         if missing:
             raise SystemExit(f"{path}: missing column(s) {', '.join(missing)}; with --context a "
-                             f"candidate table needs {', '.join(need)}, which is what `rank` emits "
-                             "(rename its `p_response` column to `p`)")
+                             f"candidate table needs {', '.join(need)} and one of "
+                             f"{' / '.join(RESPONSE_COLUMNS)}, which is what `rank` emits")
         rows = []
         for line in fh:
             f = line.rstrip("\n").split("\t")
             if len(f) < len(cols) or not f[cols.index("peptide")].strip():
                 continue
-            rows.append(dict(zip(cols, f)))
+            d = dict(zip(cols, f))
+            d.setdefault("p", d[pcol])
+            rows.append(d)
         return rows
 
 

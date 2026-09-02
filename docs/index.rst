@@ -41,7 +41,7 @@ The mathematical and statistical theory lives in the technical appendix,
      </a>
      <a class="proj-card" href="cassette.html">
        <h3>Cassette design</h3>
-       <p>Choose the k units to manufacture, and score a finished cassette on an axis that survives
+       <p>Choose the k epitopes to carry, and score a finished cassette on an axis that survives
        changing donor and changing size.</p>
      </a>
      <a class="proj-card" href="safety.html">
@@ -84,7 +84,8 @@ Capabilities
   and all three corpus channels ``C_corpus_thymus`` / ``_self`` / ``_viral``. Agretopicity and
   near-exact matches to already-tested neoantigens are reported beside the score rather than in it
   (:doc:`neoantigen`).
-- **Cassette design** — choose the *k* units to manufacture by maximising a mean-variance objective
+- **Cassette design** — choose the *k* **epitopes** to carry (the construct holds no more units
+  than that, usually fewer) by maximising a mean-variance objective
   derived from the design goal, and score a finished cassette on ``lam``, the one axis that survives
   changing donor *and* changing cassette size (:doc:`cassette`).
 - **Cassette assembly** — withdraw unsafe units, size each allotype, order them, choose the spacer,

@@ -28,6 +28,25 @@ curl -O https://raw.githubusercontent.com/antigenomics/mhcmatch/master/integrati
 | `run_mouse.sbatch` | the same, for an inbred line | 8 cpu · 48 GB · 8 h |
 | `run_slurm_head.sbatch` | a **cohort** — one job per task, across the cluster | 2 cpu · 8 GB · 48 h |
 
+### Every `EDIT THESE` variable
+
+| variable | in | default | what it is |
+|---|---|---|---|
+| `ENV` | all four | `mhcmatch` | conda env name. `setup.sbatch` **creates** it if absent |
+| `VERSION` | setup | `1.7.1` | the release to install. Pinned, and asserted after install |
+| `REF` | all four | `/shared/ref/mhcmatch` | shared reference + calibration root. A filesystem every compute node can see |
+| `TYPING` | setup | *(empty)* | optional: one typing file, to print how many alleles resolve |
+| `WHEELHOUSE` | setup | *(empty)* | optional: a directory of `.whl`s, for a node with no PyPI egress |
+| `MODULE` | the three run scripts | `/path/to/…` | **path to this checkout's `integrations/nextflow/mhcmatch`** |
+| `IN` | the three run scripts | `/path/to/…` | the input directory; naming contract in `../README.md` |
+| `OUT` | the three run scripts | `$PWD/results…` | where results are published |
+| `TUMOR` | human, head | `SKCM` | TCGA study code for expression context. **Do not set it for mouse** |
+| `K` | the three run scripts | `20` | **epitopes** selected — the construct-size lever on this path |
+| `N0` | the three run scripts | `8` | per-allotype capacity. **Not read on this path** (both arms run `cassette order`); only `cassette build` uses it |
+| `QUEUE` | head only | *(empty)* | **REQUIRED.** `--mhcmatch_slurm_queue` falls back to `normal`, which many clusters do not have |
+| `ALLELES_MHC1` / `ALLELES_MHC2` | mouse only | H-2d | the inbred line's haplotype; a literal panel replaces the typing file |
+| `BLOCK_LIVE` | mouse only | `0.999` | P(allotype alive) **behind a quota** — inert unless `--mhcmatch_vector_quota` is also set |
+
 `../README.md` is the module contract — every process's inputs and outputs, every parameter, the
 input file-naming rules. `docs/pipeline.rst` is the same thing as prose.
 
@@ -42,7 +61,11 @@ name and not a universal one, so on a cluster without it every task is rejected 
 `sinfo -o '%20P %5a %10l %6D %6c %10m'` and check the **time limit** too: `MHCMATCH_CASSETTE` asks
 for 8 h under `--screen`, which a 2 h queue cannot give it.
 
-**`--mhcmatch_vector_n0` has no default on purpose.** Per-allotype capacity is not fitted by
+**`--mhcmatch_vector_n0` is not read on the `pipeline.nf` path at all.** Both arms run
+`cassette order`, which does not size, and `cassette select` sizes by fixed `-k` -- so
+`--mhcmatch_cassette_k` is the construct-size commitment here. `--n0` is read by
+`cassette build`, which is what `subworkflows/mhcmatch.nf` runs, and there it
+**has no default on purpose.** Per-allotype capacity is not fitted by
 anything in the public record, so the value is yours to defend — and it is recorded in the output so
 a reader can see which one you chose. It is a different question from `--mhcmatch_cassette_k`:
 `k` is how many **epitopes are selected** — the construct carries fewer *units* than that,
