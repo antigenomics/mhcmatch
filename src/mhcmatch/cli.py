@@ -552,9 +552,12 @@ def _aggregate_channels(cls: str, no_self: bool, species: str = "human"):
     which report *which* reference peptide was nearest and do need the index, and for the safety
     scan.
 
-    ``species`` picks the ``self`` proteome, so a mouse run scores mouse self. The ``thymus`` and
-    ``viral`` deposits are human-only; that is stated in :func:`mhcmatch.mimicry.corpus_spectrum`
-    and is a roadmap item, not a silent substitution.
+    ``species`` keys every corpus channel, not only ``self``: all six ``thymus``/``self``/``viral``
+    tables ship for each of mouse and human, so a mouse run is scored against mouse references
+    throughout. The mouse thymic and viral tables are *thinner* than their human counterparts --
+    25,264 and 40,244 reference windows against 140,482 and 136,618 for class I -- which is a
+    precision statement about a mouse score, not a substitution. This used to read "the thymus and
+    viral deposits are human-only", which stopped being true when those tables shipped.
 
     The ``C_phys`` pair is deliberately absent: :func:`mhcmatch.rank._finish` computes both, because
     they are matrix products against published residue vectors and need no deposit at all.

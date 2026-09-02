@@ -856,9 +856,12 @@ def corpus_spectrum(pmhc_dir=None, cls: str = "mhc1", components=None, k: int = 
     not need to be, because the length compensation it stood in for is now done explicitly by
     normalizing per query window (see :func:`corpus_R`).
 
-    **Species.** ``self_species`` picks the proteome, so mouse self is a mouse proteome. The
-    ``thymus`` and ``viral`` deposits are human-only; a mouse arm is one more ``bincount`` away and
-    is an open roadmap item, not a silent substitution.
+    **Species.** ``self_species`` keys every component, not just ``self``: ``thymus`` and ``viral``
+    ship a mouse table as well as a human one (see the guard in :func:`corpus_counts`), so a mouse
+    run is scored against mouse references throughout. Those two mouse tables stand on less data --
+    25,264 and 40,244 reference windows against 140,482 and 136,618 for class I -- so a mouse
+    corpus channel is noisier than its human counterpart, which is a different claim from the
+    "human-only deposits" this docstring used to make.
     """
     shp = shapes or corpus_shapes()
     out: dict = {}
