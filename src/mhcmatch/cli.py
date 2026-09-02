@@ -593,6 +593,14 @@ def cmd_alleles(a):
     if dropped:
         say(f"dropped {len(dropped)} name(s) that resolve to no pseudosequence: "
             + ", ".join(sorted(set(dropped))), level=1)
+    # A mouse haplotype is a property of the inbred line, so there is no typing file for it and this
+    # command has no locus grammar that would match one. Say that, rather than leaving a run to
+    # discover an empty allele list on its own -- which is exactly the silence this command exists
+    # to break.
+    if not keep and any(n.upper().startswith(("H-2", "H2-", "I-")) for n in names):
+        say("every name looks like a mouse H-2 allele: this command reads HLA typing files. An "
+            "inbred line's haplotype is a property of the line, so pass it directly, e.g. "
+            "--alleles 'H2-K*d,H2-D*d,H2-L*d' / --alleles_mhc2 'H-2-IAd,H-2-IEd'", level=1)
     say(f"{len(keep)} {a.cls} allele(s) from {len(names)} typed name(s)", level=1)
     text = ",".join(keep)
     if a.out:

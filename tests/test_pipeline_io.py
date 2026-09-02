@@ -228,3 +228,14 @@ def test_passthrough_emits_the_callers_columns_and_no_more(tmp_path, capsys):
     head = out.read_text().splitlines()[0].split("\t")
     assert head[:5] == ["type", "subtype", "epitope", "best_allele", "score"]
     assert "peptide" not in head and "mm_peptide" in head
+
+
+def test_alleles_says_so_when_handed_a_mouse_panel(tmp_path, capsys):
+    """A mouse haplotype is a property of the inbred line, so there is no typing file to read and
+    this command has no locus grammar that matches one. Saying that beats leaving the run to find
+    an empty allele list on its own — which is the silence the command exists to break."""
+    p = tmp_path / "m.tsv"
+    p.write_text("Allele\nH2-K*d\nH2-D*d\n")
+    cli.main(["alleles", str(p), "--cls", "mhc1"])
+    err = capsys.readouterr().err
+    assert "mouse H-2 allele" in err and "--alleles" in err
