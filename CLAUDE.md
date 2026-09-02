@@ -42,6 +42,33 @@ release is a restamp (`bench/epic/features.py --restamp`, seconds) rather than a
 which means **`SCORER_EPOCH` is now load-bearing in two repos**: forget to bump it and a frame built
 under the old heads will be accepted under the new ones.
 
+**Every column a caller supplies has to be resolved BY NAME, and each one we forgot cost a run.**
+Four instances of the same shape, all silent, all found by running real data end to end and none
+reachable by a unit test: the **peptide** (`_read_peptides`, `_read_table` and `_cassette_rows` each
+resolved it separately, so a table spelling it `epitope` was accepted by `rank` and refused by
+`neoag`, `mimicry` and `cassette select` **in the same chain** -- `cli.PEPTIDE_COLUMNS` is now the
+one answer); the **allele** (`best_allele` unresolved put every unit on one empty allotype, so the
+coupling channel priced no spread); the **gene** (`gene_name` unresolved made
+`vector.self_origin_risk` unable to exclude a unit's own gene, so every register matched its own
+source and the screen withdrew **18 of 20 units over 20,150 findings**, none of them real); and the
+**score** (`_cassette_rows` falls back to `score`, and a pipeline candidate table HAS one -- the
+caller's -- so the rerank arm selected on their ranking while looking like it selected on ours).
+The rule that falls out: **resolve by name, from a short ordered list, and SAY which one answered.**
+`_cassette_rows` does; that is why the last two were found in one run instead of four.
+
+**A concatenation of per-sample tables assumes one schema, and `--passthrough` makes that false by
+construction.** The caller's own columns travel with each sample, and two samples can come from
+different upstream runs -- measured on two mouse lines whose tables differed by two columns, so the
+header of the first was applied to the rows of the second and every field past that point was off by
+two. It did not error; it produced a `gene_name` holding `A`/`C`/`G`/`T`. Project to the columns the
+next step actually needs, resolved by name **per file**, and never paste whole tables together.
+
+**`--some_flag false` on a Nextflow command line is the string `"false"`, which is truthy.** So
+`params.x ? '--flag' : ''` passes the flag a user just tried to disable. Coerce every boolean param
+once in `nextflow.config` after its default is set. The direction that matters is the reverse one:
+a user who believes they enabled `--mhcmatch_vector_screen` and did not gets a cassette with no
+safety check and no error.
+
 **Three readers, one peptide column, and the failure was invisible for one command at a time.**
 `_read_peptides`, `_read_table` and `_cassette_rows` each resolved "which column holds the peptide"
 separately, so a pipeline candidate table -- which spells it `epitope` -- was accepted by `rank` and
