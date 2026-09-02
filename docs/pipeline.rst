@@ -88,6 +88,40 @@ different answers and one must not overwrite the other:
      - **one per run and per arm**, because ``rank`` anchors ``p_response`` on the batch it is
        handed: scored per donor, no two donors would be comparable
 
+What the cassette map counts as an epitope
+------------------------------------------
+
+The map annotates against the **NetMHCpan** cut-offs, and the two classes do not share a number:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 24 24 26
+
+   * - tier
+     - class I (NetMHCpan)
+     - class II (NetMHCIIpan)
+     - flag
+   * - strong
+     - ``%rank <= 0.5``
+     - ``%rank <= 2.0``
+     - ``--mhcmatch_vector_map_binder strong``
+   * - **weak** (default)
+     - ``%rank <= 2.0``
+     - ``%rank <= 10.0``
+     - ``--mhcmatch_vector_map_binder weak``
+
+**One number for both classes is the mistake this replaces.** A single ``2.0`` is the *weak* cut for
+class I and the *strong* cut for class II, so a construct carrying an ordinary class-II weak binder
+reports none at all. Measured on one mouse cassette: 4,239 class-II windows scored, best
+``%rank 4.095``, and therefore **0** class-II epitopes at ``2.0`` against **78** at ``10.0`` — with
+``self_help`` moving from 0 of 18 units to 3 of 18.
+
+**This is a reporting cut-off and nothing else.** It does not choose units, does not change the
+cassette sequence, and does not touch the ranked candidate tables — class-II candidates are scored
+and ranked in their own ``<id>.mhc2.*`` files regardless. When a class ends up empty the map says so
+explicitly, giving the number of windows it scored and the best ``%rank`` it saw, so a zero can never
+be mistaken for a ranker that failed to run.
+
 The file naming is the whole input contract
 -------------------------------------------
 

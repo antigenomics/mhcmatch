@@ -1422,3 +1422,54 @@ def test_the_whole_orf_is_back_translated_at_once_so_the_seams_are_repaired_too(
     assert m.checks["translates"]
     assert m.checks["longest_homopolymer"] <= 6                    # greedy: a target, not a bound
     assert m.checks["slippery_sites"] == 0
+
+
+# ------------------------------------------- NetMHCpan binder tiers, and a zero that explains itself
+
+def test_the_two_classes_do_not_share_a_rank_cutoff():
+    """NetMHCpan: class I SB 0.5 / WB 2.0. NetMHCIIpan: class II SB 2.0 / WB 10.0.
+
+    One number for both is the bug this pair replaces -- a plain `2.0` is the *weak* cut for class I
+    and the *strong* cut for class II, so a construct whose best class-II window sat at %rank 4.095
+    reported zero class-II epitopes while carrying a perfectly ordinary weak binder.
+    """
+    assert vector.RANK_STRONG == {"mhc1": 0.5, "mhc2": 2.0}
+    assert vector.RANK_WEAK == {"mhc1": 2.0, "mhc2": 10.0}
+    assert vector.rank_cutoffs("weak") == vector.RANK_WEAK
+    assert vector.rank_cutoffs("strong") == vector.RANK_STRONG
+    assert vector.RANK_DEFAULT_TIER == "weak"
+    with pytest.raises(ValueError):
+        vector.rank_cutoffs("moderate")
+
+
+def test_class_two_uses_its_own_threshold():
+    """A class-II hit at %rank 6.0 is a weak binder: kept at 10.0, dropped at 2.0, and the class-I
+    cut must not decide either way."""
+    def r2_weak(peps):
+        return [[("HLA-DRB1*01:01", 6.0)] if p == SIM2_II else [] for p in peps]
+
+    cas = _map_cassette()
+    kept = vector.epitope_map(cas, _r1, r2_weak, threshold=2.0, threshold2=10.0)
+    assert [f for f in kept if f.cls == "mhc2"], "6.0 is inside the class-II weak cut of 10.0"
+    dropped = vector.epitope_map(cas, _r1, r2_weak, threshold=2.0, threshold2=2.0)
+    assert not [f for f in dropped if f.cls == "mhc2"], "6.0 is outside a 2.0 cut"
+    # the class-I side is untouched by either
+    assert len([f for f in kept if f.cls == "mhc1"]) == len([f for f in dropped if f.cls == "mhc1"])
+
+
+def test_an_empty_class_reports_its_best_near_miss():
+    """`0 class-II epitopes` is indistinguishable from a ranker that never ran unless the map says
+    what it scored and how close the best window came."""
+    def r2_weak(peps):
+        return [[("HLA-DRB1*01:01", 6.0)] if p == SIM2_II else [] for p in peps]
+
+    stats = {}
+    vector.epitope_map(_map_cassette(), _r1, r2_weak, threshold=2.0, threshold2=2.0, stats=stats)
+    assert stats["mhc2"]["n_kept"] == 0
+    assert stats["mhc2"]["n_scored"] >= 1
+    assert stats["mhc2"]["best_rank"] == 6.0
+    assert stats["mhc2"]["threshold"] == 2.0
+    # and when it is not empty, the counters still describe the same pass
+    stats2 = {}
+    vector.epitope_map(_map_cassette(), _r1, r2_weak, threshold=2.0, threshold2=10.0, stats=stats2)
+    assert stats2["mhc2"]["n_kept"] == 1 and stats2["mhc2"]["best_rank"] == 6.0

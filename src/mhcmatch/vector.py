@@ -1884,8 +1884,31 @@ def _windows(seq: str, lengths) -> list:
     return [(i, i + L, seq[i:i + L]) for L in lengths for i in range(len(seq) - L + 1)]
 
 
+#: **%rank cut-offs, per class, in the NetMHCpan vocabulary.** Strong and weak binder are not the
+#: same number in the two classes, and one threshold for both is the mistake this pair exists to
+#: stop: NetMHCpan calls class I strong at ``%rank <= 0.5`` and weak at ``<= 2.0``; NetMHCIIpan
+#: calls class II strong at ``<= 2.0`` and weak at ``<= 10.0``. A single ``2.0`` is therefore the
+#: *weak* cut for class I and the *strong* cut for class II, which is what the cassette map shipped
+#: with -- and it is why one mouse construct reported zero class-II epitopes while its best window
+#: sat at %rank 4.095, comfortably a weak binder and outside a strong cut.
+RANK_STRONG: dict = {"mhc1": 0.5, "mhc2": 2.0}
+RANK_WEAK: dict = {"mhc1": 2.0, "mhc2": 10.0}
+#: What the map annotates unless asked otherwise. Weak, because the map is a *report* -- it selects
+#: nothing and removes nothing -- and under-reporting help a construct genuinely carries is the more
+#: costly error here.
+RANK_DEFAULT_TIER: str = "weak"
+
+
+def rank_cutoffs(tier: str = RANK_DEFAULT_TIER) -> dict:
+    """``{"mhc1": f, "mhc2": f}`` for ``"strong"`` or ``"weak"``; raises on anything else."""
+    if tier not in ("strong", "weak"):
+        raise ValueError(f"tier must be 'strong' or 'weak', got {tier!r}")
+    return dict(RANK_STRONG if tier == "strong" else RANK_WEAK)
+
+
 def epitope_map(cassette: Cassette, ranker1=None, ranker2=None, threshold: float = 2.0,
-                lengths1=JUNCTION_LENGTHS, lengths2=MHC2_MAP_LENGTHS) -> list:
+                lengths1=JUNCTION_LENGTHS, lengths2=MHC2_MAP_LENGTHS,
+                threshold2: float | None = None, stats: dict | None = None) -> list:
     """Annotate an assembled cassette: units, linkers, predicted epitopes, and **which class-I and
     class-II epitopes overlap each other**.
 
@@ -1935,16 +1958,31 @@ def epitope_map(cassette: Cassette, ranker1=None, ranker2=None, threshold: float
         return 0
 
     n = 0
-    for cls, ranker, lengths in (("mhc1", ranker1, lengths1), ("mhc2", ranker2, lengths2)):
+    thr2 = threshold if threshold2 is None else threshold2
+    for cls, ranker, lengths, thr in (("mhc1", ranker1, lengths1, threshold),
+                                      ("mhc2", ranker2, lengths2, thr2)):
         if ranker is None:
             continue
         wins = _windows(seq, lengths)
         if not wins:
             continue
+        # **What was scored and what the best near-miss was, per class.** A map that prints
+        # "0 class-II epitopes" and stops cannot be told apart from a map whose ranker never ran,
+        # from one handed no alleles, and from a construct whose best window missed the cutoff by
+        # a hair -- three very different facts. Measured on one mouse cassette: 4,239 windows
+        # scored, best %rank 4.095, cutoff 2.0, so zero features and nothing wrong. The caller
+        # prints these, so the zero is never bare.
+        best, scored, kept = None, 0, 0
         for (lo, hi, pep), hits in zip(wins, ranker([w[2] for w in wins])):
             for allele, rank in hits:
-                if rank is None or rank > threshold:
+                if rank is None:
                     continue
+                scored += 1
+                if best is None or rank < best:
+                    best = rank
+                if rank > thr:
+                    continue
+                kept += 1
                 n += 1
                 k = in_unit(lo, hi)
                 from .store import binding_core
@@ -1954,6 +1992,9 @@ def epitope_map(cassette: Cassette, ranker1=None, ranker2=None, threshold: float
                                      cls=cls, allele=allele, rank=float(rank), unit=k,
                                      gene=cassette.units[k - 1].gene if k else "",
                                      core_start=span[0], core_end=span[1], core=core_seq))
+        if stats is not None:
+            stats[cls] = {"threshold": float(thr), "n_windows": len(wins), "n_scored": scored,
+                          "n_kept": kept, "best_rank": (None if best is None else float(best))}
 
     # Cross-class overlap, computed once over the finished list so both directions agree.
     e1 = [f for f in feats if f.kind == "epitope" and f.cls == "mhc1"]

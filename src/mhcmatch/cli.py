@@ -1626,12 +1626,35 @@ def cmd_vector(a):
             print("# no --map-alleles-mhc2: the map is class I only, so `self_help` -- whether a "
                   "unit's CD8 epitope has overlapping CD4 help from the same unit -- is not "
                   "computed", file=sys.stderr)
-        feats = V.epitope_map(cas, r1, r2, threshold=a.map_threshold)
+        cut = V.rank_cutoffs(a.map_binder)
+        t1 = a.map_threshold if a.map_threshold is not None else cut["mhc1"]
+        t2 = a.map_threshold_mhc2 if a.map_threshold_mhc2 is not None else cut["mhc2"]
+        mstats: dict = {}
+        feats = V.epitope_map(cas, r1, r2, threshold=t1, threshold2=t2, stats=mstats)
         summ = V.write_map(cas, feats, tsv_path=a.map_tsv, json_path=a.map_json)
-        print(f"# map: {summ['n_mhc1']} class-I and {summ['n_mhc2']} class-II epitope(s) over "
+        print(f"# map ({a.map_binder} binders: class I %rank <= {t1:g}, class II <= {t2:g}): "
+              f"{summ['n_mhc1']} class-I and {summ['n_mhc2']} class-II epitope(s) over "
               f"{summ['length_aa']} aa, {summ['n_junction_spanning']} spanning a junction; "
               f"{summ['n_units_with_self_help']}/{summ['n_units']} unit(s) carry their own "
               f"class-II help", file=sys.stderr)
+        # **A zero is never left bare.** "0 class-II epitopes" cannot otherwise be told apart from
+        # a ranker that never ran, a panel that resolved to nothing, and a construct whose best
+        # window missed the cut by a hair. Say which, every time, and say it is a reporting cut --
+        # nothing is removed from the cassette, the units table or the ranked candidates by it.
+        for cls, st in sorted(mstats.items()):
+            if st["n_kept"]:
+                continue
+            if not st["n_scored"]:
+                print(f"# map: no {cls} window could be scored at all ({st['n_windows']} window(s) "
+                      f"offered) -- the panel or the allele list is the thing to check, not the "
+                      f"threshold", file=sys.stderr)
+            else:
+                print(f"# map: no {cls} epitope at %rank <= {st['threshold']:g}, and the best of "
+                      f"{st['n_scored']:,} scored window(s) was %rank {st['best_rank']:.3f}. "
+                      f"This is the MAP cut-off only: nothing was removed from the cassette, from "
+                      f"the units table or from the ranked candidates. Widen it with "
+                      f"--map-threshold{'-mhc2' if cls == 'mhc2' else ''} to annotate them",
+                      file=sys.stderr)
         for path in (a.map_tsv, a.map_json):
             if path:
                 print(f"# wrote {path}", file=sys.stderr)
@@ -2207,8 +2230,17 @@ def _add_vector_opts(p, require_n0: bool = True) -> None:
     p.add_argument("--map-json", metavar="FILE",
                     help="the same map as JSON, plus the per-unit summary and the sequence, which "
                          "is what a viewer needs to draw the cassette without recomputing anything")
-    p.add_argument("--map-threshold", type=float, default=2.0, metavar="F",
-                    help="%%rank at or below which a window enters the map (default 2.0)")
+    p.add_argument("--map-binder", choices=("strong", "weak"), default="weak",
+                    help="which NetMHCpan cut-off the map annotates. NetMHCpan calls class I strong "
+                         "at %%rank <= 0.5 and weak at <= 2.0; NetMHCIIpan calls class II strong at "
+                         "<= 2.0 and weak at <= 10.0 -- so the two classes do NOT share a number. "
+                         "Default `weak`, because the map reports and never selects (default: weak)")
+    p.add_argument("--map-threshold", type=float, default=None, metavar="F",
+                    help="override the class-I %%rank cut-off for the map (default: from "
+                         "--map-binder, so 2.0 weak / 0.5 strong)")
+    p.add_argument("--map-threshold-mhc2", type=float, default=None, metavar="F",
+                    help="override the class-II %%rank cut-off (default: from --map-binder, so "
+                         "10.0 weak / 2.0 strong)")
     p.add_argument("--map-alleles-mhc2", metavar="LIST",
                     help="the recipient's class-II allotypes (comma-separated or a file). Without "
                          "them the map carries class I only, and a unit's `self_help` column -- "

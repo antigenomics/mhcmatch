@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased — the cassette map, on NetMHCpan's terms
+
+**One %rank cut-off was applied to both classes, and the two classes do not share one.** NetMHCpan
+calls class I strong at `%rank <= 0.5` and weak at `<= 2.0`; NetMHCIIpan calls class II strong at
+`<= 2.0` and weak at `<= 10.0`. The map's single `--map-threshold 2.0` was therefore the *weak* cut
+for class I and the *strong* cut for class II — holding class II to a stricter standard than class I
+without saying so.
+
+What that cost, measured on one mouse construct: the de novo cassette reported **0** class-II
+epitopes while its best of 4,239 scored windows sat at `%rank 4.095`, an ordinary weak binder.
+Across cut-offs, rerank vs de novo: 72 / 0 at 2.0, 77 / 8 at 5.0, 153 / 78 at 10.0.
+
+- **`vector.RANK_STRONG` / `RANK_WEAK` / `rank_cutoffs(tier)`** carry the NetMHCpan numbers, and
+  `epitope_map` takes `threshold2` so the classes are cut separately. `--map-binder {strong,weak}`
+  selects the tier and **defaults to `weak`**, because the map reports and selects nothing, so
+  under-reporting help a construct genuinely carries is the costlier error. `--map-threshold` and
+  the new `--map-threshold-mhc2` override per class.
+- **A zero is never printed bare again.** `epitope_map` fills an optional `stats` dict with, per
+  class, the windows offered, the pairs scored, the number kept and the **best `%rank` seen**; the
+  CLI prints it whenever a class comes back empty, distinguishing "the ranker never ran", "the
+  allele list resolved to nothing" and "the best window missed the cut by a hair" — three facts a
+  bare `0 class-II epitope(s)` collapses into one. It also states, in that line, that the cut-off is
+  a *reporting* one: nothing is removed from the cassette, the units table or the ranked candidates.
+
+Through the pipeline on the same mouse data: de novo class II **0 → 78** and `self_help`
+**0/18 → 3/18**; rerank class II **72 → 153** and `self_help` **2/20 → 4/20**. Class I is unchanged
+at 98 and 117, because 2.0 was already its weak cut.
+
+**Nothing else moves.** Cassette selection is class-I only by design, so class II never entered it;
+the class-II candidates were always scored and ranked in full in their own `<id>.mhc2.*` tables.
+
+
 ## [1.7.1] — 2026-09-02 — a caller's own table, and the allele step that was failing silently
 
 *(1.7.0 was tagged and then superseded before it reached PyPI; nothing was ever published
