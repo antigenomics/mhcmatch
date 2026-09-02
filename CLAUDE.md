@@ -42,6 +42,39 @@ release is a restamp (`bench/epic/features.py --restamp`, seconds) rather than a
 which means **`SCORER_EPOCH` is now load-bearing in two repos**: forget to bump it and a frame built
 under the old heads will be accepted under the new ones.
 
+**Three readers, one peptide column, and the failure was invisible for one command at a time.**
+`_read_peptides`, `_read_table` and `_cassette_rows` each resolved "which column holds the peptide"
+separately, so a pipeline candidate table -- which spells it `epitope` -- was accepted by `rank` and
+refused by `neoag`, `mimicry` and `cassette select` **in the same chain**. `cli.PEPTIDE_COLUMNS` is
+now the one answer all three read. The same shape twice more, both caught only by running the whole
+chain on real data: `_cassette_rows` resolves the **allele** column too (`mm_allele_scored` ->
+`best_allele`), because a table spelling it `best_allele` landed every unit on one empty allotype and
+the coupling channel then priced no spread at all; and `--block-live` is **two different knobs under
+one flag name** -- P(a block is live) on `cassette build --quota` (default 0.5) and the HLA-loss rate
+on `cassette select` (default 1.0). Wiring the first into the second stops the run.
+
+**An allele name with three fields resolved to nothing, and nothing said so.** `A*01:01:01G` is what
+every HLA caller writes; the pseudosequence tables are keyed at two fields; `Store._allele_set` drops
+what it cannot find silently. So a run handed a donor's own `.alleles.tsv` scored against an **empty
+panel** and exited 0. `pseudoseq.trim_allele` closes it and `mhcmatch alleles` does the class split
+and the DP/DQ alpha-beta join on top -- 40 donor typing files went from zero resolved alleles to 3-6
+class I and 3-10 class II each. The general lesson is the one `background="ligand"` already taught:
+**a lookup that returns nothing and a lookup that returns the wrong thing fail the same way when the
+layer below drops silently** -- so the resolver reports what it dropped, every time.
+
+**Nextflow 26.x strict syntax rejects three things, none of whose error messages name the rule.**
+A leading `+` on a continuation line; a top-level `def x = { ... }` closure (a `def f(x) { }`
+function is fine, and so is the same closure as a config *value*); and `workflow.onComplete`. A
+script's own params are declared in `nextflow.config`, never assigned in the script -- "Statements
+cannot be mixed with script declarations". All three fail at compile time, so `-stub-run` catches
+them and a unit test never will.
+
+**A process may be invoked once per run, so the second arm aliases.** `subworkflows/denovo.nf`
+includes the shared tail as `MHCMATCH_*_DN`; `subworkflows/rerank.nf` takes the plain names. Every
+`withName:` selector in `nextflow.config` and `slurm.config` is written to match either, because a
+selector spelled as the bare name sizes one arm and silently misses the other -- which for
+`MHCMATCH_CASSETTE` means 8 GB instead of 48 and an OOM kill hours in.
+
 This file captures only *how we work in the repo*.
 
 ## Git worktrees — one worktree + branch per task

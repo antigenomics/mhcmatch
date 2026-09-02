@@ -1,14 +1,21 @@
 // mhcmatch as a set of drop-in nf-core-style local processes.
 //
-// Six processes, in pipeline order:
+// Nine processes, in pipeline order:
 //
+//   MHCMATCH_ALLELES   an HLA typing file -> the allele list every other process takes
 //   MHCMATCH_PREDICT   variant windows -> per-allele presentation, affinity, agretopicity
 //   MHCMATCH_RANK      candidates      -> the fitted EPIC aggregate, one ordered table
 //                                        (carries `occupancy` alongside `agretopicity`)
+//   MHCMATCH_RERANK    a caller's OWN candidate table -> the same aggregate, appended to it
 //   MHCMATCH_NEOAG     peptides        -> proximity to the tested-neoantigen database
 //   MHCMATCH_MIMICRY   peptides        -> the six signed self/viral/thymus channels + autoimmune
+//   MHCMATCH_CASSETTE_SELECT  a pool   -> the k units to manufacture (default k = 20)
 //   MHCMATCH_CASSETTE  ranked units    -> a screened polyepitope cassette, amino acid and CDS
 //   MHCMATCH_CASSETTE_SCORE  every donor -> one shared calibration, so donors are comparable
+//
+// Two entry points, and they are different objects. `subworkflows/*.nf` are for a pipeline that
+// `include`s these processes into its own channel topology; `pipeline.nf` is a runnable workflow
+// over a directory of files, for a caller who wants the chain and not the wiring.
 //
 // `subworkflows/mhcmatch.nf` chains them; see ./README.md for the input and output contract of each.
 //
@@ -278,6 +285,12 @@ process MHCMATCH_CASSETTE {
     def n0     = params.mhcmatch_vector_n0
     def screen = params.mhcmatch_vector_screen ? '--screen' : ''
     def ctx    = context.name != 'NO_FILE' ? "--context ${context}" : ''
+    // The long window WITHOUT a context FASTA: a reranked candidate table already carries it in a
+    // column (`epitope_context`, 27 aa, which is `--unit-length` exactly). `--context` is for the
+    // de novo arm, where the table has minimal epitopes and the window has to be rebuilt; this is
+    // for the rerank arm, where there is no window FASTA to rebuild from. Ignored when both are set.
+    def ucol   = (context.name == 'NO_FILE' && params.mhcmatch_vector_unit_column)
+                     ? "--unit-column ${params.mhcmatch_vector_unit_column}" : ''
     // The cassette MAP: one row per unit, linker and predicted epitope in 1-based coordinates.
     // `mhcmatch_vector_map_alleles_mhc2` is what makes it worth more than a coordinate listing --
     // without the recipient's class-II allotypes the map carries class I only and `self_help`
@@ -302,7 +315,7 @@ process MHCMATCH_CASSETTE {
     if (n0 == null) error "params.mhcmatch_vector_n0 is required and has no default: per-allotype capacity is not fitted by anything in the public record, so the value is yours to set and it is recorded in the output"
     """
     mhcmatch cassette build \\
-        --candidates ${candidates} ${ctx} \\
+        --candidates ${candidates} ${ctx} ${ucol} \\
         --n0 ${n0} \\
         --alleles '${alleles}' \\
         --cls ${cls} \\
@@ -406,6 +419,201 @@ process MHCMATCH_CASSETTE_SCORE {
     """
     printf 'donor\\tk\\tyield\\tp_mean\\tp_at_least\\toffset\\trho\\tn_effective\\tlam\\n' \\
         > cohort.cassette_score.tsv
+
+    cat <<-END_VERSIONS > versions.yml
+    "${task.process}":
+        mhcmatch: \$(python -c "import mhcmatch; print(mhcmatch.__version__)")
+    END_VERSIONS
+    """
+}
+
+
+process MHCMATCH_ALLELES {
+    tag "${meta.id}:${cls}"
+    label 'process_single'
+
+    conda "${moduleDir}/environment.yml"
+    container params.mhcmatch_container
+
+    // **The step whose absence is silent.** Every HLA typer writes the G-group form
+    // (`A*01:01:01G`) and the pseudosequence tables are keyed at two fields, so an untrimmed name
+    // resolves to nothing -- and `Store._allele_set` drops what it cannot find without a word, so
+    // the run scores against an EMPTY panel and exits 0. The class-II half is worse: a DP/DQ
+    // molecule names both chains, so `DQA1*05:01` on its own is not a molecule at all and the two
+    // rows of a typing file have to be joined.
+    input:
+    tuple val(meta), path(typing), val(cls)
+
+    output:
+    tuple val(meta), val(cls), path("*.mhcmatch.alleles.txt"), emit: alleles
+    path "versions.yml",                                       emit: versions
+
+    when:
+    task.ext.when == null || task.ext.when
+
+    script:
+    def args   = task.ext.args ?: ''
+    def prefix = task.ext.prefix ?: "${meta.id}"
+    """
+    mhcmatch alleles ${typing} --cls ${cls} ${args} --out ${prefix}.${cls}.mhcmatch.alleles.txt
+
+    cat <<-END_VERSIONS > versions.yml
+    "${task.process}":
+        mhcmatch: \$(python -c "import mhcmatch; print(mhcmatch.__version__)")
+    END_VERSIONS
+    """
+
+    stub:
+    def prefix = task.ext.prefix ?: "${meta.id}"
+    """
+    printf '' > ${prefix}.${cls}.mhcmatch.alleles.txt
+
+    cat <<-END_VERSIONS > versions.yml
+    "${task.process}":
+        mhcmatch: \$(python -c "import mhcmatch; print(mhcmatch.__version__)")
+    END_VERSIONS
+    """
+}
+
+
+process MHCMATCH_RERANK {
+    tag "${meta.id}:${cls}"
+    label 'process_medium'
+
+    conda "${moduleDir}/environment.yml"
+    container params.mhcmatch_container
+
+    // `rank pairs --passthrough`: the caller's OWN candidate table comes back with every column it
+    // arrived with, in its own order, plus this model's under `--prefix`, re-ordered by the
+    // aggregate. That is not a join a caller can do afterwards -- `rank` splits a cell naming
+    // several alleles and the best presenter stands for the row, so the output shares neither its
+    // length nor its allele column with the input.
+    //
+    // `context` is the window FASTA the candidates were called on, and it is what makes
+    // agretopicity and `d_occupancy` defined: a candidate table carries the mutant k-mer and
+    // nothing the germline is recoverable from. Pass NO_FILE and every row is `wt_absent` --
+    // correct, and a weaker model. Measured on one donor's 3,293 class-I candidates: 3,090 of the
+    // 3,136 missense rows recover a wild type, every one of them differing at exactly one residue.
+    input:
+    tuple val(meta), path(table), path(context), val(cls)
+
+    output:
+    tuple val(meta), val(cls), path("*.epitopes.mhcmatch.tsv"), emit: reranked
+    path "versions.yml",                                        emit: versions
+
+    when:
+    task.ext.when == null || task.ext.when
+
+    script:
+    def args   = task.ext.args ?: ''
+    def prefix = task.ext.prefix ?: "${meta.id}"
+    def tier   = params.mhcmatch_tier ?: 'full'
+    def pre    = params.mhcmatch_rerank_prefix ?: 'mm_'
+    def tumor  = params.mhcmatch_tumor ? "--tumor ${params.mhcmatch_tumor}" : ''
+    def prev   = params.mhcmatch_prevalence ? "--prevalence ${params.mhcmatch_prevalence} " : ''
+    def ctx    = context.name != 'NO_FILE' ? "--context ${context}" : ''
+    def extra  = (params.mhcmatch_rank_extended ? '--extended ' : '') +
+                 (params.mhcmatch_rank_annotate ? '--annotate ' : '') +
+                 (params.mhcmatch_rank_core     ? '--core '     : '')
+    """
+    mhcmatch rank pairs ${table} \\
+        --cls ${cls} \\
+        --tier ${tier} \\
+        --passthrough --prefix '${pre}' \\
+        ${ctx} ${tumor} ${prev}${extra}${args} \\
+        --out ${prefix}.${cls}.epitopes.mhcmatch.tsv
+
+    cat <<-END_VERSIONS > versions.yml
+    "${task.process}":
+        mhcmatch: \$(python -c "import mhcmatch; print(mhcmatch.__version__)")
+    END_VERSIONS
+    """
+
+    stub:
+    def prefix = task.ext.prefix ?: "${meta.id}"
+    def pre    = params.mhcmatch_rerank_prefix ?: 'mm_'
+    def ext    = params.mhcmatch_rank_extended ? 'True' : 'False'
+    def ann    = params.mhcmatch_rank_annotate ? 'True' : 'False'
+    def cor    = params.mhcmatch_rank_core ? 'True' : 'False'
+    """
+    # The caller's columns lead and a stub cannot know them, so it types what the command ADDS --
+    # asked of the library, never copied, so `-stub-run` cannot drift from the real shape.
+    python -c "
+from mhcmatch import rank
+print('\\t'.join('${pre}' + c for c in rank.columns(extended=${ext}, annotate=${ann}, core=${cor})))" \\
+        > ${prefix}.${cls}.epitopes.mhcmatch.tsv
+
+    cat <<-END_VERSIONS > versions.yml
+    "${task.process}":
+        mhcmatch: \$(python -c "import mhcmatch; print(mhcmatch.__version__)")
+    END_VERSIONS
+    """
+}
+
+
+process MHCMATCH_CASSETTE_SELECT {
+    tag "${meta.id}"
+    label 'process_medium'
+
+    conda "${moduleDir}/environment.yml"
+    container params.mhcmatch_container
+
+    // Fixed k, where MHCMATCH_CASSETTE sizes by the per-allotype stopping rule of `--n0`. Both are
+    // real answers to "how many units": `--n0` says how many the recipient's allotypes can carry,
+    // `-k` says how many will be manufactured. A trial that has already committed to a construct
+    // size needs the second.
+    //
+    // NO `--species`: `cassette select` does not accept it and exits 2 if handed one, which is the
+    // failure nextflow.config records for MIMICRY. The selection is over a scored pool and reads
+    // no panel.
+    input:
+    tuple val(meta), path(candidates), val(alleles)
+
+    output:
+    tuple val(meta), path("*.vaccine.units.tsv"), emit: units
+    path "versions.yml",                          emit: versions
+
+    when:
+    task.ext.when == null || task.ext.when
+
+    script:
+    def args   = task.ext.args ?: ''
+    def prefix = task.ext.prefix ?: "${meta.id}"
+    def k      = params.mhcmatch_cassette_k ?: 20
+    def tol    = params.mhcmatch_cassette_tol ? "--tol ${params.mhcmatch_cassette_tol}" : ''
+    def scol   = params.mhcmatch_cassette_score_column
+                     ? "--score-column ${params.mhcmatch_cassette_score_column}" : ''
+    def prev   = params.mhcmatch_prevalence ? "--prevalence ${params.mhcmatch_prevalence}" : ''
+    def rho    = params.mhcmatch_cassette_rho ? "--rho ${params.mhcmatch_cassette_rho}" : ''
+    // **NOT `mhcmatch_vector_block_live`.** The two flags share a name and are different knobs:
+    // on `cassette build --quota` it is P(a block is live) in the response model and defaults to
+    // 0.5; on `cassette select` it is the HLA-LOSS rate and defaults to 1.0 (nothing is ever
+    // lost). Passing 0.5 here makes any unit whose marginal p exceeds it unrepresentable and the
+    // run stops -- measured on a real donor, 1 of 20 chosen units at p = 0.7782.
+    def bl     = params.mhcmatch_cassette_block_live
+                     ? "--block-live ${params.mhcmatch_cassette_block_live}" : ''
+    // The donor's DISTINCT allotypes: the denominator coverage is reported against, so an allotype
+    // holding zero units is visible. Without it coverage is taken over the labels the cassette
+    // happens to carry and cannot see the one it missed.
+    def uni    = alleles ? "--universe '${alleles}'" : ''
+    """
+    mhcmatch cassette select \\
+        --candidates ${candidates} \\
+        -k ${k} ${tol} ${scol} ${prev} ${rho} ${bl} ${uni} \\
+        --passthrough ${args} \\
+        --out ${prefix}.vaccine.units.tsv
+
+    cat <<-END_VERSIONS > versions.yml
+    "${task.process}":
+        mhcmatch: \$(python -c "import mhcmatch; print(mhcmatch.__version__)")
+    END_VERSIONS
+    """
+
+    stub:
+    def prefix = task.ext.prefix ?: "${meta.id}"
+    """
+    printf 'donor\\tslot\\tpeptide\\tallele\\tgene\\tscore\\tp\\tk\\tpool_n\\toffset\\tenergy\\tlam\\trho\\tgamma\\tchannels\\tblock_live\\tselectivity\\trule\\tpi\\tnot_worse\\tdiversity\\tn_covered\\tn_allotypes\\n' \\
+        > ${prefix}.vaccine.units.tsv
 
     cat <<-END_VERSIONS > versions.yml
     "${task.process}":

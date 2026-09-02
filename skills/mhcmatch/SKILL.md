@@ -103,7 +103,7 @@ Twenty-two commands, one of them with sub-verbs. Full reference: [docs/cli.rst](
 | recognition | `complement` · `mimics` · `mimicry` · `neoag` |
 | integration | `rank` · `explain` · `expression` · `source` · `genes` |
 | cassette | `cassette select` · `cassette score` · `cassette build` · `cassette order` · `cassette linkers` · `cassette deslip` |
-| setup | `bootstrap` · `build` (`build --check` = are any of the 27 shipped artifacts stale?) |
+| setup | `alleles` · `bootstrap` · `build` (`build --check` = are any of the 27 shipped artifacts stale?) |
 
 `mhcmatch binder <peptide> --alleles ... --cls mhc1` ranks alleles by the generalized binder score.
 `mhcmatch cassette select --candidates pool.tsv -k 20 [--tol 3]` chooses the units; give it the
@@ -115,6 +115,19 @@ also get `lam`, the only axis comparable across donors *and* sizes.
 **long windows**, not `rank`'s minimal epitopes, and `--screen` is opt-in because it costs a
 whole-proteome index. Without it no safety check runs at all. `vector` and `deslip` survive as
 deprecated aliases for `cassette build` / `cassette deslip` and print a deprecation line.
+
+**Three flags for being the last stage of somebody else's pipeline**, all additive:
+`rank pairs <table> --passthrough --prefix mm_ [--context windows.fasta]` emits every column of the
+caller's table, in their order, plus this model's under the prefix, re-sorted by the aggregate --
+which no join can reproduce, because `rank` splits a multi-allele cell and the best presenter stands
+for the row. `--context` recovers the wild type a candidate table cannot carry, from the window
+FASTA's own `wt_window`. `cassette select --passthrough` and `cassette build --unit-column COL` carry
+those columns onward, so a reranked table becomes a cassette with no window FASTA in sight.
+
+**`mhcmatch alleles <typing.tsv> --cls mhc1` before any of it.** Every HLA caller writes the G-group
+form (`A*01:01:01G`), the pseudosequence tables are keyed at two fields, and `Store._allele_set`
+drops what it cannot find **silently** -- so a raw typing file scores against an empty panel and
+exits 0. This trims, splits the classes, joins the DP/DQ alpha-beta pair, and reports every drop.
 
 **Pass `--peptides FILE`, never loop the shell.** The setup a per-peptide invocation re-pays is the
 whole cost: the presentation/affinity calibrators ~5 s, a human-proteome length index ~70 s. One

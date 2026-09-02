@@ -27,6 +27,7 @@ import argparse
 import contextlib
 import gzip
 import os
+import re
 import sys
 import time
 
@@ -156,12 +157,21 @@ def _read_seq(arg):
     return arg.strip()
 
 
+#: How a table may spell its peptide column, best first. **One constant, because every reader in
+#: this module needs the same answer**: `_read_peptides`, `_read_table` and `_cassette_rows` each
+#: resolved it separately, and a pipeline candidate table -- which spells it `epitope` -- was
+#: therefore accepted by `rank` and refused by `neoag`, `mimicry` and `cassette select` in the same
+#: chain. A caller should not have to rename a column between two of our own commands.
+PEPTIDE_COLUMNS: tuple = ("peptide", "epitope")
+
+
 def _read_peptides(path, inline=()):
     """Peptides from ``path`` (one per line, or the ``peptide`` column of a TSV) plus any inline.
 
-    ``-`` reads stdin, so this composes with a pipe. Whole-file reads on purpose: the scoring paths
-    are vectorised or amortised over one setup, so handing them a whole deposit is both the fast
-    path and the intended one."""
+    ``-`` reads stdin, so this composes with a pipe. The column may also be spelled ``epitope``
+    (:data:`PEPTIDE_COLUMNS`). Whole-file reads on purpose: the scoring paths are vectorised or
+    amortised over one setup, so handing them a whole deposit is both the fast path and the
+    intended one."""
     peps = [p.strip().upper() for p in (inline or ()) if p and p.strip()]
     if not path:
         return peps
@@ -173,7 +183,8 @@ def _read_peptides(path, inline=()):
     try:
         first = fh.readline()
         cols = first.rstrip("\n").split("\t")
-        col = cols.index("peptide") if "peptide" in cols else None
+        name = next((c for c in PEPTIDE_COLUMNS if c in cols), None)
+        col = cols.index(name) if name else None
         if col is None:
             peps.append(first.strip().split("\t")[0].upper())
         for line in fh:
@@ -494,6 +505,103 @@ def _read_alleles(arg):
     return [x.strip() for x in (arg or "").replace("\n", ",").split(",") if x.strip()]
 
 
+#: Loci a class-I panel is built from, and the class-II beta loci a pair key is keyed on. A typing
+#: file lists both classes in one table, and the locus is the only thing that says which is which.
+_MHC1_LOCI = ("A", "B", "C")
+_MHC2_BETA = ("DRB1", "DRB3", "DRB4", "DRB5", "DPB1", "DQB1")
+_MHC2_ALPHA = {"DPB1": "DPA1", "DQB1": "DQA1"}
+
+
+def _typing_rows(path):
+    """Allele names out of a typing file, whatever shape it is in.
+
+    Three shapes, because three tools write them: a TSV with an ``Allele`` (or ``allele``) column --
+    what OptiType, kourami and HLA-LA emit and what a donor's own ``.alleles.tsv`` is; a
+    comma-separated list; one name per line. A ``Locus`` column is not required: the locus is read
+    off the name, which is the only thing present in all three.
+    """
+    text = open(path).read() if os.path.exists(path) else (path or "")
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if lines and "\t" in lines[0]:
+        cols = lines[0].rstrip("\n").split("\t")
+        col = next((c for c in cols if c.strip().lower() == "allele"), None)
+        if col is not None:
+            i = cols.index(col)
+            return [f.split("\t")[i].strip() for f in lines[1:] if len(f.split("\t")) > i]
+    return [x.strip() for ln in lines for x in ln.split(",") if x.strip()]
+
+
+def _locus_of(name):
+    """``'HLA-DQB1*03:01'`` -> ``'DQB1'``, ``'A*01:01'`` -> ``'A'``; ``''`` when it is not an HLA name."""
+    n = re.sub(r"^HLA[- ]", "", (name or "").strip(), flags=re.I)
+    m = re.match(r"^(D[PQR][AB]\d|[ABC])w?[*\d]", n, flags=re.I)
+    return m.group(1).upper() if m else ""
+
+
+def cmd_alleles(a):
+    """A donor's typing file -> the allele list every other command's ``--alleles`` accepts.
+
+    Three things stand between a typing file and a scored run, and each of them fails **silently**:
+
+    * **Field depth.** Every typer writes three or four fields and a G-group suffix
+      (``A*01:01:01G``); the pseudosequence tables are keyed at two. See
+      :func:`mhcmatch.pseudoseq.trim_allele`.
+    * **The class split.** One file lists both classes, and a class-I panel handed a DQB1 name
+      resolves it to nothing.
+    * **The DP/DQ pairing.** A DP or DQ molecule is an alpha-beta heterodimer and its key names both
+      chains, so the two rows of a typing file have to be *joined* -- ``DQA1*05:01`` alone is not a
+      molecule and does not resolve. :func:`mhcmatch.pseudoseq.class2_key` is the join; where the
+      alpha is absent it is imputed from the beta (:func:`mhcmatch.pseudoseq.alpha_prior`), which is
+      what DR needs too since DRA is monomorphic.
+
+    Every dropped name is reported, because :meth:`mhcmatch.store.Store._allele_set` drops what it
+    cannot find without saying so -- the whole failure mode this command exists to make loud.
+    """
+    from .pseudoseq import class2_key, resolve_allele, trim_allele
+
+    names = [trim_allele(n) for n in _typing_rows(a.input)]
+    by_locus = {}
+    for n in names:
+        loc = _locus_of(n)
+        if loc and n not in by_locus.setdefault(loc, []):
+            by_locus[loc].append(n)
+
+    out, dropped = [], []
+    if a.cls == "mhc1":
+        for loc in _MHC1_LOCI:
+            out += by_locus.get(loc, [])
+    else:
+        for beta_loc in _MHC2_BETA:
+            alpha_loc = _MHC2_ALPHA.get(beta_loc)
+            alphas = by_locus.get(alpha_loc, []) if alpha_loc else []
+            for beta in by_locus.get(beta_loc, []):
+                # No alpha typed -> one key with the imputed alpha. Two alphas typed -> both pairings,
+                # because a heterozygous DQA1 with a heterozygous DQB1 really can present as four
+                # molecules and the typing does not say which trans pairs form.
+                out += [class2_key(al, beta) for al in alphas] or [class2_key("", beta)]
+    seen, keep = set(), []
+    for n in out:
+        key, exact = resolve_allele(n, a.cls)
+        if key is None:
+            dropped.append(n)
+        elif key not in seen:
+            seen.add(key)
+            keep.append(n if a.form == "input" else key)
+    unknown = [n for n in names if not _locus_of(n)]
+    for n in unknown:
+        dropped.append(n)
+    if dropped:
+        say(f"dropped {len(dropped)} name(s) that resolve to no pseudosequence: "
+            + ", ".join(sorted(set(dropped))), level=1)
+    say(f"{len(keep)} {a.cls} allele(s) from {len(names)} typed name(s)", level=1)
+    text = ",".join(keep)
+    if a.out:
+        with open(a.out, "w") as fh:
+            fh.write(text + "\n")
+    else:
+        print(text)
+
+
 def _load_refs(spec):
     """``name=path[,name=path]`` -> ``{name: {peptides}}`` for the exact-match known-epitope flag.
 
@@ -640,9 +748,22 @@ def cmd_rank(a):
     # None -> mhcmatch.known's built-in sets; --no-known-refs -> {} -> lookup off
     refs = _load_refs(getattr(a, "refs", None)) if getattr(a, "refs", None) else \
         ({} if getattr(a, "no_known_refs", False) else None)
+    carry = []            # the caller's own columns, in the caller's own order
     if a.mode == "pairs":
         store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
-        rows = R.rank_pairs(store, _read_table(a.input), cls=a.cls,
+        recs = _read_table(a.input)
+        # The caller's OWN columns, read off the header rather than off a row: `_read_table` adds a
+        # `peptide` key when the header spelled it `epitope`, and --passthrough emits the caller's
+        # table, not one this command widened by a column they never sent.
+        with _open_text(a.input) as _fh:
+            carry = _fh.readline().rstrip("\n").split("\t")
+        # `--context` supplies the germline arm the table does not carry. Before ranking, because
+        # the wild type is what `binder_ranks` is asked for alongside the mutant.
+        if getattr(a, "context", None):
+            n = R.wt_from_windows(recs, a.context)
+            say(f"--context: recovered a wild type for {n:,} of {len(recs):,} row(s) from "
+                f"{a.context}", level=1)
+        rows = R.rank_pairs(store, recs, cls=a.cls,
                             tissue=a.tissue, tumor=a.tumor, refs=refs, score=a.score,
                             prevalence=a.prevalence,
                             channels=_aggregate_channels(a.cls, a.no_self, a.species)
@@ -664,6 +785,13 @@ def cmd_rank(a):
                             prevalence=a.prevalence,
                             channels=_aggregate_channels(a.cls, a.no_self, a.species)
                             if a.score == "aggregate" else None)
+    # `rank` floats an exact known-epitope match to the top of its *listing* -- a display choice,
+    # documented on `Ranked.rank`, which the `rank` column does not follow. Under --passthrough the
+    # file IS the caller's table re-ordered by our score, so the listing order and the rank have to
+    # agree or the deliverable is sorted by something nobody asked for. Scoped to the flag: every
+    # other caller's output is byte-identical.
+    if getattr(a, "passthrough", False):
+        rows = sorted(rows, key=lambda r: r.rank)
     rows = rows[:a.top] if a.top else rows
     cols = list(R.BASE_COLUMNS)
     if a.score == "aggregate":
@@ -686,9 +814,21 @@ def cmd_rank(a):
         cols += list(R.ANNOTATE_COLUMNS)
     if a.core:
         cols += list(R.CORE_COLUMNS)
+    # `--passthrough`: the caller's table comes back annotated and re-ordered, not replaced. Its
+    # columns lead, in its own order; ours follow under `--prefix`. A join would not reproduce this
+    # -- `rank` splits a multi-allele cell and the best presenter stands for the row, so the output
+    # shares neither length nor allele column with the input.
+    head = cols
+    if getattr(a, "passthrough", False):
+        pre = getattr(a, "prefix", "") or ""
+        clash = sorted(set(carry) & {pre + c for c in cols})
+        if clash:
+            say(f"--prefix {pre!r} leaves {len(clash)} duplicated column name(s): "
+                + ", ".join(clash), level=1)
+        head = carry + [pre + c for c in cols]
     out = open(a.out, "w") if a.out else sys.stdout
     try:
-        print("\t".join(cols), file=out)
+        print("\t".join(head), file=out)
         for i, r in enumerate(rows, 1):
             cells = [str(r.rank), r.peptide, _allele(a, r.allele),
                      _allele(a, r.allele_scored) if r.allele_scored else "",
@@ -722,6 +862,8 @@ def cmd_rank(a):
                           str(g["neoag_n_within"])]
             if a.core:
                 cells += [r.core, str(r.core_offset), r.core_source]
+            if getattr(a, "passthrough", False):
+                cells = [str(r.row.get(c, "")) for c in carry] + cells
             print("\t".join(cells), file=out)
     finally:
         if a.out:
@@ -824,22 +966,38 @@ def cmd_complement(a):
               file=sys.stderr)
 
 
-def _read_table(path, col="peptide"):
+def _read_table(path, col=PEPTIDE_COLUMNS):
     """Every row of a TSV with a ``peptide`` column, as dicts, preserving column order.
 
     ``col`` names that column for the one caller whose table does not spell it ``peptide``
     (``genes``, which offers ``--peptide-col``); it is the column normalised to upper case, so the
-    key a lookup is built on and the cell that is written back agree."""
+    key a lookup is built on and the cell that is written back agree. It may be a tuple of accepted
+    spellings (default :data:`PEPTIDE_COLUMNS`), in which case the first the header carries wins --
+    which is how a pipeline table spelling it ``epitope`` is read without a rename stage.
+
+    **A row resolved to a spelling in :data:`PEPTIDE_COLUMNS` always gets a ``peptide`` key**, so a
+    downstream reader never has to know which of them arrived; the caller's own column is untouched
+    and still in the dict, so a passthrough that carries "every column but ``peptide``" still
+    carries it. A caller-named column (``--peptide-col mt_peptide``) gets no such alias --
+    ``genes`` writes its header from the row's keys and an invented one would appear in the
+    output."""
     with _open_text(path) as fh:
         cols = fh.readline().rstrip("\n").split("\t")
+        want = (col,) if isinstance(col, str) else tuple(col)
+        col = next((c for c in want if c in cols), want[0])
         if col not in cols:
-            raise SystemExit(f"{path}: no `{col}` column (found {cols})")
+            raise SystemExit(f"{path}: no `{'` / `'.join(want)}` column (found {cols})")
         out = []
         for line in fh:
             line = line.rstrip("\n")
             if line:
                 d = dict(zip(cols, line.split("\t")))
                 d[col] = (d.get(col) or "").strip().upper()
+                # Only for a spelling WE know. A caller who named their own column
+                # (`genes --peptide-col mt_peptide`) gets no invented key -- `genes` writes its
+                # header from the row's keys, so one would appear as a third column in the output.
+                if col in PEPTIDE_COLUMNS:
+                    d.setdefault("peptide", d[col])
                 out.append(d)
         return out
 
@@ -1097,9 +1255,27 @@ def _parse_quota(spec: str) -> dict:
     return out
 
 
-def _read_units(path):
+def _cell(fields, ix, names):
+    """First non-empty cell among ``names``, ``""`` if none is present. The variant class is
+    spelled ``kind`` by hand, ``variant_type`` by ``rank``, and ``mm_variant_type`` by
+    ``rank --prefix mm_``; ``cassette build --quota`` reads it, and reading only the first spelling
+    is how a non-conventional quota comes back satisfiable by missense alone."""
+    for n in names:
+        if n in ix and len(fields) > ix[n] and fields[ix[n]].strip():
+            return fields[ix[n]].strip()
+    return ""
+
+
+def _read_units(path, unit_column: str = "peptide"):
     """``[Unit]`` from a TSV with ``peptide``/``gene``/``allele``/``p`` (+ optional
     ``mutation_index``, ``cls``, ``kind``).
+
+    ``unit_column`` names the column holding the **long window**, for a caller whose table carries
+    it beside the minimal epitope rather than in place of it -- a pipeline candidate table spelling
+    it ``epitope_context`` is the case in hand, and at 27 residues it is already the shipped
+    ``--unit-length``. This is the alternative to ``--context``, not a second version of it:
+    ``--context`` rebuilds a window from the variant's FASTA when the table has none, and this reads
+    one the table already has.
 
     ``kind`` is the variant class -- ``missense`` (the default) or a non-conventional product
     (``frameshift``, ``fusion``, ``splice``, ``retained_intron``, ``ORF``, ``editing``). ``rank``
@@ -1115,20 +1291,20 @@ def _read_units(path):
 
     with _open_text(path) as fh:
         cols = fh.readline().rstrip("\n").split("\t")
-        need = ("peptide", "gene", "allele", "p")
+        need = (unit_column, "gene", "allele", "p")
         missing = [c for c in need if c not in cols]
         if missing:
             raise SystemExit(f"{path}: missing column(s) {', '.join(missing)}; a unit table needs "
                              f"{', '.join(need)} (+ optional mutation_index, cls). `rank` gives you "
-                             "gene, allele and a score -- peptide must be the long window around the "
-                             "mutation, not the minimal epitope")
+                             f"gene, allele and a score -- `{unit_column}` must be the long window "
+                             "around the mutation, not the minimal epitope")
         ix = {c: cols.index(c) for c in cols}
         units = []
         for line in fh:
             f = line.rstrip("\n").split("\t")
-            if not f or not f[ix["peptide"]].strip():
+            if not f or not f[ix[unit_column]].strip():
                 continue
-            pep = f[ix["peptide"]].strip().upper()
+            pep = f[ix[unit_column]].strip().upper()
             mi = (int(f[ix["mutation_index"]]) if "mutation_index" in ix
                   and len(f) > ix["mutation_index"] and f[ix["mutation_index"]].strip()
                   else len(pep) // 2)
@@ -1136,8 +1312,8 @@ def _read_units(path):
                               allele=f[ix["allele"]].strip(), p=float(f[ix["p"]]),
                               cls=(f[ix["cls"]].strip() if "cls" in ix and len(f) > ix["cls"]
                                    else "mhc1"),
-                              kind=(f[ix["kind"]].strip() or "missense"
-                                    if "kind" in ix and len(f) > ix["kind"] else "missense")))
+                              kind=_cell(f, ix, ("kind", "variant_type", "mm_variant_type"))
+                              or "missense"))
         return units
 
 
@@ -1193,7 +1369,7 @@ def cmd_vector(a):
         print(f"# --context: {len(rows)} ranked row(s) over {len(records)} window(s) -> "
               f"{len(units)} unit(s), one per variant", file=sys.stderr)
     else:
-        units = _read_units(a.candidates)
+        units = _read_units(a.candidates, getattr(a, "unit_column", None) or "peptide")
     print(f"# {len(units)} candidate unit(s) over "
           f"{len({u.allele for u in units})} allotype(s)", file=sys.stderr)
 
@@ -1387,8 +1563,12 @@ def cmd_vector(a):
     if built and a.fasta:
         with open(a.fasta, "w") as fh:
             for name, c in built:
+                # `cassette order` does not select, so it has no --n0 and the header must not
+                # claim one: formatting `None` with `:g` raised, which made `order --fasta` fail
+                # for every caller who had already chosen their units.
+                n0 = f" n0={a.n0:g}" if a.n0 is not None else ""
                 fh.write(f">{name} units={len(c.units)} spacer={c.spacer} "
-                         f"objective={a.objective} n0={a.n0:g}\n{c.sequence}\n")
+                         f"objective={a.objective}{n0}\n{c.sequence}\n")
         print(f"# wrote {a.fasta}: {len(built)} cassette(s)", file=sys.stderr)
 
     if cas and (a.map_tsv or a.map_json):
@@ -1543,10 +1723,32 @@ def _cassette_rows(path, score_col, need_score=True):
     aliases are accepted, with the resolved name reported --- silently scoring the wrong column is
     the failure this avoids.
     """
-    rows = _read_table(path)
+    rows = _read_table(path)          # resolves `peptide` / `epitope`, and always sets `peptide`
     if not rows:
         raise SystemExit(f"{path}: no rows")
     cols = list(rows[0])
+    # The restricting allotype, resolved and reported like the score column below. It is not
+    # cosmetic: `select` keys its allotype coupling channel and its coverage on this column, so a
+    # table spelling it `best_allele` -- every pipeline table does -- silently lands every unit on
+    # one empty allotype, and the objective then prices no spread at all. `mm_allele_scored` leads
+    # because that is the allele a `rank --prefix` row's numbers are actually against.
+    if "allele" not in cols:
+        acol = next((c for c in ("mm_allele_scored", "mm_allele", "best_allele", "allele_scored")
+                     if c in cols), None)
+        if acol:
+            say(f"allele column: {acol!r}", level=1)
+            for r in rows:
+                r["allele"] = r.get(acol, "")
+        else:
+            say("no allele column: the allotype channel and coverage are off "
+                f"(looked for allele, mm_allele_scored, mm_allele, best_allele; found {cols})",
+                level=1)
+    # A pipeline table spells the peptide `epitope`, and one `rank --passthrough --prefix` has
+    # annotated carries the caller's `epitope` beside our `mm_peptide` -- the same string. Resolved
+    # like the score column below rather than made the caller's problem with a rename stage.
+    if "peptide" not in cols:
+        for r in rows:
+            r["peptide"] = r.get("epitope", "")
     col = next((c for c in (score_col, "aggregate", "score", "epic") if c in cols), None)
     if col is None and need_score:
         raise SystemExit(f"{path}: no score column (looked for {score_col!r}, `aggregate`, `score`, "
@@ -1677,7 +1879,14 @@ def cmd_cassette_select(a):
         for slot, (i, pi) in enumerate(zip(c.index, c.p), start=1):
             r = dict(g[i])
             r.pop("_score", None)
-            out.append({"donor": donor, "slot": slot, "peptide": r["peptide"],
+            # --passthrough: the caller's own columns lead, so the chosen units carry whatever the
+            # candidate table carried -- the long window a cassette is actually built from
+            # (`epitope_context`), the variant class the quota reads, the caller's identifiers.
+            # Without it those have to be joined back on the peptide, and a pool may hold the same
+            # peptide on two allotypes.
+            carried = r if getattr(a, "passthrough", False) else {}
+            out.append({**carried,
+                        "donor": donor, "slot": slot, "peptide": r["peptide"],
                         "allele": r.get("allele", ""), "gene": r.get("gene", ""),
                         "score": f"{g[i]['_score']:.6f}", "p": f"{pi:.6f}",
                         "k": c.k, "pool_n": c.pool_n, "offset": f"{c.offset:.6f}",
@@ -1799,6 +2008,12 @@ def _add_vector_opts(p, require_n0: bool = True) -> None:
                          "own output of MINIMAL epitopes: each is joined back to its source window "
                          "and re-centred as a long unit, one per variant rather than one per "
                          "register. Without it --candidates must already carry long windows")
+    p.add_argument("--unit-column", metavar="COL",
+                    help="the column of --candidates holding the LONG window, when the table "
+                         "carries it beside the minimal epitope (a pipeline table spells it "
+                         "`epitope_context`, and at 27 residues it is already --unit-length). The "
+                         "alternative to --context, which rebuilds the window from the variant "
+                         "FASTA when the table has none; ignored when --context is given")
     p.add_argument("--unit-length", type=int, default=27, metavar="N",
                     help="unit window length for --context (default 27, the BioNTech backbone "
                          "configuration; see mhcmatch.vector.unit)")
@@ -2072,6 +2287,21 @@ def main(argv=None):
                          "expression/mimicry lookups read (~115 MB) — everything offline in one call")
     bs.set_defaults(fn=cmd_bootstrap)
 
+    al = sub.add_parser("alleles",
+                        help="a donor's HLA typing file -> the allele list --alleles accepts")
+    al.add_argument("input", help="typing TSV with an `Allele` column (OptiType / kourami / HLA-LA "
+                                  "and a donor's own .alleles.tsv), a comma-separated list, or one "
+                                  "name per line")
+    al.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"),
+                    help="which class to emit. One typing file holds both, and a class-I panel "
+                         "handed a DQB1 name resolves it to nothing (default: %(default)s)")
+    al.add_argument("--form", default="key", choices=("key", "input"),
+                    help="`key` (default) emits the pseudosequence key every scoring path uses; "
+                         "`input` emits the typed name that resolved to it, for a caller that wants "
+                         "its own spelling back")
+    al.add_argument("--out", help="write the comma-separated list here instead of stdout")
+    al.set_defaults(fn=cmd_alleles)
+
     rk = sub.add_parser("rank", help="rank neoantigen candidates (FASTA of windows, or a scored table)")
     rk.add_argument("mode", nargs="?", choices=("fasta", "table", "pairs"),
                     help="fasta: mutation-spanning window FASTA + donor alleles. "
@@ -2135,6 +2365,26 @@ def main(argv=None):
                          "every screen its own intercept precisely so base rate stayed out of the "
                          "slopes, and the nine screens behind it span 0.0060%% to 59.7%% positive. "
                          "It shifts every probability and moves no rank")
+    rk.add_argument("--passthrough", action="store_true",
+                    help="mode=pairs/table: emit every column of the input table, unchanged and in "
+                         "its own order, ahead of this command's own -- so a caller's table comes "
+                         "back annotated and re-ordered by the aggregate rather than replaced. Do "
+                         "NOT do this with a join instead: a cell naming several alleles is split "
+                         "and the best presenter stands for the row, so the output shares neither "
+                         "its length nor its allele column with the input. Rows come out in `rank` "
+                         "order, not the listing order an exact known-epitope match floats to")
+    rk.add_argument("--prefix", default="", metavar="STR",
+                    help="with --passthrough, prefix the columns THIS command adds (`mm_` is what "
+                         "the shipped deliverables use), so a name it shares with the caller's "
+                         "table -- `score`, `allele`, `rank` -- does not appear twice")
+    rk.add_argument("--context", metavar="FILE",
+                    help="mode=pairs: the window FASTA the candidates were called on, read for the "
+                         "germline arm of each window (`wt_window`) so agretopicity and "
+                         "`d_occupancy` are defined. A candidate table usually carries the mutant "
+                         "k-mer and nothing the wild type is recoverable from; without this every "
+                         "row is `wt_absent`. Only equal-length window pairs are used, so a "
+                         "frameshift, a fusion and an indel stay wild-type-less, which is what "
+                         "they are")
     rk.add_argument("--top", type=int, help="print only the top N candidates")
     rk.add_argument("--out", help="write TSV here instead of stdout")
     _add_store_opts(rk)
@@ -2334,6 +2584,11 @@ def main(argv=None):
     cs.add_argument("--no-allele", action="store_true",
                     help="ignore the allele column, so the overlap has no allotype channel. What a "
                          "trial that published no per-patient genotype is left with")
+    cs.add_argument("--passthrough", action="store_true",
+                    help="emit every column of --candidates ahead of this command's own, so the "
+                         "chosen units keep the long window a cassette is built from and the "
+                         "variant class `--quota` reads. This command's own columns win a name "
+                         "clash, because they are the ones downstream reads")
     cs.add_argument("--out", metavar="FILE", help="write the chosen units here instead of stdout")
     cs.set_defaults(fn=cmd_cassette_select)
 

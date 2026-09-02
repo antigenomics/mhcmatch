@@ -16,6 +16,58 @@ the build plan. Phase sections marked _(TBD)_ await detail.
 > tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
 > below resolve there, not here.
 
+## Where this stands, 2026-09-02 — the library can be somebody else's last stage
+
+**`mhcmatch alleles`, and the failure it exists to make loud.** `resolve_allele('A*01:01:01G',
+'mhc1')` returned `(None, False)`. Every HLA caller — OptiType, kourami, HLA-LA, arcasHLA, HLA-HD —
+writes that G-group form; the pseudosequence tables are keyed at two fields; and
+`Store._allele_set` drops what it cannot find **without a word**. So a run handed a donor's own
+`.alleles.tsv` scored against an **empty panel** and exited 0. `pseudoseq.trim_allele` fixes the
+resolution and `mhcmatch alleles` does the two other joins a typing file needs — the class split,
+and the alpha–beta pairing without which `DQA1*05:01` is not a molecule. Measured on **40 donor
+typing files: every one now yields 3–6 class-I and 3–10 class-II alleles, where before it yielded
+zero.** Non-classical loci (HLA-E/F/G) are correctly among the reported drops.
+
+**`rank --passthrough` makes the caller's table the deliverable.** Every column they sent,
+unchanged and in their order, then ours under `--prefix`, re-sorted by the aggregate. This is not a
+join anyone can do afterwards — `rank` splits a multi-allele cell and the best presenter stands for
+the row, so the output shares neither its length nor its allele column with the input. It replaces
+the 368-line private script (`analysis/all_epitopes/e2_score.py` in `2026-gamaleya-cancer`) that
+had been producing the shipped deliverable, and the 1,948-line chain around it.
+
+**`rank pairs --context` recovers the wild type a candidate table cannot carry.** Measured on the
+pipeline schema, the peptide is not a substring of its own `seq`/`ref_seq` columns in **0 of 6,961**
+missense rows — no arithmetic over that table recovers a germline counterpart. The window FASTA
+carries it as `wt_window`, and `rank.wt_from_windows` takes the **position-aligned** slice. On one
+donor's 3,293 class-I candidates, **3,090 of the 3,136 missense rows** recover a wild type, every
+one differing at exactly one residue. Frameshift, fusion, isoform and indel rows stay
+wild-type-less, because they are.
+
+**Nextflow: nine processes, two arms, and `pipeline.nf`** — a runnable entry over a directory of
+files, so a stakeholder gets the chain without the wiring. `subworkflows/mhcmatch.nf` is unchanged.
+Two things the live run on Aldan-3 caught that no test would have:
+
+- **`cassette select` was scoring the caller's `score` column.** `_cassette_rows` resolves
+  `score` / `aggregate` / `epic` when not told, and a pipeline candidate table *has* a `score`
+  column — the upstream tool's. So the rerank arm selected on their ranking while looking like it
+  selected on ours. The arm now passes `--score-column <prefix>score` explicitly, told apart from
+  the de novo arm by the `_DN` include alias.
+- **`--block-live` is two different knobs under one name.** On `cassette build --quota` it is
+  P(a block is live) and defaults to 0.5; on `cassette select` it is the HLA-loss rate and defaults
+  to 1.0. Wiring the first into the second stopped the run — 1 of 20 chosen units carried a
+  marginal p = 0.7782 above q = 0.5, which is not representable. They now have separate params.
+
+**Nextflow 26.x strict syntax rejects three things the module had to be written around**, each
+failing at compile time with a message that does not name the rule: a leading `+` on a continuation
+line, a top-level `def x = { ... }` closure (a `def f(x) { }` function is fine), and
+`workflow.onComplete`. A script's own params are declared in `nextflow.config`, not assigned in the
+script.
+
+**Open loop.** The version stays at **1.6.1**. Bumping it makes `mhcmatch build --check` demand a
+regeneration of the four vendored artifacts, and that rebuild is a release-time step and the
+author's to take. `predict.SCORER_EPOCH` is deliberately **not** bumped: nothing here changes what a
+scoring head returns.
+
 ## Where this stands, 2026-08-31 — two library additions, and the vaccine rows moved
 
 **`rank.aggregate_terms`** returns the score unsummed: `(n, d)` of `coef * z`, one column per fitted

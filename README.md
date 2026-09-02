@@ -625,23 +625,50 @@ Pseudosequences (34-mer grooves) and the fitted model parameters are vendored in
 
 ## Deployment
 
-`integrations/nextflow/mhcmatch/` is a self-contained nf-core-style module — **six processes**
-(`MHCMATCH_PREDICT`, `_RANK`, `_NEOAG`, `_MIMICRY`, `_CASSETTE`, `_CASSETTE_SCORE`) plus a
-`subworkflows/mhcmatch.nf`
-that chains them, with `nextflow.config`, a `slurm.config` executor profile, `environment.yml` and a
-`Dockerfile`. `PREDICT` drops in for MHCflurry class I and the class-II binding subworkflow,
-consuming the same `(meta, peptide.fasta, alleles)` channel and emitting a pipeline-compatible
-57-column `.scored.csv`; the other five cover ranking, prior evidence, safety, cassette assembly
-and cassette scoring,
-which have no incumbent. No stub types a column header — each asks the installed library for its own
-schema, so `-stub-run` cannot drift from the real shape. The image bootstraps its panel at **build**
-time, so compute nodes need no network.
+`integrations/nextflow/mhcmatch/` is a self-contained nf-core-style module — **nine processes**
+(`MHCMATCH_ALLELES`, `_PREDICT`, `_RANK`, `_RERANK`, `_NEOAG`, `_MIMICRY`, `_CASSETTE_SELECT`,
+`_CASSETTE`, `_CASSETTE_SCORE`), **two arms** that chain them, and **`pipeline.nf`**, a runnable
+entry point over a directory of files:
+
+```bash
+nextflow run integrations/nextflow/mhcmatch/pipeline.nf \
+    --indir donor_files --outdir results --mode both \
+    --mhcmatch_vector_n0 8 --mhcmatch_tumor SKCM
+```
+
+| `--mode` | in | the deliverable is |
+|---|---|---|
+| `rerank` | your candidate table (+ the window FASTA it came from) | **your** table — every column intact, in your order — plus an `mm_` block, re-sorted by the aggregate |
+| `denovo` | your mutation-window FASTA | **our** table: binding called from scratch, ranked, annotated |
+| `both` | both | both, independently; each arm builds its own cassette |
+
+Both arms end in a cassette: the *k* units to manufacture as a TSV (default **k = 20**), the
+assembled construct as amino acids with its linker, the CDS, and the epitope map.
+
+**`pipeline.nf` is the easy entry point, not the integration surface.** A pipeline that already does
+variant calling, HLA typing and expression quantification should `include` the processes in
+`main.nf` or the arms in `subworkflows/` into its own channel topology — `subworkflows/mhcmatch.nf`
+is unchanged, so an existing include keeps working.
+
+`MHCMATCH_PREDICT` drops in for MHCflurry class I and the class-II binding subworkflow, consuming
+the same `(meta, peptide.fasta, alleles)` channel and emitting a pipeline-compatible 57-column
+`.scored.csv`. No stub types a column header — each asks the installed library for its own schema,
+so `-stub-run` cannot drift from the real shape. The image bootstraps its panel at **build** time,
+so compute nodes need no network.
+
+**`MHCMATCH_ALLELES` is not optional plumbing.** Every HLA caller writes the G-group form
+(`A*01:01:01G`), which is keyed at three fields where the pseudosequence tables are keyed at two, so
+an untrimmed name resolves to nothing — and `Store._allele_set` drops what it cannot find *without
+saying so*, so the run scores against an empty panel and exits 0. It also performs the join a DP/DQ
+heterodimer needs, since `DQA1*05:01` alone is not a molecule. Measured on 40 donor typing files:
+every one now yields 3–6 class-I and 3–10 class-II alleles.
 
 `slurm.config` sizes each process to what it measurably consumes and points every task at one shared
 reference and calibration directory — without it a 200-sample run re-derives the same per-allele
-background 200 times. `integrations/nextflow/mhcmatch/README.md` is the full contract, including the
-two things a cluster gets wrong first: the partition name has no safe default, and the wheel needs
-Python ≥ 3.10 where a cluster's system `python3` is often older.
+background 200 times. `docs/pipeline.rst` and `integrations/nextflow/mhcmatch/README.md` are the
+full contract, including the three things a cluster gets wrong first: the partition name has no safe
+default, the wheel needs Python ≥ 3.10 where a cluster's system `python3` is often older, and a
+compute node's egress may not reach PyPI even when it reaches HuggingFace.
 
 ## Benchmarks
 

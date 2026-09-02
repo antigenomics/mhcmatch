@@ -1,7 +1,7 @@
 Command-line reference
 ======================
 
-Twenty-two commands, one binary --- and one of them, ``cassette``, has sub-verbs. This page groups them by **what you are trying to do**; every
+Twenty-three commands, one binary --- and one of them, ``cassette``, has sub-verbs. This page groups them by **what you are trying to do**; every
 command also has ``mhcmatch <command> --help``.
 
 .. important::
@@ -49,8 +49,12 @@ Routine tasks
      - ``mhcmatch scan p.fasta --correction bh``
    * - Will a T cell recognise it?
      - ``mhcmatch complement --peptides p.txt``
+   * - Turn a donor's HLA typing file into an allele list
+     - ``mhcmatch alleles donor.alleles.tsv --cls mhc1``
    * - Rank a donor's neoantigen candidates end to end
      - ``mhcmatch rank fasta cand.fasta --alleles donor.txt --tumor SKCM``
+   * - Re-rank *my* candidate table, keeping every column I sent
+     - ``mhcmatch rank pairs mine.tsv --passthrough --prefix mm_ --context windows.fasta``
    * - What model is doing the ranking, and how well does it hold out?
      - ``mhcmatch rank --coefficients`` / ``mhcmatch rank --holdout``
    * - Why did *this* candidate rank where it did?
@@ -141,7 +145,15 @@ The commands, by axis
    * - command
      - does
    * - ``rank``
-     - rank neoantigen candidates, from a FASTA of windows or an already-scored table. Emits
+     - rank neoantigen candidates, from a FASTA of windows, an already-scored table, or a
+       ``pairs`` TSV of ``peptide`` / ``wt_peptide`` / ``allele``. On the ``pairs`` path,
+       ``--passthrough`` emits **every column of your table**, unchanged and in your order, ahead
+       of this command's own under ``--prefix``, with the rows re-sorted by the aggregate — so a
+       caller's table comes back annotated rather than replaced. Do not reach for a join instead:
+       a cell naming several alleles is split and the best presenter stands for the row, so the
+       output shares neither its length nor its allele column with the input. ``--context`` reads
+       the germline arm of a window FASTA, which is the only thing that makes agretopicity defined
+       for a table that carries only the mutant k-mer (:doc:`pipeline`). Emits
        ``occupancy`` (equilibrium fraction of MHC held, defined with or without a wild type) beside
        ``agretopicity`` (reported, not fitted — see :ref:`occupancy-vs-agretopicity`), plus
        ``n_alleles_presenting`` / ``alleles_presenting``. ``--extended`` appends the remaining mimicry channels, ``--annotate`` what each
@@ -191,7 +203,9 @@ The commands, by axis
      - does
    * - ``cassette select``
      - choose *k* units (± ``--tol``) from a donor's **whole** candidate pool, maximising the
-       mean-variance objective rather than sorting on the score (:doc:`cassette`)
+       mean-variance objective rather than sorting on the score (:doc:`cassette`).
+       ``--passthrough`` keeps your columns on the chosen units, including the long window
+       ``cassette build --unit-column`` then assembles from
    * - ``cassette score``
      - score finished cassettes across donors and across sizes: expected responding units,
        ``P(X >= target)`` under the block model, ``target`` being ``--target`` (default 1),, and ``lam`` (:doc:`cassette`)
@@ -216,6 +230,11 @@ The commands, by axis
 
    * - command
      - does
+   * - ``alleles``
+     - a donor's HLA typing file (OptiType / kourami / HLA-LA, or a bare list) to the allele list
+       every other command's ``--alleles`` takes: two-field trimming, the class split, and the
+       DP/DQ alpha-beta join. Reports what it drops --- see :ref:`pipeline-alleles`, because
+       **every one of those three fails silently**
    * - ``bootstrap``
      - pre-fetch the pmhc panel; ``--reference`` also stages the corpora, mimicry references and
        expression tables that ``rank``, ``neoag`` and ``mimicry`` read
@@ -255,4 +274,5 @@ Environment
      - local overrides for the expression tables and structure templates
 
 For a cluster, set the first two to one shared directory every node can see; the SLURM profile in
-``integrations/nextflow/mhcmatch/slurm.config`` does exactly that.
+``integrations/nextflow/mhcmatch/slurm.config`` does exactly that. :doc:`pipeline` is the whole
+cohort story — the two arms, the file-naming contract, and what a cluster gets wrong first.

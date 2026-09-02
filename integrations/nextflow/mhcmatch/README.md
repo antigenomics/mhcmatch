@@ -1,41 +1,247 @@
 # mhcmatch as a Nextflow module
 
-Five nf-core-style processes plus a subworkflow that chains them. `mhcmatch predict` replaces the
-neoantigen pipeline's binding predictors (MHCflurry class I, TLimmuno2 class II); the other four
-cover the steps that come after and have no incumbent in the pipeline at all — ranking, prior
-evidence, safety, and cassette assembly.
+Nine nf-core-style processes, two arms that chain them, and a runnable entry point. `mhcmatch
+predict` replaces a neoantigen pipeline's binding predictors (MHCflurry class I, TLimmuno2 class
+II); the rest cover the steps that come after and have no incumbent — allele resolution, ranking,
+prior evidence, safety, cassette selection and cassette assembly.
 
 ```
 integrations/nextflow/mhcmatch/
-  main.nf                  MHCMATCH_{PREDICT,RANK,NEOAG,MIMICRY,VECTOR}
-  subworkflows/mhcmatch.nf MHCMATCH — the five wired end to end
+  pipeline.nf              RUNNABLE from a directory of files: `nextflow run pipeline.nf --indir ...`
+  main.nf                  the nine processes
+  subworkflows/rerank.nf   MHCMATCH_RERANK_ARM  — your candidate table in, the same table + `mm_`
+  subworkflows/denovo.nf   MHCMATCH_DENOVO_ARM  — your window FASTA in, our epitope table out
+  subworkflows/mhcmatch.nf MHCMATCH             — the original chain, unchanged
   nextflow.config          per-process config: species, publishDir, every params.mhcmatch_*
+  slurm.config             executor profile: sizing, retries, the shared reference dirs
   environment.yml          conda env (pip: mhcmatch, which pulls seqtree) for -profile conda
   Dockerfile               image (mhcmatch + seqtree + every baked reference) for -profile docker
+  NO_FILE                  the empty-path placeholder for optional inputs
 ```
 
-These artifacts are **templates for review** — adjust the pins, registry and wiring to the ISPRAS
+**Two entry points, and they are different objects.** `pipeline.nf` is for a caller who has files
+on disk and wants the chain, not the wiring. The processes in `main.nf` and the arms in
+`subworkflows/` are for a pipeline that wants mhcmatch as a *component* and will supply its own
+channel topology — which is the case for any pipeline that already does variant calling, HLA typing
+and expression quantification, and reaches mhcmatch with those in hand.
+
+These artifacts are **templates for review** — adjust the pins, registry and wiring to your own
 infra before use.
 
-## The pipeline
+## Run it from a directory
+
+```bash
+nextflow run integrations/nextflow/mhcmatch/pipeline.nf \
+    --indir  /path/to/donor_files \
+    --outdir results \
+    --mode   both \
+    --mhcmatch_vector_n0 8 \
+    --mhcmatch_tumor     SKCM
+```
+
+**The file naming is the entire input contract**, and the sample id is the filename up to its first
+dot. A file that does not match is ignored:
+
+| file | feeds |
+|---|---|
+| `<id>.mhcI.epitopes.scored.tsv` · `<id>.mhcII.epitopes.scored.tsv` | the **rerank** arm |
+| `<id>.mhcI.peptide.fasta` · `<id>.mhcII.peptide.fasta` | the **de novo** arm, and the rerank arm's `--context` |
+| `<id>.alleles.tsv` (or `<id>_norma.alleles.tsv`) | `mhcmatch alleles` → the allele list |
+
+Pass `--epitopes` / `--windows` / `--typing` globs when your names differ, or `--alleles` /
+`--alleles_mhc2` to use one literal list for every sample.
+
+### The two arms
+
+| `--mode` | in | out | the deliverable is |
+|---|---|---|---|
+| `rerank` | your candidate table (+ the window FASTA it was called from) | `<id>.<cls>.epitopes.mhcmatch.tsv` | **your** table, every column intact and in your order, plus an `mm_` block, re-sorted by the aggregate |
+| `denovo` | your mutation-window FASTA | `<id>.<cls>.mhcmatch.{scored.csv,native.tsv,ranked.tsv}` | **our** table: binding called from scratch, ranked, annotated |
+| `both` | both | both | both, independently — each arm builds its own cassette |
+
+Both arms end in a cassette: `<id>.vaccine.units.tsv` (the *k* units to manufacture, default
+**k = 20**, `--mhcmatch_cassette_k`), `<id>.cassette.faa` (assembled, with the linker chosen by
+minimising junctional binding), `<id>.cassette.fna` (the CDS, deslipped) and the epitope map.
+
+### Why the rerank arm needs the window FASTA too
+
+`--context`, and it is not redundancy. A candidate table carries the **mutant** k-mer and nothing
+the germline counterpart is recoverable from — measured on the pipeline schema, the peptide is not a
+substring of its own `seq`/`ref_seq` columns in **0 of 6,961** missense rows. The window FASTA
+carries the wild-type arm beside the mutant one, which is where `rank fasta` already gets it.
+Without it every row is `wt_absent`, and agretopicity and `d_occupancy` are undefined — correct, and
+a weaker model. With it, measured on one donor's 3,293 class-I candidates: **3,090 of the 3,136
+missense rows** recover a wild type, every one differing at exactly one residue. A frameshift, a
+fusion, an isoform and an indel stay wild-type-less, because they are.
+
+### Mouse
+
+Species follows `params.genome`, so there is no extra parameter — but there are two things to set:
+
+```bash
+nextflow run pipeline.nf --indir mouse_files --outdir results --mode both \
+    --genome GRCm39 \
+    --alleles      'H2-K*d,H2-D*d,H2-L*d' \
+    --alleles_mhc2 'H-2-IAd,H-2-IEd' \
+    --mhcmatch_vector_n0 8 --mhcmatch_vector_block_live 0.999
+```
+
+- **`--alleles` / `--alleles_mhc2` rather than a typing file.** An inbred line's H-2 haplotype is a
+  property of the line, so there is nothing to type. All three spellings resolve — `H2-K*d`,
+  `H-2Kb`, `I-Ab` — so pass whatever your tables carry.
+- **Leave `--mhcmatch_tumor` unset.** The tumour-matched expression contexts are TCGA study codes
+  and there is no mouse equivalent; setting one silently scores mouse candidates against a human
+  transcriptome's abundance floor.
+- `--mhcmatch_vector_block_live 0.999` is what the shipped mouse bundles used, against 0.95 for
+  human. It is a stated design parameter, not a fitted one — measure your own with
+  `mhcmatch.portfolio.betabinom_rho`.
+- Do **not** reach for `background="ligand-pooled"` on mouse class II. It reproduces the pre-1.5.0
+  self-inclusive null, under which `H-2-IAb` — 6,483 of 6,705 mouse class-II ligands — was scored
+  against its own motif and read AUROC 0.322.
+
+## The two arms, wired
+
+Two independent chains. Under `--mode both` they run side by side and each builds its own cassette;
+nothing is shared but the reference directories.
 
 ```
-windows.fasta ─► PREDICT ─► scored.csv + native.tsv
-              └► RANK ────► ranked.tsv ─┬─► NEOAG   ─► neoag.tsv      prior evidence
-                                        ├─► MIMICRY ─► mimicry.tsv    safety channels
-                                        └─► VECTOR  ─► cassette .tsv / .faa / .fna
+--mode rerank                                --mode denovo
+  alleles.tsv ─► ALLELES                       alleles.tsv ─► ALLELES
+  epitopes.tsv  ┐                              windows.fasta ─► PREDICT ─► scored.csv + native.tsv
+  windows.fasta ┴─► RERANK                                   └► RANK
+        (as --context)  │                                          │
+                        ▼                                          ▼
+        *.epitopes.mhcmatch.tsv                            *.mhcmatch.ranked.tsv
+                        │                                          │
+        ┌───────────────┼───────────────┐          ┌───────────────┼───────────────┐
+        ▼               ▼               ▼          ▼               ▼               ▼
+      NEOAG         MIMICRY    CASSETTE_SELECT   NEOAG_DN      MIMICRY_DN   CASSETTE_SELECT_DN
+                                       │                                          │
+                              *.vaccine.units.tsv                        *.vaccine.units.tsv
+                                       ▼                                          ▼
+                       CASSETTE (--unit-column)                    CASSETTE_DN (--context)
+                          .faa / .fna / map                           .faa / .fna / map
+                                       ▼                                          ▼
+                              CASSETTE_SCORE                          CASSETTE_SCORE_DN
+                          (waits for every donor)                 (waits for every donor)
 ```
 
-`VECTOR` takes **both** `ranked.tsv` (as `--candidates`) and the original `windows.fasta` (as
-`--context`). That is not redundancy: `rank` emits **minimal epitopes** and a vaccine unit is the
-long window around the mutation, so neither side alone can build one. Injecting a minimal epitope is
-not a smaller version of the right thing — a 9-mer loads onto any cell without costimulation and is
-the tolerising configuration (PMID 17911588), so the reader refuses a table it cannot tell apart
-rather than guessing.
+The de novo arm's shared tail is **included under a `_DN` alias**, because a DSL2 process may be
+invoked once per run and `--mode both` would otherwise raise "Process 'X' has been already used".
+Every `withName:` selector in `nextflow.config` **and** `slurm.config` is written to match either
+spelling; a selector written as the bare name would size the rerank arm and silently miss the de
+novo one, which for `MHCMATCH_CASSETTE` means 8 GB instead of 48 and an OOM kill hours in.
+
+### A cassette unit is the long window, and the two arms reach it from opposite sides
+
+A vaccine unit is the ~27-residue window around the mutation, never the minimal epitope. Injecting a
+minimal one is not a smaller version of the right thing — a 9-mer loads onto any cell without
+costimulation and is the **tolerising** configuration (PMID 17911588) — so neither arm is allowed to.
+
+- **de novo**: `CASSETTE_DN` takes **both** `ranked.tsv` (as `--candidates`) and the original
+  `windows.fasta` (as `--context`), because `rank` emits minimal epitopes and only the FASTA knows
+  where the mutation sits. Neither side alone can build a unit.
+- **rerank**: there may be no window FASTA at all, and the caller's table already carries the window
+  at 27 aa. `CASSETTE` reads it by name — `--unit-column`, defaulting to `epitope_context`.
+
+`params.mhcmatch_vector_unit_column` is **defaulted for that reason**: without it `_read_units`
+falls back to `peptide`, which on a reranked table is the minimal epitope. A table that spells the
+window differently gets a loud `missing column` error rather than a silently tolerising cassette,
+which is the right failure of the two.
 
 ---
 
 ## Input and output, per process
+
+### `MHCMATCH_ALLELES`
+
+| | |
+|---|---|
+| **in** | `tuple val(meta), path(typing), val(cls)` — a typing TSV with an `Allele` column, a comma list, or one name per line |
+| **out** | `alleles` → `${prefix}.${cls}.mhcmatch.alleles.txt` (one comma-separated line) · `versions` |
+
+**The step whose absence is silent, and the reason this process exists at all.** Three things stand
+between a typing file and a scored run, and each of them fails without a word:
+
+- **Field depth.** Every HLA caller — OptiType, kourami, HLA-LA, arcasHLA, HLA-HD — writes the
+  G-group form `A*01:01:01G`, and the pseudosequence tables are keyed at two fields. An untrimmed
+  name resolves to **nothing**, and `Store._allele_set` drops what it cannot find without saying so,
+  so the run scores against an **empty panel** and exits 0.
+- **The class split.** One typing file lists both classes, and a class-I panel handed a DQB1 name
+  resolves it to nothing.
+- **The DP/DQ join.** A DP or DQ molecule is an alpha-beta heterodimer and its key names both
+  chains, so two rows of the typing file have to be *joined*. `DQA1*05:01` alone is not a molecule.
+  DR and a lone DPB1/DQB1 get their alpha imputed.
+
+Everything it drops is reported. Measured on 40 donor typing files: **every one** now yields 3–6
+class-I and 3–10 class-II alleles, where before the trim they yielded zero. Non-classical loci
+(HLA-E/F/G) are correctly among the dropped — the panel carries no pseudosequence for them.
+
+```
+# dropped 6 name(s) that resolve to no pseudosequence: E*01:01, E*01:03, F*01:01, G*01:01
+# 6 mhc1 allele(s) from 26 typed name(s)
+HLA-A01:01,HLA-A02:01,HLA-B08:01,HLA-B13:02,HLA-C06:02,HLA-C07:01
+```
+
+---
+
+### `MHCMATCH_RERANK`
+
+| | |
+|---|---|
+| **in** | `tuple val(meta), path(table), path(context), val(cls)` — `context` may be `NO_FILE`; the table needs a peptide column (`peptide` or `epitope`) and an allele column (`allele` or `best_allele`) |
+| **out** | `reranked` → `${prefix}.${cls}.epitopes.mhcmatch.tsv` · `versions` |
+
+`mhcmatch rank pairs --passthrough --prefix mm_`. **Your table comes back, not a different one:**
+every column you sent, unchanged and in your own order, then this model's under the prefix, with the
+rows re-sorted by the aggregate.
+
+**Do not try to do this with a join instead.** `rank` splits a cell naming several alleles and the
+best presenter stands for the row, so the output shares neither its length nor its allele column
+with the input — there is no key that survives.
+
+The pipeline schema's spellings are accepted as aliases (`epitope` → `peptide`, `best_allele` →
+`allele`, `gene_name` → `gene`), so an existing candidate table drops in with no rename stage, and
+`variant_type` is derived from `type`/`subtype` when the table does not carry it explicitly.
+That last one is not cosmetic: `cassette build --quota` charges a unit to the non-conventional arm
+on that column, and a blank one makes the quota satisfiable by missense alone.
+
+Expression follows the same rule the de novo path already uses: **`tpm` where present.** `Isoform`
+rows carry both `tpm` and `fpkm` and the `tpm` is the real one; `Fusion` rows carry neither, only
+`ffpm`, which is fusion fragments per million and **not on the TPM axis the model scores** — those
+rows take the reference median and say so in `expr_imputed`. The floor `expr_lvl` divides by is a
+TPM reference quantile that does not move with the submitted column, so feeding FPKM or FFPM into it
+is a scale error rather than a no-op.
+
+---
+
+### `MHCMATCH_CASSETTE_SELECT`
+
+| | |
+|---|---|
+| **in** | `tuple val(meta), path(candidates), val(alleles)` — the donor's **whole** scored pool, and their DISTINCT allotypes |
+| **out** | `units` → `${prefix}.vaccine.units.tsv` · `versions` |
+
+`mhcmatch cassette select -k`, at `params.mhcmatch_cassette_k` (default **20**), with
+`--passthrough` so the chosen units keep the caller's columns — including the long window
+`MHCMATCH_CASSETTE` then builds from.
+
+**`-k` and `--n0` are different questions**, and both are real: `-k` is a construct-size commitment,
+`--n0` is an estimate of how many units the recipient's allotypes can carry. `MHCMATCH_CASSETTE`
+alone answers the second; putting this process in front answers the first.
+
+Pass the pool, not a shortlist. Binding and expression carry the two largest coefficients in the
+model, so a pool already cut on them has no range left along them.
+
+`val(alleles)` becomes `--universe`: the denominator coverage is reported against, so an allotype
+holding zero units is visible. Without it, coverage is taken over the labels the cassette happens to
+carry and cannot see the one it missed.
+
+**No `--species` here.** `cassette select` does not accept it and exits 2 if handed one — the same
+failure `nextflow.config` records for `MIMICRY`, and a stub does not catch it because a stub runs no
+command.
+
+---
 
 ### `MHCMATCH_PREDICT`
 
@@ -225,6 +431,21 @@ alleles is unaffected by the default.
 | `mhcmatch_vector_block_live` | `0.5` | `P(a block is live)` in the response model behind the quota |
 | `mhcmatch_vector_evenness` | `0.0` | weight on class-I allotype evenness (H/H\ :sub:`max`) in the quota objective |
 
+`pipeline.nf` only — the file-driven entry point:
+
+| param | default | what it does |
+|---|---|---|
+| `indir` | — | the directory to glob. Required unless `--epitopes` / `--windows` are given |
+| `mode` | `both` | `rerank`, `denovo` or `both` |
+| `epitopes` · `windows` · `typing` | from `--indir` | explicit globs, for names that do not follow the convention |
+| `alleles` · `alleles_mhc2` | `null` | one literal allele list for **every** sample, bypassing `MHCMATCH_ALLELES`. The mouse case: an inbred line's haplotype is a property of the line |
+| `mhcmatch_cassette_k` | `20` | how many units are **manufactured**. A different question from `mhcmatch_vector_n0`, which is how many the recipient's allotypes can *carry* |
+| `mhcmatch_cassette_tol` | `0` | manufacturing tolerance: the size in `[k-tol, k+tol]` with the largest objective. A spent tolerance is a result — the objective has an internal optimum and it moves with the prevalence and with rho |
+| `mhcmatch_cassette_score_column` | `null` | which column of the pool holds the aggregate. Left null, the **rerank** arm is given `<prefix>score` and the de novo arm resolves `score` / `aggregate` / `epic`. Do not leave this to the fallback on the rerank arm: a pipeline candidate table *has* a `score` column — the caller's own — so the fallback selects on the upstream tool's ranking while looking like it selected on ours |
+| `mhcmatch_cassette_block_live` | `1.0` | the **HLA-loss rate** `cassette select` prices: below 1, two units on one allotype are lost together. **Not `mhcmatch_vector_block_live`** — same flag name, different question, different default (0.5), and passing the quota's value here stops the run, because a unit whose marginal `p` exceeds `q` is not representable |
+| `mhcmatch_rerank_prefix` | `mm_` | the prefix on the columns `MHCMATCH_RERANK` adds. Without one, a table that already has `score`, `allele` or `rank` carries each twice |
+| `mhcmatch_vector_unit_column` | `epitope_context` | the column holding the LONG window when there is no `--context` FASTA — the rerank arm's case. **Defaulted, and it must be:** the fallback is `peptide`, which on a reranked table is the *minimal* epitope, and a 9-mer loads onto any cell without costimulation. A table spelling the window differently gets a loud `missing column` rather than a silently tolerising cassette. Consulted only when `--context` is absent, so the de novo arm is unaffected |
+
 From `slurm.config` only:
 
 | param | default | what it does |
@@ -236,11 +457,16 @@ From `slurm.config` only:
 ## Build the image (only for `-profile docker`)
 
 ```zsh
-docker build -t <ISPRAS_REGISTRY>/mhcmatch:1.1.0 \
-    --build-arg MHCMATCH_VERSION=1.1.0 \
+docker build -t <YOUR_REGISTRY>/mhcmatch:1.6.1 \
+    --build-arg MHCMATCH_VERSION=1.6.1 \
     integrations/nextflow/mhcmatch/
-docker push <ISPRAS_REGISTRY>/mhcmatch:1.1.0
+docker push <YOUR_REGISTRY>/mhcmatch:1.6.1
 ```
+
+One tag, four files, and they must move together on a release: `Dockerfile`'s
+`ARG MHCMATCH_VERSION`, `environment.yml`'s pin, `nextflow.config`'s
+`params.mhcmatch_container` default, and this block. The container default sat on `1.6.0` while
+the other two were on `1.6.1`, which is the drift this note exists to stop.
 
 No data staging: the build runs `mhcmatch bootstrap --reference`, which fetches the ligand panel
 **and** the known-epitope sets, mimicry references and expression tables (~115 MB total) from the
@@ -264,7 +490,7 @@ the predictor swap.
 
 ## Running it on a SLURM cluster
 
-`slurm.config` is the executor profile: it sets `executor = 'slurm'`, sizes the six processes to
+`slurm.config` is the executor profile: it sets `executor = 'slurm'`, sizes the nine processes to
 what they actually consume, retries the two exit codes a *scheduler* produces rather than the code
 (137 OOM-kill, 140 wall-clock kill) with `task.attempt` scaling the request, and points every task
 at one shared reference directory.
@@ -321,11 +547,27 @@ is 3.8, with no module system, so conda is the only source of a newer one. A pla
 a conda interpreter is enough and is what `-profile conda` sidesteps entirely:
 
 ```bash
-/path/to/conda/envs/<env>/bin/python3 -m venv .venv && . .venv/bin/activate
-pip install mhcmatch==1.6.1
-
-(README.md:239, :240 and :242 pin the same 1.1.0 in the `docker build` / `docker push` block and must move with it.)
+conda create -n mhcmatch -c bioconda python=3.12 nextflow
+conda run -n mhcmatch --no-capture-output pip install mhcmatch==1.6.1
 ```
+
+(The `docker build` block above pins the same version and must move with it.)
+
+**A compute node's egress may not reach PyPI, and the failure looks like a hang.** Measured on
+Aldan-3 2026-09-02: `pip install seqtree` from a compute node read-times-out after four retries
+against `pypi.org`, while the HuggingFace fetch that `mhcmatch bootstrap --reference` performs from
+the same node succeeds. If you hit it, build a wheelhouse where the network works and install from
+it, which needs no network at all on the node:
+
+```bash
+pip download --dest wheels --platform manylinux2014_x86_64 --python-version 3.12 \
+    --implementation cp --only-binary=:all: mhcmatch     # on a machine with egress
+# then, on the cluster:
+pip install --no-index --find-links wheels mhcmatch
+```
+
+Use `conda run -n <env> --no-capture-output`, never `conda activate`, inside a batch script, and
+give the script `#!/bin/bash -l` — conda's shell hook is only loaded by a login shell.
 
 **Why the calibration directory is worth the trouble.** `mhcmatch` reports a %rank, which means each
 allele needs a background distribution derived from 10,000 random peptides plus an isotonic fit.
@@ -345,7 +587,7 @@ Nextflow's own process is the thing `sbatch` runs; it then submits one job per t
 allocation and a long wall clock, because it mostly waits.
 
 ```bash
-#!/bin/bash
+#!/bin/bash -l
 #SBATCH --job-name=mhcmatch
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
@@ -357,10 +599,16 @@ export NXF_OPTS='-Xms1g -Xmx4g'
 export MHCMATCH_PMHC_DIR=/shared/ref/mhcmatch/pmhc_data
 export MHCMATCH_CALIBRATION_CACHE=/shared/ref/mhcmatch/calibration
 
-nextflow run . -profile slurm,singularity -resume \
-    --input samplesheet.csv --outdir results \
-    --mhcmatch_vector_n0 6
+conda run -n mhcmatch --no-capture-output nextflow run pipeline.nf \
+    -profile slurm -resume \
+    --indir /shared/donors --outdir results \
+    --mhcmatch_slurm_queue <partition> \
+    --mhcmatch_vector_n0 8
 ```
+
+`#!/bin/bash -l` and `conda run --no-capture-output`, not `conda activate`: conda's shell hook is
+only loaded by a login shell, and `activate` inside a non-interactive batch script silently leaves
+you on the system interpreter.
 
 `-resume` is not optional in practice: `MHCMATCH_CASSETTE --screen` builds a whole-proteome index per
 register length and a re-run without it repeats hours of work that has not changed.
@@ -375,6 +623,9 @@ register length and a re-run without it repeats hours of work that has not chang
 | `MHCMATCH_MIMICRY` | 4 | 32 GB | 4 h | the same, six channels |
 | `MHCMATCH_CASSETTE` | 4 | **48 GB** | 8 h | one whole-proteome index **per register length**, ~12 GB peak each |
 | `MHCMATCH_CASSETTE_SCORE` | 1 | 2 GB | 20 m | one pass over the collected tables; waits for every sample |
+| `MHCMATCH_ALLELES` | 1 | 2 GB | 20 m | a table read and a lookup; no panel |
+| `MHCMATCH_RERANK` | 8 | 8 GB | 1 h | `rank pairs` — the same work as `MHCMATCH_RANK`, sized the same |
+| `MHCMATCH_CASSETTE_SELECT` | 1 | 2 GB | 20 m | a coupling matrix over at most `cassette.MAX_POOL` = 2,000 rows |
 
 ### `MHCMATCH_CASSETTE_SCORE`
 

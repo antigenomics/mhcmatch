@@ -25,7 +25,7 @@ from .structure import StructureScorer
 from .diffusion import AnchorModel
 from .proteome import Proteome, SourceHit
 from .pseudoseq import (Pseudoseq, learn_anchor_weights, load_pseudo, normalize_allele,
-                        resolve_allele)
+                        resolve_allele, trim_allele)
 from .ligand import Span, SpanModel, load_span_model, presented_span, processing_score
 from .predict import Prediction, predict_fasta, predict_windows
 from .store import Decomposition, Restriction, Store, anchor_indices, infer_class
@@ -48,6 +48,7 @@ __all__ = [
     "load_pseudo",
     "normalize_allele",
     "resolve_allele",
+    "trim_allele",
     "logo",
     "ligand",
     "Span",

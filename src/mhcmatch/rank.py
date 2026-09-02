@@ -734,6 +734,13 @@ class Ranked:
     #: is a display choice, not a ranking.
     rank: int = 0
     components: dict = field(default_factory=dict)
+    #: The input row this candidate came from, verbatim, on the paths that read a table
+    #: (:func:`rank_pairs`). Empty elsewhere. What ``rank --passthrough`` emits ahead of its own
+    #: columns, so a caller's table comes back annotated and re-ordered rather than replaced --
+    #: and so the join that would otherwise reconstruct it is not needed. It cannot be done by the
+    #: caller safely: a cell naming several alleles is split and the best presenter stands for the
+    #: row, so the output has neither the same length nor the same allele column as the input.
+    row: dict = field(default_factory=dict)
 
 
 #: Effective peptide concentration (nM) in the occupancy term. A physical quantity, not a fitted
@@ -1203,9 +1210,11 @@ def _unscored(r: dict, cls: str, tissue, tumor, refs, binding_core, phys: dict) 
         tpm = None
     expr, imputed = _expression_for(gene, tpm, tissue, tumor, r["peptide"])
     nan = float("nan")
+    from . import predict as P
     rk = Ranked(peptide=r["peptide"], allele=r["allele"], allele_scored="", gene=gene,
                 source=str(r.get("source") or ""),
-                variant_type=str(r.get("variant_type") or "").strip(),
+                variant_type=(str(r.get("variant_type") or "").strip()
+                              or P.variant_product(r)),
                 presentation=nan, binder=nan, occupancy=nan, d_occupancy=nan,
                 wt_absent=0.0 if r["wt_peptide"] else 1.0, agretopicity=nan,
                 physchem=phys.get(r["peptide"], float("nan")),
@@ -1213,6 +1222,7 @@ def _unscored(r: dict, cls: str, tissue, tumor, refs, binding_core, phys: dict) 
                 wt_peptide=r["wt_peptide"], known_epitope=_known(r["peptide"], refs))
     rk.core, rk.core_offset = binding_core(r["peptide"], cls)
     rk.core_source = ("footprint" if cls != "mhc2" else "heuristic") if rk.core else ""
+    rk.row = r.get("_row", {})
     return rk
 
 
@@ -1266,6 +1276,56 @@ def species_of(cell) -> str | None:
     return None
 
 
+def wt_from_windows(rows, fasta_path: str) -> int:
+    """Fill each row's ``wt_peptide`` from the window FASTA the candidates were called on.
+
+    A caller's candidate table names the mutant k-mer and, usually, nothing about the germline it
+    came from -- the ISP ``.epitopes.scored.tsv`` is the case in hand: its ``ref_seq``/``seq``
+    columns do **not** contain the epitope (0 of 6,961 missense rows), so no arithmetic over that
+    table recovers a wild type. The window FASTA does carry it, as the header's ``wt_window`` beside
+    its ``mut_window``, which is where :func:`rank_fasta` already gets it.
+
+    So: locate the row's peptide inside a record's mutant window and take the **position-aligned**
+    slice of that record's wild-type window. Aligned by offset, not by search, because the point of
+    the pair is that the two differ -- searching for the mutant in the wild type finds nothing, and
+    searching for anything else finds the wrong residue.
+
+    Only equal-length window pairs are used. A frameshift or fusion has no germline counterpart and
+    an indel shifts the frame, so an offset into the wild-type arm would name a different residue
+    with the confidence of an exact match. Those rows keep an empty ``wt_peptide`` and
+    :func:`rank_pairs` carries them on ``wt_absent``, which is what they are.
+
+    Mutates ``rows`` in place and returns how many were filled. Rows that already carry a
+    ``wt_peptide`` are left alone.
+    """
+    from .predict import _strip_marker, parse_fasta, parse_variant_header
+
+    pairs = []
+    for hdr, _seq in parse_fasta(fasta_path):
+        var = parse_variant_header(hdr)
+        wt = _strip_marker(var.get("wt_window", ""))
+        mt = _strip_marker(var.get("mut_window", ""))
+        if wt and mt and len(wt) == len(mt):
+            pairs.append((mt, wt))
+
+    n = 0
+    for r in rows:
+        if str(r.get("wt_peptide") or "").strip():
+            continue
+        pep = str(r.get("peptide") or r.get("epitope") or "").strip().upper()
+        if not pep:
+            continue
+        for mt, wt in pairs:
+            i = mt.find(pep)
+            if i >= 0:
+                cand = wt[i:i + len(pep)]
+                if len(cand) == len(pep):
+                    r["wt_peptide"] = cand
+                    n += 1
+                break
+    return n
+
+
 def rank_pairs(store, rows, cls: str = "mhc1", *, tissue: str | None = None,
                tumor: str | None = None, refs: dict | None = None, gate: dict | None = None,
                score: str = "aggregate", channels=None,
@@ -1299,6 +1359,15 @@ def rank_pairs(store, rows, cls: str = "mhc1", *, tissue: str | None = None,
     recs = [dict(r) for r in rows]
     for i, r in enumerate(recs):
         r["_i"] = i
+        r["_row"] = {k: v for k, v in r.items() if not k.startswith("_")}
+        # The pipeline schema's spellings, accepted as aliases so an ISP-style
+        # `.epitopes.scored.tsv` is a native input rather than something a caller renames first.
+        # `rank_table` already reads `gene_name`; this is the same courtesy on this path, and it
+        # is one-directional -- an explicit `peptide`/`allele`/`gene` always wins.
+        for want, alias in (("peptide", "epitope"), ("allele", "best_allele"),
+                            ("gene", "gene_name")):
+            if not str(r.get(want) or "").strip():
+                r[want] = r.get(alias, "")
         r["peptide"] = str(r.get("peptide") or "").strip().upper()
         r["wt_peptide"] = str(r.get("wt_peptide") or "").strip().upper()
         r["allele"] = str(r.get("allele") or "").strip()
@@ -1340,7 +1409,13 @@ def rank_pairs(store, rows, cls: str = "mhc1", *, tissue: str | None = None,
                 dai = math.log10(w / nm[k])
             rk = Ranked(peptide=r["peptide"], allele=r["allele"], allele_scored=allele, gene=gene,
                         source=str(r.get("source") or ""),
-                        variant_type=str(r.get("variant_type") or "").strip(),
+                        # An explicit `variant_type` wins; otherwise the pipeline schema's
+                        # `type`/`subtype` pair, read exactly as `rank_table` reads it. Empty here
+                        # is not cosmetic: `cassette build --quota` charges a unit to the
+                        # non-conventional arm on this column, so a blank one makes the quota
+                        # satisfiable by missense alone -- which is the constraint's whole point.
+                        variant_type=(str(r.get("variant_type") or "").strip()
+                                      or P.variant_product(r)),
                         presentation=_neglog10(pr[k]), binder=_neglog10(br[k]),
                         occupancy=occupancy(nm[k]) if nm[k] == nm[k] else float("nan"),
                         d_occupancy=d_occupancy(nm[k], w) if nm[k] == nm[k] else float("nan"),
@@ -1351,6 +1426,7 @@ def rank_pairs(store, rows, cls: str = "mhc1", *, tissue: str | None = None,
                         wt_peptide=r["wt_peptide"], known_epitope=_known(r["peptide"], refs))
             rk.core, rk.core_offset = binding_core(r["peptide"], cls)
             rk.core_source = ("footprint" if cls != "mhc2" else "heuristic") if rk.core else ""
+            rk.row = r["_row"]
             prev = out.get(r["_i"])
             if prev is None or _presents_better(rk, prev):
                 out[r["_i"]] = rk

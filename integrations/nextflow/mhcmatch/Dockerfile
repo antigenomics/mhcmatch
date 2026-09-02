@@ -1,6 +1,6 @@
 # mhcmatch epitope-prediction image, for the -profile docker path of the module beside it.
 #
-# Packages the mhcmatch CLI + its seqtree C++ core + every reference the module's six processes
+# Packages the mhcmatch CLI + its seqtree C++ core + every reference the module's nine processes
 # read, so predict / rank / neoag / mimicry / cassette / cassette score all run with no host data mounts. Everything is
 # staged from the public HF dataset isalgo/pmhc_data at BUILD time, into the image's
 # huggingface_hub cache, so runtime needs no network -- which matters on offline compute nodes.

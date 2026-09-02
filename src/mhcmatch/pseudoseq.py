@@ -28,6 +28,34 @@ _LEN = 34
 #: (``DRB1*01:01``) and a non-human genus (``BoLA-1:00101``, ``DLA-88*501:01``) cannot match.
 _BARE_I = re.compile(r"^(?:HLA[- ])?([ABC])w?\*?(\d{2,3}):?(\d{2,3})[A-Z]?$")
 
+#: Third and further IMGT fields, and the G/P group and expression suffixes that may follow them.
+#: Anchored on the digit groups rather than on the locus, so one substitution trims **each chain**
+#: of a DP/DQ pair name independently and leaves a name with only two fields alone.
+_EXTRA_FIELDS = re.compile(r"(\d{2,3}:\d{2,3})(?::\d{2,3})+")
+_GROUP_SUFFIX = re.compile(r"(\d{2,3}:\d{2,3})[GPNLSCAQ](?![\dA-Za-z])")
+
+
+def trim_allele(a: str) -> str:
+    """IMGT allele name -> its two-field form, dropping any G/P group or expression suffix.
+
+    ``'A*01:01:01G' -> 'A*01:01'``, ``'DRB1*15:01:01' -> 'DRB1*15:01'``,
+    ``'B*44:02:01:02S' -> 'B*44:02'``. Names already at two fields, mouse H-2 names and the
+    separator-free pair keys (``'HLA-DQA10501-DQB10301'``) are returned unchanged.
+
+    **Every HLA typer emits more than two fields.** OptiType, kourami, HLA-LA, arcasHLA and HLA-HD
+    all write the G-group form (``A*01:01:01G``), which is what a donor's own ``.alleles.tsv``
+    carries -- and the pseudosequence tables are keyed at two fields, because that is the depth at
+    which the groove is determined. Without this trim :func:`resolve_allele` returns
+    ``(None, False)`` for every allele of such a file, and :meth:`mhcmatch.store.Store._allele_set`
+    drops what it cannot find **silently**, so the run scores against an empty panel and says
+    nothing. The failure is the one :func:`normalize_allele` records for ``'H2-Kb'``, reached from
+    the other side.
+
+    A pair name is trimmed chain by chain: ``'DQA1*05:01:01-DQB1*03:01:01'`` ->
+    ``'DQA1*05:01-DQB1*03:01'``, because the pattern matches the digit fields and not the locus.
+    """
+    return _GROUP_SUFFIX.sub(r"\1", _EXTRA_FIELDS.sub(r"\1", (a or "").strip()))
+
 
 def normalize_allele(a: str) -> str:
     """pmhc allele name -> pseudosequence-FASTA key.
@@ -45,7 +73,7 @@ def normalize_allele(a: str) -> str:
     defect that produced ``'HLA-B08:010701'`` -- two names run together into a spelling no table
     has, which then resolves to nothing.
     """
-    a = a.replace("*", "")
+    a = trim_allele(a).replace("*", "")
     if a.startswith("H2-"):                                   # mouse: 'H2-Kb'  -> 'H-2-Kb'
         a = "H-2-" + a[3:]
     elif a.startswith("H-2") and len(a) > 3 and a[3] != "-":  # mouse: 'H-2Kb' -> 'H-2-Kb'
@@ -220,7 +248,11 @@ def resolve_allele(name: str, cls: str):
     build, so an unresolvable name used to cost ~6.7 s per allele instead of one lookup.
     """
     seqs = load_pseudo(cls)
-    cand = normalize_allele(name.strip())
+    # Trimmed once, here, because the three consumers below each take the RAW name: `hla_spellings`
+    # matches a two-field class-I name and `class2_from_name` splits a locus off one, so a trim
+    # applied only inside `normalize_allele` would reach `cand` and neither of the other two.
+    name = trim_allele(name)
+    cand = normalize_allele(name)
     # class-I HLA spellings come first, colon form leading, so one molecule always resolves to one
     # key. The table carries both (17,472 keys with the field colon, 1,471 without) on the SAME
     # 34-mer, so without a fixed order `A0201` and `A*02:01` return different names for the same

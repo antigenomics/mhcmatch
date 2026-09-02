@@ -276,8 +276,15 @@ def test_rank_pairs_is_offered_and_needs_a_peptide_column(tmp_path, capsys):
         cli.main(["rank", "--help"])
     assert "pairs" in capsys.readouterr().out
 
+    # `epitope` is the pipeline schema's spelling and is accepted as an alias, so an ISP-style
+    # candidate table is a native input rather than something a caller renames first.
+    ok = tmp_path / "pipeline_spelling.tsv"
+    ok.write_text("epitope\tbest_allele\nGILGFVFTL\tHLA-A*02:01\n")
+    cli.main(["rank", "pairs", str(ok)])
+    assert "GILGFVFTL" in capsys.readouterr().out
+
     bad = tmp_path / "no_peptide.tsv"
-    bad.write_text("epitope\tallele\nGILGFVFTL\tHLA-A*02:01\n")
+    bad.write_text("sequence\tallele\nGILGFVFTL\tHLA-A*02:01\n")
     with pytest.raises(SystemExit, match="peptide"):
         cli.main(["rank", "pairs", str(bad)])
 

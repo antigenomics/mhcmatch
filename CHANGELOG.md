@@ -1,5 +1,88 @@
 # Changelog
 
+## Unreleased — a caller's own table, and the allele step that was failing silently
+
+**The library can now be the last stage of somebody else's pipeline, rather than a replacement for
+it.** Four additive changes, each closing a gap a private one-off script had been covering, and one
+runnable Nextflow entry point over a directory of files.
+
+- **`pseudoseq.trim_allele`** — IMGT allele names to their two-field form, dropping G/P group and
+  expression suffixes. `A*01:01:01G` -> `A*01:01`; a DP/DQ pair name is trimmed chain by chain.
+  Applied inside `normalize_allele` and at the top of `resolve_allele`, so all three of that
+  function's consumers see it.
+
+  **This was a silent total failure, not a papercut.** Every HLA caller — OptiType, kourami,
+  HLA-LA, arcasHLA, HLA-HD — writes the G-group form, and the pseudosequence tables are keyed at
+  two fields, so `resolve_allele('A*01:01:01G', 'mhc1')` returned `(None, False)`. `Store._allele_set`
+  drops what it cannot find **without saying so**, so a run handed a donor's own `.alleles.tsv`
+  scored against an empty panel and exited 0. Measured on 40 donor typing files: every one now
+  yields 3–6 class-I and 3–10 class-II alleles, where before it yielded zero. Same class of bug as
+  the `H2-Kb` fold in 1.4.0, reached from the other side.
+
+- **`mhcmatch alleles`** — a typing file (a TSV with an `Allele` column, a comma list, or one name
+  per line) to the allele list every other command's `--alleles` takes. Trims through the above,
+  splits class I from class II, and performs the alpha–beta join a DP/DQ heterodimer needs through
+  `class2_key` — `DQA1*05:01` alone is not a molecule and resolves to nothing. Everything it drops
+  is reported, because the layer below it does not.
+
+- **`rank --passthrough` / `--prefix` / `--context`** on the `pairs` and `table` modes.
+  `--passthrough` emits every column of the input table, unchanged and in its own order, ahead of
+  this command's own under `--prefix`, with the rows re-sorted by the aggregate rather than by the
+  listing order a known-epitope match floats to. **A caller cannot reproduce this with a join**: a
+  cell naming several alleles is split and the best presenter stands for the row, so the output
+  shares neither its length nor its allele column with the input.
+
+  `--context` reads the germline arm (`wt_window`) of the window FASTA the candidates were called
+  from, via the new `rank.wt_from_windows`, and takes the **position-aligned** slice — aligned by
+  offset, not by search, because the point of the pair is that the two differ. This is the only
+  thing that makes agretopicity and `d_occupancy` defined for a table that carries the mutant
+  k-mer alone: measured on the pipeline schema, the peptide is not a substring of its own
+  `seq`/`ref_seq` columns in **0 of 6,961** missense rows. With it, on one donor's 3,293 class-I
+  candidates, **3,090 of the 3,136 missense rows** recover a wild type, every one differing at
+  exactly one residue; frameshift, fusion, isoform and indel rows stay wild-type-less, because
+  they are.
+
+  `rank_pairs` also accepts the pipeline schema's spellings as aliases (`epitope` -> `peptide`,
+  `best_allele` -> `allele`, `gene_name` -> `gene`, which `rank_table` already took) and derives
+  `variant_type` from `type`/`subtype` when the table has no explicit column. That last one is not
+  cosmetic: `cassette build --quota` charges a unit to the non-conventional arm on that column, and
+  a blank one makes the quota satisfiable by missense alone. `Ranked.row` carries the source row.
+
+- **`cassette select --passthrough`**, and **`cassette build|order --unit-column COL`** — the
+  chosen units keep the caller's columns, including the long window `build` then assembles from,
+  so a reranked table can become a cassette with no window FASTA to rebuild one from
+  (`epitope_context` is 27 aa, which is `--unit-length` exactly). `_cassette_rows` resolves the
+  peptide and allele columns the way it already resolved the score column, and reports which it
+  used: a table spelling the allele `best_allele` previously landed every unit on one empty
+  allotype, so the coupling channel priced no spread at all and `coverage` was meaningless.
+
+- **`cassette order --fasta` crashed on every run.** `order` has no `--n0` — it does not select —
+  but the FASTA header formatted it with `:g` unconditionally, so `None` raised `TypeError`. The
+  header now omits `n0` when there is none.
+
+- **Nextflow: three new processes, two arms, and a runnable `pipeline.nf`.** `MHCMATCH_ALLELES`,
+  `MHCMATCH_RERANK` and `MHCMATCH_CASSETTE_SELECT` (fixed `-k`, default 20, against
+  `MHCMATCH_CASSETTE`'s per-allotype `--n0` stopping rule); `subworkflows/rerank.nf` and
+  `subworkflows/denovo.nf`; `pipeline.nf`, which globs a directory and runs either or both.
+  `subworkflows/mhcmatch.nf` is unchanged, so an existing include keeps working.
+
+  The de novo arm includes the shared tail under a `_DN` alias — a DSL2 process may be invoked once
+  per run — and **every `withName:` selector in both configs is rewritten to match either
+  spelling**. A selector written as the bare name would size the rerank arm and silently miss the
+  de novo one, which for `MHCMATCH_CASSETTE` means 8 GB instead of 48 and an OOM kill hours in.
+
+  Three things Nextflow 26.x strict syntax rejects that the module had to be written around, each
+  of which fails at compile time with a message that does not name the rule: a leading `+` on a
+  continuation line, a top-level `def x = { ... }` closure (functions are fine), and
+  `workflow.onComplete`. `params` a script owns are declared in `nextflow.config`, not assigned in
+  the script.
+
+  `params.mhcmatch_container` moved 1.6.0 -> 1.6.1, which is where `Dockerfile` and
+  `environment.yml` already were.
+
+- **`docs/pipeline.rst`** is the new cohort page: the two arms, the file-naming contract, the
+  expression rule, the mouse preset, and the SLURM runbook.
+
 ## Unreleased — cassette v2: select on the degeneracy
 
 **The headline objective changed shape.** `p_i` is a probability, so the number of units that

@@ -23,7 +23,7 @@ The mathematical and statistical theory lives in the technical appendix,
      </a>
      <a class="proj-card" href="cli.html">
        <h3>Command line</h3>
-       <p>Twenty-two commands grouped by what you are trying to do, and the two env vars a cluster needs.</p>
+       <p>Twenty-three commands grouped by what you are trying to do, and the two env vars a cluster needs.</p>
      </a>
      <a class="proj-card" href="complementarity.html">
        <h3>Complementarity</h3>
@@ -33,6 +33,11 @@ The mathematical and statistical theory lives in the technical appendix,
      <a class="proj-card" href="neoantigen.html">
        <h3>Ranking neoantigens</h3>
        <p>The shipped scorer end to end: the nine terms, what each was fitted on, what it does not do.</p>
+     </a>
+     <a class="proj-card" href="pipeline.html">
+       <h3>Running a cohort</h3>
+       <p>Two arms — re-rank your own table, or call epitopes de novo — from a directory of files,
+       on a laptop or under SLURM.</p>
      </a>
      <a class="proj-card" href="cassette.html">
        <h3>Cassette design</h3>
@@ -94,6 +99,7 @@ Capabilities
 
    getting-started
    cli
+   pipeline
    neoantigen
    immunogenicity
    complementarity

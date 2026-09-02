@@ -1,6 +1,8 @@
 // End-to-end mhcmatch: variant windows in, ranked candidates and a screened cassette out.
 //
-// Chains the five processes in ./main.nf. Take it as written or as a template -- the useful part is
+// Chains six of the processes in ./main.nf, and is UNCHANGED -- an existing `include` of it keeps
+// working. ../subworkflows/rerank.nf and denovo.nf are the two arms ../pipeline.nf runs; this one is
+// the original chain. Take it as written or as a template -- the useful part is
 // which output feeds which input, because that is the thing a README sentence gets wrong.
 //
 //   windows.fasta ─► PREDICT ─► native.tsv                        both classes
