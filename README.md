@@ -645,6 +645,11 @@ nextflow run integrations/nextflow/mhcmatch/pipeline.nf \
 Both arms end in a cassette: the *k* units to manufacture as a TSV (default **k = 20**), the
 assembled construct as amino acids with its linker, the CDS, and the epitope map.
 
+On a cluster, start from **`integrations/nextflow/mhcmatch/templates/`** — four SLURM scripts
+(`setup.sbatch` once, then `run_human.sbatch` / `run_mouse.sbatch` for a few samples or
+`run_slurm_head.sbatch` for a cohort), each with a single `EDIT THESE` block at the top and nothing
+cluster-specific below it.
+
 **`pipeline.nf` is the easy entry point, not the integration surface.** A pipeline that already does
 variant calling, HLA typing and expression quantification should `include` the processes in
 `main.nf` or the arms in `subworkflows/` into its own channel topology — `subworkflows/mhcmatch.nf`
@@ -655,6 +660,13 @@ the same `(meta, peptide.fasta, alleles)` channel and emitting a pipeline-compat
 `.scored.csv`. No stub types a column header — each asks the installed library for its own schema,
 so `-stub-run` cannot drift from the real shape. The image bootstraps its panel at **build** time,
 so compute nodes need no network.
+
+**Your columns come back untouched.** The rerank arm requires exactly two — the peptide
+(`peptide` / `epitope`) and the allele (`allele` / `best_allele`) — and stops naming what is
+missing. Four more are used when present (`wt_peptide`, `gene`/`gene_name`, `tpm`, `type`+`subtype`).
+Everything else may be named in any style and is emitted unchanged, in your order, ahead of ours; a
+name that collides with one of ours is an **error**, because two columns under one name are resolved
+silently and differently by every reader that keys a row by name.
 
 **`MHCMATCH_ALLELES` is not optional plumbing.** Every HLA caller writes the G-group form
 (`A*01:01:01G`), which is keyed at three fields where the pseudosequence tables are keyed at two, so
