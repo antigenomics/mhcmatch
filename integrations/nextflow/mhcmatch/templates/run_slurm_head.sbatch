@@ -38,6 +38,12 @@ export NXF_OPTS='-Xms1g -Xmx4g'
 export NXF_HOME="$REF/.nextflow"
 mkdir -p "$TMPDIR" "$NXF_HOME" logs
 
+# **Each run gets its own launch directory.** Nextflow keeps its session cache under the directory
+# it was launched from, so two runs started from the same one -- human and mouse side by side --
+# collide on `Unable to acquire lock on session with ID ...` and the second dies at startup. It is
+# also where `.nextflow.log` lands, which you want separate when something fails.
+mkdir -p work_cohort && cd work_cohort
+
 conda run -n "$ENV" --no-capture-output nextflow run "$MODULE/pipeline.nf" \
     -profile slurm \
     --indir   "$IN" \

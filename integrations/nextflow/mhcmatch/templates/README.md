@@ -42,6 +42,12 @@ anything in the public record, so the value is yours to defend — and it is rec
 a reader can see which one you chose. It is a different question from `--mhcmatch_cassette_k`:
 `k` is how many units are *manufactured*, `n0` is how many the recipient's allotypes can *carry*.
 
+**Two runs cannot share a launch directory.** Nextflow keeps its session cache under the directory
+it was launched from, so `run_human.sbatch` and `run_mouse.sbatch` started side by side would
+collide on `Unable to acquire lock on session with ID ...` and the second would die at startup.
+Each script `cd`s into its own `work_*` subdirectory for that reason — which is also where its
+`.nextflow.log` lands, and you want those separate when something fails.
+
 ## Two things worth reading before you change a default
 
 **`--mhcmatch_vector_screen` is on, and off means off.** With it false, **no** safety check runs at

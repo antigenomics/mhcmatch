@@ -282,6 +282,16 @@ process MHCMATCH_CASSETTE {
     script:
     def args   = task.ext.args ?: ''
     def prefix = task.ext.prefix ?: "${meta.id}"
+    // **`build` selects; `order` lays out what it was handed.** Both arms put
+    // MHCMATCH_CASSETTE_SELECT in front, which has already chosen exactly `-k` units -- so running
+    // `build` here re-selects them under the per-allotype `--n0` stopping rule and throws most
+    // away. Measured on a real donor: `-k 20` in, `units=2` and 54 aa out. `order` is the same code
+    // path with the sizing rule skipped (`cmd_vector`'s `order_only`), so the safety screen still
+    // runs and the layout, spacer and map are byte-for-byte what a selected cassette gets.
+    //
+    // `build` stays the default, because `subworkflows/mhcmatch.nf` has no selector and the `--n0`
+    // rule IS its answer to "how many units".
+    def verb   = task.ext.verb ?: 'build'
     def n0     = params.mhcmatch_vector_n0
     def screen = params.mhcmatch_vector_screen ? '--screen' : ''
     def ctx    = context.name != 'NO_FILE' ? "--context ${context}" : ''
@@ -312,11 +322,13 @@ process MHCMATCH_CASSETTE {
                      ? "--quota '${params.mhcmatch_vector_quota}' " +
                        "--block-live ${params.mhcmatch_vector_block_live ?: 0.5} " +
                        "--evenness ${params.mhcmatch_vector_evenness ?: 0.0}" : ''
-    if (n0 == null) error "params.mhcmatch_vector_n0 is required and has no default: per-allotype capacity is not fitted by anything in the public record, so the value is yours to set and it is recorded in the output"
+    // `order` does not size, so it needs no capacity estimate.
+    def n0arg  = verb == 'order' ? '' : "--n0 ${n0}"
+    if (verb != 'order' && n0 == null) error "params.mhcmatch_vector_n0 is required and has no default: per-allotype capacity is not fitted by anything in the public record, so the value is yours to set and it is recorded in the output"
     """
-    mhcmatch cassette build \\
+    mhcmatch cassette ${verb} \\
         --candidates ${candidates} ${ctx} ${ucol} \\
-        --n0 ${n0} \\
+        ${n0arg} \\
         --alleles '${alleles}' \\
         --cls ${cls} \\
         ${screen} ${quota} ${mapArg} ${args} \\
@@ -398,38 +410,58 @@ process MHCMATCH_CASSETTE_SCORE {
     // column of theirs -- so the cassette would be scored on ours and the pool on theirs, and
     // `lam` compares the two. Naming the prefixed one is right for both files: the pool has it, and
     // the units table does not, so that one falls back to its own `score` and says which it used.
-    def scol = params.mhcmatch_cassette_score_column
-                   ? "--score-column ${params.mhcmatch_cassette_score_column}" : ''
+    // Which column holds the aggregate, resolved per ARM: on the rerank arm the pool is the
+    // caller's own table and HAS a `score` column of theirs, so an unqualified fallback scores the
+    // cassette on ours and the pool on theirs -- and `lam` compares the two.
+    def scoreCol = task.ext.score_column ?: (params.mhcmatch_cassette_score_column ?: '')
+    def scol = scoreCol ? "--score-column ${scoreCol}" : ''
     // Cohort-level and therefore no `meta`, but still one file per ARM into one publishDir.
     def prefix = task.ext.prefix ?: 'cohort'
     """
-    # ONE header, and a `donor` column carrying the sample id each row came from. awk over the whole
-    # file list rather than one invocation per file: a per-file loop resets awk's state, so it
-    # re-emitted the header for every table after the first and those became data rows. And a table
-    # that ALREADY has a `donor` column -- which `cassette select --passthrough` writes -- got a
-    # second one prepended, which `dict(zip(...))` resolves in favour of the later, constant value,
-    # collapsing every donor into one group. That is the cross-donor comparison this process exists
-    # for. awk rather than python so the concatenation is visible in the .command.sh of a failed run.
-    awk -F'\\t' -v OFS='\\t' '
-        FNR == 1 {
-            n = split(FILENAME, p, "/"); split(p[n], q, "."); d = q[1]
-            di = 0; for (i = 1; i <= NF; i++) if (\$i == "donor") di = i
-            if (!seen) { if (di) print \$0; else print "donor", \$0; seen = 1 }
-            next
-        }
-        { if (di) \$di = d; else \$0 = d OFS \$0; print }
-    ' ${tables} > cohort.cassettes.tsv
-
-    if [ -n "${pool}" ]; then
-        awk -F'\\t' -v OFS='\\t' '
+    # **Projected to four columns by NAME, not concatenated whole.** `cassette score` needs exactly
+    # `donor, peptide, allele, score`, and pasting whole tables together assumes every sample has
+    # the same schema -- which under `--passthrough` is false by construction, because the caller's
+    # own columns travel with each sample and two samples may come from different upstream runs.
+    # Measured on two mouse lines: their tables differed by two columns, so the header of the first
+    # was applied to the rows of the second and every field after that point was off by two. The
+    # result was not an error -- it was a `gene_name` holding `A`/`C`/`G`/`T` and a peptide column
+    # that silently held something else.
+    #
+    # One awk over the whole file list, not one per file: a per-file loop resets awk's state, so it
+    # re-emitted the header for every table after the first and those became data rows.
+    project() {
+        awk -F'\\t' -v OFS='\\t' -v SCOL="\$1" '
+            function pick(list,   n, i, a) {
+                n = split(list, a, ",")
+                for (i = 1; i <= n; i++) if (a[i] != "" && (a[i] in H)) return H[a[i]]
+                return 0
+            }
             FNR == 1 {
+                delete H; for (i = 1; i <= NF; i++) H[\$i] = i
+                pc = pick("peptide,epitope")
+                ac = pick("allele,mm_allele_scored,mm_allele,best_allele,allele_scored")
+                sc = pick(SCOL ",score,aggregate,epic,mm_score")
+                dc = pick("donor,patient")
                 n = split(FILENAME, p, "/"); split(p[n], q, "."); d = q[1]
-                di = 0; for (i = 1; i <= NF; i++) if (\$i == "donor") di = i
-                if (!seen) { if (di) print \$0; else print "donor", \$0; seen = 1 }
+                if (!pc || !sc) {
+                    printf "%s: no peptide and/or score column\\n", FILENAME > "/dev/stderr"; exit 3
+                }
+                if (!seen) { print "donor", "peptide", "allele", "score"; seen = 1 }
                 next
             }
-            { if (di) \$di = d; else \$0 = d OFS \$0; print }
-        ' ${pools} > cohort.pool.tsv
+            {
+                # The filename wins over a `donor` column holding `-`: `cassette select` writes
+                # that when the pool it was given had no donor column of its own, and taking it
+                # literally puts every sample in one group -- which is the cross-donor comparison
+                # this process exists for.
+                dv = dc ? \$dc : ""
+                print (dv != "" && dv != "-" ? dv : d), \$pc, (ac ? \$ac : ""), \$sc
+            }
+        ' "\${@:2}"
+    }
+    project '${scoreCol}' ${tables} > cohort.cassettes.tsv
+    if [ -n "${pool}" ]; then
+        project '${scoreCol}' ${pools} > cohort.pool.tsv
     fi
 
     mhcmatch cassette score \\
