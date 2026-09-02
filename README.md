@@ -31,7 +31,7 @@ pip install mhcmatch
 mhcmatch bootstrap                                   # pre-fetch the panel (optional; ~16 MB)
 ```
 
-The library examples below run on any recent release. **The Nextflow pipeline needs >= 1.7.1** --
+The library examples below run on any recent release. **The Nextflow pipeline needs >= 1.7.2** --
 its first process calls `mhcmatch alleles`, which does not exist before then.
 
 **Optional extras.** The base install is `seqtree`, `numpy` and `huggingface_hub` — nothing heavy,
@@ -660,7 +660,7 @@ The construct carries no more *units* than *k* and usually fewer — several epi
 27-mer window, and the safety screen withdraws some — so read `units=` from the FASTA header rather
 than assuming *k*.
 
-> **The pipeline requires mhcmatch >= 1.7.1.** Its first process calls `mhcmatch alleles` and the
+> **The pipeline requires mhcmatch >= 1.7.2.** Its first process calls `mhcmatch alleles` and the
 > rerank arm calls `rank --passthrough`; neither exists in 1.6.0, and 1.6.1 was never published.
 > `templates/setup.sbatch` pins the version and asserts what it installed.
 

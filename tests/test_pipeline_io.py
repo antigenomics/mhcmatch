@@ -374,3 +374,33 @@ def test_a_table_with_neither_response_column_still_names_p(tmp_path):
     with pytest.raises(SystemExit) as e:
         cli._read_unit_rows(str(p))
     assert "p" in str(e.value)
+
+
+# ------------------------------------- `cassette select --passthrough` must not overwrite a column
+
+def test_select_column_set_is_the_one_the_clash_check_uses():
+    """The guard is only as good as the list of names it guards."""
+    from mhcmatch import cli
+    for c in ("score", "p", "k", "slot", "donor", "peptide", "allele", "gene"):
+        assert c in cli._SELECT_COLUMNS
+
+
+def test_a_caller_column_named_score_is_preserved_not_overwritten(tmp_path):
+    """`cassette select` emits its own `score`, and a caller table may carry one too.
+
+    Ours has to keep the plain name -- `cassette build`, `cassette score` and the map read it -- so
+    the caller's copy moves to `score_in`. It used to be overwritten outright, values differing in
+    the first decimal, with nothing in the file or the log to say so.
+    """
+    from mhcmatch import cli
+    p = tmp_path / "cands.tsv"
+    p.write_text(
+        "epitope\tbest_allele\tgene_name\tscore\tmm_score\n"
+        "GILGFVFTL\tHLA-A*02:01\tGENEA\t3.97\t4.87\n"
+        "NLVPMVATV\tHLA-A*02:01\tGENEB\t1.11\t2.22\n")
+    with cli._open_text(str(p)) as fh:
+        theirs = set(fh.readline().rstrip("\n").split("\t"))
+    clash = sorted(theirs & cli._SELECT_COLUMNS)
+    # `peptide`/`allele`/`gene` are keys `_cassette_rows` RESOLVES into the row, not columns the
+    # caller wrote, so they must not be counted as a clash and must not sprout `_in` twins.
+    assert clash == ["score"], clash

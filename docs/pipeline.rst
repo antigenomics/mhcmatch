@@ -6,7 +6,7 @@ commands it runs and :doc:`cassette` is what the last stage decides.
 
 .. note::
 
-   **Requires mhcmatch >= 1.7.1.** The first process calls ``mhcmatch alleles`` and the rerank arm
+   **Requires mhcmatch >= 1.7.2.** The first process calls ``mhcmatch alleles`` and the rerank arm
    calls ``rank --passthrough``; neither exists in 1.6.0, and 1.6.1 was never published. An
    unpinned install on a stale index resolves to a release that cannot run the first process, so
    ``templates/setup.sbatch`` pins the version and asserts what it got.
@@ -72,7 +72,12 @@ different answers and one must not overwrite the other:
        the rerank arm every one of your own columns and every ``mm_`` column survive, plus the
        selection's own (``slot``, ``p``, ``k``, ``pool_n``, ``offset``, ``energy``, ``lam``,
        ``rho``). Measured on one donor: 53 caller + 32 ``mm_`` + 22 selection = 107 columns over
-       20 rows, 0 caller columns dropped. See ``-k`` counts epitopes, not manufactured units below
+       20 rows, 0 caller columns dropped. If one of your names collides with a column
+       ``cassette select`` emits (``score``, ``p``, ``k``, ``slot``, …), **ours keeps the plain
+       name and yours is preserved beside it as** ``<name>_in``, with a line naming what moved —
+       ours has to keep the name because ``cassette build``, ``cassette score`` and the map read
+       it. Before 1.7.2 yours was overwritten silently. See ``-k`` counts epitopes, not
+       manufactured units below
    * - ``<id>.{rerank,denovo}.cassette.faa``
      - assembled, with the linker chosen by minimising junctional binding
    * - ``<id>.{rerank,denovo}.cassette.fna``

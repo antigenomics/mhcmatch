@@ -5,10 +5,22 @@ predict` replaces a neoantigen pipeline's binding predictors (MHCflurry class I,
 II); the rest cover the steps that come after and have no incumbent — allele resolution, ranking,
 prior evidence, safety, cassette selection and cassette assembly.
 
-> **Requires mhcmatch >= 1.7.1.** `MHCMATCH_ALLELES` calls `mhcmatch alleles` and the rerank arm
+> **The module and the library must be the same version — clone the tag, not `master`.** The
+> module calls the CLI, so a checkout ahead of the installed release passes flags that release
+> has never heard of, and the failure is a bare argparse error deep inside a task log. It
+> happened on 2026-09-02: PyPI served 1.7.1 while `master` had gained `--map-binder`, and both
+> `MHCMATCH_CASSETTE` tasks died with `unrecognized arguments: --map-binder weak`.
+> `mhcmatch --version` cannot warn you, because both print the same string. So:
+>
+> ```bash
+> git clone --branch v1.7.2 --depth 1 https://github.com/antigenomics/mhcmatch.git
+> pip install "mhcmatch==1.7.2"
+> ```
+>
+> **Requires mhcmatch >= 1.7.2.** `MHCMATCH_ALLELES` calls `mhcmatch alleles` and the rerank arm
 > calls `rank --passthrough`; neither exists in 1.6.0, and 1.6.1 was stamped in the tree but never
 > published. Every pin in this directory — `environment.yml`, the `Dockerfile`,
-> `params.mhcmatch_container` — names 1.7.1, and `templates/setup.sbatch` asserts the version it
+> `params.mhcmatch_container` — names 1.7.2, and `templates/setup.sbatch` asserts the version it
 > installed rather than letting the run discover the mismatch inside a task log.
 
 ```
@@ -98,7 +110,7 @@ are two different answers and one must not overwrite the other:
 
 | file | what |
 |---|---|
-| `<id>.{rerank,denovo}.vaccine.units.tsv` | one row per **selected epitope** (default *k* = 20, `--mhcmatch_cassette_k`) — **this is the input table filtered to what the cassette carries, nothing removed from the row.** On the rerank arm it holds every one of your own columns and every `mm_` column, plus the selection's own (`slot`, `p`, `k`, `pool_n`, `offset`, `energy`, `lam`, `rho`); on the de novo arm, every column of `*.mhcmatch.ranked.tsv`. Measured on one donor: 53 caller + 32 `mm_` + 22 selection = 107 columns over 20 rows, with 0 caller columns dropped |
+| `<id>.{rerank,denovo}.vaccine.units.tsv` | one row per **selected epitope** (default *k* = 20, `--mhcmatch_cassette_k`) — **this is the input table filtered to what the cassette carries, nothing removed from the row.** On the rerank arm it holds every one of your own columns and every `mm_` column, plus the selection's own (`slot`, `p`, `k`, `pool_n`, `offset`, `energy`, `lam`, `rho`); on the de novo arm, every column of `*.mhcmatch.ranked.tsv`. Measured on one donor: 53 caller + 32 `mm_` + 22 selection = 107 columns over 20 rows, with 0 caller columns dropped. **If one of your column names collides with one `cassette select` emits** (`score`, `p`, `k`, `slot`, …), ours keeps the plain name — it is what `cassette build`, `cassette score` and the map read — and **yours is preserved beside it as `<name>_in`**, with a line naming what moved. Before 1.7.2 yours was overwritten silently |
 | `<id>.{rerank,denovo}.cassette.faa` | assembled, with the linker chosen by minimising junctional binding |
 | `<id>.{rerank,denovo}.cassette.fna` | the CDS, deslipped |
 | `<id>.{rerank,denovo}.cassette.map.{tsv,json}` | unit / linker / epitope in 1-based coordinates |
@@ -526,10 +538,10 @@ From `slurm.config` only:
 ## Build the image (only for `-profile docker`)
 
 ```zsh
-docker build -t <YOUR_REGISTRY>/mhcmatch:1.7.1 \
-    --build-arg MHCMATCH_VERSION=1.7.1 \
+docker build -t <YOUR_REGISTRY>/mhcmatch:1.7.2 \
+    --build-arg MHCMATCH_VERSION=1.7.2 \
     integrations/nextflow/mhcmatch/
-docker push <YOUR_REGISTRY>/mhcmatch:1.7.1
+docker push <YOUR_REGISTRY>/mhcmatch:1.7.2
 ```
 
 One tag, four files, and they must move together on a release: `Dockerfile`'s
@@ -537,7 +549,7 @@ One tag, four files, and they must move together on a release: `Dockerfile`'s
 `params.mhcmatch_container` default, and this block. The container default sat on `1.6.0` while
 the other two were on `1.6.1`, which is the drift this note exists to stop -- and `1.6.1` was
 itself never published, so every one of those pins named a distribution that did not exist until
-1.7.1 was cut.
+1.7.2 was cut.
 
 No data staging: the build runs `mhcmatch bootstrap --reference`, which fetches the ligand panel
 **and** the known-epitope sets, mimicry references and expression tables (~115 MB total) from the
@@ -620,7 +632,7 @@ a conda interpreter is enough and is what `-profile conda` sidesteps entirely:
 
 ```bash
 conda create -n mhcmatch -c bioconda python=3.12 nextflow
-conda run -n mhcmatch --no-capture-output pip install mhcmatch==1.7.1
+conda run -n mhcmatch --no-capture-output pip install mhcmatch==1.7.2
 ```
 
 (The `docker build` block above pins the same version and must move with it.)

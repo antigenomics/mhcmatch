@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased — the cassette map, on NetMHCpan's terms
+## [1.7.2] — 2026-09-02 — the cassette map, on NetMHCpan's terms
+
+*(1.7.0 was tagged and superseded before publication. 1.7.1 **was** published, on 2026-09-02, and
+is the reason 1.7.2 is urgent: `master` gained `--map-binder` after that wheel was cut, so a
+checkout of `master` against an installed 1.7.1 dies in both `MHCMATCH_CASSETTE` tasks with
+`unrecognized arguments: --map-binder weak`. **Clone the tag that matches the release you
+installed** — `mhcmatch --version` cannot tell the two apart, because both print `1.7.1`.)*
 
 **One %rank cut-off was applied to both classes, and the two classes do not share one.** NetMHCpan
 calls class I strong at `%rank <= 0.5` and weak at `<= 2.0`; NetMHCIIpan calls class II strong at
@@ -17,6 +23,17 @@ Across cut-offs, rerank vs de novo: 72 / 0 at 2.0, 77 / 8 at 5.0, 153 / 78 at 10
   selects the tier and **defaults to `weak`**, because the map reports and selects nothing, so
   under-reporting help a construct genuinely carries is the costlier error. `--map-threshold` and
   the new `--map-threshold-mhc2` override per class.
+- **`cassette select --passthrough` overwrote a caller column instead of preserving it.** Its own
+  `score` (and `p`, `k`, `slot`, …) won any name clash, so a candidate table carrying its own
+  `score` got ours in that cell — measured on a real table, `3.9703657700079718` replaced by
+  `4.866210` — with nothing in the file or the log to say so. That is the exact opposite of the
+  contract the rerank arm advertises. Ours still keeps the plain name, because `cassette build`,
+  `cassette score` and the map read it; the caller's is now emitted beside it as `<name>_in` and the
+  swap is announced once. The clash set is computed from the caller's real **header**, not from the
+  parsed row, so the keys `_cassette_rows` resolves internally (`epitope` -> `peptide`,
+  `best_allele` -> `allele`, `gene_name` -> `gene`) are not mistaken for the caller's own and do not
+  sprout spurious `_in` twins.
+
 - **A zero is never printed bare again.** `epitope_map` fills an optional `stats` dict with, per
   class, the windows offered, the pairs scored, the number kept and the **best `%rank` seen**; the
   CLI prints it whenever a class comes back empty, distinguishing "the ranker never ran", "the
@@ -32,7 +49,7 @@ at 98 and 117, because 2.0 was already its weak cut.
 the class-II candidates were always scored and ranked in full in their own `<id>.mhc2.*` tables.
 
 
-## [1.7.1] — 2026-09-02 — a caller's own table, and the allele step that was failing silently
+### Also in this release — a caller's own table, and the allele step that was failing silently
 
 *(1.7.0 was tagged and then superseded before it reached PyPI; nothing was ever published
 under that number, so its contents are folded in here rather than split across two entries.)*

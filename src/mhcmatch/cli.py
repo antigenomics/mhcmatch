@@ -1857,6 +1857,14 @@ def _by_donor(rows):
     return out
 
 
+#: The columns `cassette select` emits itself. Any of these appearing in a `--passthrough` table is
+#: a name clash, and the caller's copy is preserved as ``<name>_in`` rather than overwritten.
+_SELECT_COLUMNS: frozenset = frozenset((
+    "donor", "slot", "peptide", "allele", "gene", "score", "p", "k", "pool_n", "offset", "energy",
+    "lam", "rho", "gamma", "channels", "block_live", "selectivity", "rule", "pi", "not_worse",
+    "diversity", "n_covered", "n_allotypes"))
+
+
 def cmd_cassette_select(a):
     """Choose k units from a donor's pool by maximising the mean-variance objective."""
     import numpy as np
@@ -1864,6 +1872,12 @@ def cmd_cassette_select(a):
     from . import cassette as CA
 
     rows, col = _cassette_rows(a.candidates, a.score_column)
+    # The caller's OWN column names, read from the header rather than from the parsed row:
+    # `_cassette_rows` resolves `epitope` -> `peptide`, `best_allele` -> `allele` and
+    # `gene_name` -> `gene` into the dict, and those keys are ours, not theirs.
+    with _open_text(a.candidates) as _fh:
+        _their_cols = set(_fh.readline().rstrip("\n").split("\t"))
+    _clash = sorted(_their_cols & _SELECT_COLUMNS) if getattr(a, "passthrough", False) else []
     groups = _by_donor(rows)
     kw = {k: v for k, v in (("prevalence", a.prevalence), ("rho", a.rho), ("gamma", a.gamma))
           if v is not None}
@@ -1952,6 +1966,7 @@ def cmd_cassette_select(a):
             say(f"{donor}: pool of {c.pool_n} trimmed to {c.pool_n - c.trimmed} before the "
                 f"coupling matrix (see mhcmatch.cassette.MAX_POOL)", level=1)
         chosen += c.k
+        _select_clash_said: list = []
         for slot, (i, pi) in enumerate(zip(c.index, c.p), start=1):
             r = dict(g[i])
             r.pop("_score", None)
@@ -1961,6 +1976,24 @@ def cmd_cassette_select(a):
             # Without it those have to be joined back on the peptide, and a pool may hold the same
             # peptide on two allotypes.
             carried = r if getattr(a, "passthrough", False) else {}
+            # **A carried column that shares a name with one of ours is not allowed to vanish.**
+            # Ours has to keep the name -- `score`, `p` and `peptide` are what `cassette build`,
+            # `cassette score` and the map read -- so the caller's copy is emitted alongside under
+            # `<name>_in`, and the swap is announced once. It used to be a silent overwrite: a
+            # caller table carrying its own `score` got ours in that cell, values differing in the
+            # first decimal, with nothing in the output or the log to say so.
+            if carried and _clash:
+                if not _select_clash_said:
+                    say(f"{len(_clash)} of your column(s) share a name with this command's own "
+                        f"and would have been overwritten: {', '.join(_clash)}. Yours are "
+                        f"preserved as {', '.join(x + '_in' for x in _clash)}; the unsuffixed "
+                        f"name carries ours, because that is what `cassette build`, `cassette "
+                        f"score` and the map read.", level=0)
+                    _select_clash_said.append(True)
+                carried = dict(carried)
+                for _cname in _clash:          # NOT `c`: that is the selection this loop is over
+                    if _cname in carried:
+                        carried[_cname + "_in"] = carried.pop(_cname)
             out.append({**carried,
                         "donor": donor, "slot": slot, "peptide": r["peptide"],
                         "allele": r.get("allele", ""), "gene": r.get("gene", ""),
@@ -2673,8 +2706,11 @@ def main(argv=None):
     cs.add_argument("--passthrough", action="store_true",
                     help="emit every column of --candidates ahead of this command's own, so the "
                          "chosen units keep the long window a cassette is built from and the "
-                         "variant class `--quota` reads. This command's own columns win a name "
-                         "clash, because they are the ones downstream reads")
+                         "variant class `--quota` reads. On a name clash this command's own "
+                         "column keeps the plain name -- `score`, `p` and `peptide` are what "
+                         "`cassette build`, `cassette score` and the map read -- and YOUR "
+                         "column is preserved beside it as `<name>_in`, with a line saying "
+                         "which ones moved. Nothing is overwritten")
     cs.add_argument("--out", metavar="FILE", help="write the chosen units here instead of stdout")
     cs.set_defaults(fn=cmd_cassette_select)
 
