@@ -69,16 +69,11 @@ once in `nextflow.config` after its default is set. The direction that matters i
 a user who believes they enabled `--mhcmatch_vector_screen` and did not gets a cassette with no
 safety check and no error.
 
-**Three readers, one peptide column, and the failure was invisible for one command at a time.**
-`_read_peptides`, `_read_table` and `_cassette_rows` each resolved "which column holds the peptide"
-separately, so a pipeline candidate table -- which spells it `epitope` -- was accepted by `rank` and
-refused by `neoag`, `mimicry` and `cassette select` **in the same chain**. `cli.PEPTIDE_COLUMNS` is
-now the one answer all three read. The same shape twice more, both caught only by running the whole
-chain on real data: `_cassette_rows` resolves the **allele** column too (`mm_allele_scored` ->
-`best_allele`), because a table spelling it `best_allele` landed every unit on one empty allotype and
-the coupling channel then priced no spread at all; and `--block-live` is **two different knobs under
-one flag name** -- P(a block is live) on `cassette build --quota` (default 0.5) and the HLA-loss rate
-on `cassette select` (default 1.0). Wiring the first into the second stops the run.
+**`--block-live` is two different knobs under one flag name.** P(a block is live) on
+`cassette build --quota`, default 0.5; the HLA-loss rate on `cassette select`, default 1.0. Wiring
+the first into the second stops the run -- a unit whose marginal p exceeds q is not representable,
+and one real donor had one at p = 0.7782. Two flags that share a name and not a meaning need two
+parameters, which is what `mhcmatch_vector_block_live` and `mhcmatch_cassette_block_live` are.
 
 **An allele name with three fields resolved to nothing, and nothing said so.** `A*01:01:01G` is what
 every HLA caller writes; the pseudosequence tables are keyed at two fields; `Store._allele_set` drops
