@@ -75,6 +75,51 @@ The sample id is the filename up to its first dot. A file that does not match is
 Pass ``--epitopes`` / ``--windows`` / ``--typing`` globs when your names differ, or ``--alleles`` /
 ``--alleles_mhc2`` to use one literal list for every sample.
 
+What your candidate table must have, and what it may have
+---------------------------------------------------------
+
+**Two required columns, and the run stops if either is missing** — rather than discovering it as an
+empty field several minutes into scoring, where it reads as "this candidate named no allele we
+know", which is a real and different state that :func:`mhcmatch.rank.rank_pairs` handles.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - what
+     - accepted spellings
+   * - the peptide
+     - ``peptide`` · ``epitope``
+   * - the restricting allele
+     - ``allele`` · ``best_allele``
+
+**Four more are used when present** and cost nothing when absent: ``wt_peptide`` (or pass
+``--context`` and it is recovered from the window FASTA), ``gene`` / ``gene_name``, ``tpm``, and
+``type`` + ``subtype``, from which ``variant_type`` is derived — which is what ``--quota`` charges
+its non-conventional arm on.
+
+**Everything else is yours.** Name it in any style — any language, spaces, dots — and it comes back
+untouched, in your order, ahead of ours. The one restriction is that **an input column may not
+collide with a name mhcmatch adds**, and that is an error rather than a warning: two columns under
+one name break silently, because every reader that keys a row by name (``csv.DictReader``, pandas,
+polars, ours) resolves the duplicate in favour of one of them and the file does not record which.
+``--mhcmatch_rerank_prefix`` (default ``mm_``) keeps them apart, and the error names the offenders.
+
+**No column is ever removed or rewritten.** The output is your table plus a block, re-sorted.
+
+Templates
+---------
+
+`integrations/nextflow/mhcmatch/templates/ <https://github.com/antigenomics/mhcmatch/tree/master/integrations/nextflow/mhcmatch/templates>`_
+holds four SLURM scripts, each with one ``EDIT THESE`` block at the top and nothing cluster-specific
+below it — ``setup.sbatch`` (once), ``run_human.sbatch`` / ``run_mouse.sbatch`` (a few samples,
+local executor in one allocation) and ``run_slurm_head.sbatch`` (a cohort, one job per task).
+
+.. code-block:: bash
+
+   git clone https://github.com/antigenomics/mhcmatch.git
+   cp mhcmatch/integrations/nextflow/mhcmatch/templates/*.sbatch .
+
 .. _pipeline-alleles:
 
 The allele step is not optional plumbing

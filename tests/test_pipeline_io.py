@@ -239,3 +239,47 @@ def test_alleles_says_so_when_handed_a_mouse_panel(tmp_path, capsys):
     cli.main(["alleles", str(p), "--cls", "mhc1"])
     err = capsys.readouterr().err
     assert "mouse H-2 allele" in err and "--alleles" in err
+
+
+# ---------------------------------------------------------------- the passthrough contract
+#
+# Two required columns, everything else free-form and carried through, and a name collision with
+# what mhcmatch adds is an ERROR. The last one matters because two columns under one name break
+# silently: every reader that keys a row by name -- csv.DictReader, pandas, polars, our own
+# `_read_table` -- resolves the duplicate in favour of one of them, and the file does not record
+# which.
+
+
+def _tbl(tmp_path, header, row):
+    p = tmp_path / "in.tsv"
+    p.write_text("\t".join(header) + "\n" + "\t".join(row) + "\n")
+    return str(p)
+
+
+def test_passthrough_requires_a_peptide_and_an_allele_column(tmp_path):
+    with pytest.raises(SystemExit, match="peptide"):
+        cli.main(["rank", "pairs", _tbl(tmp_path, ["gene", "best_allele"], ["G1", "HLA-A02:01"]),
+                  "--score", "gate", "--passthrough"])
+    with pytest.raises(SystemExit, match="allele"):
+        cli.main(["rank", "pairs", _tbl(tmp_path, ["epitope", "gene"], ["GILGFVFTL", "G1"]),
+                  "--score", "gate", "--passthrough"])
+
+
+def test_passthrough_carries_arbitrarily_named_columns_untouched(tmp_path, capsys):
+    """Anything that is not one of the handful mhcmatch reads is the caller's own business."""
+    head = ["epitope", "best_allele", "их_колонка", "Some Column", "score", "x.y"]
+    out = tmp_path / "o.tsv"
+    cli.main(["rank", "pairs", _tbl(tmp_path, head, ["GILGFVFTL", "NOPE", "a", "b", "1", "c"]),
+              "--score", "gate", "--passthrough", "--prefix", "mm_", "--out", str(out)])
+    lines = out.read_text().splitlines()
+    assert lines[0].split("\t")[:len(head)] == head       # untouched, in the caller's order
+    assert lines[1].split("\t")[:len(head)] == ["GILGFVFTL", "NOPE", "a", "b", "1", "c"]
+
+
+def test_passthrough_refuses_a_column_that_collides_with_ours(tmp_path):
+    """`--prefix ''` over a table that already has `score` would emit two `score` columns."""
+    t = _tbl(tmp_path, ["epitope", "best_allele", "score"], ["GILGFVFTL", "NOPE", "1"])
+    with pytest.raises(SystemExit, match="collide"):
+        cli.main(["rank", "pairs", t, "--score", "gate", "--passthrough"])
+    # ...and the prefix is what resolves it, which is why the shipped deliverables use `mm_`.
+    cli.main(["rank", "pairs", t, "--score", "gate", "--passthrough", "--prefix", "mm_"])

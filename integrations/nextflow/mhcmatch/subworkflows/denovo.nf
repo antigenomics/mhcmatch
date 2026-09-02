@@ -68,8 +68,11 @@ workflow MHCMATCH_DENOVO_ARM {
     )
     ch_versions = ch_versions.mix( MHCMATCH_CASSETTE_DN.out.versions.first() )
 
+    // The **units** table, not the `.cassette.tsv` report -- see the same call in ./rerank.nf.
     MHCMATCH_CASSETTE_SCORE_DN(
-        MHCMATCH_CASSETTE_DN.out.report.map { meta, tsv -> tsv }.collect(),
+        MHCMATCH_CASSETTE_SELECT_DN.out.units
+            .join( MHCMATCH_CASSETTE_DN.out.report )
+            .map { meta, units, report -> units }.collect(),
         ch_mhc1.map { meta, cls, tsv -> tsv }.collect()
     )
     ch_versions = ch_versions.mix( MHCMATCH_CASSETTE_SCORE_DN.out.versions )

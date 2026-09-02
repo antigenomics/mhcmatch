@@ -765,6 +765,16 @@ def cmd_rank(a):
         # table, not one this command widened by a column they never sent.
         with _open_text(a.input) as _fh:
             carry = _fh.readline().rstrip("\n").split("\t")
+        # **Two required columns, and everything else is the caller's business.** The peptide is
+        # checked by `_read_table` above; the allele is checked here rather than discovered as an
+        # empty `allele` field several minutes into a scoring run, where it reads as "this candidate
+        # named no allele we know" -- a real and different state that `_unscored` handles, and one
+        # a missing COLUMN should not be mistaken for.
+        if recs and not any(c in carry for c in ("allele", "best_allele")):
+            raise SystemExit(f"{a.input}: no `allele` / `best_allele` column (found {carry}). "
+                             "`peptide`/`epitope` and one of these two are the only columns this "
+                             "command requires; `wt_peptide`, `gene`/`gene_name` and `tpm` are used "
+                             "when present, and every other column is carried through untouched")
         # `--context` supplies the germline arm the table does not carry. Before ranking, because
         # the wild type is what `binder_ranks` is asked for alongside the mutant.
         if getattr(a, "context", None):
@@ -829,10 +839,19 @@ def cmd_rank(a):
     head = cols
     if getattr(a, "passthrough", False):
         pre = getattr(a, "prefix", "") or ""
+        # **A name collision is an error, not a warning.** The contract is that the caller's columns
+        # come back untouched and ours are appended, and two columns under one name breaks it in the
+        # worst way available: every reader that keys a row by name -- `csv.DictReader`, pandas,
+        # polars, our own `_read_table` -- silently resolves the duplicate in favour of one of them,
+        # and which one is not something the file records. So the run stops here instead.
         clash = sorted(set(carry) & {pre + c for c in cols})
         if clash:
-            say(f"--prefix {pre!r} leaves {len(clash)} duplicated column name(s): "
-                + ", ".join(clash), level=1)
+            raise SystemExit(
+                f"--passthrough: {len(clash)} of your column(s) collide with the names this "
+                f"command adds under --prefix {pre!r}: {', '.join(clash)}. Your columns are "
+                "emitted unchanged and ours are appended, so the two cannot share a name -- "
+                "choose a --prefix that does not collide (the shipped deliverables use `mm_`), "
+                "or rename those columns upstream")
         head = carry + [pre + c for c in cols]
     out = open(a.out, "w") if a.out else sys.stdout
     try:

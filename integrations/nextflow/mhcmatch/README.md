@@ -51,6 +51,35 @@ dot. A file that does not match is ignored:
 Pass `--epitopes` / `--windows` / `--typing` globs when your names differ, or `--alleles` /
 `--alleles_mhc2` to use one literal list for every sample.
 
+**On a cluster, start from [`templates/`](templates/)** — `setup.sbatch` once, then
+`run_human.sbatch` / `run_mouse.sbatch` for a few samples or `run_slurm_head.sbatch` for a cohort.
+Each has one `EDIT THESE` block at the top and nothing cluster-specific below it.
+
+### What your candidate table must have, and what it may have
+
+**Two required columns, and the run stops if either is missing** — rather than discovering it as an
+empty field several minutes into scoring, where it reads as "this candidate named no allele we
+know", which is a real and different state:
+
+| what | accepted spellings |
+|---|---|
+| the peptide | `peptide` · `epitope` |
+| the restricting allele | `allele` · `best_allele` |
+
+**Four more are used when present** and cost nothing when absent: `wt_peptide` (or supply
+`--context` and it is recovered from the window FASTA), `gene` / `gene_name`, `tpm`, and
+`type` + `subtype` (from which `variant_type` is derived, which is what `--quota` charges its
+non-conventional arm on).
+
+**Everything else is yours.** Name it in any style — any language, spaces, dots — and it comes back
+untouched, in your order, ahead of ours. The one restriction is that **an input column may not
+collide with a name mhcmatch adds**, and that is an error rather than a warning: two columns under
+one name break silently, because every reader that keys a row by name (`csv.DictReader`, pandas,
+polars, ours) resolves the duplicate in favour of one of them and the file does not record which.
+`--mhcmatch_rerank_prefix` (default `mm_`) is what keeps them apart; the error names the offenders.
+
+**No column is ever removed or rewritten.** The output is your table plus a block.
+
 ### The two arms
 
 | `--mode` | in | out | the deliverable is |

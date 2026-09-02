@@ -74,8 +74,14 @@ workflow MHCMATCH_RERANK_ARM {
     // ONE calibration for the whole run. `rank` anchors `p_response` on the batch it is handed, so
     // a per-donor call makes every donor's mean the declared prevalence and no two donors
     // comparable -- see the comment on the process in ../main.nf.
+    // The **units** table, not the `.cassette.tsv` report: `cassette score` wants one row per
+    // manufactured unit with a peptide and a score, and the report is long-form with neither.
+    // Gated on CASSETTE so the score still waits for assembly -- a cassette that failed its safety
+    // screen should not be scored as if it shipped.
     MHCMATCH_CASSETTE_SCORE(
-        MHCMATCH_CASSETTE.out.report.map { meta, tsv -> tsv }.collect(),
+        MHCMATCH_CASSETTE_SELECT.out.units
+            .join( MHCMATCH_CASSETTE.out.report )
+            .map { meta, units, report -> units }.collect(),
         ch_pool.map { meta, tsv -> tsv }.collect()
     )
     ch_versions = ch_versions.mix( MHCMATCH_CASSETTE_SCORE.out.versions )

@@ -370,13 +370,19 @@ process MHCMATCH_CASSETTE_SCORE {
     // Set `params.mhcmatch_cassette_per_donor_offset` only if you want the ENRICHMENT reading --
     // how far each donor's chosen units sit above their own background -- and know that the result
     // is no longer a probability and no longer comparable between donors.
+    // `tables` is the **units** table `cassette select` writes -- `donor, slot, peptide, allele,
+    // gene, score, p` -- and NOT the `.cassette.tsv` report. That report is long-form
+    // (`section, i, key, value, detail`) with the peptide absent and `p` inside a free-text
+    // `detail` field, so `cassette score` could never read it: it wants one row per manufactured
+    // unit. Every subworkflow passed the report here until 2026-09-02, which means this process had
+    // never once completed.
     input:
     path tables
     path pools
 
     output:
-    path "cohort.cassette_score.tsv", emit: score
-    path "versions.yml",              emit: versions
+    path "*.cassette_score.tsv", emit: score
+    path "versions.yml",         emit: versions
 
     when:
     task.ext.when == null || task.ext.when
@@ -387,27 +393,49 @@ process MHCMATCH_CASSETTE_SCORE {
     def rho  = params.mhcmatch_cassette_rho ? "--rho ${params.mhcmatch_cassette_rho}" : ''
     def per  = params.mhcmatch_cassette_per_donor_offset ? '--per-donor-offset' : ''
     def pool = pools.name != 'NO_FILE' ? "--pool cohort.pool.tsv" : ''
+    // Which column carries the aggregate. `_cassette_rows` resolves `score` / `aggregate` / `epic`
+    // when not told, and on the rerank arm the POOL is the caller's own table, which has a `score`
+    // column of theirs -- so the cassette would be scored on ours and the pool on theirs, and
+    // `lam` compares the two. Naming the prefixed one is right for both files: the pool has it, and
+    // the units table does not, so that one falls back to its own `score` and says which it used.
+    def scol = params.mhcmatch_cassette_score_column
+                   ? "--score-column ${params.mhcmatch_cassette_score_column}" : ''
+    // Cohort-level and therefore no `meta`, but still one file per ARM into one publishDir.
+    def prefix = task.ext.prefix ?: 'cohort'
     """
-    # One table, one header, a `donor` column carrying the sample id each row came from. awk rather
-    # than a python one-liner so the concatenation is visible in the .command.sh of a failed run.
-    for f in ${tables}; do
-        d=\$(basename \$f | sed 's/\\..*//')
-        awk -v d="\$d" 'NR==1 && !h {print "donor\\t" \$0; h=1; next} FNR>1 {print d "\\t" \$0}' \\
-            OFS='\\t' \$f
-    done > cohort.cassettes.tsv
+    # ONE header, and a `donor` column carrying the sample id each row came from. awk over the whole
+    # file list rather than one invocation per file: a per-file loop resets awk's state, so it
+    # re-emitted the header for every table after the first and those became data rows. And a table
+    # that ALREADY has a `donor` column -- which `cassette select --passthrough` writes -- got a
+    # second one prepended, which `dict(zip(...))` resolves in favour of the later, constant value,
+    # collapsing every donor into one group. That is the cross-donor comparison this process exists
+    # for. awk rather than python so the concatenation is visible in the .command.sh of a failed run.
+    awk -F'\\t' -v OFS='\\t' '
+        FNR == 1 {
+            n = split(FILENAME, p, "/"); split(p[n], q, "."); d = q[1]
+            di = 0; for (i = 1; i <= NF; i++) if (\$i == "donor") di = i
+            if (!seen) { if (di) print \$0; else print "donor", \$0; seen = 1 }
+            next
+        }
+        { if (di) \$di = d; else \$0 = d OFS \$0; print }
+    ' ${tables} > cohort.cassettes.tsv
 
     if [ -n "${pool}" ]; then
-        for f in ${pools}; do
-            d=\$(basename \$f | sed 's/\\..*//')
-            awk -v d="\$d" 'NR==1 && !h {print "donor\\t" \$0; h=1; next} FNR>1 {print d "\\t" \$0}' \\
-                OFS='\\t' \$f
-        done > cohort.pool.tsv
+        awk -F'\\t' -v OFS='\\t' '
+            FNR == 1 {
+                n = split(FILENAME, p, "/"); split(p[n], q, "."); d = q[1]
+                di = 0; for (i = 1; i <= NF; i++) if (\$i == "donor") di = i
+                if (!seen) { if (di) print \$0; else print "donor", \$0; seen = 1 }
+                next
+            }
+            { if (di) \$di = d; else \$0 = d OFS \$0; print }
+        ' ${pools} > cohort.pool.tsv
     fi
 
     mhcmatch cassette score \\
         --cassettes cohort.cassettes.tsv \\
-        ${pool} ${prev} ${rho} ${per} ${args} \\
-        --out cohort.cassette_score.tsv
+        ${pool} ${prev} ${rho} ${per} ${scol} ${args} \\
+        --out ${prefix}.cassette_score.tsv
 
     cat <<-END_VERSIONS > versions.yml
     "${task.process}":
@@ -416,9 +444,10 @@ process MHCMATCH_CASSETTE_SCORE {
     """
 
     stub:
+    def prefix = task.ext.prefix ?: 'cohort'
     """
     printf 'donor\\tk\\tyield\\tp_mean\\tp_at_least\\toffset\\trho\\tn_effective\\tlam\\n' \\
-        > cohort.cassette_score.tsv
+        > ${prefix}.cassette_score.tsv
 
     cat <<-END_VERSIONS > versions.yml
     "${task.process}":

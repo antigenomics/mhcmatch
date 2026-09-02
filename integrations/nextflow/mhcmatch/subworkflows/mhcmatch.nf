@@ -1,7 +1,8 @@
 // End-to-end mhcmatch: variant windows in, ranked candidates and a screened cassette out.
 //
-// Chains six of the processes in ./main.nf, and is UNCHANGED -- an existing `include` of it keeps
-// working. ../subworkflows/rerank.nf and denovo.nf are the two arms ../pipeline.nf runs; this one is
+// Chains five of the processes in ./main.nf. Its channel topology is UNCHANGED -- an existing
+// `include` of it keeps working -- with one removal: the CASSETTE_SCORE call, which had never once
+// completed because it was handed a report it cannot read (see the note further down). ../subworkflows/rerank.nf and denovo.nf are the two arms ../pipeline.nf runs; this one is
 // the original chain. Take it as written or as a template -- the useful part is
 // which output feeds which input, because that is the thing a README sentence gets wrong.
 //
@@ -9,13 +10,12 @@
 //                 └► RANK ────► ranked.tsv ─┬─► NEOAG   ─► neoag.tsv     class I only
 //                                           ├─► MIMICRY ─► mimicry.tsv   class I only
 //                                           └─► CASSETTE─► cassette      class I only
-//                                                        └─► CASSETTE_SCORE (all donors at once)
 //
 // PREDICT and RANK serve both classes. NEOAG, MIMICRY and CASSETTE are CD8-only by design, not
 // by omission -- see the comment at the filter and docs/safety.rst.
 //
-// CASSETTE_SCORE is the one step that is NOT per sample: it waits for every donor so the
-// calibration offset is fitted once over the run. See its comment in ../main.nf.
+// There is no CASSETTE_SCORE step here -- see the note where it used to be called. Use
+// ./rerank.nf or ./denovo.nf, which run `cassette select` and can supply the shape it needs.
 //
 // CASSETTE takes `ranked.tsv` as its candidate table AND the original `windows.fasta` as `--context`:
 // `rank` emits minimal epitopes and a unit is the long window around the mutation, so neither side
@@ -27,7 +27,6 @@ include { MHCMATCH_RANK     } from '../main.nf'
 include { MHCMATCH_NEOAG    } from '../main.nf'
 include { MHCMATCH_MIMICRY  } from '../main.nf'
 include { MHCMATCH_CASSETTE       } from '../main.nf'
-include { MHCMATCH_CASSETTE_SCORE } from '../main.nf'
 
 workflow MHCMATCH {
 
@@ -75,16 +74,17 @@ workflow MHCMATCH {
     MHCMATCH_CASSETTE( ch_vector )
     ch_versions = ch_versions.mix( MHCMATCH_CASSETTE.out.versions.first() )
 
-    // ONE calibration for the whole run, which is why this is `.collect()` and not a per-sample
-    // call. `rank` anchors `p_response` on the batch it is handed, so scoring each donor alone
-    // makes every donor's mean the declared prevalence and no two donors comparable. Collecting
-    // first is the fix, and it is the only place in this subworkflow where a process deliberately
-    // waits for every sample.
-    MHCMATCH_CASSETTE_SCORE(
-        MHCMATCH_CASSETTE.out.report.map { meta, tsv -> tsv }.collect(),
-        ch_ranked.filter { meta, cls, tsv -> cls == 'mhc1' }.map { meta, cls, tsv -> tsv }.collect()
-    )
-    ch_versions = ch_versions.mix( MHCMATCH_CASSETTE_SCORE.out.versions )
+    // **MHCMATCH_CASSETTE_SCORE is not called here, and cannot be.** It wants one row per
+    // manufactured unit with a peptide and a score; what this chain has is `.cassette.tsv`, which is
+    // long-form (`section, i, key, value, detail`) with the peptide absent and `p` inside a
+    // free-text field. This subworkflow passed that report to it from the day the process was added,
+    // so the step had never once completed -- it was removed on 2026-09-02 rather than left as a
+    // wiring that always fails at the last stage of a long run.
+    //
+    // The units table comes from `cassette select`, which this chain does not run: it sizes by the
+    // per-allotype `--n0` stopping rule, not by a fixed k. To score a cohort, use
+    // ../subworkflows/rerank.nf or denovo.nf, which put MHCMATCH_CASSETTE_SELECT in front and hand
+    // its output to the scorer.
 
     emit:
     scored   = MHCMATCH_PREDICT.out.scored     // [ meta, cls, *.mhcmatch.scored.csv ]
@@ -95,6 +95,5 @@ workflow MHCMATCH {
     cassette = MHCMATCH_CASSETTE.out.protein   // [ meta, *.cassette.faa ]
     cds      = MHCMATCH_CASSETTE.out.cds       // [ meta, *.cassette.fna ]
     report   = MHCMATCH_CASSETTE.out.report    // [ meta, *.cassette.tsv ]
-    score    = MHCMATCH_CASSETTE_SCORE.out.score  // cohort.cassette_score.tsv, ONE per run
     versions = ch_versions
 }

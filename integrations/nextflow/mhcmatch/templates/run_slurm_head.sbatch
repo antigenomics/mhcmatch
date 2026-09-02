@@ -1,0 +1,55 @@
+#!/bin/bash -l
+#SBATCH --job-name=mhcmatch-head
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=8G
+#SBATCH --time=48:00:00
+#SBATCH --output=logs/mhcmatch-head-%j.out
+#
+#   sbatch --partition <your-partition> run_slurm_head.sbatch
+#
+# The COHORT form. Nextflow's own process is what sbatch runs; it then submits one job per task, so
+# samples run in parallel across the cluster instead of inside one allocation. Give the head job a
+# small allocation and a long wall clock, because it mostly waits.
+set -euo pipefail
+
+# ---------------------------------------------------------------- EDIT THESE
+ENV=mhcmatch
+MODULE=/path/to/mhcmatch/integrations/nextflow/mhcmatch
+REF=/shared/ref/mhcmatch
+IN=/path/to/donor_files
+OUT=$PWD/results
+QUEUE=                             # REQUIRED. `--mhcmatch_slurm_queue` falls back to `normal`,
+                                   # which is a common partition name and not a universal one, so
+                                   # the default gets every task rejected at submit on a cluster
+                                   # that does not have it. Check `sinfo`, and check its TIME LIMIT:
+                                   # MHCMATCH_CASSETTE asks for 8 h under --screen and a 2 h queue
+                                   # cannot give it
+N0=8
+K=20
+TUMOR=SKCM
+# -----------------------------------------------------------------------------
+[ -n "$QUEUE" ] || { echo "set QUEUE: run 'sinfo -o \"%20P %5a %10l %6D %6c %10m\"' first" >&2; exit 2; }
+
+export MHCMATCH_PMHC_DIR="$REF/pmhc_data"
+export MHCMATCH_CALIBRATION_CACHE="$REF/calibration"
+export TMPDIR="${TMPDIR:-$REF/tmp}"
+export NXF_ANSI_LOG=false
+export NXF_OPTS='-Xms1g -Xmx4g'
+export NXF_HOME="$REF/.nextflow"
+mkdir -p "$TMPDIR" "$NXF_HOME" logs
+
+conda run -n "$ENV" --no-capture-output nextflow run "$MODULE/pipeline.nf" \
+    -profile slurm \
+    --indir   "$IN" \
+    --outdir  "$OUT" \
+    --mhcmatch_slurm_queue       "$QUEUE" \
+    --mhcmatch_pmhc_dir          "$REF/pmhc_data" \
+    --mhcmatch_calibration_cache "$REF/calibration" \
+    --mhcmatch_vector_n0  $N0 \
+    --mhcmatch_cassette_k $K \
+    --mhcmatch_tumor      $TUMOR \
+    -resume
+
+# `-resume` is not optional in practice: MHCMATCH_CASSETTE --screen builds a whole-proteome index
+# per register length, and a re-run without it repeats hours of work that has not changed.
+echo "RUN OK"

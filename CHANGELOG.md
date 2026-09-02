@@ -48,6 +48,41 @@ runnable Nextflow entry point over a directory of files.
   cosmetic: `cassette build --quota` charges a unit to the non-conventional arm on that column, and
   a blank one makes the quota satisfiable by missense alone. `Ranked.row` carries the source row.
 
+- **The `--passthrough` column contract, enforced.** Two required columns — the peptide
+  (`peptide` / `epitope`) and the allele (`allele` / `best_allele`) — and the run stops naming what
+  is missing, rather than surfacing it minutes into scoring as an empty `allele` field, which is a
+  real and *different* state (`_unscored` handles a row that named no allele we know). Four more are
+  used when present and cost nothing when absent: `wt_peptide`, `gene`/`gene_name`, `tpm`, and
+  `type`+`subtype`. Everything else may be named in any style and comes back untouched.
+
+  **A collision between one of the caller's columns and a name this command adds is an error**, not
+  a warning. Two columns under one name break in the worst way available: every reader that keys a
+  row by name — `csv.DictReader`, pandas, polars, our own `_read_table` — silently resolves the
+  duplicate in favour of one of them, and which one is not something the file records.
+
+- **The two arms name their outputs apart, via `ext.prefix`.** Both run `NEOAG`, `MIMICRY`,
+  `CASSETTE_SELECT` and `CASSETTE`, and each writes `${meta.id}.<something>` — the same filename
+  from two processes under `--mode both`. The de novo cassette overwrote the rerank one in
+  publishDir, and, worse because it is silent, `CASSETTE_SCORE` collecting `*.vaccine.units.tsv` got
+  a set mixing the two, so units chosen from one arm's pool were scored against the other's.
+  Measured on a mouse line: **5 of 20 units absent from the pool they were selected from**. Outputs
+  are now `<id>.rerank.*` and `<id>.denovo.*`, and the cohort score `cohort.{rerank,denovo}.*`.
+
+- **`MHCMATCH_CASSETTE_SCORE` had never once completed**, in any subworkflow. It was handed
+  `CASSETTE.out.report` — the long-form `.cassette.tsv`, `section/i/key/value/detail`, with the
+  peptide absent and `p` inside a free-text field — where `cassette score` wants one row per
+  manufactured unit. It now takes `CASSETTE_SELECT.out.units`. `subworkflows/mhcmatch.nf` has no
+  selector and so cannot supply that shape at all; the broken call is removed from it with a note
+  pointing at the two arms. Its `awk` is rewritten too: run once per file in a shell loop, it reset
+  awk's state and re-emitted the header for every table after the first, and it prepended a second
+  `donor` column to a table that already had one — which `dict(zip(...))` resolves in favour of the
+  later, constant value, collapsing every donor into one group.
+
+- **`templates/`** — four SLURM scripts with one `EDIT THESE` block each and nothing
+  cluster-specific below it: `setup.sbatch` (once), `run_human.sbatch` / `run_mouse.sbatch` (a few
+  samples, local executor) and `run_slurm_head.sbatch` (a cohort, one job per task), with their own
+  README.
+
 - **`cassette select --passthrough`**, and **`cassette build|order --unit-column COL`** — the
   chosen units keep the caller's columns, including the long window `build` then assembles from,
   so a reranked table can become a cassette with no window FASTA to rebuild one from
