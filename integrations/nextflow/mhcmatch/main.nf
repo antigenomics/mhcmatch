@@ -305,8 +305,15 @@ process MHCMATCH_CASSETTE {
     // `mhcmatch_vector_map_alleles_mhc2` is what makes it worth more than a coordinate listing --
     // without the recipient's class-II allotypes the map carries class I only and `self_help`
     // (does this unit's CD8 epitope have CD4 help from the SAME unit?) cannot be computed at all.
-    def map2   = params.mhcmatch_vector_map_alleles_mhc2
-                     ? "--map-alleles-mhc2 '${params.mhcmatch_vector_map_alleles_mhc2}'" : ''
+    // Falls back to `--alleles_mhc2`, the ONE literal class-II panel a run may use for every sample
+    // (the mouse case, and any cohort typed once) -- it is the recipient's list, so the map gets it
+    // for free and `self_help` becomes computable. Resolved here rather than in the config because a
+    // config statement runs before Nextflow applies `--param`. A PER-DONOR list cannot travel this
+    // way: it would have to be a sixth element of this process's input tuple, which is a breaking
+    // change to a signature other pipelines include -- so a per-donor run gets a class-I-only map,
+    // and the process says so on stderr.
+    def m2list = params.mhcmatch_vector_map_alleles_mhc2 ?: params.alleles_mhc2
+    def map2   = m2list ? "--map-alleles-mhc2 '${m2list}'" : ''
     def mapArg = params.mhcmatch_vector_map
                      ? "--map ${prefix}.cassette.map.tsv --map-json ${prefix}.cassette.map.json " +
                        "--map-threshold ${params.mhcmatch_vector_map_threshold ?: 2.0} ${map2}" : ''
