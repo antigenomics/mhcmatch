@@ -18,12 +18,17 @@
 # you on the system interpreter.
 set -euo pipefail
 
-# ---------------------------------------------------------------- EDIT THESE FOUR
-ENV=mhcmatch                                  # conda env name
-TYPING=""                                     # optional: a typing file, to check allele resolution
-REF=/shared/ref/mhcmatch                      # a filesystem EVERY compute node can see, and a
-                                              # large one -- not a home quota
-WHEELHOUSE=""                                 # optional: a directory of .whl files, see below
+# ---------------------------------------------------------------- EDIT THESE
+ENV=mhcmatch          # conda env name
+REF=/shared/ref/mhcmatch
+                      # the shared reference + calibration root. A filesystem EVERY compute node can
+                      # see, and a large one -- not a home quota, which on a shared cluster is
+                      # typically small, untracked and never cleaned up
+TYPING=""             # optional but worth it: one typing file. Prints how many alleles resolved,
+                      # which is the five-second check that a run is not about to score against an
+                      # empty panel
+WHEELHOUSE=""         # optional: a directory of .whl files, for a node whose egress cannot reach
+                      # PyPI. See the note further down
 # -----------------------------------------------------------------------------
 
 export MHCMATCH_PMHC_DIR="$REF/pmhc_data"
