@@ -313,7 +313,7 @@ def test_an_empty_gene_column_does_not_win_over_a_populated_alias(tmp_path):
 @pytest.mark.hfdata
 @pytest.mark.parametrize("species,alleles,peptide", [
     ("human", ["HLA-A*02:01", "HLA-A02:01", "A*02:01", "A0201"], "GILGFVFTL"),
-    ("mouse", ["H2-K*d", "H-2Kd", "H-2-Kd"], "SYTSYIMAI"),
+    ("mouse", ["H2-K*d", "H-2Kd", "H-2-Kd"], "SYIPSAEKI"),   # PbCSP 252-260, H-2Kd
 ])
 def test_the_panel_accepts_every_spelling_we_emit(species, alleles, peptide):
     """**The panel and the pseudosequence tables do not spell an allele the same way.**
