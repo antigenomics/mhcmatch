@@ -1770,6 +1770,17 @@ def _cassette_rows(path, score_col, need_score=True):
             say("no allele column: the allotype channel and coverage are off "
                 f"(looked for allele, mm_allele_scored, mm_allele, best_allele; found {cols})",
                 level=1)
+    # The source gene, resolved the same way and for a reason that is not cosmetic either. It is
+    # what `vector.self_origin_risk` excludes when it asks "does this register coincide with a
+    # DIFFERENT expressed gene" -- so an empty one makes every register match its own source and the
+    # safety screen withdraws the unit. Measured on a real donor whose table spelled it `gene_name`:
+    # 18 of 20 units withdrawn over 20,150 findings, none of them a real off-target.
+    if "gene" not in cols or not any(str(r.get("gene") or "").strip() for r in rows):
+        gcol = next((c for c in ("mm_gene", "gene_name", "gene_symbol") if c in cols), None)
+        if gcol:
+            say(f"gene column: {gcol!r}", level=1)
+            for r in rows:
+                r["gene"] = r.get(gcol, "")
     # A pipeline table spells the peptide `epitope`, and one `rank --passthrough --prefix` has
     # annotated carries the caller's `epitope` beside our `mm_peptide` -- the same string. Resolved
     # like the score column below rather than made the caller's problem with a rename stage.

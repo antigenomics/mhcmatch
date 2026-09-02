@@ -283,3 +283,25 @@ def test_passthrough_refuses_a_column_that_collides_with_ours(tmp_path):
         cli.main(["rank", "pairs", t, "--score", "gate", "--passthrough"])
     # ...and the prefix is what resolves it, which is why the shipped deliverables use `mm_`.
     cli.main(["rank", "pairs", t, "--score", "gate", "--passthrough", "--prefix", "mm_"])
+
+
+def test_cassette_rows_resolves_the_gene_column(tmp_path, capsys):
+    """Not cosmetic: `vector.self_origin_risk` excludes the unit's OWN gene when it asks whether a
+    register coincides with a different expressed one. An empty `gene` makes every register match
+    its own source, so the safety screen withdraws the unit -- measured on a real donor whose table
+    spelled it `gene_name` as 18 of 20 units withdrawn over 20,150 findings, none a real
+    off-target."""
+    p = tmp_path / "c.tsv"
+    p.write_text("epitope\tgene_name\tmm_allele_scored\tmm_score\nGILGFVFTL\tMYGENE\tHLA-A02:01\t2.5\n")
+    rows, _ = cli._cassette_rows(str(p), "mm_score")
+    assert rows[0]["gene"] == "MYGENE"
+    assert "gene column: 'gene_name'" in capsys.readouterr().err
+
+
+def test_an_empty_gene_column_does_not_win_over_a_populated_alias(tmp_path):
+    """`cassette select` writes a `gene` key whether or not it found one, so the check is on the
+    VALUES, not on the column's presence."""
+    p = tmp_path / "c.tsv"
+    p.write_text("epitope\tgene\tmm_gene\tmm_score\nGILGFVFTL\t\tMYGENE\t2.5\n")
+    rows, _ = cli._cassette_rows(str(p), "mm_score")
+    assert rows[0]["gene"] == "MYGENE"
