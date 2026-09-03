@@ -502,6 +502,15 @@ coerced **at the point of use**, never in `nextflow.config` — a config stateme
 reverse one — somebody who believes they enabled `--mhcmatch_vector_screen` and did not gets a
 cassette with no safety check and no error.
 
+**Three params the module reads but does not own** -- `outdir`, `genome` and `publish_dir_mode` --
+belong to the calling pipeline, as in every nf-core module, and are defaulted here only when absent
+so a caller who set them is never clobbered. `publish_dir_mode` is the one worth naming: it is the
+only one of the three evaluated eagerly at config-parse time (`publishDir mode:`; the other two sit
+inside closures and resolve per task), so leaving it unset aborts the run **before the first
+process** rather than at the first publish, with `Unknown config attribute
+process.withName:MHCMATCH_*.params.publish_dir_mode`. Running `pipeline.nf` directly you get `copy`
+and never think about it.
+
 
 | param | default | what it does |
 |---|---|---|
