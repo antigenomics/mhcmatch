@@ -17,13 +17,13 @@ visible in the code's own docstrings:
 
 | axis | mechanism | law-abiding? |
 |---|---|---|
-| PWM mixture (`n_motifs`) | `n_k=0 → pooled` **identically** (`_dist`) | ✅ |
-| length (`length_motifs`) | `n_{a,L}=0 → pooled` **identically** (`_dist_len`) | ✅ |
-| shrinkage *target* (`m_a`) | kernel-weighted neighbour mean (`shrink`) | ✅ |
-| offset prior | shrunk over neighbours (`_offset_logprior`) | ✅ |
-| **register** (`register_em`) | **global pass count** | ❌ |
-| **shrinkage *strength*** (`τ`) | **global constant, 10** | ❌ |
-| **anchor** (`footprint`) | **hard threshold `n ≤ rare_max=30`** | ❌ |
+| PWM mixture (`n_motifs`) | `n_k=0 → pooled` **identically** (`_dist`) | yes |
+| length (`length_motifs`) | `n_{a,L}=0 → pooled` **identically** (`_dist_len`) | yes |
+| shrinkage *target* (`m_a`) | kernel-weighted neighbour mean (`shrink`) | yes |
+| offset prior | shrunk over neighbours (`_offset_logprior`) | yes |
+| **register** (`register_em`) | **global pass count** | no |
+| **shrinkage *strength*** (`τ`) | **global constant, 10** | no |
+| **anchor** (`footprint`) | **hard threshold `n ≤ rare_max=30`** | no |
 
 The law the first four obey:
 

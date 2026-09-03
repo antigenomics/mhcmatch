@@ -89,7 +89,8 @@ different answers and one must not overwrite the other:
        and in no column of the TSV, so their absence from the TSV means nothing
    * - ``<id>.{rerank,denovo}.cassette.tsv``
      - the assembly **report**, long-form (``section, i, key, value, detail``): a ``withdrawn``
-       section naming every unit the safety screen removed and the clause that fired, plus
+       section naming every unit the safety screen removed and the clause that fired -- empty
+       under the shipped default, because the screen is off unless you ask for it -- plus
        ``unit``, ``junction``, ``allotype``, ``cassette`` and ``sequence``. **Not** the epitope
        table — that is ``vaccine.units.tsv`` above
    * - ``cohort.{rerank,denovo}.cassette_score.tsv``
@@ -232,6 +233,16 @@ DPB1/DQB1 get their alpha imputed from :func:`mhcmatch.pseudoseq.alpha_prior`.
 Measured on 40 donor typing files: every one yields 3–6 class-I and 3–10 class-II alleles.
 The non-classical loci among the dropped are correct — the panel carries no pseudosequence for
 HLA-E, -F or -G.
+
+.. warning::
+
+   **The safety screen is OFF by default.** With ``--mhcmatch_vector_screen`` unset, no unit is
+   withdrawn for essential-tissue self-origin and the cassette carries whatever it was handed.
+   Every ``MHCMATCH_CASSETTE`` task prints that no screen ran. **Turn it on before anything is
+   manufactured**: ``--mhcmatch_vector_screen true``, after staging the index it needs with
+   ``mhcmatch bootstrap --index "human:8|9|10|11"`` (published; 3.08 s to load against 64.6 s to
+   build). The mimicry annotation is off for the same reason, and is a different case -- it is
+   annotation only, and scores are identical either way.
 
 How long it takes, and the two stages that ship off
 ---------------------------------------------------

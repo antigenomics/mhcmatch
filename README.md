@@ -516,7 +516,7 @@ mhcmatch cassette build --candidates ranked.tsv --context windows.fasta --n0 8 -
     --fasta cassette.faa --fasta-nt cassette.fna
 ```
 
-⚠️ **`mimicry` is a scoring term, not a safety screen.** Flagging candidates by "resembles a
+**`mimicry` is a scoring term, not a safety screen.** Flagging candidates by "resembles a
 tolerance-side reference" fires on almost everything — influenza `GILGFVFTL` drew 14
 essential-tissue hits — because anchor-masked similarity to a *presented* reference is presentation,
 not recognition. Exclusion goes through `vector.self_origin_risk`
@@ -653,12 +653,27 @@ Both arms end in a cassette, published as six files per donor and arm:
 | `<id>.<arm>.cassette.faa` | the assembled construct, with whichever spacer the junction sweep chose |
 | `<id>.<arm>.cassette.fna` | its CDS, deslipped |
 | `<id>.<arm>.cassette.map.tsv` / `.map.json` | unit / linker / epitope in 1-based coordinates. Both carry the feature rows; **only the JSON carries the per-unit summary**, which is where `self_help` is — `summary.n_units_with_self_help` |
-| `<id>.<arm>.cassette.tsv` | the assembly **report** (`section, i, key, value, detail`) — where the safety screen records what it withdrew and why. **Not** the epitope table |
+| `<id>.<arm>.cassette.tsv` | the assembly **report** (`section, i, key, value, detail`) — where the safety screen records what it withdrew and why, **when it is enabled**; with the shipped default the `withdrawn` section is empty because no screen ran. **Not** the epitope table |
 | `cohort.<arm>.cassette_score.tsv` | one per run and per arm, because `rank` anchors `p_response` on the batch it is handed |
 
 The construct carries no more *units* than *k* and usually fewer — several epitopes can share one
-27-mer window, and the safety screen withdraws some — so read `units=` from the FASTA header rather
-than assuming *k*.
+27-mer window, and the safety screen withdraws some **when it is enabled** — so read `units=` from
+the FASTA header rather than assuming *k*.
+
+> ### The safety screen is OFF by default. Turn it on before you manufacture anything.
+>
+> `--mhcmatch_vector_screen true`. With it off — the shipped default since 1.7.3 — **no unit is
+> withdrawn for essential-tissue self-origin** and the cassette carries whatever it was handed.
+> Every `MHCMATCH_CASSETTE` task prints that no screen ran, so the absence is never silent, but a
+> log line is not a substitute for reading this.
+>
+> It is off because it cost hours rather than because it is optional: the whole-proteome index it
+> needs was rebuilt inside every task. That is fixed — the index is published and loads in **3.08 s**
+> against 64.6 s to build — so turning it on is now cheap. Stage it first with
+> `mhcmatch bootstrap --index "human:8|9|10|11"`.
+>
+> The **mimicry annotation** (`--mhcmatch_mimicry`) is off for the same reason and is a different
+> case: it is annotation only, and **scores are identical either way**.
 
 > **The pipeline requires mhcmatch >= 1.7.3.** Its first process calls `mhcmatch alleles` and the
 > rerank arm calls `rank --passthrough`; neither exists in 1.6.0, and 1.6.1 was never published.

@@ -709,7 +709,7 @@ audit of it found five defects that every local check passes straight through.
 
 ## [1.2.0] --- 2026-08-27
 
-**⚠ The shipped neoantigen scorer gains a term and changes the scale it divides abundance by.
+**The shipped neoantigen scorer gains a term and changes the scale it divides abundance by.
 Every score moves.**
 
 ### Changed
@@ -855,7 +855,7 @@ Every score moves.**
 
 ## [1.1.0] --- 2026-08-25
 
-**⚠ The shipped neoantigen scorer changes its feature set, and the composition objective changes
+**The shipped neoantigen scorer changes its feature set, and the composition objective changes
 its risk term.** Every user's scores and every built cassette move.
 
 ### Changed
@@ -943,7 +943,7 @@ its risk term.** Every user's scores and every built cassette move.
 
 ## [1.0.6] --- 2026-08-25
 
-**⚠ The shipped neoantigen scorer is refitted.** Every coefficient moves.
+**The shipped neoantigen scorer is refitted.** Every coefficient moves.
 
 ### Changed
 
