@@ -203,6 +203,22 @@ def _read_peptides(path, inline=()):
     return [p for p in peps if p]
 
 
+def _pairs(a):
+    """``[(peptide, wt), ...]`` for a batch run, or ``None`` when this is a single invocation.
+
+    The ``--out``-makes-it-a-batch-of-one rule of :func:`_batch`, for the two commands that read
+    *pairs* rather than a bare list. ``affinity`` and ``explain`` both took ``--out``, exited 0 and
+    wrote no file on their positional path; here the single peptide carries its ``--wt`` into the
+    same pair the file path would have produced, so the emitted schema does not depend on how the
+    peptide arrived.
+    """
+    if getattr(a, "peptides", None):
+        return _read_pairs(a.peptides)
+    if getattr(a, "out", None) and getattr(a, "peptide", None):
+        return [(a.peptide, getattr(a, "wt", "") or "")]
+    return None
+
+
 def _read_pairs(path, second="wt_peptide"):
     """``[(peptide, wt), ...]`` from a TSV with ``peptide`` + ``second`` columns, else columns 1-2.
 
@@ -226,8 +242,24 @@ def _read_pairs(path, second="wt_peptide"):
 
 
 def _batch(a, positional=None):
-    """The peptide list for a batch run, or ``None`` when this is a single-peptide invocation."""
+    """The peptide list for a batch run, or ``None`` when this is a single-peptide invocation.
+
+    **A single peptide plus ``--out`` is a batch of one**, and saying so here is what stops five
+    commands from accepting ``--out``, exiting 0, printing the aligned table to stdout and never
+    creating the file. That was the behaviour of ``restriction``, ``affinity``, ``decompose``,
+    ``explain`` and ``binder``: each wrote through :class:`_Out` on its ``--peptides`` path and
+    ignored ``a.out`` entirely on the positional one, so a caller got a returncode and a
+    populated stdout with nothing to suggest the named file was missing. ``span`` and ``predict``
+    do not declare ``--out`` at all and argparse rejects it loudly, which is the behaviour this
+    restores for the rest.
+
+    Routing the single peptide through the same writer also makes the two paths emit **one**
+    schema, which is what a caller who scripts over both needs -- the aligned form is a different
+    shape by design (see the ``--out``/``--tsv`` note in ``docs/cli.rst``).
+    """
     if not getattr(a, "peptides", None):
+        if getattr(a, "out", None) and getattr(a, "peptide", None):
+            return [a.peptide]
         return None
     return _read_peptides(a.peptides, [positional] if positional else ())
 
@@ -330,10 +362,10 @@ def cmd_affinity(a):
     store = _store(a)
     allele = _resolve_panel_allele(store, a.allele, a.cls)
     am = store.affinity_model(a.cls)
-    if a.peptides:
+    pairs = _pairs(a)
+    if pairs is not None:
         # a `wt_peptide` (or second) column is read as the WT counterpart, so agretopicity comes out
         # of the same pass instead of needing a second run keyed back on the peptide
-        pairs = _read_pairs(a.peptides)
         out = _Out(a, "peptide")
         out.header("peptide", "allele", "ic50_nm", "wt_peptide", "wt_ic50_nm", "amplitude", "dai")
         for p, wt in pairs:
@@ -916,8 +948,8 @@ def cmd_explain(a):
     from . import complement as CM, posbayes, rank as R
     store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
     from . import predict as P
-    if a.peptides:
-        pairs = _read_pairs(a.peptides)
+    pairs = _pairs(a)
+    if pairs is not None:
         peps = [p for p, _ in pairs]
         recog = CM.score(peps, a.species)                 # vectorised: one pass for the whole list
         llr = [posbayes.llr(p, a.species) for p in peps]

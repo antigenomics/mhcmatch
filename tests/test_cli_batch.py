@@ -465,3 +465,33 @@ def test_genes_reads_a_named_peptide_column_and_refuses_a_missing_one(tmp_path, 
 
     with pytest.raises(SystemExit, match="mt_peptide"):
         cli.main(["genes", str(t), "--species", str(gene_fasta)])
+
+
+@pytest.mark.parametrize("cmd,argv", [
+    ("restriction", ["restriction", "NLVPMVATV"]),
+    ("binder",      ["binder", "NLVPMVATV"]),
+    ("decompose",   ["decompose", "NLVPMVATV"]),
+    ("affinity",    ["affinity", "NLVPMVATV", "--allele", "HLA-A*02:01", "--wt", "NLVPMVATL"]),
+    ("explain",     ["explain", "NLVPMVATV", "--allele", "HLA-A*02:01"]),
+])
+@pytest.mark.hfdata
+def test_out_on_a_single_peptide_writes_the_file_it_names(cmd, argv, tmp_path, capsys):
+    """``--out`` was accepted, ignored and exited 0 on every positional path.
+
+    Five commands wrote through ``_Out`` on their ``--peptides`` path and read ``a.out`` nowhere on
+    the single-peptide one: the aligned table went to stdout, the named file was never created, and
+    the caller saw a returncode of 0 with populated output. Nothing about that says "your file is
+    missing". ``span`` and ``predict`` do not declare ``--out``, so argparse rejects it loudly --
+    which is what makes the silent five a bug rather than a convention.
+
+    Asserting the header matters as much as the file: a single peptide and a list must emit ONE
+    schema, or a caller who scripts over both joins two different tables.
+    """
+    from mhcmatch.cli import main
+
+    out = tmp_path / f"{cmd}.tsv"
+    main([*argv, "--out", str(out)])
+    assert out.exists(), f"{cmd} --out exited 0 and wrote nothing"
+    lines = out.read_text().splitlines()
+    assert len(lines) >= 2, f"{cmd}: header only, no row"
+    assert lines[0].split("\t")[0] == "peptide", f"{cmd}: unexpected schema {lines[0]!r}"
