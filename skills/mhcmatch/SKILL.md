@@ -40,7 +40,7 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 
 | param | default | use |
 |---|---|---|
-| `background` | `"ligand"` | **the null, and the main per-task knob.** `"ligand"` = specificity (which allele? → restriction/hard-negative tasks). `"proteome"` = presentation `log(θ_A/p_proteome)` (is it presented at all? → screening). `"markov"` = order-1 proteome (measured slightly worse; opt-in). Since 1.5.0 `"ligand"` pools every allele's ligands **except the queried one**; `"ligand-pooled"` reproduces the pre-1.5.0 self-inclusive null, which scored `H-2-IAb` (6,483 of 6,705 mouse class-II ligands) against its own motif at AUROC 0.322 |
+| `background` | `"ligand"` | **the null, and the main per-task knob.** `"ligand"` = specificity (which allele? → restriction/hard-negative tasks). `"proteome"` = presentation `log(θ_A/p_proteome)` (is it presented at all? → screening). `"markov"` = order-1 proteome (measured slightly worse; opt-in). `"ligand"` pools every allele's ligands **except the queried one**; `"ligand-pooled"` is the self-inclusive null, which scored `H-2-IAb` (6,483 of 6,705 mouse class-II ligands) against its own motif at AUROC 0.322 |
 | `footprint` | `"anchor"` | `"anchor"` (primary pockets) / `"core"` (all core positions) / `"adaptive"` (MHC-I: anchors for rare alleles, full core otherwise; MHC-II: always the full 9-mer core). **`predict.build_scorer` ships `"adaptive"`, so `"anchor"` is never the predict-path footprint** — a benchmark arm left at `"anchor"` understates mhcmatch. `rare_max=30` is a hard threshold sitting on the eval stratum boundary — see `docs/hierarchical_rules.md` |
 | `n_motifs` | `3` (MHC-II) | motif-mixture components, fit by EM on the corpus. K=3 closes ~40% of the frequent gap. Self-adapting: an empty component returns the pooled motif *identically*. `1` = single-PWM escape hatch |
 | `register` | `"marginal"` | MHC-II: integrate the register out under the learned core-offset prior; `"max"` picks the single best frame instead |
@@ -150,9 +150,8 @@ exits 0. This trims, splits the classes, joins the DP/DQ alpha-beta pair, and re
 
 **`predict` / `rank fasta` drop nothing by default, and the tier is class-aware.**
 `--rank-threshold sb|wb|<pct>|none` (default `none`). `wb` is 2.0 on class I and **10.0** on class
-II; a bare number is the same in both, which is why `2.0` -- the pre-1.8.0 default -- was the
-*strong* class-II cut and kept 0 of 56 scored pairs in a measured case, returncode 0 and an empty
-table. `band` is class-aware for the same reason (`predict.band_for`), and `n_alleles_presenting`
+II; a bare number is the same in both, which is why a flat `2.0` is the *strong* class-II cut and
+keeps 0 of 56 scored pairs in a measured case, returncode 0 and an empty table. `band` is class-aware for the same reason (`predict.band_for`), and `n_alleles_presenting`
 deliberately is **not** tied to the caller's threshold -- it uses the class's weak cut.
 **Two whitelists, and `keep_reason` names which fired.** `--keep-genes 'TP53,KRAS'` (a driver list)
 and `--keep-epitopes builtin|LIST|FILE` (a validated-response list) are separate flags because they
@@ -162,7 +161,7 @@ strongest-evidence-first. `--keep-mismatch 1` widens the epitope list to one sub
 length only. `builtin` is the shipped `seqtree` index of the 23,299 peptides an assay called
 immunogenic (`known`'s `neoantigen` set): **pre-built by `mhcmatch build known`, reloaded in ~1 ms,
 never built at run time** -- so N concurrent samples pay a read, not a build, and share no cache to
-race on. `--keep` is the deprecated 1.8.0 one-list spelling and still runs.
+race on. `--keep` is the deprecated one-list spelling and still runs.
 
 A gene symbol has to *reach the row* first: the rerank/de novo arms carry one in the variant header,
 a bare peptide table does not -- run `mhcmatch genes` (same `seqtree` proteome index) before
@@ -171,14 +170,13 @@ a bare peptide table does not -- run `mhcmatch genes` (same `seqtree` proteome i
 **Pass `--peptides FILE`, never loop the shell.** The setup a per-peptide invocation re-pays is the
 whole cost: the presentation/affinity calibrators ~5 s, a human-proteome length index 64.6 s -- the
 one of those that now also survives the process, cached on disk under `$MHCMATCH_CALIBRATION_CACHE`
-and fetchable prebuilt in 3.08 s (`bootstrap --index`) since 1.7.3. One process over a list is the
-difference between seconds per peptide and thousands per second.
+and fetchable prebuilt in 3.08 s (`bootstrap --index`). One process over a list is the difference
+between seconds per peptide and thousands per second.
 `--threads` exists **only** on `source`, `mimics` and `genes`, whose neighbour search runs in C++ with the GIL
 released; elsewhere it is absent rather than accepted and ignored.
 
-**`$MHCMATCH_REFERENCE_CACHE` is gone in 0.24.0** and so is the ~1 GB it held (yours to delete).
-`C_corpus` stopped searching — it contracts a k-mer table, exactly, in milliseconds — so there was
-nothing left to cache. `$MHCMATCH_PMHC_DIR` and `$MHCMATCH_CALIBRATION_CACHE` are the two a cluster
+`C_corpus` does not search — it contracts a k-mer table, exactly, in milliseconds — so there is
+nothing to cache for it. `$MHCMATCH_PMHC_DIR` and `$MHCMATCH_CALIBRATION_CACHE` are the two a cluster
 still wants; `integrations/nextflow/mhcmatch/slurm.config` exports both.
 
 ## Running it as a pipeline
@@ -281,8 +279,8 @@ The four blocks and what each reads:
   recovered a median 0.4999. That is why `self` and `viral` are back — 64 kB tables, not a 7.5 GB
   trie. `mimicry.corpus_counts` + `contract`; `docs/corpus.rst`.
 - **`C_phys` averages over the face, it does not sum.** The summed form was Pearson **+0.954** with
-  peptide length — 91 % of a chemistry term was a ruler. `burial(..., per_residue=False)` reproduces
-  a pre-0.24.0 number.
+  peptide length — 91 % of a chemistry term was a ruler. `burial(..., per_residue=False)` is the
+  summed form, kept so the measurement reproduces.
 - **`C_corpus_missing` is retired.** On IEDB_neoag the v2 cache reached 3.0 % of rows and those rows
   were 76.9 % positive against 46.0 % for the rest, so the flag with v2's largest coefficient
   magnitude (−0.3510) was a within-screen label proxy for our own index coverage.

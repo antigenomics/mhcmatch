@@ -11,8 +11,8 @@ that are **self and presented** --- a statement about *passing thymic selection*
 self peptide carrying a somatic mutation, and whether a T cell responds to it is a different
 question. So ``C_aa`` imports a selection discriminator into a neoantigen model.
 
-:func:`mhcmatch.mimicry.corpus_R` is the label-free replacement, and since 0.21.0 its ``thymus``
-channel is what the shipped aggregate scores as ``C_corpus_thymus``. It reads how close a candidate
+:func:`mhcmatch.mimicry.corpus_R` is the label-free replacement, and its ``thymus`` channel is what
+the shipped aggregate scores as ``C_corpus_thymus``. It reads how close a candidate
 sits to reference peptide sets a real repertoire was actually shaped by.
 
 Three references, separated by when a T cell meets them
@@ -102,7 +102,7 @@ constant --- both sides are eluted human self 9-mers --- so the enrichment is th
 The formula
 -----------
 
-Since 0.24.0 the term is the **exact** Łuksza sum, evaluated as a table lookup. The paragraphs below
+The term is the **exact** Łuksza sum, evaluated as a table lookup. The paragraphs below
 give it in four steps and then say why the lookup is exact rather than an approximation.
 
 **1. The face, and the window that slides along it.** Mask the anchor positions
@@ -208,7 +208,7 @@ Why *k* = 3
 *k* is bounded below by **coverage**, not chosen by fit. The face is *L* − 5 wide and the shortest
 class-I ligand is an 8-mer, so an 8-mer supplies exactly three face residues: at *k* = 4 it has no
 window at all, and at *k* = 5 neither an 8-mer nor a 9-mer does. That reads as a low score and is
-really a structural zero --- the exact failure mode 0.24.0 removed. Restricted to the rows every *k*
+really a structural zero, which is the failure mode the :math:`m_k` divisor removes. Restricted to the rows every *k*
 can score, a wider window buys nothing (profile deviance 375.7 at *k* = 3, 4 and 5).
 
 Fitted shapes
@@ -302,7 +302,7 @@ since artifact v4 it reads them under the graded BLOSUM62 kernel.
    mimicry.corpus_spectrum()                              # all three -- what rank uses
 
 They were not all scored before, and the reason was cost rather than worth: ``self`` needed a
-~7.5 GB proteome trie, so 0.21.0 cut the corpus term down to ``thymus`` alone. The contraction
+~7.5 GB proteome trie, which is why the corpus term was once ``thymus`` alone. The contraction
 removes that cost --- three channels are three 64 KB tables --- and the held-out numbers say to
 carry them: adding the corpus block moves leave-one-screen-out mean AUROC from 0.6840 to
 **0.6927**, the largest gain of any recognition block.
@@ -590,7 +590,7 @@ only way to neutralise a wildcard row of :math:`e^{\kappa\sigma(a,a)}`.
 Scope
 -----
 
-* **Length is no longer in it.** The pre-0.24.0 column correlated −0.3493 with peptide length; the
+* **Length is no longer in it.** The uncorrected column correlated −0.3493 with peptide length; the
   per-window density correlates +0.0399 on the same rows. The correction was the :math:`m_k`
   divisor, and the same correction had to be made on the chemistry side --- see :doc:`burial`.
 * The three channels share an axis. Their joint contribution is what the held-out number rewards;

@@ -227,8 +227,8 @@ The Łuksza recognition term :math:`R = Z/(1+Z)` -- a soft partition function ov
 replacing a hard distance cut, so **how many** near-matches a candidate has and **how near** they
 are both enter. ``viral_R`` is not a term of the shipped aggregate — the sum
 lived only in the benchmark repo, which made :func:`mhcmatch.rank.aggregate_score` callable with a
-feature no installed user could supply. ``EPIC`` retired the term in 0.21.0, so the shipped
-aggregate no longer scores with it; the quantity is still the published recognition term and is
+feature no installed user could supply. ``EPIC`` does not score with it; the quantity is still the
+published recognition term and is
 still computed here. ``k`` and ``a0`` are read from the shipped artifact when one carries them, so
 a refit needs no code change.
 
@@ -288,8 +288,8 @@ mhcmatch.rank module
 
 Neoantigen candidate ranking, from a mutation-spanning window FASTA or an already-scored table.
 The default score is the fitted aggregate vendored at ``mhcmatch/data/aggregate_mhc1.json``
-(``--score aggregate``); the noisy-AND **gate** — a product of sigmoids, the default before
-0.19.0 — is still reachable as ``--score gate`` / :data:`mhcmatch.rank.GATE`.
+(``--score aggregate``); the noisy-AND **gate** — a product of sigmoids — is still reachable as
+``--score gate`` / :data:`mhcmatch.rank.GATE`.
 
 .. automodule:: mhcmatch.rank
    :members:
@@ -301,7 +301,7 @@ mhcmatch.precursor module
 
 Optional extra: ``pip install 'mhcmatch[precursor]'``.
 
-Since 0.12.0 this is a **re-export of** ``vdjmatch.precursor`` — the estimators, their maths and the
+This is a **re-export of** ``vdjmatch.precursor`` — the estimators, their maths and the
 ``vdjmatch precursor`` CLI live in the repertoire library, which is where that half of the problem
 belongs. The name is kept so existing imports and notebooks keep working, and
 ``from mhcmatch import precursor as P`` still gives ``P.event_ratio``, ``P.observed_mass``,

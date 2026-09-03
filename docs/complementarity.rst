@@ -401,8 +401,8 @@ over the 354,909 rows and 958 positives the corpus held when it was measured
 :func:`mhcmatch.recognition.score` computes when no head is named, and it is the axis this page
 documents — it is not itself a term of the ranker.
 
-Before 0.19.0 the ranker instead combined presentation and recognition as a **gate**, a product of
-two sigmoids rather than a sum, on the argument that the axes are close to orthogonal and a
+The ranker can instead combine presentation and recognition as a **gate**, a product of two
+sigmoids rather than a sum, on the argument that the axes are close to orthogonal and a
 recognition term is worth almost nothing on a peptide that is not presented::
 
     P(immunogenic) = sigmoid(a * presentation + b) * sigmoid(c * recognition + d)
@@ -628,7 +628,7 @@ error in the frame moves every residue from one face to the other. Pass ``regist
 The fitted class-II complementarity score
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Since **0.16.0** the six-block score is fitted on class II in its own right, on the class-II arm of
+The six-block score is fitted on class II in its own right, on the class-II arm of
 the same IEDB export built by the same rules with the restriction *parsed* rather than imputed
 (``bench/results/complementarity_mhc2.md``). :func:`mhcmatch.complement.score` takes ``cls="mhc2"``
 and reads ``complement_mhc2_<species>.json``; the hosts are never pooled.

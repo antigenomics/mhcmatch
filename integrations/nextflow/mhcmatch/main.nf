@@ -49,7 +49,7 @@ def isOn(v) {
 
 // The whitelist flags, in one place. Two lists, because they make two different claims about a row:
 // a gene hit says the gene is of interest, an epitope hit is evidence about the peptide itself. The
-// deprecated `--mhcmatch_keep` folds into both, which is exactly what it did in 1.8.0.
+// deprecated `--mhcmatch_keep` folds into both, which is exactly what it used to do on its own.
 //
 // `--keep-epitopes builtin` loads a PRE-BUILT seqtree index off disk (~1 ms). Nothing here builds
 // an index, writes a cache, or shares state between tasks, so N concurrent samples cannot race:

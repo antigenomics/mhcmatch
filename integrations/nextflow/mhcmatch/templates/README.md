@@ -33,7 +33,7 @@ curl -O https://raw.githubusercontent.com/antigenomics/mhcmatch/master/integrati
 | variable | in | default | what it is |
 |---|---|---|---|
 | `ENV` | all four | `mhcmatch` | conda env name. `setup.sbatch` **creates** it if absent |
-| `VERSION` | setup | `1.8.0` | the release to install. Pinned, and asserted after install |
+| `VERSION` | setup | `1.9.0` | the release to install. Pinned, and asserted after install |
 | `REF` | all four | `/shared/ref/mhcmatch` | shared reference + calibration root. A filesystem every compute node can see |
 | `TYPING` | setup | *(empty)* | optional: one typing file, to print how many alleles resolve |
 | `WHEELHOUSE` | setup | *(empty)* | optional: a directory of `.whl`s, for a node with no PyPI egress |

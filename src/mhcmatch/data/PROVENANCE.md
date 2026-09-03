@@ -158,8 +158,8 @@ leave-one-dataset-out refit; sign convention is that each component's largest-ma
 is positive. PC1 carries **32.79 %** of total variance and is a hydropathy axis with residue order
 `I F L W V M C Y A P G T H S Q N E K D R`; PC1 + PC2 carry **51.2 %**, and 10 components carry
 **91.3 %** (`bench/results/ipred_pca.md`). Regenerate with `python bench/ipred/pca.py`. They were
-first vendored inside the retired `ipred_mhc1.json` as `residue_scores`; that artifact left the
-wheel in 0.22.0 and these vectors, which never depended on the fit, stayed.
+first vendored inside a retired artifact as `residue_scores`; it left the wheel and these vectors,
+which never depended on its fit, stayed.
 
 Regenerate (from the `2026-mhcmatch-benchmark` repo; `peptides` must be downloaded and unpacked
 first — it is not installed in any venv here):
@@ -204,50 +204,6 @@ immunogenicity *labels*; this profile is crystal *geometry* — the two share no
 excluded because the paper itself marks them NA (anchors), which is also the conservative choice:
 they are the three positions that would most inflate ρ. Caveat: only P4–P7 carry a significance star
 in the source, so ρ = 0.943 leans partly on ranks the authors did not call significant.
-
-## `ipred_mhc1.json` — **RETIRED, no longer shipped** (last shipped in 0.21.0)
-
-`mhcmatch.ipred` and this artifact were removed in **0.22.0**. The entry is kept because a result
-recorded against 0.21.0 or earlier cites a file this package used to carry, and a provenance record
-that deletes retired artifacts cannot answer "where did that number come from". The full legacy
-record — what `ipred` was, how it performed, and why it was retired — is `docs/complementarity.rst`,
-section "`ipred`: the retired predecessor".
-
-**Nothing in the current package reads it.** `PROPERTY_PC1` / `PROPERTY_PC2`, the only part of it
-anything still needs, are self-contained in `mhcmatch/data/aa_tables.py`; they are derived/computed
-label-free from the vendored property tables (below) and were never dependent on the fit.
-
-What the file was: the frozen parameters `mhcmatch.ipred` scored with — the retained principal
-components of the amino-acid **property** matrix as a residue → coordinates table, a standardizer,
-two class-conditional Gaussians with diagonal covariance, and a two-parameter Platt calibration map.
-**13 fitted numbers** (2 × 3 means, 2 × 3 variances, one mixing proportion) plus the label-free PCA
-basis.
-
-| part | what it is | provenance |
-|---|---|---|
-| `residue_scores` | the first `n_components` principal components of the 20 × 142 property matrix (`aa_tables`, column-standardized over the 20 residues, SVD). Sign convention: the largest-magnitude residue score of each component is positive. | **derived/computed** from the vendored `aa_tables` — label-free, so it is identical under every refit |
-| `standardizer`, `classes` | weighted maximum-likelihood means and variances of the two class-conditional Gaussians | **derived/computed** — fitted to experimental T-cell-assay labels |
-| `calibration` | Platt `a`, `b`, fitted by Newton-Raphson on **out-of-fold** scores of the Chowell 2015 set | **derived/computed** |
-
-Fitted on seven pooled label sets — Chowell 2015, Calis 2013, CEDAR, TESLA, the NCI exome screen,
-`iedb_labeled` and the NAP-CNB H2-Kb set — at `(peptide, source, species)` granularity, 8–11-mers over
-AA20, with source-balanced weights `1 / (S · 2 · n[source, label])` so a 599-row set and a 336,830-row
-set carry the same total weight. 694,507 rows, 35,595 immunogenic.
-
-`log P` means **P(immunogenic) for a peptide on a Chowell-like tested-epitope set** (51.3% positive,
-within-assay negatives) — deliberately not the base rate of an exome screen, which is a property of the
-screen and not of the peptide.
-
-Regenerated (from the `2026-mhcmatch-benchmark` repo, branch `ipred`) — recorded for
-reproducing a pre-0.22.0 result, not run by anything here:
-
-    python bench/ipred/corpus.py
-    python bench/ipred/pca.py
-    python bench/ipred/fit.py --stage freeze --out src/mhcmatch/data/ipred_mhc1.json
-
-Evidence — eigenspectrum, leave-one-dataset-out parameter stability, bootstrap intervals, human↔mouse
-transfer, the summed-Kidera baseline and the cross-validated AUC — is in `bench/results/ipred_*.md` in
-that repo. Nothing in this package recomputes any of it, and removing the module did not touch it.
 
 ## `complement_mhc1_human.json` / `complement_mhc1_mouse.json`
 

@@ -127,8 +127,7 @@ filled by score alone --- so the comparison is laid out on your own candidates r
 
 With a quota, ``--fasta`` and ``--fasta-nt`` carry two records, ``cassette_composed`` and
 ``cassette_topk``; ``--map`` describes the composed one. Without a quota each carries the single
-``cassette`` record it always did. (Through 0.24.0 ``--quota`` composed a set and then built the
-sequence from :func:`mhcmatch.vector.select` anyway --- it reported and did not act.)
+``cassette`` record it always did.
 
 .. note::
 

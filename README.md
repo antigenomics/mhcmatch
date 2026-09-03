@@ -35,8 +35,8 @@ Nothing else has to be downloaded by hand — every reference table is fetched o
 only decides *when*, which matters on a compute node with no outbound network; the four staging
 tiers are under [Data](#data).
 
-The library examples below run on any recent release. **The Nextflow pipeline needs >= 1.7.3** --
-its first process calls `mhcmatch alleles`, which does not exist before then.
+The library examples below run from a plain `pip install mhcmatch`. The Nextflow pipeline pins its
+own version; see [Deployment](#deployment).
 
 **Optional extras.** The base install is `seqtree`, `numpy` and `huggingface_hub` — nothing heavy,
 and every model that ships by default runs on it.
@@ -112,9 +112,9 @@ Full command reference, grouped by task: [the CLI page](https://antigenomics.git
 
 **`predict` and `rank fasta` drop nothing by default.** `--rank-threshold` takes `sb` / `wb` /
 `none` / a percentage, and the tiers are **class-aware** because a bare number cannot be: `2.0` is
-the weak cut for class I and the *strong* cut for class II. That number was the default through
-1.7.3, and on class II it kept **0 of 56** scored pairs in a measured case, discarding the best
-window at `%rank 2.364` — an empty table, returncode 0.
+the weak cut for class I and the *strong* cut for class II. Measured on class II, a flat `2.0`
+keeps **0 of 56** scored pairs, discarding the best window at `%rank 2.364` — an empty table,
+returncode 0.
 
 **Two whitelists, because they make two different claims.** `--keep-genes 'TP53,KRAS'` keeps every
 candidate in a driver gene; `--keep-epitopes builtin` keeps every candidate that *is* one of the
@@ -282,8 +282,8 @@ this one. Set it to `off` and nothing is cached; leave it unset and entries go t
 that a per-peptide invocation pays again every time: the presentation and affinity calibrators are
 ~5 s, the binder calibrator ~45 s, a human-proteome length index 64.6 s. All of it is cached for the
 life of the process, so one process over a whole list is the difference between 49 s per peptide and
-thousands per second. The index outlives the process too — since 1.7.3 it is cached on disk and can
-be fetched prebuilt in 3.08 s (`mhcmatch bootstrap --index`), so it is paid once per machine. Measured, both ways, in
+thousands per second. The index outlives the process too — it is cached on disk and can be fetched
+prebuilt in 3.08 s (`mhcmatch bootstrap --index`), so it is paid once per machine. Measured, both ways, in
 `bench/cli/` in [`2026-mhcmatch-code`](https://github.com/repseq/2026-mhcmatch-code) (private; released to reviewers).
 
 ```bash
@@ -371,93 +371,30 @@ adjacent TCR-facing dipeptides. Fitted per species and never pooled across hosts
 whole published corpus scores in seconds, so pass a list. `mhcmatch.posbayes` is a strict special
 case of it and ships alongside for comparison.
 
-**MJ1996 and TCRen sit on opposite faces because they are different physics, and the difference is
-measured rather than assumed.** A generic contact potential is essentially additive: MJ1996 is
-**96.4% one-body**, its two leading modes correlating with Kyte–Doolittle at exactly **±0.851** — a
-hydrophobicity axis, which is the right object for burial in a pocket. TCRen, inverted from 374
-TCR:pMHC crystals, is **3.29% one-body**, *below* its own composition-matched shuffle floor
-(**9.68 ± 2.16%**, 500 shuffles), and neither leading mode is a hydropathy axis (**+0.353** on the
-receptor side, **−0.295** on the peptide side). There is no per-residue TCRen scale to extract,
-which is why the receptor side is integrated out instead of read off. The face assignment is then
-checked against coordinates: predicting *does this side chain reach the groove floor* over 3,875
-(structure, position) rows from the same 374 crystals, MJ1996 alone reaches **AUROC 0.5818** and
-TCRen alone **0.4801** — below chance — which is the ordering the block assumes. On class II
-neither separates alone (**0.5171** MJ, **0.5368** TCRen over 94 structures) and that ordering is
-not reproduced, so it is not claimed there.
+**MJ1996 and TCRen sit on opposite faces because they are different physics**, and the split is
+measured rather than assumed: MJ1996 is **96.4% one-body**, a hydrophobicity axis and the right
+object for burial in a pocket; TCRen, inverted from 374 TCR:pMHC crystals, is **3.29% one-body**,
+below its own composition-matched shuffle floor, with no per-residue scale to extract — which is why
+the receptor side is integrated out instead of read off. The potentials and the contact maps are our
+own upstream work, [`antigenomics/tcren`](https://github.com/antigenomics/tcren); the tables are
+**vendored here**, so `tcren` is a runtime dependency of the optional `[structure]` extra alone.
 
-Both are lossy summaries, and they are carried for the distinction they draw rather than for the
-ranking they move: on top of the geometric prior the two scalars add **+0.0012** AUROC against a
-free 20-way one-hot's **+0.0062** on the same task, and in the shipped complement head their four
-columns are small next to the fitted-identity ones — per column standard deviation, `mj_anchor`
-**+0.0354**, `mj_tcr` **−0.0927**, `para_tcr` **−0.0299** and `para_sd_tcr` **+0.0052**, against
-`aa_tcr`'s **−0.8796** and `kmer_llr`'s **+0.6544**. The potentials, the 374-crystal contact maps
-and the spectral analysis are our own upstream work,
-[`antigenomics/tcren`](https://github.com/antigenomics/tcren); the tables are **vendored here**, so
-`tcren` is a runtime dependency of the optional `[structure]` extra alone.
+**The recognition axis reduces to one published scale, and the reduction is measured.** Scoring all
+**576** candidate columns (every vendored residue vector × {anchor, TCR} × {sum, mean}) by ΔBIC
+*inside* the general model keeps exactly one: **the Rose burial propensity over the TCR face**,
+which ships as `C_phys_buried`. Rose's scale is not a hydrophobicity scale — it is the mean fraction
+of solvent-accessible area a residue loses on folding ([Rose et al., *Science*
+1985](https://doi.org/10.1126/science.4023714)) — so over the exposed face it scores the area a
+receptor *could* bury, and because its basis is imported rather than fitted it cannot memorise the
+corpus's cysteine artefact. The second column is `C_phys_charge`, Atchley 2005's electrostatic
+factor ([Atchley et al., *PNAS* 2005](https://doi.org/10.1073/pnas.0408677102)), selected on its
+**residual against Rose** rather than on its own AUROC.
 
-**The recognition axis reduces to one published scale, and the reduction is measured.** Split into
-its chemistry half and its fitted-identity half — exact partial sums via `score(blocks=...)` — the
-two behave oppositely: the identity half wins in-corpus and the chemistry half transfers. Scoring
-all **576** candidate columns (every vendored residue vector × {anchor, TCR} × {sum, mean}) by ΔBIC
-*inside* the general model keeps exactly one: **the Rose burial propensity summed over the TCR
-face**, at z **+4.57** — the second-largest coefficient of the ten-term model it was selected in,
-behind expression alone — against the sixteen-column chemistry block's +0.18 in the same slot. In
-the shipped nine-term model it is `C_phys_buried`, the larger of the block's two fitted terms, and
-smaller than at selection because the corpus block now carries three coefficients it previously
-shared one with (`mhcmatch rank --coefficients` prints the current value; this file no longer
-transcribes it, having carried a superseded one across two refits). Rose's scale is not a hydrophobicity scale
-— it is the mean fraction of solvent-accessible area a residue loses on folding ([Rose et al.,
-*Science* 1985](https://doi.org/10.1126/science.4023714)) — so summed over the exposed face it
-scores the area a receptor *could* bury. Because its basis is imported rather than fitted it cannot
-memorise the corpus's cysteine artefact: correlation with per-peptide cysteine count is **+0.108**
-against the shipped score's **+0.688**. Full derivation in [docs/burial.rst](docs/burial.rst) and
-§11 of the theory appendix; all of it regenerable from `bench/immuno/` in the benchmark repo.
-
-**The second chemistry column is charge, and what it buys is burial's stability.** `C_phys_charge`
-is Atchley 2005's fifth factor — electrostatic charge ([Atchley et al., *PNAS*
-2005](https://doi.org/10.1073/pnas.0408677102)), read as the mean over the TCR face — and it was
-selected on its **residual against Rose**, not on its own AUROC. That is the point of it: all 39
-transfer scales swept correlate **0.74 to 0.95** with burial over the twenty residues, so a
-hydropathy scale is burial measured a second way and the two are not identified. v3 paired Rose
-with Kidera KF4 at *r* = **−0.837** per peptide; AF5 sits at **+0.008**. Swapping the partner
-leaves burial's coefficient *smaller* and its evidence *stronger*, which is what dropping a
-collinear term does: bootstrap sd **0.0874 → 0.0487**, *z* **+1.71 → +2.34**, *p* **0.088 →
-0.020**, sign stability **96.5% → 100%**, over 400 cluster bootstraps on the 354,909 rows and 958
-immunogenic peptides the corpus held when the swap was measured. AF5 also carries the **lowest cysteine loading of the 141 complete
-residue scales swept, −0.0028**, which matters because the Chowell family runs a 12.5×
-mass-spectrometry cysteine enrichment a fitted basis can learn. Its own coefficient is the smaller of the
-two — the column being fixed here is burial, not the one swapped in. `mhcmatch.complement.PHYS_SCALE_CHARGE` names the scale;
-[docs/burial.rst](docs/burial.rst) carries the arms table.
-
-Four opt-in parameters came out of that work, all defaulting to the shipped behaviour so no recorded
-number moves: `blocks=` (score a subset of blocks, exact partial sum), `mask_cys=` (zero cysteine in
-the fitted tables, as `posbayes` does by construction), `positions="profile"` (read the chemistry
-over the crystallographic per-position TCR-contact profile rather than a binary anchor mask), and
-`paratope="contact"` (marginalise TCRen over the receptor residues that actually contact, rather
-than over the whole CDR3 loop).
-
-The other half of that axis is not chemistry and is not fitted on labels either. `C_aa` — the
-residue log-odds — is estimated on Chowell, which separates **foreign** from **self and presented**:
-a statement about *passing thymic selection*, not about whether a T cell responds to a somatic
-mutation. `mimicry.corpus_R` replaces it with a label-free neighbour density against three
-references, split by *when a T cell meets them*:
-
-| channel | what it is | reads as | sign in the shipped fit |
-|---|---|---|:--:|
-| `thymus` | thymic immunopeptidome — **the only one that enters selection** | danger | + |
-| `self` | host proteome, met in the periphery | tolerance | − |
-| `viral` | foreign ligandome — **never seen during selection** | reference | + |
-
-(`mhcmatch rank --coefficients` for the magnitudes. Signs are what the argument rests on, and all
-three hold their sign in at least 98 % of 400 cluster bootstrap resamples in the shipped v11 fit -- `self` 100 %, `thymus` 98.5 %, `viral` 98.0 %.)
-
-The thymic channel is positive because the thymus is not a random sample of self: mTECs
-promiscuously express tissue-restricted antigens under *Aire* and *Fezf2* precisely to purge the
-clones that would cause autoimmunity, so thymic display is enriched for the self **worth tolerising
-against**. Measured on the burial axis, thymic ligands sit above *non-thymic presented* self at
-Cohen's d = +0.1650 (p = 1.0×10⁻⁸⁰) — presentation held constant, so the effect is thymus-specific.
-`thymus` and `self` are both similarity to *self* sets, and their opposite signs are what no
-single-mechanism account gives. See [docs/corpus.rst](docs/corpus.rst).
+Every number behind those two paragraphs — the shuffle floors, the per-face AUROCs, the 576-column
+sweep, the per-column coefficients — is in [docs/burial.rst](docs/burial.rst) and
+[docs/complementarity.rst](docs/complementarity.rst), regenerable from `bench/immuno/`.
+`mhcmatch rank --coefficients` prints the shipped values; this file deliberately does not transcribe
+them, having once carried a superseded one across two refits.
 
 **Evidence that outranks a model.** `mhcmatch.known` carries five reference sets built from the
 public deposits — confirmed tumour neoantigens, peptides the screens tested and found
@@ -492,56 +429,17 @@ immunogenicity), **neoag** (already tested somewhere).
 **Mimicry as risk.** `mhcmatch.mimicry` is the fitted form of that scan: `viral`, `self` and
 `thymus`, each split into an **anchor** and a **TCR-facing** channel that partition the peptide, as
 six signed log-odds contributions and their sum. A single whole-peptide distance is the wrong
-feature and the sparsity that suggests otherwise is a search artifact — whole-peptide radius-2
-thymic coverage is 1.63 %, while the TCR face at radius 1 reaches **53.4 %**. Signs follow the
-reference, as designed: `viral` positive on both channels, `self` negative on both, `thymus`
-positive on its anchor. `MimicryScore.nearest` carries *which* peptide was hit and what protein it
-came from, so `mimicry.safety()` reaches `expression.safety_profile` — a bare distance cannot.
-**Scores are log-odds**; `probability()` needs a *named* corpus, because the seven screens behind
-the calibration run from 0.048 % to 46.8 % positive. Report the **within-screen** AUROC (0.596), not
-the pooled one (0.849). The tested-neoantigen database is `mimicry.annotate` / `mhcmatch neoag` —
-prior evidence, and deliberately never a fitted term, since every labelled screen we hold sits
-inside it.
+feature, and the sparsity that suggests otherwise is a search artifact. Scores are log-odds;
+`probability()` needs a *named* corpus, because a base rate is a property of the pool.
 
-**Building the cassette.** `mhcmatch.vector` is the step after ranking: **withdraw on safety**, then
-how many units each allotype carries, in what order, joined by what. `screen()` **excludes** rather
-than down-ranks — the second-best cassette is cheap, myocarditis is not — and it screens *every*
-register of a 27-mer unit, not the mutated one, against near-exact self origin joined to tissue
-expression. `select()` grows each allotype while the next candidate beats that allotype's own
-expected yield per slot, so diversification falls out of the arithmetic instead of a quota;
-`order()` tries **no spacer first** and picks the layout minimising the strongest predicted binder
-spanning each junction; `slippery_sites()`/`deslip()` remove the m1Ψ +1-frameshift motif, which
-matters more for a concatemer than for a natural ORF.
+**`mimicry` is a scoring term, not a safety screen.** Flagging candidates by "resembles a
+tolerance-side reference" fires on almost everything — influenza `GILGFVFTL` drew 14
+essential-tissue hits — because anchor-masked similarity to a *presented* reference is presentation,
+not recognition. Exclusion goes through `vector.self_origin_risk`.
 
-**Choosing a linker, and building the mRNA.** `LINKERS` is a table of named presets — GS-rich
-flexible, class-I favouring, class-II oriented, minimal, protease-cleavable, rigid — each carrying
-its family, the class it is *intended* for and where it comes from. `mhcmatch cassette linkers`
-prints it and `--linker NAME` pins one instead of sweeping. **The table does not rank itself:** the
-two mechanisms that would settle a class-I ranking act at different positions — Gly and Pro are
-abundant in the C-terminal regions class-I ligands are cleaved from (PMID 30645615), yet the same
-residues immediately flanking a class-I epitope inhibit recognition of the epitope on their
-amino-terminal side and move the ratio of two responses from one construct up to fifty-fold
-(PMID 8871618) — so `order()` measures each candidate
-against the recipient's own allotypes and that is what selects. `GS10` is a **reconstruction**: the
-manufactured pentatope format is described as a "non-immunogenic 10-mer glycine/serine linker" and
-not published residue by residue.
-
-`mrna()` then assembles the molecule and returns a parts map that tiles it exactly, in nucleotides:
-5' UTR, start, leader, units, linkers, trailer, stop, 3' UTR, poly(A). The **coding sequence is
-generated for the whole reading frame in one pass**, so homopolymer avoidance and the m1Ψ
-+1-frameshift repair act across the seams the designer created rather than inside each unit — which
-is where a concatemer's problems actually are. The **backbone is not supplied and defaults to
-nothing**: a UTR belongs to a particular vector and a plausible invented one is worse than none.
-`checks` reports numbers rather than a verdict, and `translates` — the coding sequence read back in
-the frame the construct sets it in — is the one that must hold.
-
-Both ends join to the rest of the library. `--context windows.fasta` takes `rank`'s **minimal
-epitopes** and rebuilds them as long units against the FASTA they were called on, one per variant
-rather than one per register — a minimal peptide loads onto any cell without costimulation and is
-the tolerising configuration, so `--candidates` must carry long windows rather than minimal epitopes. `--fasta-nt` writes the epitope
-cassette's coding sequence alone: highest-usage human codon per residue, backed off to shorten
-homopolymers, then deslipped. It is **not a codon optimiser** — it fixes the two things that break a
-concatemer specifically and leaves GC, structure and CpG to the manufacturer's tooling.
+**Building the cassette.** `mhcmatch.vector` is the step after ranking: withdraw on safety, order
+the units, pick a linker, emit amino acids and a codon-optimised CDS. `LINKERS` is a table of named
+presets and `deslip` removes the m1-pseudouridine +1-frameshift motifs a concatemer can create.
 
 ```zsh
 mhcmatch rank fasta windows.fasta --alleles "$HLA" --out ranked.tsv
@@ -549,11 +447,9 @@ mhcmatch cassette build --candidates ranked.tsv --context windows.fasta --n0 8 -
     --fasta cassette.faa --fasta-nt cassette.fna
 ```
 
-**`mimicry` is a scoring term, not a safety screen.** Flagging candidates by "resembles a
-tolerance-side reference" fires on almost everything — influenza `GILGFVFTL` drew 14
-essential-tissue hits — because anchor-masked similarity to a *presented* reference is presentation,
-not recognition. Exclusion goes through `vector.self_origin_risk`
-(`bench/results/vector_safety_screen.md`).
+The selection rule, the safety screen and what it does *not* catch, the linker presets and the
+cohort calibration are [docs/cassette.rst](docs/cassette.rst), [docs/safety.rst](docs/safety.rst)
+and [docs/portfolio.rst](docs/portfolio.rst).
 
 ## Model names
 
@@ -718,7 +614,7 @@ the FASTA header rather than assuming *k*.
 
 > ### The safety screen is OFF by default. Turn it on before you manufacture anything.
 >
-> `--mhcmatch_vector_screen true`. With it off — the shipped default since 1.7.3 — **no unit is
+> `--mhcmatch_vector_screen true`. With it off — the shipped default — **no unit is
 > withdrawn for essential-tissue self-origin** and the cassette carries whatever it was handed.
 > Every `MHCMATCH_CASSETTE` task prints that no screen ran, so the absence is never silent, but a
 > log line is not a substitute for reading this.
@@ -731,9 +627,9 @@ the FASTA header rather than assuming *k*.
 > The **mimicry annotation** (`--mhcmatch_mimicry`) is off for the same reason and is a different
 > case: it is annotation only, and **scores are identical either way**.
 
-> **The pipeline requires mhcmatch >= 1.7.3.** Its first process calls `mhcmatch alleles` and the
-> rerank arm calls `rank --passthrough`; neither exists in 1.6.0, and 1.6.1 was never published.
-> `templates/setup.sbatch` pins the version and asserts what it installed.
+> **The pipeline pins its own mhcmatch version.** `environment.yml`, the `Dockerfile`,
+> `params.mhcmatch_container` and `templates/setup.sbatch` all name it, and `setup.sbatch` asserts
+> what it installed rather than letting the run discover a mismatch inside a task log.
 
 On a cluster, start from **`integrations/nextflow/mhcmatch/templates/`** — four SLURM scripts
 (`setup.sbatch` once, then `run_human.sbatch` / `run_mouse.sbatch` for a few samples or
@@ -742,45 +638,12 @@ cluster-specific below it.
 
 **`pipeline.nf` is the easy entry point, not the integration surface.** A pipeline that already does
 variant calling, HLA typing and expression quantification should `include` the processes in
-`main.nf` or the arms in `subworkflows/` into its own channel topology — `subworkflows/mhcmatch.nf`
-is unchanged, so an existing include keeps working.
+`main.nf` or the arms in `subworkflows/` into its own channel topology.
 
-`MHCMATCH_PREDICT` drops in for MHCflurry class I and the class-II binding subworkflow, consuming
-the same `(meta, peptide.fasta, alleles, cls)` channel — one element more than MHCflurry's,
-because `cls` selects the panel and names the outputs — and emitting a pipeline-compatible
-57-column `.scored.csv`. **Almost** no stub types a column header: each asks the installed
-library for its own schema,
-so `-stub-run` cannot drift from the real shape. The image bootstraps its panel at **build** time,
-so compute nodes need no network.
-
-**Your columns come back untouched.** The rerank arm requires exactly two — the peptide
-(`peptide` / `epitope`) and the allele (`allele` / `best_allele`) — and stops naming what is
-missing. Four more are used when present (`wt_peptide`, `gene`/`gene_name`, `tpm`, `type`+`subtype`).
-Everything else may be named in any style and is emitted unchanged, in your order, ahead of ours; a
-name that collides with one of ours is an **error**, because two columns under one name are resolved
-silently and differently by every reader that keys a row by name.
-
-**`cassette select` resolves a collision the other way, and on purpose.** By that point the run has
-committed to a selection, so erroring out would throw away the work rather than protect it: your
-column keeps its value under `<name>_in`, ours takes the plain name — it is what `cassette build`,
-`cassette score` and the map read — and one line names every column that moved. So the rule across
-the pipeline is *never silently*, not *always the same way*: `rank --passthrough` refuses before it
-starts, `cassette select --passthrough` renames and says so. Before 1.7.3 the latter overwrote
-yours without a word.
-
-**`MHCMATCH_ALLELES` is not optional plumbing.** Every HLA caller writes the G-group form
-(`A*01:01:01G`), which is keyed at three fields where the pseudosequence tables are keyed at two, so
-an untrimmed name resolves to nothing — and `Store._allele_set` drops what it cannot find *without
-saying so*, so the run scores against an empty panel and exits 0. It also performs the join a DP/DQ
-heterodimer needs, since `DQA1*05:01` alone is not a molecule. Measured on 40 donor typing files:
-every one now yields 3–6 class-I and 3–10 class-II alleles.
-
-`slurm.config` sizes each process to what it measurably consumes and points every task at one shared
-reference and calibration directory — without it a 200-sample run re-derives the same per-allele
-background 200 times. `docs/pipeline.rst` and `integrations/nextflow/mhcmatch/README.md` are the
-full contract, including the three things a cluster gets wrong first: the partition name has no safe
-default, the wheel needs Python ≥ 3.10 where a cluster's system `python3` is often older, and a
-compute node's egress may not reach PyPI even when it reaches HuggingFace.
+The per-process input/output contract, the column rules (`--passthrough` refuses a collision,
+`cassette select` renames and says so), every parameter, the SLURM templates and the Docker build
+are [`integrations/nextflow/mhcmatch/README.md`](integrations/nextflow/mhcmatch/README.md) and
+[docs/pipeline.rst](docs/pipeline.rst). They are the contract; this section is the orientation.
 
 ## Benchmarks
 

@@ -2,9 +2,8 @@ Command-line reference
 ======================
 
 **Twenty-one commands, one binary** --- two of them, ``cassette`` and ``build``, have sub-verbs.
-``mhcmatch --help`` lists twenty-three, because the parser still answers to the deprecated aliases
-``vector`` and ``deslip``; this page names them once, at the end of the cassette table, and uses the
-current spelling everywhere else.
+``mhcmatch --help`` lists two more: ``vector`` and ``deslip``, deprecated aliases named once at the
+end of the cassette table and spelled currently everywhere else.
 
 This page groups the commands by **what you are trying to do**; every command also has
 ``mhcmatch <command> --help``.
@@ -16,8 +15,8 @@ This page groups the commands by **what you are trying to do**; every command al
    binder calibrator ~45 s, a human-proteome length index 64.6 s. One process over a list is the
    difference between seconds *per peptide* and thousands *per second*.
 
-   The index is the only one of those that also survives the process --- since 1.7.3 it is cached
-   on disk and can be fetched prebuilt (:ref:`bootstrap-tiers`), so it is paid once per machine
+   The index is the only one of those that also survives the process --- it is cached on disk and
+   can be fetched prebuilt (:ref:`bootstrap-tiers`), so it is paid once per machine
    rather than once per run. The calibrators are cached too, under ``$MHCMATCH_CALIBRATION_CACHE``.
 
    ``--threads`` exists **only** on ``source``, ``mimics`` and ``genes``, whose neighbour search
@@ -209,13 +208,12 @@ built on them and a run of ``rank`` are the same model by construction. Neither 
 neither needs a *mode* or an *input*.
 
 **The aggregate computes every one of its features before scoring** — a model emits the features it
-used and refuses to run without them (0.20.0). ``EPIC`` scores all three corpus channels
+used and refuses to run without them. ``EPIC`` scores all three corpus channels
 (``C_corpus_thymus``, ``C_corpus_self``, ``C_corpus_viral``) as a 64 KB *k*-mer table contraction
-rather than a neighbour search (0.24.0), so no proteome index is on the ranking path at all and
-``--no-self`` is allowed with ``--score aggregate`` (the refusal went in 0.21.0). ``--extended`` and
-``--annotate`` do build one, because they report what a candidate resembles; since 1.7.3 that index
-is cached on disk and can be staged prebuilt, so it is paid once per machine
-(:ref:`bootstrap-tiers`).
+rather than a neighbour search, so no proteome index is on the ranking path at all and
+``--no-self`` is allowed with ``--score aggregate``. ``--extended`` and ``--annotate`` do build one,
+because they report what a candidate resembles; that index is cached on disk and can be staged
+prebuilt, so it is paid once per machine (:ref:`bootstrap-tiers`).
 
 .. _rank-tiers:
 
@@ -252,7 +250,7 @@ candidate, and **it removes nothing by default**.
 
 **A number cannot be class-aware and a name can**, which is the whole reason the tiers are named.
 ``2.0`` is the *weak* cut for class I and the *strong* cut for class II, so one number applied to
-both silently discards ordinary class-II binders --- and until 1.8.0 ``2.0`` was the default.
+both silently discards ordinary class-II binders.
 Measured on one class-II window pair against ``DRB1*15:01``: **0 of 56** scored pairs survived, the
 best window discarded at ``%rank 2.364``, and the de novo arm returned an empty table with
 returncode 0.
@@ -265,8 +263,8 @@ when a caller changes their own filter.
 
 **Two whitelists, because they make two different claims.** A row kept because its *gene* is a
 driver is not evidence that its *peptide* works; a row kept because its peptide is a validated
-neoantigen is. One list matched against both fields --- what ``--keep`` did in 1.8.0 --- cannot say
-which claim a surviving row rests on, so there are two flags and a column that names the rule.
+neoantigen is. One list matched against both fields --- what ``--keep`` does --- cannot say which
+claim a surviving row rests on, so there are two flags and a column that names the rule.
 
 .. list-table::
    :header-rows: 1
@@ -315,7 +313,7 @@ one in the variant header; a bare peptide table does not. ``mhcmatch genes`` res
 gene from the sequence against the same ``seqtree`` proteome index (:ref:`parent-gene`) --- run it
 first, then ``--keep-genes`` has something to match.
 
-``--keep`` is the deprecated 1.8.0 spelling: one list, matched against gene and peptide alike, exact
+``--keep`` is the deprecated spelling: one list, matched against gene and peptide alike, exact
 only. It still runs, and folds into both lists.
 
 ``genes`` — why an unkeyed table scores two terms at a constant
@@ -526,8 +524,8 @@ Environment
        network
    * - ``MHCMATCH_CALIBRATION_CACHE``
      - **two caches, one variable.** The shared per-allele ``%rank`` calibration — measured **15×**
-       on a 25-allele sweep (13.3 s → 0.9 s) — and, in a ``proteome_index/`` subdirectory since
-       1.7.3, whole-proteome window indexes that were **built locally**. Both are derived data keyed
+       on a 25-allele sweep (13.3 s → 0.9 s) — and, in a ``proteome_index/`` subdirectory,
+       whole-proteome window indexes that were **built locally**. Both are derived data keyed
        by their inputs and both are safe to delete; reusing the variable means a cluster that
        already points it at shared storage gets the second for free. Safe to share under
        concurrency without a lock — entries are written to a tempfile and moved with

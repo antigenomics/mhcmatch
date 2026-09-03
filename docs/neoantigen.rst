@@ -516,8 +516,8 @@ move a ranking.
    term reads three reference deposits as three 64 KB k-mer tables, so an aggregate score builds no
    trie at all and ``--no-self`` is allowed with ``--score aggregate``. ``--extended`` and
    ``--annotate`` do build the reference index, because they report the ``self`` channels — paid
-   once for the whole candidate list, and since 1.7.3 cached on disk and stageable prebuilt, so
-   once per machine rather than once per run.
+   once for the whole candidate list, cached on disk and stageable prebuilt, so once per machine
+   rather than once per run.
 
    The ``imputed`` column names any feature that had to take its training mean for **that row** — a
    candidate with no IC50 has no occupancy, a frameshift has no wild type. Those are candidates with

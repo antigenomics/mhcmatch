@@ -181,13 +181,21 @@ def test_nextflow_pins_match_pyproject():
     # ``params.mhcmatch_container`` went unchecked (it sat on 1.6.0 while the rest were on 1.6.1),
     # and ``templates/*.sbatch`` was never in the list at all, though ``setup.sbatch`` asserts the
     # installed version equals its own ``VERSION=`` and so installs the wrong release when stale.
-    # Anchoring on the four spellings of a *mhcmatch* pin also keeps Nextflow's own ``21.10.6`` in
+    # Anchoring on the five spellings of a *mhcmatch* pin also keeps Nextflow's own ``21.10.6`` in
     # main.nf from reading as a stale pin, which a bare ``\d+\.\d+\.\d+`` would.
-    PINS = re.compile(r"(?:mhcmatch==|mhcmatch:|MHCMATCH_VERSION=|^VERSION=)(\d+\.\d+\.\d+)", re.M)
+    #
+    # ``README.md`` is in the glob because it is the file a collaborator actually follows, and it
+    # was the last one left out: at 1.9.0 it still said ``git clone --branch v1.8.0`` and
+    # ``pip install "mhcmatch==1.8.0"`` in twelve places while every machine-read pin beside it had
+    # moved. Following it installed 1.8.0 and then ``setup.sbatch`` failed its own assertion. A
+    # human-read pin goes stale exactly like a machine-read one; only the check was missing.
+    PINS = re.compile(r"(?:mhcmatch==|mhcmatch:|MHCMATCH_VERSION=|^VERSION=|--branch v)"
+                      r"(\d+\.\d+\.\d+)", re.M)
     scanned, stale = [], {}
     for p in sorted(list(nf.rglob("*.nf")) + list(nf.rglob("*.config"))
                     + list(nf.glob("templates/*.sbatch"))
-                    + [nf / "Dockerfile", nf / "environment.yml"]):
+                    + [nf / "Dockerfile", nf / "environment.yml", nf / "README.md",
+                       nf / "templates" / "README.md"]):
         if not p.is_file():
             continue
         for v in set(PINS.findall(p.read_text())):

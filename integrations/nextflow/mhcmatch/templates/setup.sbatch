@@ -22,7 +22,7 @@ set -euo pipefail
 ENV=mhcmatch          # conda env name. Created below if it does not exist yet
 VERSION=1.9.0         # the mhcmatch release to install. PIN IT -- the pipeline calls
                       # subcommands (`mhcmatch alleles`) and flags (`rank --passthrough`)
-                      # that do not exist before 1.8.0, and an unpinned `--upgrade` on a
+                      # that older releases do not have, and an unpinned `--upgrade` on a
                       # cluster with a stale index resolves to whatever it already has
 REF=/shared/ref/mhcmatch
                       # the shared reference + calibration root. A filesystem EVERY compute node can
@@ -84,10 +84,10 @@ fi
 echo "== versions =="
 conda run -n "$ENV" --no-capture-output mhcmatch --version
 # A wrong version does not fail loudly on its own: the pipeline's first process calls
-# `mhcmatch alleles`, which simply does not exist before 1.8.0, and the run dies several minutes
-# later inside a task log. Check it here, where the message can say what actually happened.
+# `mhcmatch alleles`, which an older release does not have, and the run dies several minutes later
+# inside a task log. Check it here, where the message can say what actually happened.
 conda run -n "$ENV" --no-capture-output mhcmatch --version 2>&1 | grep -q "$VERSION" || {
-    echo "ERROR: expected mhcmatch $VERSION; the pipeline needs >=1.8.0 for \`alleles\` and \`rank --passthrough\`" >&2
+    echo "ERROR: expected mhcmatch $VERSION; the pipeline needs it for \`alleles\` and \`rank --passthrough\`" >&2
     exit 1
 }
 conda run -n "$ENV" --no-capture-output nextflow -version 2>&1 | grep -i version || true

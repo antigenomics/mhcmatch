@@ -6,10 +6,10 @@ commands it runs and :doc:`cassette` is what the last stage decides.
 
 .. note::
 
-   **Requires mhcmatch >= 1.7.3.** The first process calls ``mhcmatch alleles`` and the rerank arm
-   calls ``rank --passthrough``; neither exists in 1.6.0, and 1.6.1 was never published. An
-   unpinned install on a stale index resolves to a release that cannot run the first process, so
-   ``templates/setup.sbatch`` pins the version and asserts what it got.
+   **The module pins its own mhcmatch version** --- ``environment.yml``, the ``Dockerfile``,
+   ``params.mhcmatch_container`` and ``templates/setup.sbatch`` all name it. An unpinned install on
+   a stale index can resolve to a release that cannot run the first process, so ``setup.sbatch``
+   asserts what it got rather than letting the run discover it inside a task log.
 
 .. code-block:: bash
 
@@ -76,8 +76,7 @@ different answers and one must not overwrite the other:
        ``cassette select`` emits (``score``, ``p``, ``k``, ``slot``, …), **ours keeps the plain
        name and yours is preserved beside it as** ``<name>_in``, with a line naming what moved —
        ours has to keep the name because ``cassette build``, ``cassette score`` and the map read
-       it. Before 1.7.3 yours was overwritten silently. See ``-k`` counts epitopes, not
-       manufactured units below
+       it. See ``-k`` counts epitopes, not manufactured units below
    * - ``<id>.{rerank,denovo}.cassette.faa``
      - assembled, with the linker chosen by minimising junctional binding
    * - ``<id>.{rerank,denovo}.cassette.fna``
@@ -392,9 +391,9 @@ Species follows ``params.genome``, so there is no extra parameter — but there 
 - ``--mhcmatch_vector_block_live 0.999`` is what the shipped mouse bundles used, against 0.95 for
   human. A stated design parameter, not a fitted one — measure your own with
   :func:`mhcmatch.portfolio.betabinom_rho`.
-- Do **not** reach for ``background="ligand-pooled"`` on mouse class II. It reproduces the
-  pre-1.5.0 self-inclusive null, under which ``H-2-IAb`` — 6,483 of 6,705 mouse class-II ligands —
-  was scored against its own motif and read AUROC 0.322.
+- Do **not** reach for ``background="ligand-pooled"`` on mouse class II. It is the self-inclusive
+  null, under which ``H-2-IAb`` — 6,483 of 6,705 mouse class-II ligands — is scored against its own
+  motif and reads AUROC 0.322.
 
 On a cluster
 ------------
