@@ -1,5 +1,55 @@
 # Changelog
 
+## [1.7.3] — 2026-09-03 — the pipeline runs in 197 s, and three things stopped being rebuilt per process
+
+**553 s -> 197 s** on two donors, both arms, 8 cpu / 24 GB (Aldan-3), longest single task 60 s
+against 453 s. Every output identical: 114/703/93/640 rows preserved, 85 columns, four cassettes,
+maps fully populated, `self_help` on every unit.
+
+Nothing here was slow because the work is hard. Three quantities that are pure functions of
+published data were recomputed inside **every process**, because their caches were per process and
+a Nextflow fan-out is many processes.
+
+- **The MHC-II presentation model was vendored for every config except the one the library asks
+  for.** `Store._anchor_model` -- and therefore `restriction()`, `vote()` and the cassette map --
+  takes `anchor_model`'s defaults, `footprint="anchor", background="ligand"`. All three shipped
+  models were `background="proteome"`. So `_VENDORED_MODELS` missed on both keys and every process
+  refit from scratch: **87.9 s -> 0.1 s**. The version guard and panel hash matched all along; it
+  was only that the key had no entry, and a refit prints a progress line rather than an error.
+  `cassette order` with a full class-I + class-II map went **453 s -> 45.8 s**.
+
+- **The whole-proteome window index is cached on disk** (`seqtree.Index` already had `save`/`load`;
+  what was missing was a key and a write discipline). Human L=9: **64.6 s -> 0.7 s**.
+
+- **The mimicry reference index too** -- 24 seqtree indexes over ~12 M windows: **65.0 s -> 0.4 s**.
+
+**Two stages now ship OFF, and both say so.** `--mhcmatch_vector_screen` is the essential-tissue
+exclusion; turn it on before anything is manufactured, and every task prints that it did not run.
+`--mhcmatch_mimicry` is annotation only and **scores are identical either way**, because `rank`'s
+corpus channels are a `corpus_spectrum` table contraction rather than a neighbour search. A cache
+only helps the *second* run -- in a fan-out all four tasks miss at the same instant and each builds
+its own, which is why not running the stage beat caching it (341 s with both on, 197 s without).
+
+**Caching discipline, the same in all three places** and the same as `calibrate._write_atomic`: a
+content key, a temp file in the same directory, `os.replace`, **no lock**. Racing writers produce
+byte-identical payloads because the payload is a pure function of the key, so last-writer-wins
+cannot introduce a disagreement; a lock would serialise a fan-out to buy nothing, and one left by a
+killed task would deadlock the next run. The mimicry entry is 24 files plus a manifest, and the
+manifest is renamed **last** -- its presence is what says the rest landed.
+
+**Fixed with it: cache entries were private to whoever wrote them.** `mkstemp` creates at 0600 and
+`os.replace` preserves the mode, so every file `calibrate._write_atomic` ever wrote was unreadable
+to anyone else -- on the shared path its own docstring recommends. Measured on Aldan-3: **361 of
+361** entries in a group-shared reference directory were 0600. All three caches now chmod 0644.
+
+**`mhcmatch bootstrap --index "human:8|9|10|11"`** stages prebuilt indexes, reporting per length
+whether each was **fetched** from `isalgo/pmhc_data` or **built** locally -- those differ by two
+orders of magnitude. `templates/setup.sbatch` calls it only when `STAGE_INDEX` is set, because with
+both optional stages off a colleague reads neither.
+
+Also: the local-executor templates asked 48 GB / 8 h against a measured 197 s and 16.3 GB peak;
+they now ask 24 GB / 2 h.
+
 ## Unreleased — the donor's own class-II allotypes, and a post-release audit
 
 **Not in any release yet, and the distinction matters here**: the Nextflow module is cloned by tag,

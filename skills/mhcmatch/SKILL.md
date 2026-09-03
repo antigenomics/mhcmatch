@@ -156,6 +156,14 @@ whenever the ask is "run this for a cohort".
 - **de novo** takes a window FASTA and produces the epitope table itself.
 - Both end in `cassette select` → `cassette order`, and a cohort-level `cassette score`.
 
+**Two stages ship off, and both cost time rather than accuracy.** `--mhcmatch_vector_screen` is the
+essential-tissue safety exclusion -- turn it on before anything is manufactured; every task prints
+that it did not run. `--mhcmatch_mimicry` is annotation only: `rank`'s corpus channels are a
+`corpus_spectrum` table contraction, not a neighbour search, so **scores are identical either way**.
+Each needs a whole-proteome index, cached on disk under `$MHCMATCH_CALIBRATION_CACHE` and stageable
+with `mhcmatch bootstrap --index`. Measured on Aldan-3 2026-09-03, two donors both arms: 197 s on
+the defaults, 341 s with both on.
+
 `--mhcmatch_vector_map_alleles_mhc2` is the one to remember to pass: without it the cassette map is
 class I only and `self_help` is not computed. Under `pipeline.nf` you do **not** need to set it: both
 arms send the donor's own class-II list through the allele value the process already takes, as

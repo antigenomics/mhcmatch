@@ -3,15 +3,14 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=24G
 #SBATCH --time=02:00:00
-# **Sized from measurement, not headroom-on-headroom.** Measured on Aldan-3 2026-09-03, on the
-# published 1.7.2, both arms with the screen ON: two human donors plus two mouse lines ran in
-# **26:48** at **16.3 GB** peak RSS, and two mouse lines alone in **12:30** at **12.7 GB**. The
-# longest single task was the whole-proteome screen at **701 s**; nothing else exceeded 186 s.
-# These asked 48 GB / 8 h -- 2.9x the memory and 18x the wall clock actually used, which on a
-# shared cluster is time spent queueing behind a quota for capacity the job never touches. Raise
-# them for a genuinely larger cohort, and raise the TIME first: memory tracks how many tasks the
-# local executor runs at once, not how many samples you have.
 #SBATCH --output=mhcmatch-mouse-%j.out
+#
+# **Sized from measurement, not headroom-on-headroom.** Measured on Aldan-3 2026-09-03, two human
+# donors, both arms, on the shipped defaults: **197 s** end to end, longest single task 60 s, all
+# 50 outputs correct. These asked 48 GB / 8 h. With the screen and the mimicry annotation both ON
+# the same shape of run was 26:48 at 16.3 GB peak RSS, so even that fits inside 24 GB / 2 h --
+# raise them only for a genuinely larger cohort, and raise the TIME first: memory tracks how many
+# tasks the local executor runs at once, not how many samples you have.
 #
 #   sbatch --partition <your-partition> run_mouse.sbatch
 #

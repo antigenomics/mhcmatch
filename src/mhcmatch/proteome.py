@@ -276,10 +276,12 @@ class Proteome:
         download itself, so the second process on the host reads its cache rather than the network,
         and :meth:`_index_to_disk` still writes the local entry so the third reads that."""
         try:
-            from huggingface_hub import hf_hub_download
-            from .store import PMHC_REPO
-            got = [hf_hub_download(repo_id=PMHC_REPO, repo_type="dataset", filename=n)
-                   for n in self._index_to_hf_paths(L)]
+            from .store import fetch_file
+            # `fetch_file`, not `hf_hub_download` directly: it consults `$MHCMATCH_PMHC_DIR` first,
+            # which is how an offline cluster node reads a local mirror instead of the network. Going
+            # straight to the hub would work everywhere the mirror exists and fail on exactly the
+            # machines the mirror was set up for.
+            got = [fetch_file(n) for n in self._index_to_hf_paths(L)]
             return got[0], got[1]
         except Exception:
             return None                # not published, no network, no token: build it locally

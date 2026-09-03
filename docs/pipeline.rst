@@ -6,7 +6,7 @@ commands it runs and :doc:`cassette` is what the last stage decides.
 
 .. note::
 
-   **Requires mhcmatch >= 1.7.2.** The first process calls ``mhcmatch alleles`` and the rerank arm
+   **Requires mhcmatch >= 1.7.3.** The first process calls ``mhcmatch alleles`` and the rerank arm
    calls ``rank --passthrough``; neither exists in 1.6.0, and 1.6.1 was never published. An
    unpinned install on a stale index resolves to a release that cannot run the first process, so
    ``templates/setup.sbatch`` pins the version and asserts what it got.
@@ -76,7 +76,7 @@ different answers and one must not overwrite the other:
        ``cassette select`` emits (``score``, ``p``, ``k``, ``slot``, …), **ours keeps the plain
        name and yours is preserved beside it as** ``<name>_in``, with a line naming what moved —
        ours has to keep the name because ``cassette build``, ``cassette score`` and the map read
-       it. Before 1.7.2 yours was overwritten silently. See ``-k`` counts epitopes, not
+       it. Before 1.7.3 yours was overwritten silently. See ``-k`` counts epitopes, not
        manufactured units below
    * - ``<id>.{rerank,denovo}.cassette.faa``
      - assembled, with the linker chosen by minimising junctional binding
@@ -232,6 +232,20 @@ DPB1/DQB1 get their alpha imputed from :func:`mhcmatch.pseudoseq.alpha_prior`.
 Measured on 40 donor typing files: every one yields 3–6 class-I and 3–10 class-II alleles.
 The non-classical loci among the dropped are correct — the panel carries no pseudosequence for
 HLA-E, -F or -G.
+
+How long it takes, and the two stages that ship off
+---------------------------------------------------
+
+Two donors, both arms, 8 cpu / 24 GB on one node (Aldan-3, 2026-09-03): **197 s** on the shipped
+defaults, longest single task 60 s; 341 s with the safety screen and the mimicry annotation both on.
+
+``--mhcmatch_vector_screen`` and ``--mhcmatch_mimicry`` are off by default. The screen is the
+essential-tissue exclusion and **should be turned on before anything is manufactured** -- every task
+prints that it did not run. Mimicry is annotation only, and scores are identical either way, because
+``rank``'s corpus channels are a ``corpus_spectrum`` table contraction rather than a neighbour
+search. Both need a whole-proteome index; it is cached on disk under ``$MHCMATCH_CALIBRATION_CACHE``
+and staged with ``mhcmatch bootstrap --index "human:8|9|10|11"``, which fetches the published index
+where one exists and builds locally otherwise, reporting per length which it did.
 
 The class-II half is what makes the cassette map say ``self_help``
 ------------------------------------------------------------------

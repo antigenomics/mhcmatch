@@ -31,7 +31,7 @@ pip install mhcmatch
 mhcmatch bootstrap                                   # pre-fetch the panel (optional; ~16 MB)
 ```
 
-The library examples below run on any recent release. **The Nextflow pipeline needs >= 1.7.2** --
+The library examples below run on any recent release. **The Nextflow pipeline needs >= 1.7.3** --
 its first process calls `mhcmatch alleles`, which does not exist before then.
 
 **Optional extras.** The base install is `seqtree`, `numpy` and `huggingface_hub` — nothing heavy,
@@ -660,7 +660,7 @@ The construct carries no more *units* than *k* and usually fewer — several epi
 27-mer window, and the safety screen withdraws some — so read `units=` from the FASTA header rather
 than assuming *k*.
 
-> **The pipeline requires mhcmatch >= 1.7.2.** Its first process calls `mhcmatch alleles` and the
+> **The pipeline requires mhcmatch >= 1.7.3.** Its first process calls `mhcmatch alleles` and the
 > rerank arm calls `rank --passthrough`; neither exists in 1.6.0, and 1.6.1 was never published.
 > `templates/setup.sbatch` pins the version and asserts what it installed.
 
@@ -694,7 +694,7 @@ committed to a selection, so erroring out would throw away the work rather than 
 column keeps its value under `<name>_in`, ours takes the plain name — it is what `cassette build`,
 `cassette score` and the map read — and one line names every column that moved. So the rule across
 the pipeline is *never silently*, not *always the same way*: `rank --passthrough` refuses before it
-starts, `cassette select --passthrough` renames and says so. Before 1.7.2 the latter overwrote
+starts, `cassette select --passthrough` renames and says so. Before 1.7.3 the latter overwrote
 yours without a word.
 
 **`MHCMATCH_ALLELES` is not optional plumbing.** Every HLA caller writes the G-group form

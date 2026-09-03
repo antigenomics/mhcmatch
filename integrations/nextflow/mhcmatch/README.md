@@ -13,8 +13,8 @@ prior evidence, safety, cassette selection and cassette assembly.
 > `mhcmatch --version` cannot warn you, because both print the same string. So:
 >
 > ```bash
-> git clone --branch v1.7.2 --depth 1 https://github.com/antigenomics/mhcmatch.git
-> pip install "mhcmatch==1.7.2"
+> git clone --branch v1.7.3 --depth 1 https://github.com/antigenomics/mhcmatch.git
+> pip install "mhcmatch==1.7.3"
 > ```
 >
 > **Behind an HTTP proxy, take the tarball instead — `git clone` can fail where `git ls-remote`
@@ -22,12 +22,12 @@ prior evidence, safety, cassette selection and cassette assembly.
 > transfer (`POST .../git-upload-pack`) makes git report a **401 as a credential prompt**:
 > `fatal: could not read Username for 'https://github.com'` on a repository that is public and
 > needs none. Measured on Aldan-3 2026-09-03, on the login node and on a compute node, while
-> `git ls-remote` returned the `v1.7.2` tag from both. The release tarball is a plain GET and goes
+> `git ls-remote` returned the `v1.7.3` tag from both. The release tarball is a plain GET and goes
 > straight through, giving the identical tree:
 >
 > ```bash
-> curl -sSL -o mhcmatch-1.7.2.tar.gz https://github.com/antigenomics/mhcmatch/archive/refs/tags/v1.7.2.tar.gz
-> tar xzf mhcmatch-1.7.2.tar.gz     # -> mhcmatch-1.7.2/integrations/nextflow/mhcmatch/
+> curl -sSL -o mhcmatch-1.7.3.tar.gz https://github.com/antigenomics/mhcmatch/archive/refs/tags/v1.7.3.tar.gz
+> tar xzf mhcmatch-1.7.3.tar.gz     # -> mhcmatch-1.7.3/integrations/nextflow/mhcmatch/
 > ```
 >
 > Chase the proxy only if you need git history; for running the pipeline the tarball is the whole
@@ -35,10 +35,10 @@ prior evidence, safety, cassette selection and cassette assembly.
 > there — a run of four `ReadTimeoutError`s that then succeeds is normal on that cluster, and
 > `templates/setup.sbatch`'s `WHEELHOUSE` block is for when they do not.
 >
-> **Requires mhcmatch >= 1.7.2.** `MHCMATCH_ALLELES` calls `mhcmatch alleles` and the rerank arm
+> **Requires mhcmatch >= 1.7.3.** `MHCMATCH_ALLELES` calls `mhcmatch alleles` and the rerank arm
 > calls `rank --passthrough`; neither exists in 1.6.0, and 1.6.1 was stamped in the tree but never
 > published. Every pin in this directory — `environment.yml`, the `Dockerfile`,
-> `params.mhcmatch_container` — names 1.7.2, and `templates/setup.sbatch` asserts the version it
+> `params.mhcmatch_container` — names 1.7.3, and `templates/setup.sbatch` asserts the version it
 > installed rather than letting the run discover the mismatch inside a task log.
 
 ```
@@ -128,7 +128,7 @@ are two different answers and one must not overwrite the other:
 
 | file | what |
 |---|---|
-| `<id>.{rerank,denovo}.vaccine.units.tsv` | one row per **selected epitope** (default *k* = 20, `--mhcmatch_cassette_k`) — **this is the input table filtered to what the cassette carries, nothing removed from the row.** On the rerank arm it holds every one of your own columns and every `mm_` column, plus the selection's own (`slot`, `p`, `k`, `pool_n`, `offset`, `energy`, `lam`, `rho`); on the de novo arm, every column of `*.mhcmatch.ranked.tsv`. Measured on one donor: 53 caller + 32 `mm_` + 22 selection = 107 columns over 20 rows, with 0 caller columns dropped. **If one of your column names collides with one `cassette select` emits** (`score`, `p`, `k`, `slot`, …), ours keeps the plain name — it is what `cassette build`, `cassette score` and the map read — and **yours is preserved beside it as `<name>_in`**, with a line naming what moved. Before 1.7.2 yours was overwritten silently |
+| `<id>.{rerank,denovo}.vaccine.units.tsv` | one row per **selected epitope** (default *k* = 20, `--mhcmatch_cassette_k`) — **this is the input table filtered to what the cassette carries, nothing removed from the row.** On the rerank arm it holds every one of your own columns and every `mm_` column, plus the selection's own (`slot`, `p`, `k`, `pool_n`, `offset`, `energy`, `lam`, `rho`); on the de novo arm, every column of `*.mhcmatch.ranked.tsv`. Measured on one donor: 53 caller + 32 `mm_` + 22 selection = 107 columns over 20 rows, with 0 caller columns dropped. **If one of your column names collides with one `cassette select` emits** (`score`, `p`, `k`, `slot`, …), ours keeps the plain name — it is what `cassette build`, `cassette score` and the map read — and **yours is preserved beside it as `<name>_in`**, with a line naming what moved. Before 1.7.3 yours was overwritten silently |
 | `<id>.{rerank,denovo}.cassette.faa` | assembled, with the linker chosen by minimising junctional binding |
 | `<id>.{rerank,denovo}.cassette.fna` | the CDS, deslipped |
 | `<id>.{rerank,denovo}.cassette.map.{tsv,json}` | unit / linker / epitope in 1-based coordinates |
@@ -510,34 +510,36 @@ ignored rather than rejected, so renaming them would silently drop every deploye
 need a different mapping; allele names (HLA vs H-2) also imply the species, so a human run with HLA
 alleles is unaffected by the default.
 
-## How long it takes, and what makes the first run slow
+## How long it takes
 
 Two donors, both arms, shipped defaults, 8 cpu / 24 GB on one node (Aldan-3, 2026-09-03):
 
-| | wall clock |
-|---|--:|
-| before 2026-09-03 | 553 s |
-| with the vendored `restriction` model | **307 s** |
-| with the caches warm (`setup.sbatch` has run) | **see below** |
-
-**Everything expensive here is a pure function of published data, and all of it used to be rebuilt
-inside every task**, because the caches were per *process* and a Nextflow fan-out is many processes:
-
-| rebuilt per process | was | warm |
+| | wall clock | longest task |
 |---|--:|--:|
-| MHC-II presentation model — `restriction`, and so the cassette map | 87.9 s | **0.1 s** (now vendored) |
-| mimicry reference index — 24 seqtree indexes over ~12 M windows | 65.0 s | **0.4 s** |
-| whole-proteome window index — what `--screen` needs | 26.9 s (mouse) | **0.7 s** |
+| **shipped defaults** | **197 s** | 60 s |
+| + safety screen and mimicry on | 341 s | 194 s |
+| before 2026-09-03 | 553 s | 453 s |
 
-The first was a missing registry entry and is fixed in the wheel: `_VENDORED_MODELS` had no
-`("mhc2", "anchor", "ligand")`, which is precisely the config `Store._anchor_model` asks for. The
-other two are on-disk caches under `$MHCMATCH_CALIBRATION_CACHE`, shared by every node that can see
-it, and **`templates/setup.sbatch` stages them once** so the first pipeline run is as fast as the
-second. Without that step nothing breaks — the first run simply pays the build, once per task.
+**Nothing here is slow because the work is hard; it was slow because three pure functions of
+published data were recomputed inside every process.** The in-memory caches are per process and a
+Nextflow fan-out is many processes, so every task rebuilt all three:
 
-`mhcmatch bootstrap --index "human:8|9|10|11"` is the staging command, and it reports per length
-whether the index was **fetched** from the published dataset or **built** locally, because those
-differ by two orders of magnitude.
+| rebuilt per process | was | now |
+|---|--:|--:|
+| MHC-II presentation model — `restriction`, and so the cassette map | 87.9 s | **0.1 s**, vendored in the wheel |
+| mimicry reference index — 24 seqtree indexes over ~12 M windows | 65.0 s | **0.4 s** warm, and the stage ships off |
+| whole-proteome window index — what `--screen` needs | 64.6 s (human, L=9) | **0.7 s** warm, and the screen ships off |
+
+The first was a missing registry entry: `_VENDORED_MODELS` had no `("mhc2", "anchor", "ligand")`,
+which is exactly the config `Store._anchor_model` asks for, so there was a pre-fit model for every
+config except the one the library reaches for most. Fixed in the wheel; nothing to configure.
+
+The other two are on-disk caches under `$MHCMATCH_CALIBRATION_CACHE`, and **the two stages that
+need them ship off**, so a default run reads neither. A cache also only helps the *second* run: in
+a fan-out every task misses at the same instant and each builds its own, which is why turning the
+stage off beat caching it. Turn one on and stage the cache first —
+`mhcmatch bootstrap --index "human:8|9|10|11"`, which fetches the published index where there is
+one and builds locally otherwise, saying per length which it did.
 
 ## Every parameter
 
@@ -611,10 +613,10 @@ From `slurm.config` only:
 ## Build the image (only for `-profile docker`)
 
 ```zsh
-docker build -t <YOUR_REGISTRY>/mhcmatch:1.7.2 \
-    --build-arg MHCMATCH_VERSION=1.7.2 \
+docker build -t <YOUR_REGISTRY>/mhcmatch:1.7.3 \
+    --build-arg MHCMATCH_VERSION=1.7.3 \
     integrations/nextflow/mhcmatch/
-docker push <YOUR_REGISTRY>/mhcmatch:1.7.2
+docker push <YOUR_REGISTRY>/mhcmatch:1.7.3
 ```
 
 **The build stages both the reference tables and the two proteomes**, ~170 MB in the image's
@@ -630,7 +632,7 @@ One tag, four files, and they must move together on a release: `Dockerfile`'s
 `params.mhcmatch_container` default, and this block. The container default sat on `1.6.0` while
 the other two were on `1.6.1`, which is the drift this note exists to stop -- and `1.6.1` was
 itself never published, so every one of those pins named a distribution that did not exist until
-1.7.2 was cut.
+1.7.3 was cut.
 
 No data staging: the build runs `mhcmatch bootstrap --reference`, which fetches the ligand panel
 **and** the known-epitope sets, mimicry references and expression tables (~115 MB total) from the
@@ -725,7 +727,7 @@ a conda interpreter is enough and is what `-profile conda` sidesteps entirely:
 
 ```bash
 conda create -n mhcmatch -c bioconda python=3.12 nextflow
-conda run -n mhcmatch --no-capture-output pip install mhcmatch==1.7.2
+conda run -n mhcmatch --no-capture-output pip install mhcmatch==1.7.3
 ```
 
 (The `docker build` block above pins the same version and must move with it.)
