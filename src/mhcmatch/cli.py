@@ -1746,7 +1746,10 @@ def cmd_bootstrap(a):
         print(f"# proteome {name}: {fetch_proteome(name)}")
     for rel in (REFERENCE_FILES if a.reference else ()):
         print(f"# reference {rel}: {fetch_file(rel)}")
-    for spec in (x.strip() for x in (getattr(a, "index", None) or "").split(",") if x.strip()):
+    specs = [x.strip() for x in (getattr(a, "index", None) or "").split(",") if x.strip()]
+    for spec in specs:                        # validate all of them BEFORE fetching any GB
+        _check_index_spec(spec)
+    for spec in specs:
         _bootstrap_index(spec)
     print(f"# cached from HF dataset {PMHC_REPO}")
 
@@ -1755,6 +1758,24 @@ def cmd_bootstrap(a):
 #: `--index` spec names a species without lengths. Class II is a fifteen-length ladder and nobody
 #: wants it fetched by accident, so it is opt-in per length.
 INDEX_LENGTHS = (8, 9, 10, 11)
+
+
+def _check_index_spec(spec: str) -> None:
+    """Reject a stray length before a single GB is fetched.
+
+    **The two separators are different on purpose, and that is the whole grammar.** Specs are
+    comma-separated; the lengths inside one spec are pipe-separated. So a comma in a length list is
+    eaten by the outer split -- ``human:8,9,10,11`` arrives as FOUR specs, ``human:8`` plus the bare
+    ``9``, ``10`` and ``11`` -- and the caller who typed it stages one length believing they staged
+    four, then watches the screen rebuild the other three. The tell is that a spec is all digits,
+    which no species is.
+    """
+    name = spec.partition(":")[0].strip()
+    if name.isdigit():
+        raise SystemExit(
+            f"--index: {name!r} is a length, not a species. Lengths inside one spec are separated "
+            f"by '|', not ',' -- write 'human:8|9|10|11'. Commas separate whole specs "
+            f"('human,mouse'), which is why a comma here silently split your length list.")
 
 
 def _bootstrap_index(spec: str) -> None:
@@ -1778,13 +1799,26 @@ def _bootstrap_index(spec: str) -> None:
     for L in lengths:
         paths = pm._index_paths(L)
         if paths and all(os.path.exists(p) for p in paths):
-            print(f"# index {name} L={L}: already staged")
+            print(f"# index {name} L={L}: already in the local cache, nothing to do")
             continue
         t0 = time.time()
         got = pm._index_from_hf(L)
-        how = "fetched" if got else "BUILT locally (not published for this proteome)"
+        dt = time.time() - t0
         pm._index(L)                      # loads the fetch, or builds and writes the local entry
-        print(f"# index {name} L={L}: {how} in {time.time() - t0:.1f} s")
+        if not got:
+            print(f"# index {name} L={L}: BUILT locally (not published for this proteome) "
+                  f"in {dt:.1f} s -> {index_cache_dir()}")
+            continue
+        # **Say where it landed, because it is not where the reader expects.** A published index is
+        # resolved by `fetch_file`, which honours `$MHCMATCH_PMHC_DIR` first and otherwise goes
+        # through `hf_hub_download` -- so it lands in the MIRROR or in `$HF_HOME`, and the local
+        # `proteome_index/` cache stays empty. Reporting a bare "fetched" made a mirror hit that
+        # copied nothing look identical to a 1.5 GB download, on the one command whose entire job
+        # is to tell you whether staging happened. Measured mouse L=9: 1.49 GB, 47.0 s from the hub
+        # unauthenticated, 0.8 s off a mirror.
+        gb = sum(os.path.getsize(p) for p in got if os.path.exists(p)) / 1e9
+        root = os.path.commonpath(list(got))
+        print(f"# index {name} L={L}: resolved {gb:.2f} GB in {dt:.1f} s -> {root}")
 
 
 def cmd_build(a):
@@ -2443,9 +2477,11 @@ def main(argv=None):
                          "expression/mimicry lookups read (~115 MB) — everything offline in one call")
     bs.add_argument("--index", metavar="SPEC",
                     help="also fetch PREBUILT whole-proteome window indexes, so a safety screen "
-                         "loads instead of building. `human` / `mouse` / `human:8,9,10,11`; "
-                         "comma-separated. Each is GB-scale, so ask for the lengths you need -- "
-                         "class I is 8-11. Falls back to building locally if one is not published")
+                         "loads instead of building. `human` / `mouse` for the class-I lengths, or "
+                         "`human:8|9|10|11` to name them -- lengths are PIPE-separated, commas "
+                         "separate whole specs (`human,mouse:9`). Each index is GB-scale, so ask "
+                         "for the lengths you need; class I is 8-11. Falls back to building "
+                         "locally if one is not published")
     bs.set_defaults(fn=cmd_bootstrap)
 
     al = sub.add_parser("alleles",

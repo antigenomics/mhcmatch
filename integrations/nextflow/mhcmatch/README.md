@@ -576,7 +576,7 @@ and never think about it.
 | `mhcmatch_neoag_max_subs` | `2` | `neoag` search radius |
 | `mhcmatch_mimicry_annotate` | `false` | append the nearest reference peptide per channel |
 | `mhcmatch_vector_n0` | `null` | **required** per-allotype capacity |
-| `mhcmatch_vector_screen` | `false` | run the essential-tissue / self-origin exclusion. **Off by default and the one default that costs you something**: without it no unit is withdrawn and every task says so in its log. Set it `true` before manufacturing. Off because the index is rebuilt per task rather than cached — 701 s of a 26:48 run — not because the check is cheap to skip |
+| `mhcmatch_vector_screen` | `false` | run the essential-tissue / self-origin exclusion. **Off by default and the one default that costs you something**: without it no unit is withdrawn and every task says so in its log. Set it `true` before manufacturing, having first staged the whole-proteome index (`mhcmatch bootstrap --index`). It ships off because on a COLD cache every task in the fan-out builds its own index at once — 701 s of a 26:48 run — not because the check is optional; staged, the same run is 26:48 at 16.3 GB peak |
 | `mhcmatch_vector_map` | `true` | emit the cassette map (`*.cassette.map.tsv` / `.json`) |
 | `mhcmatch_vector_map_binder` | `weak` | which **NetMHCpan** cut-off the map annotates. NetMHCpan: class I strong `%rank <= 0.5`, weak `<= 2.0`. NetMHCIIpan: class II strong `<= 2.0`, weak `<= 10.0`. **The two classes do not share a number** — a single `2.0` is weak for class I and *strong* for class II, which is why one mouse construct reported 0 class-II epitopes with its best window at `%rank 4.095`. `weak` is the default because the map reports and selects nothing |
 | `mhcmatch_vector_map_threshold` | *(from the tier)* | explicit class-I `%rank` override |
@@ -800,7 +800,7 @@ register length and a re-run without it repeats hours of work that has not chang
 | `MHCMATCH_RANK` | 8 | 8 GB | 1 h | the aggregate alone; **24 GB / 6 h** under `--mhcmatch_rank_extended`, which loads the self-mimicry reference |
 | `MHCMATCH_NEOAG` | 4 | 32 GB | 4 h | one seqtree index over the reference window set |
 | `MHCMATCH_MIMICRY` | 4 | 32 GB | 4 h | the same, six channels |
-| `MHCMATCH_CASSETTE` | 4 | **48 GB** | 8 h | one whole-proteome index **per register length**, ~12 GB peak each |
+| `MHCMATCH_CASSETTE` | 4 | **48 GB** | 8 h | only with `--mhcmatch_vector_screen`; 8 GB / 1 h without it. Sized for a **cold** cache, where every task builds its own whole-proteome index per register length at ~12 GB peak. Stage the index (`bootstrap --index`) and the real peak is 16.3 GB |
 | `MHCMATCH_CASSETTE_SCORE` | 1 | 2 GB | 20 m | one pass over the collected tables; waits for every sample |
 | `MHCMATCH_ALLELES` | 1 | 2 GB | 20 m | a table read and a lookup; no panel |
 | `MHCMATCH_RERANK` | 8 | 8 GB | 1 h | `rank pairs` — the same work as `MHCMATCH_RANK`, sized the same |

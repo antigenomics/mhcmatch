@@ -410,7 +410,7 @@ parameter paid for on no information. Repaired, it fits **+0.2155** in v11. (Whi
 
 The symbol is recoverable from the peptide, because a neoantigen is a near-copy of a self peptide:
 
-.. code-block:: fish
+.. code-block:: bash
 
    mhcmatch genes candidates.tsv --species human --max-subs 2 --out annotated.tsv
    mhcmatch rank pairs annotated.tsv --tumor SKCM --out ranked.tsv
@@ -448,7 +448,7 @@ information:
 Reading the output
 ------------------
 
-.. code-block:: fish
+.. code-block:: bash
 
    mhcmatch rank fasta candidates.fasta --alleles donor.txt --tumor SKCM --out ranked.tsv
 
@@ -514,9 +514,10 @@ move a ranking.
 
    **A model emits the features it used, and refuses to run without them.** ``EPIC``'s corpus
    term reads three reference deposits as three 64 KB k-mer tables, so an aggregate score builds no
-   trie at all and ``--no-self`` is allowed with ``--score aggregate``. That
-   index — ~7.5 GB and 6 min 15 s, paid once for the whole candidate list — is still what
-   ``--extended`` and ``--annotate`` cost, because they report the ``self`` channels.
+   trie at all and ``--no-self`` is allowed with ``--score aggregate``. ``--extended`` and
+   ``--annotate`` do build the reference index, because they report the ``self`` channels — paid
+   once for the whole candidate list, and since 1.7.3 cached on disk and stageable prebuilt, so
+   once per machine rather than once per run.
 
    The ``imputed`` column names any feature that had to take its training mean for **that row** — a
    candidate with no IC50 has no occupancy, a frameshift has no wild type. Those are candidates with

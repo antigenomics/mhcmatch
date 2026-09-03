@@ -23,7 +23,8 @@ The mathematical and statistical theory lives in the technical appendix,
      </a>
      <a class="proj-card" href="cli.html">
        <h3>Command line</h3>
-       <p>Twenty-three commands grouped by what you are trying to do, and the two env vars a cluster needs.</p>
+       <p>Twenty-one commands grouped by what you are trying to do, how to stage reference data,
+       and the env vars a cluster needs.</p>
      </a>
      <a class="proj-card" href="complementarity.html">
        <h3>Complementarity</h3>

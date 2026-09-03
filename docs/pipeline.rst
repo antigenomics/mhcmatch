@@ -254,9 +254,10 @@ defaults, longest single task 60 s; 341 s with the safety screen and the mimicry
 essential-tissue exclusion and **should be turned on before anything is manufactured** -- every task
 prints that it did not run. Mimicry is annotation only, and scores are identical either way, because
 ``rank``'s corpus channels are a ``corpus_spectrum`` table contraction rather than a neighbour
-search. Both need a whole-proteome index; it is cached on disk under ``$MHCMATCH_CALIBRATION_CACHE``
-and staged with ``mhcmatch bootstrap --index "human:8|9|10|11"``, which fetches the published index
-where one exists and builds locally otherwise, reporting per length which it did.
+search. Both need a whole-proteome index, staged with
+``mhcmatch bootstrap --index "human:8|9|10|11"``, which reads the published index where one exists
+and builds locally otherwise --- reporting the size, the wall clock and the directory per length,
+because the three routes land in three different places (:ref:`bootstrap-tiers`).
 
 The class-II half is what makes the cassette map say ``self_help``
 ------------------------------------------------------------------

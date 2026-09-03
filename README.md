@@ -28,8 +28,12 @@ search core, MHC-I and MHC-II, human and mouse. Every reference dataset is fetch
 
 ```bash
 pip install mhcmatch
-mhcmatch bootstrap                                   # pre-fetch the panel (optional; ~16 MB)
+mhcmatch bootstrap                                   # optional: pre-fetch the ligand panel (~16 MB)
 ```
+
+Nothing else has to be downloaded by hand — every reference table is fetched on first use. `bootstrap`
+only decides *when*, which matters on a compute node with no outbound network; the four staging
+tiers are under [Data](#data).
 
 The library examples below run on any recent release. **The Nextflow pipeline needs >= 1.7.3** --
 its first process calls `mhcmatch alleles`, which does not exist before then.
@@ -102,6 +106,16 @@ mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor 
 | How viral-like is it, as a soft sum not a cutoff? | — | `luksza.viral_r` |
 
 Full command reference, grouped by task: [the CLI page](https://antigenomics.github.io/mhcmatch/cli.html).
+
+**Two module names for the cassette, because they are two jobs.** `cassette` *chooses* the units and
+scores a finished construct (`select`, `score`, `lam`); `vector` *assembles* one that has been chosen
+(`select` over allotype slots, `order`, `assemble`, `mrna`, `epitope_map`, `LINKERS`). The CLI hides
+the split behind one `mhcmatch cassette` verb; the Python column above does not, which is why both
+names appear in it.
+
+**Chaining `rank` into a cassette takes two flags** — `--prefix` renames the column the next step
+looks for, and `rank`'s peptide is the minimal epitope where the assembly wants the long window.
+[The tested four-command chain is on the CLI page](https://antigenomics.github.io/mhcmatch/cli.html#rerank-chain).
 
 `predict` is the presentation axis (**is it presented at all**, the NetMHCpan `%Rank_EL` analogue);
 `restriction` is the specificity axis (**which allele**). They answer different questions and a
@@ -248,9 +262,10 @@ this one. Set it to `off` and nothing is cached; leave it unset and entries go t
 
 **Pass `--peptides FILE` to any peptide-keyed command.** The expensive part of most of them is setup
 that a per-peptide invocation pays again every time: the presentation and affinity calibrators are
-~5 s, the binder calibrator ~45 s, a human-proteome length index ~70 s. All of it is cached for the
+~5 s, the binder calibrator ~45 s, a human-proteome length index 64.6 s. All of it is cached for the
 life of the process, so one process over a whole list is the difference between 49 s per peptide and
-thousands per second. Measured, both ways, in
+thousands per second. The index outlives the process too — since 1.7.3 it is cached on disk and can
+be fetched prebuilt in 3.08 s (`mhcmatch bootstrap --index`), so it is paid once per machine. Measured, both ways, in
 `bench/cli/` in [`2026-mhcmatch-code`](https://github.com/repseq/2026-mhcmatch-code) (private; released to reviewers).
 
 ```bash
@@ -617,11 +632,34 @@ end on whole published deposits (`pip install 'mhcmatch[notebooks]'`).
 Everything is fetched on demand from [`isalgo/pmhc_data`](https://huggingface.co/datasets/isalgo/pmhc_data)
 and cached by `huggingface_hub`; `$MHCMATCH_PMHC_DIR` points at a local mirror instead.
 
+**Four staging tiers, each a superset of the need above it.** Everything works with none of them —
+they trade disk now for network later, which is the trade a compute node with no outbound route
+needs made in advance.
+
 ```bash
-mhcmatch bootstrap                              # the reference ligand panel, both tiers (~16 MB)
-mhcmatch bootstrap --proteome human,mouse       # + reference proteomes
-mhcmatch bootstrap --reference                  # + corpora, known-epitope, mimicry, expression (~115 MB)
+mhcmatch bootstrap                              # the ligand panel, both tiers         ~16 MB
+mhcmatch bootstrap --tier shortlist             # ... one tier only
+mhcmatch bootstrap --proteome human,mouse       # + reference proteomes                 51 MB
+mhcmatch bootstrap --reference                  # + corpora, known epitopes, mimicry
+                                                #   references, expression tables      ~115 MB
+mhcmatch bootstrap --index "human:9"            # + a PREBUILT whole-proteome window
+                                                #   index, per (species, length)    1.2-2.8 GB
 ```
+
+`--reference` is the one a cluster wants: it is everything `rank`, `neoag` and `mimicry` read, in one
+call. `--index` is separate because it is GB-scale and only the **safety screen** and the **mimicry
+annotation** need it — both ship off (see [Deployment](#deployment)). Fetching one takes 3.08 s where
+building it locally takes 64.6 s (human, L=9); ask for the lengths you will use, class I being 8-11,
+and all eight published indexes together are 17 GB. Anything not published falls back to building
+locally, so the command never fails for want of an upload.
+
+**Where an index lands is not where you would guess.** A *published* one is read in place from
+`$MHCMATCH_PMHC_DIR` if a mirror has it and downloaded into `$HF_HOME` if not; only one this machine
+*built* goes to `$MHCMATCH_CALIBRATION_CACHE/proteome_index/`. Measured, mouse `L=9`: 1.49 GB, 0.0 s
+off a mirror against 47.0 s from the hub. Point all three at shared, roomy paths on a cluster —
+`$HF_HOME` especially, or ~250 MB of ordinary reference data arrives in your home quota. `bootstrap
+--index` prints the size, the wall clock and the directory for every length, so you can see which
+route you got.
 
 Pseudosequences (34-mer grooves) and the fitted model parameters are vendored in
 `src/mhcmatch/data/` with their `PROVENANCE.md`. Nothing is refitted at import.

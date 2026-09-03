@@ -127,3 +127,22 @@ def test_concurrent_cold_builders_agree_and_leave_no_partial_file(tmp_path):
     d = os.path.join(str(tmp_path), "proteome_index")
     names = os.listdir(d)
     assert names and not any(n.startswith(".tmp-") for n in names), names
+
+
+def test_an_index_spec_that_is_a_bare_length_is_named_not_staged():
+    """``--index human:8,9,10,11`` reads as four specs, and used to stage one of them in silence.
+
+    Whole specs are comma-separated and the lengths inside one are pipe-separated, so a comma in a
+    length list is eaten by the outer split. The caller then believes four lengths are staged, one
+    is, and the safety screen rebuilds the other three at 64.6 s each. The tell is a spec that is
+    all digits, which no species is; validation runs over every spec before a single GB is fetched.
+    """
+    import pytest
+
+    from mhcmatch.cli import _check_index_spec
+
+    for ok in ("human", "mouse", "human:9", "human:8|9|10|11", "mouse:11"):
+        _check_index_spec(ok)                      # no exception
+
+    with pytest.raises(SystemExit, match="is a length, not a species"):
+        _check_index_spec("9")

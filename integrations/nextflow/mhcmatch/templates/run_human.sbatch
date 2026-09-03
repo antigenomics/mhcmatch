@@ -78,7 +78,11 @@ conda run -n "$ENV" --no-capture-output nextflow run "$MODULE/pipeline.nf" \
 # **`--mhcmatch_vector_screen` is OFF by default, and the run above did NOT safety-screen.** No
 # unit was withdrawn for essential-tissue self-origin; the cassette carries whatever it was handed.
 # Every task says so in its log. Add `--mhcmatch_vector_screen true` before anything is
-# manufactured, and expect the run to go from minutes to hours when you do: the whole-proteome
-# index is rebuilt per task, four register lengths each, ~12 GB peak apiece. Raise --mem to 48G and
-# --time to 08:00:00 for that arm.
+# manufactured. **Stage the index first** -- setup.sbatch's STAGE_INDEX, or
+# `mhcmatch bootstrap --index "human:8|9|10|11"` -- and every task loads it in ~3 s instead of
+# spending 64.6 s building its own. Measured with the screen AND the mimicry annotation both on,
+# staged: 26:48 at 16.3 GB peak RSS, which is inside the 24 GB / 2 h this script asks for.
+#
+# Skip the staging and the fan-out pays for it: all four tasks miss the cache at once, each builds
+# its own index at ~12 GB peak over four register lengths, and 24 GB / 2 h is no longer enough.
 echo "RUN OK"

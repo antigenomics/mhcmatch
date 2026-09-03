@@ -129,6 +129,35 @@ def test_every_build_target_owns_files_that_exist():
             assert os.path.exists(os.path.join(_build.DATA, f)), f"{name}: {f} is not shipped"
 
 
+def test_the_documented_artifact_count_is_the_real_one():
+    # The docs quote how many files `build --check` covers, and that number has now drifted twice
+    # -- 11 -> 27 when the TARGETS table grew to every shipped artifact, 27 -> 29 unnoticed after
+    # that. It is the kind of fact a reader trusts precisely because it is specific, so pin it to
+    # the table rather than to whoever last edited the prose.
+    import re
+    from pathlib import Path
+
+    from mhcmatch import _build
+    n = sum(len(files) for _label, _fn, files in _build.TARGETS.values())
+    root = Path(__file__).resolve().parents[1]
+    # "artifact files" exactly: `\b` keeps the 4 of "a v4 artifact" out, and requiring the noun
+    # plural keeps "the four vendored artifacts" out. Both were false positives on the first pass.
+    pat = re.compile(r"\b(\d+)\s+(?:shipped\s+)?artifact\s+files\b")
+    checked = []
+    for rel in ("docs/cli.rst", "skills/mhcmatch/SKILL.md", "CLAUDE.md"):
+        p = root / rel
+        if not p.exists():
+            continue
+        for i, line in enumerate(p.read_text().splitlines(), 1):
+            for m in pat.finditer(line):
+                checked.append(f"{rel}:{i}")
+                assert int(m.group(1)) == n, (
+                    f"{rel}:{i} says {m.group(1)} artifact files, `build --check` covers {n}. "
+                    "Update the prose, not this test.")
+    assert checked, ("no doc states the artifact count any more -- either it was removed on "
+                     "purpose (delete this test) or the wording drifted out of the pattern")
+
+
 def test_nextflow_pins_match_pyproject():
     """The container pins must name the version this checkout builds -- unless it is a dev version.
 

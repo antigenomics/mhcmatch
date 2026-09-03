@@ -26,7 +26,7 @@ tell you nothing; on a fresh patient's variants they are the most informative co
    been measured here. Reusing these numbers on class-II ligands would assert an equivalence nobody
    has established.
 
-   So: run ``vector``, ``neoag`` and the ``rank`` annotation on ``--cls mhc1``. ``mhcmatch vector``
+   So: run ``cassette build``, ``neoag`` and the ``rank`` annotation on ``--cls mhc1``. ``mhcmatch cassette build``
    accepts ``--cls mhc2`` for the *register vocabulary* used in junction scanning and claims nothing
    beyond that; the shipped Nextflow subworkflow filters all three to class I.
 
@@ -101,7 +101,7 @@ Two floors, not one
 under MAGE-A12's 0.33 so the fatal case is always visible. It is not an exclusion line — 0.25 TPM is
 "detectable somewhere", which nearly every human gene is. ``veto_tpm = 5.0``, the conventional
 "is it expressed" cut, is the exclusion line, and it applies under
-``self_origin_risk(..., graded=True)`` / ``mhcmatch vector --screen-mode graded``: a finding below it
+``self_origin_risk(..., graded=True)`` / ``mhcmatch cassette build --screen-mode graded``: a finding below it
 is kept as a per-unit **off-target fingerprint** rather than a refusal, reported in the cassette's
 ``fingerprint`` rows and priced into composition by ``--weight-offtarget``
 (:func:`mhcmatch.vector.offtarget_cost` → :func:`mhcmatch.portfolio.compose`). The default stays
@@ -196,7 +196,7 @@ The third clause: report near-identity, never withdraw on it
 
 Both deaths were *near*-identity rather than identity, so an exact-only screen cannot be the whole
 answer — and the section above is why a ``d = 1`` **veto** cannot be it either. ``report_subs=1``
-(``mhcmatch vector --report-subs 1``) resolves that by separating the two decisions: a ``d = 1``
+(``mhcmatch cassette build --report-subs 1``) resolves that by separating the two decisions: a ``d = 1``
 coincidence is **reported and the unit is kept**, arriving in ``screen``'s ``notes`` with
 ``"veto": False`` regardless of ``graded``, so it is a safety consideration attached to a candidate
 rather than a refusal of it.

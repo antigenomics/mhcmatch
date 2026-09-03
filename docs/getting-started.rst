@@ -7,7 +7,11 @@ Install
 .. code-block:: bash
 
    pip install mhcmatch
-   mhcmatch bootstrap       # pre-fetch the pmhc panel; add --proteome human,mouse for the proteomes
+   mhcmatch bootstrap       # optional: pre-fetch the ligand panel (~16 MB)
+
+Every reference table is fetched on first use, so nothing above is required. ``bootstrap`` only
+decides *when* the download happens, which is what a compute node with no outbound network needs
+decided in advance --- the four staging tiers are in :ref:`bootstrap-tiers`.
 
 From a checkout
 ~~~~~~~~~~~~~~~
@@ -75,7 +79,7 @@ the WT counterpart + agretopicity / amplitude / DAI, and the
 **generalized binder score**
 (``binder_rank`` = calibrated combined %rank, plus ``binder_band``):
 
-.. code-block:: fish
+.. code-block:: bash
 
    mhcmatch predict sample.mhcI.peptide.fasta --alleles 'HLA-A*02:01,HLA-B*07:02' \
        --cls mhc1 --species human --scored-csv out.scored.csv --native out.native.tsv
@@ -97,3 +101,7 @@ Data
 - **Reference proteomes** — :meth:`mhcmatch.proteome.Proteome.from_hf` auto-fetches the human (UP000005640),
   mouse (UP000000589), and pathogen proteomes from HF on first use (cached);
   ``mhcmatch bootstrap --proteome human,mouse`` pre-fetches them. Pass your own FASTA to :meth:`mhcmatch.proteome.Proteome.from_fasta` to override.
+- **Whole-proteome window indexes** — only the safety screen and the mimicry annotation need one.
+  ``mhcmatch bootstrap --index "human:9"`` reads a published one instead of spending 64.6 s
+  building it; a locally built one is cached under ``$MHCMATCH_CALIBRATION_CACHE/proteome_index/``
+  and a published one is not. See :ref:`bootstrap-tiers`.

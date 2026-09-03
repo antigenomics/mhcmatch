@@ -120,7 +120,7 @@ filled by score alone --- so the comparison is laid out on your own candidates r
 
 .. code-block:: console
 
-   $ mhcmatch vector --candidates units.tsv --n0 20 \
+   $ mhcmatch cassette build --candidates units.tsv --n0 20 \
          --quota 'mhc1=8:2,mhc2=4:1,nonconventional=3:1' --block-live 0.5 \
          --alleles "$(cat donor.hla)" \
          --fasta cassette.faa --fasta-nt cassette.fna --map cassette.map.tsv
