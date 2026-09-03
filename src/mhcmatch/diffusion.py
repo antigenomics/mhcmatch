@@ -476,9 +476,6 @@ class AnchorModel:
             return self._learned_weights(cls, prune_dpi)
         raise ValueError(f"unknown weights {weights!r} (learned|uniform)")
 
-    def _candidates(self, j):
-        return list(self.prefs[j].keys())
-
     def _dist(self, j, allele, raw, k=None):
         """Residue distribution at anchor ``j`` for ``allele``; ``k`` selects a motif component.
 

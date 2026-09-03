@@ -32,6 +32,7 @@ discarding the candidate -- which is the standing rule for every partially-cover
 """
 from __future__ import annotations
 
+import csv
 import functools
 import logging
 import gzip
@@ -410,16 +411,11 @@ def _synonyms(path: str | None = None) -> dict:
     and an organ, and an origin reading "Lung" means the lung, whichever table it was written
     against."""
     out: dict = {}
-    with open(fetch_synonyms(path), encoding="utf-8") as fh:
-        head = fh.readline().rstrip("\n").split("\t")
-        ia, ik, it = head.index("alias"), head.index("target_kind"), head.index("target")
-        for line in fh:
-            f = line.rstrip("\n").split("\t")
-            if len(f) <= max(ia, ik, it):
-                continue
-            d = out.setdefault(f[ia].strip().lower(), {"tcga_code": [], "gtex_context": []})
-            if f[ik] in d and f[it] not in d[f[ik]]:
-                d[f[ik]].append(f[it])
+    with open(fetch_synonyms(path), encoding="utf-8", newline="") as fh:
+        for r in csv.DictReader(fh, delimiter="\t"):
+            d = out.setdefault(r["alias"].strip().lower(), {"tcga_code": [], "gtex_context": []})
+            if r["target_kind"] in d and r["target"] not in d[r["target_kind"]]:
+                d[r["target_kind"]].append(r["target"])
     return {k: {kk: tuple(vv) for kk, vv in v.items()} for k, v in out.items()}
 
 
@@ -497,17 +493,6 @@ def coexpression(genes, path: str | None = None, absolute: bool = False):
     return out
 
 
-def _gtex_contexts(path: str | None = None) -> dict:
-    """``{lowercased tissue name: the name as the matrix spells it}``.
-
-    Spelling is the reason this exists rather than a set. Toil writes ``Skin - Sun Exposed (Lower
-    Leg)`` and ``Brain - Frontal Cortex (Ba9)`` where GTEx v11 writes ``(Lower leg)`` and ``(BA9)``,
-    so a tissue name carried from one table to the other matches on nothing at all."""
-    _, ci, _, _ = _matrix(path)
-    return {c.split("|", 1)[1].lower(): c.split("|", 1)[1]
-            for c in ci if c.startswith("toil_gtex|")}
-
-
 def resolve_context(text: str, path: str | None = None, approximate: bool = True,
                     detail: bool = False):
     """``(TCGA study codes, GTEx tissue names)`` for a free-text origin.
@@ -581,11 +566,6 @@ def _log_approximate(text: str, alias: str) -> None:
         _APPROX_SEEN.add(text)
         _LOG.info("expression: %r matched no context exactly; resolved on the organ %r. "
                   "The floor and the matched normal are that organ's.", text, alias)
-
-
-def _matched_toil(code: str, gt: dict) -> tuple:
-    """:func:`matched_tissues` mapped onto the spellings this matrix actually uses."""
-    return tuple(gt[t.lower()] for t in matched_tissues(code) if t.lower() in gt)
 
 
 def _floor_from(keys: tuple, q: float, path: str | None = None) -> tuple:
