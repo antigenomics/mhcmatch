@@ -9,11 +9,54 @@ See the theory appendix §5 (near-exact source identification).
 from __future__ import annotations
 
 import gzip
+import hashlib
+import os
+import tempfile
 from array import array
 from bisect import bisect_right
 from dataclasses import dataclass
 
 from seqtree import Index, SearchParams
+
+#: Bump when the on-disk index layout changes, or when a seqtree release changes what
+#: :meth:`seqtree.Index.save` writes. It is the first field of every key, so a bump orphans every
+#: existing entry rather than risking one being loaded under the wrong reader -- the same role
+#: :data:`mhcmatch.predict.SCORER_EPOCH` plays for the calibration cache, and for the same reason:
+#: **a cache key of pure data cannot see a code change.**
+_INDEX_CACHE_VERSION = 1
+
+
+def _unlink(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def index_cache_dir() -> str | None:
+    """Where whole-proteome window indexes are cached, or ``None`` when caching is off.
+
+    **It shares :data:`mhcmatch.calibrate.CACHE_ENV` on purpose**, in a ``proteome_index``
+    subdirectory. Both are derived data keyed by their inputs, both are safe to delete, and both
+    want the same lifetime -- and reusing the variable means every template, container and cluster
+    that already points ``MHCMATCH_CALIBRATION_CACHE`` at shared storage gets this for free, with
+    no second thing to configure and no second thing to forget. Setting it to ``0``/``off``/``none``
+    disables both.
+
+    **Size is the reason to know it exists.** An index is a few GB per register length per species
+    -- measured on the mouse proteome at ``L=9``, 1.3 GB written in 1.3 s and read back in 0.3 s
+    against 27.5 s to rebuild. A class-I screen spans four lengths. Point it at scratch or shared
+    reference storage, not a home quota."""
+    from .calibrate import cache_dir
+    d = cache_dir()
+    if d is None:
+        return None
+    d = os.path.join(d, "proteome_index")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        return None
+    return d
 
 _AA_ORDER = "ACDEFGHIKLMNPQRSTVWY"
 _AA = set(_AA_ORDER)
@@ -154,8 +197,19 @@ class Proteome:
         What remains is inherent: the window list handed to ``Index.build`` and the index itself.
         Measured on the human proteome, 12.6 GB peak for the first length and ~3.6 GB for each
         further one. **Ask for the lengths you need** -- :meth:`find_sources` builds one index per
-        distinct query length, so a mixed 8-11 query set builds four."""
+        distinct query length, so a mixed 8-11 query set builds four.
+
+        **The in-memory cache is per process, so a disk cache sits under it** (:func:`index_cache_dir`).
+        Every ``cassette build --screen`` is a fresh process, so a four-task Nextflow run over four
+        register lengths built this sixteen times where four would do -- 701 s of a 26:48 run,
+        measured on Aldan-3 2026-09-03. Rebuilding is a pure function of ``(proteome content, L)``,
+        which is exactly what the on-disk key digests, so the entry cannot outlive what produced
+        it."""
         if L not in self._cache:
+            hit = self._index_from_disk(L)
+            if hit is not None:
+                self._cache[L] = hit
+                return self._cache[L]
             names, starts, pos = [], [], array("l")
             windows = []
             for name, seq in self.seqs.items():
@@ -168,8 +222,116 @@ class Proteome:
                         windows.append(w)
                         pos.append(i)
             meta = _Meta(self.seqs, names, starts, pos, L)
-            self._cache[L] = (Index.build(windows, alphabet="aa") if windows else None, meta)
+            idx = Index.build(windows, alphabet="aa") if windows else None
+            self._cache[L] = (idx, meta)
+            if idx is not None:
+                self._index_to_disk(L, idx, names, meta)
         return self._cache[L]
+
+    # ---- the on-disk half of `_index`, and why it needs no lock -----------------------------
+
+    def _index_key(self, L: int) -> str:
+        """Digest of ``(cache format, L, every name and sequence in iteration order)``.
+
+        The **order** is in the key and not merely the content, because ``names``/``starts`` index
+        into ``self.seqs`` positionally: two proteomes holding the same proteins in a different
+        order produce different ``ref_id`` numbering and must not share an entry. Hashing the
+        sequences themselves rather than a path and mtime is what makes an entry safe to share
+        across hosts and survive a re-download that changes neither."""
+        h = hashlib.blake2b(digest_size=16)
+        h.update(f"{_INDEX_CACHE_VERSION}|{L}|".encode())
+        for name, seq in self.seqs.items():
+            h.update(name.encode("utf-8", "replace")); h.update(b"\0")
+            h.update(seq.encode("utf-8", "replace")); h.update(b"\0")
+        return h.hexdigest()
+
+    def _index_paths(self, L: int):
+        d = index_cache_dir()
+        if d is None:
+            return None
+        k = self._index_key(L)
+        return os.path.join(d, f"{k}.idx"), os.path.join(d, f"{k}.meta.npz")
+
+    def _index_from_disk(self, L: int):
+        """``(Index, _Meta)`` from the disk cache, or ``None`` -- never a partial answer.
+
+        Both files are required and any failure falls through to a rebuild, because a rebuild is
+        always correct and merely slower. That is the whole error policy: a cache that can only
+        cost time cannot cost a wrong answer."""
+        paths = self._index_paths(L)
+        if paths is None:
+            return None
+        ipath, mpath = paths
+        if not (os.path.exists(ipath) and os.path.exists(mpath)):
+            return None
+        try:
+            import numpy as np
+            with np.load(mpath, allow_pickle=False) as z:
+                names = z["names"].tobytes().decode("utf-8").split("\n")
+                starts, pos = z["starts"], z["pos"]
+            meta = _Meta(self.seqs, names, array("l", starts.tolist()),
+                         array("l", pos.tolist()), L)
+            return Index.load(ipath), meta
+        except Exception:
+            return None
+
+    def _index_to_disk(self, L: int, idx, names, meta) -> None:
+        """Write both halves so that **no reader can observe a partial or mixed entry.**
+
+        Each file is written to a temporary name in the SAME directory and moved into place with
+        :func:`os.replace`, which is atomic on POSIX and on a POSIX-compliant network mount --
+        the identical discipline :func:`mhcmatch.calibrate._write_atomic` uses, and for the same
+        reason.
+
+        **There is deliberately no lock.** Two processes that build the same ``(proteome, L)``
+        both write, and the second rename wins -- which is safe rather than merely tolerable,
+        because the payload is a pure function of the cache key, so the two files are byte-
+        identical and last-writer-wins cannot introduce a disagreement. It costs duplicated work
+        on a cold cache and never a corrupt one. A lock would serialise a Nextflow fan-out to buy
+        nothing, and a stale lock left by a killed task would deadlock the next run.
+
+        **Both entries are left world-readable.** ``mkstemp`` creates at 0600 and :func:`os.replace`
+        preserves the mode, so without the ``chmod`` a cache on shared storage is readable only by
+        whoever happened to build it first -- which silently defeats the point of sharing it, with
+        nothing to see but a slow run. Measured on Aldan-3 2026-09-03, before this was fixed here
+        and in :func:`mhcmatch.calibrate._write_atomic`: 361 of 361 calibration entries in a
+        group-shared reference directory were 0600. Umask is deliberately not consulted -- the
+        payload is derived from public reference data, and a cache nobody else can read is not one.
+
+        Mixing generations is impossible for the same reason: the key digests the content, so
+        there is only one possible payload per key, and a reader that finds one file without the
+        other rebuilds rather than pairing them. Failures are swallowed -- a full or read-only
+        cache directory must slow a run down, never stop it."""
+        paths = self._index_paths(L)
+        if paths is None:
+            return
+        ipath, mpath = paths
+        try:
+            import numpy as np
+            d = os.path.dirname(ipath)
+            fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-", suffix=".idx")
+            os.close(fd)
+            try:
+                idx.save(tmp)
+                os.chmod(tmp, 0o644)     # mkstemp is 0600 and os.replace keeps it; see below
+                os.replace(tmp, ipath)
+            except BaseException:
+                _unlink(tmp)
+                raise
+            fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-", suffix=".npz")
+            os.close(fd)
+            try:
+                with open(tmp, "wb") as fh:
+                    np.savez(fh, names=np.frombuffer("\n".join(names).encode("utf-8"), dtype="u1"),
+                             starts=np.asarray(meta.starts, dtype="i8"),
+                             pos=np.asarray(meta.pos, dtype="i8"))
+                os.chmod(tmp, 0o644)
+                os.replace(tmp, mpath)
+            except BaseException:
+                _unlink(tmp)
+                raise
+        except Exception:
+            return                     # derived data: a cache that cannot be written is not an error
 
     def find_source(self, peptide, max_subs=1, exclude_exact=False):
         """Self peptides within ``max_subs`` substitutions of ``peptide``, nearest first.

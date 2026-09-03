@@ -74,12 +74,22 @@ def _write_atomic(path: str, payload: dict) -> None:
     the cache key, so the two payloads are byte-identical and last-writer-wins cannot introduce a
     disagreement. It costs duplicated work, never a corrupt or inconsistent cache -- which is why
     there is no lock file here. A lock would serialise the fleet to buy nothing.
+
+    **And the entry is left world-readable**, which is not cosmetic: ``mkstemp`` creates at 0600 and
+    :func:`os.replace` preserves the mode, so every file this wrote was readable only by the user
+    who wrote it. On the shared path this docstring recommends that silently defeats the whole
+    point -- a second person on the same project gets no hits and rebuilds all of it, with nothing
+    to see but a slow run. Measured on Aldan-3 2026-09-03: 361 of 361 entries in a group-shared
+    reference directory were 0600. The payload is derived from public reference data, so 0644 is
+    the right mode and umask is deliberately not consulted; a cache nobody else can read is not a
+    shared cache.
     """
     d = os.path.dirname(path)
     fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-", suffix=".json")
     try:
         with os.fdopen(fd, "w") as fh:
             json.dump(payload, fh)
+        os.chmod(tmp, 0o644)
         os.replace(tmp, path)
     except BaseException:
         try:
