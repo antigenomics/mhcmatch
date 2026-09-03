@@ -1,9 +1,21 @@
 Corpus complementarity: what the repertoire was shaped by
 =========================================================
 
-Complementarity is two factors (:doc:`complementarity`). The chemistry one, ``C_phys``, is a single
-imported scale and is :doc:`burial`. This page owns the other one, ``C_corpus``, and the reason the
-term that used to carry it was fitted on the wrong question.
+**What it is.** Three of the nine fitted terms --- ``C_corpus_thymus``, ``C_corpus_self`` and
+``C_corpus_viral`` --- each measuring how densely a candidate sits among a reference set a real
+repertoire was actually shaped by. Thymic immunopeptidome reads as **danger**, the host proteome as
+**tolerance**, the foreign ligandome as a **reference** never seen during selection.
+
+**Why it is cheap.** Each channel is a 64 KB *k*-mer table contraction, not a neighbour search, so
+all three together cost three table lookups and the ranking path builds **no proteome index at
+all**. The tables ship in the wheel.
+
+**Why it is label-free.** No immunogenicity label is anywhere in the fit --- the channels are
+densities against deposits, so nothing here can memorise a screen's outcome.
+
+Complementarity is two factors (:doc:`complementarity`); the chemistry one, ``C_phys``, is a single
+imported scale and is :doc:`burial`. This page owns the other one --- and the reason the term that
+used to carry it was fitted on the wrong question.
 
 That term was ``C_aa``, the residue-identity half of :mod:`mhcmatch.complement`: forty log-odds
 cells estimated on the Chowell corpus. Chowell separates peptides that are **foreign** from peptides

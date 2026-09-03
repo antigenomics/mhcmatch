@@ -4,6 +4,8 @@ Getting started
 Install
 -------
 
+**This documentation is built from mhcmatch** |release|.
+
 .. code-block:: bash
 
    pip install mhcmatch

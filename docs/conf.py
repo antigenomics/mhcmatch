@@ -10,6 +10,26 @@ project = "mhcmatch"
 author = "ISALGO laboratory"
 copyright = f"{datetime.date.today().year}, {author}"
 
+# **The release, read from the package, never typed into a page.** Docs used to name the version in
+# prose -- ">= 1.7.3" in three places, three different numbers, none of them the shipped pin -- and
+# every one of them went stale at a release nobody remembered to grep. `|release|` substitutes this,
+# so a page can say which version it documents and cannot be wrong about it. Read from the installed
+# metadata, falling back to pyproject for a docs build in a bare checkout.
+def _version() -> str:
+    try:
+        from importlib.metadata import version as _v
+        return _v("mhcmatch")
+    except Exception:
+        import re
+        src = open(os.path.join(os.path.dirname(__file__), "..", "pyproject.toml")).read()
+        m = re.search(r'^version = "([^"]+)"', src, re.M)
+        return m.group(1) if m else "0.0.0"
+
+
+release = _version()
+version = ".".join(release.split(".")[:2])
+rst_prolog = f".. |release| replace:: {release}\n"
+
 extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
@@ -33,8 +53,19 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 html_theme = "pydata_sphinx_theme"
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
-html_title = "mhcmatch"
+# The version is in the brand, on every page: which release a page documents is the first thing a
+# reader needs and the last thing anyone remembers to write down.
+html_title = f"mhcmatch {release}"
 html_theme_options = {
     "github_url": "https://github.com/antigenomics/mhcmatch",
     "show_prev_next": False,
+    # **The sidebar was a flat wall of thirteen full page titles**, in source order, with no grouping
+    # and nothing marking where the reader is -- so it was scenery, not navigation. The toctree in
+    # `index.rst` is now four captioned groups with short link titles; these three options are what
+    # make the theme render that structure rather than flatten it.
+    "show_nav_level": 2,        # open each caption's pages, do not collapse to the caption alone
+    "navigation_depth": 3,      # let a page's own sections show under it
+    "collapse_navigation": False,
+    "header_links_before_dropdown": 4,
+    "show_toc_level": 2,        # the right-hand on-page TOC: subsections too, not just top level
 }

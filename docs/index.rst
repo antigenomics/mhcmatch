@@ -1,6 +1,11 @@
 mhcmatch
 ========
 
+.. rst-class:: lead
+
+   **Version** |release|. Everything on these pages is what this release does; the release history
+   is in ``CHANGELOG.md``.
+
 Peptide–MHC presentation, cross-reactivity, and motif tools on the
 `seqtree <https://github.com/antigenomics/seqtree>`_ fuzzy-search substrate. ``mhcmatch``
 productionizes the reference ``seqtree.pmhc`` methodology and adds a pseudosequence-based
@@ -14,44 +19,32 @@ The mathematical and statistical theory lives in the technical appendix,
 
    <div class="proj-card-grid">
      <a class="proj-card" href="getting-started.html">
-       <h3>Getting Started</h3>
+       <h3>Getting started</h3>
        <p>Install, build a store, predict restriction, scan a protein.</p>
-     </a>
-     <a class="proj-card" href="immunogenicity.html">
-       <h3>Immunogenicity features</h3>
-       <p>Physicochemical featurization of an epitope, offline, in one second.</p>
      </a>
      <a class="proj-card" href="cli.html">
        <h3>Command line</h3>
        <p>Twenty-one commands grouped by what you are trying to do, how to stage reference data,
        and the env vars a cluster needs.</p>
      </a>
-     <a class="proj-card" href="complementarity.html">
-       <h3>Complementarity</h3>
-       <p>The recognition axis: two factors in the shipped model, six feature blocks in the full
-       one, class I and class II.</p>
-     </a>
      <a class="proj-card" href="neoantigen.html">
-       <h3>Ranking neoantigens</h3>
-       <p>The shipped scorer end to end: the nine terms, what each was fitted on, what it does not do.</p>
+       <h3>The EPIC scorer</h3>
+       <p>Rank neoantigen candidates: nine fitted terms in four blocks, one page each &mdash;
+       expression, presentation, immunogenicity, complementarity.</p>
      </a>
      <a class="proj-card" href="pipeline.html">
        <h3>Running a cohort</h3>
-       <p>Two arms — re-rank your own table, or call epitopes de novo — from a directory of files,
-       on a laptop or under SLURM.</p>
+       <p>Two arms &mdash; re-rank your own table, or call epitopes de novo &mdash; from a directory
+       of files, on a laptop or under SLURM.</p>
      </a>
      <a class="proj-card" href="cassette.html">
-       <h3>Cassette design</h3>
-       <p>Choose the k epitopes to carry, and score a finished cassette on an axis that survives
-       changing donor and changing size.</p>
-     </a>
-     <a class="proj-card" href="safety.html">
-       <h3>Safety &amp; assembly</h3>
-       <p>The self-origin screen before a cassette is built, and the map of the one you built.</p>
+       <h3>Cassette design &amp; safety</h3>
+       <p>Choose the k epitopes to carry, withdraw the unsafe ones, and score the finished
+       construct.</p>
      </a>
      <a class="proj-card" href="api.html">
-       <h3>API Reference</h3>
-       <p>Store, search, proteome, pseudoseq diffusion, logos.</p>
+       <h3>API reference</h3>
+       <p>Store, search, proteome, pseudoseq diffusion, expression, logos.</p>
      </a>
    </div>
 
@@ -99,16 +92,9 @@ Capabilities
    :maxdepth: 2
    :hidden:
 
-   getting-started
-   cli
-   pipeline
-   neoantigen
-   immunogenicity
-   complementarity
-   cassette
-   safety
-   portfolio
-   burial
-   corpus
-   property_basis
-   api
+   Getting started <getting-started>
+   Command line <cli>
+   The EPIC scorer <neoantigen>
+   Running a cohort <pipeline>
+   Amino-acid property basis <property_basis>
+   API reference <api>

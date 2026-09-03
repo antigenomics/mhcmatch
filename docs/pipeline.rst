@@ -6,10 +6,11 @@ commands it runs and :doc:`cassette` is what the last stage decides.
 
 .. note::
 
-   **The module pins its own mhcmatch version** --- ``environment.yml``, the ``Dockerfile``,
-   ``params.mhcmatch_container`` and ``templates/setup.sbatch`` all name it. An unpinned install on
-   a stale index can resolve to a release that cannot run the first process, so ``setup.sbatch``
-   asserts what it got rather than letting the run discover it inside a task log.
+   **This module pins mhcmatch** |release| --- in ``environment.yml``, the ``Dockerfile``,
+   ``params.mhcmatch_container`` and ``templates/setup.sbatch``, four places a test checks against
+   ``pyproject.toml``. An unpinned install on a stale index can resolve to a release that cannot run
+   the first process, so ``setup.sbatch`` asserts what it got rather than letting the run discover
+   it inside a task log.
 
 .. code-block:: bash
 
@@ -448,3 +449,12 @@ cross-donor triage built on them reads noise.
 Collecting first and fitting **one** offset over the run is what makes ``yield`` a level two donors
 can be compared on. See :doc:`cassette` for ``lam``, which is comparable across donors *and* across
 cassette sizes without any shared calibration.
+
+.. rubric:: What the last stage decides
+
+.. toctree::
+   :maxdepth: 1
+
+   Designing a cassette <cassette>
+   Safety screen <safety>
+   Cassette composition <portfolio>

@@ -3,9 +3,24 @@
 Ranking neoantigens
 ===================
 
-This page documents the shipped scorer end to end: what each term is, how it is computed, what it
-was fitted on, and what it does not do. Every number here is recorded in the benchmark repository
-under ``bench/results/`` and is cited from there rather than restated from memory.
+**What you get.** One ordered table from a candidate list, scored by the fitted ``EPIC`` aggregate:
+**nine terms in four blocks** --- **E**\ xpression, **P**\ resentation, **I**\ mmunogenicity,
+**C**\ omplementarity.
+
+.. code-block:: bash
+
+   mhcmatch genes pairs.tsv --out annotated.tsv                     # if your table has no gene column
+   mhcmatch rank pairs annotated.tsv --tumor SKCM --out ranked.tsv  # the score
+   mhcmatch rank --coefficients                                     # every term and its coefficient
+
+**What this page is.** What each term is, how it is computed, what it was fitted on, and what it
+does not do. One page per block is linked at the bottom and from the sidebar. Every number here is
+recorded in the benchmark repository under ``bench/results/`` and cited from there rather than
+restated from memory.
+
+**Two things to know before reading a score.** The blocks enter in pipeline order, so a later
+block's coefficient is what that term is worth *after* the earlier ones --- never in competition
+with them. And a candidate missing a term is scored on the terms it has, flagged, never dropped.
 
 .. contents::
    :local:
@@ -572,3 +587,18 @@ Limits
   your own.
 * ``--score gate`` is the two-term product-of-sigmoids, kept for when a candidate failing either
   axis should not be rescuable by the other.
+
+.. rubric:: The four blocks, one page each
+
+Each letter of ``EPIC`` has its own page. Read this one for how the nine terms combine; read those
+for what a single term is and how to get it.
+
+.. toctree::
+   :maxdepth: 1
+
+   E - Expression <expression>
+   P - Presentation <presentation>
+   I - Immunogenicity features <immunogenicity>
+   I - the chemistry reduction <burial>
+   C - Complementarity <complementarity>
+   C - the corpus channels <corpus>

@@ -1,10 +1,14 @@
 Cassette composition
 ====================
 
-A cassette is a **set**, and the quantity that decides whether it works is not how good its units
-are on average but whether *at least one* elicits a response --- better, at least :math:`k`.
-Sorting by a score and keeping the top :math:`m` maximises :math:`\sum_{i \in S} p_i`, the expected
-*number* of responding units. Those two objectives agree only if the units respond independently.
+**Read** :doc:`cassette` **first** --- it is the practical page, and this one is the geometry
+underneath it: the block response model, the measured over-dispersion, coverage, redundancy, and
+what no weighted score can ever select.
+
+The objective a cassette is actually judged on is whether *at least one* unit elicits a response ---
+better, at least :math:`k`. Sorting by a score and keeping the top :math:`m` maximises
+:math:`\sum_{i \in S} p_i`, the expected *number* of responding units. Those two objectives agree
+only if the units respond independently.
 
 :mod:`mhcmatch.portfolio` is what the difference costs. It computes nothing new about a peptide ---
 it takes the scores the rest of the library produces and says what a proposed *set* of them is
