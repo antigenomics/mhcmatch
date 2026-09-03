@@ -53,7 +53,15 @@ workflow MHCMATCH_RERANK_ARM {
     ch_pep  = ch_mhc1.map { meta, cls, tsv -> [ meta, tsv, cls ] }
 
     MHCMATCH_NEOAG( ch_pep )
-    MHCMATCH_MIMICRY( ch_pep )
+    // **Mimicry is an ANNOTATION step and ships off.** It says what a candidate resembles; it does
+    // not feed the ranking, because `rank`'s corpus channels are a `corpus_spectrum` table
+    // contraction rather than a neighbour search and build no index at all. Turning it on costs a
+    // whole-proteome reference index -- 65.0 s warm-cached, and ~194 s per task cold, because in a
+    // fan-out every task misses the cache at once and builds it simultaneously. That was the
+    // dominant stage of the whole pipeline. Same truthiness rule as main.nf's `isOn`.
+    ch_mim = "${params.mhcmatch_mimicry}".toLowerCase() in ['false', '0', 'no', '', 'null']
+                 ? Channel.empty() : ch_pep
+    MHCMATCH_MIMICRY( ch_mim )
     ch_versions = ch_versions.mix( MHCMATCH_NEOAG.out.versions.first() )
     ch_versions = ch_versions.mix( MHCMATCH_MIMICRY.out.versions.first() )
 

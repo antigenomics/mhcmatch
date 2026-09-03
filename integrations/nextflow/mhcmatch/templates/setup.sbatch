@@ -33,6 +33,10 @@ TYPING=""             # optional but worth it: one typing file. Prints how many 
                       # empty panel
 WHEELHOUSE=""         # optional: a directory of .whl files, for a node whose egress cannot reach
                       # PyPI. See the note further down
+STAGE_INDEX=""        # optional, and empty is right unless you enable the safety screen or the
+                      # mimicry annotation -- BOTH SHIP OFF, and neither reads this. If you do turn
+                      # one on, set e.g. "human:8|9|10|11" (GB per length) so the tasks load a
+                      # prebuilt index instead of every one of them building its own at once
 # -----------------------------------------------------------------------------
 
 # **This script is the whole prerequisite.** It used to assume `$ENV` already existed with
@@ -91,6 +95,24 @@ conda run -n "$ENV" --no-capture-output nextflow -version 2>&1 | grep -i version
 echo "== references (~115 MB: ligand panel, thymic/viral sets, neoantigen deposits, expression) =="
 conda run -n "$ENV" --no-capture-output mhcmatch bootstrap --reference
 conda run -n "$ENV" --no-capture-output mhcmatch bootstrap --proteome human,mouse
+
+# **Only if you turn on the safety screen or the mimicry annotation.** Both ship OFF, and with
+# them off nothing below is read -- so the default setup skips this entirely and the pipeline still
+# runs end to end in minutes.
+#
+# Turn either on and a whole-proteome index has to exist. It is a pure function of published data,
+# and its in-memory cache is per PROCESS -- so without staging it here, every task in a fan-out
+# misses at the same moment and builds its own: measured on Aldan-3 2026-09-03, ~194 s per mimicry
+# task against 65.0 s warm, and it was the dominant stage of the whole run. Staged once into $REF,
+# every node loads it in well under a second.
+#
+# Fetched from the published dataset where available and built locally otherwise; the command says
+# which, per length, because the two differ by two orders of magnitude. GB per length, so ask only
+# for what you need -- `8|9|10|11` is the class-I ladder.
+if [ -n "$STAGE_INDEX" ]; then
+    echo "== prebuilt indexes (GB-scale; only needed for --screen / --mimicry) =="
+    conda run -n "$ENV" --no-capture-output mhcmatch bootstrap --index "$STAGE_INDEX"
+fi
 
 # A five-second check that is worth more than it looks: every HLA typer writes the G-group form
 # (`A*01:01:01G`), and an allele that resolves to nothing is dropped SILENTLY one layer down --

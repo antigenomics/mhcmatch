@@ -510,6 +510,35 @@ ignored rather than rejected, so renaming them would silently drop every deploye
 need a different mapping; allele names (HLA vs H-2) also imply the species, so a human run with HLA
 alleles is unaffected by the default.
 
+## How long it takes, and what makes the first run slow
+
+Two donors, both arms, shipped defaults, 8 cpu / 24 GB on one node (Aldan-3, 2026-09-03):
+
+| | wall clock |
+|---|--:|
+| before 2026-09-03 | 553 s |
+| with the vendored `restriction` model | **307 s** |
+| with the caches warm (`setup.sbatch` has run) | **see below** |
+
+**Everything expensive here is a pure function of published data, and all of it used to be rebuilt
+inside every task**, because the caches were per *process* and a Nextflow fan-out is many processes:
+
+| rebuilt per process | was | warm |
+|---|--:|--:|
+| MHC-II presentation model — `restriction`, and so the cassette map | 87.9 s | **0.1 s** (now vendored) |
+| mimicry reference index — 24 seqtree indexes over ~12 M windows | 65.0 s | **0.4 s** |
+| whole-proteome window index — what `--screen` needs | 26.9 s (mouse) | **0.7 s** |
+
+The first was a missing registry entry and is fixed in the wheel: `_VENDORED_MODELS` had no
+`("mhc2", "anchor", "ligand")`, which is precisely the config `Store._anchor_model` asks for. The
+other two are on-disk caches under `$MHCMATCH_CALIBRATION_CACHE`, shared by every node that can see
+it, and **`templates/setup.sbatch` stages them once** so the first pipeline run is as fast as the
+second. Without that step nothing breaks — the first run simply pays the build, once per task.
+
+`mhcmatch bootstrap --index "human:8|9|10|11"` is the staging command, and it reports per length
+whether the index was **fetched** from the published dataset or **built** locally, because those
+differ by two orders of magnitude.
+
 ## Every parameter
 
 **Boolean parameters accept `false` / `0` / `no` on the command line.** That is not free in Nextflow:

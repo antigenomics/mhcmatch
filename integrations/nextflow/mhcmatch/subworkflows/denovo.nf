@@ -47,7 +47,10 @@ workflow MHCMATCH_DENOVO_ARM {
     ch_mhc1 = MHCMATCH_RANK.out.ranked.filter { meta, cls, tsv -> cls == 'mhc1' }
 
     MHCMATCH_NEOAG_DN( ch_mhc1.map { meta, cls, tsv -> [ meta, tsv, cls ] } )
-    MHCMATCH_MIMICRY_DN( ch_mhc1.map { meta, cls, tsv -> [ meta, tsv, cls ] } )
+    // Off by default -- see the note at the same call in ./rerank.nf.
+    ch_mim = "${params.mhcmatch_mimicry}".toLowerCase() in ['false', '0', 'no', '', 'null']
+                 ? Channel.empty() : ch_mhc1.map { meta, cls, tsv -> [ meta, tsv, cls ] }
+    MHCMATCH_MIMICRY_DN( ch_mim )
     ch_versions = ch_versions.mix( MHCMATCH_NEOAG_DN.out.versions.first() )
     ch_versions = ch_versions.mix( MHCMATCH_MIMICRY_DN.out.versions.first() )
 
