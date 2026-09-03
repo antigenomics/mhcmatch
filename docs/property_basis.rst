@@ -189,10 +189,10 @@ hydrophobicity" in the same table, is a different factor and is not what the -0.
 Kidera factors reached epitope-immunogenicity prediction through
 `ipred <https://github.com/antigenomics/ipred>`_, introduced by Pogorelyy *et al.* (*Genome Medicine*
 2018, `doi:10.1186/s13073-018-0577-7 <https://doi.org/10.1186/s13073-018-0577-7>`_) to link epitope
-physicochemistry to naive-repertoire precursor TCR frequency and immunogenicity: its classifier
-takes the **sum of all ten** Kidera factors over the peptide as its feature vector — KF4 included,
-not singled out — and returns a probability of T-cell immunogenicity, trained on the Chowell corpus.
-Buckley *et al.* (*Briefings in Bioinformatics* 2022,
+physicochemistry to naive-repertoire precursor TCR frequency and immunogenicity: an EM-trained naive
+Bayes classifier over a multinomial-normal model of the ten Kidera-factor sums, returning a
+probability of T-cell immunogenicity, trained on the Chowell corpus — KF4 among its ten inputs,
+not singled out. Buckley *et al.* (*Briefings in Bioinformatics* 2022,
 `doi:10.1093/bib/bbac141 <https://doi.org/10.1093/bib/bbac141>`_) benchmarked it against other CD8
 T-cell immunogenicity predictors.
 
