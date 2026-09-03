@@ -358,20 +358,45 @@ read. One flat `20**3 = 8,000` float64 array per (class, component, species), pl
 array carrying the build version and `k`.
 
 **Derived, not experimental.** Every table is a deterministic function of deposits that ship in
-`isalgo/pmhc_data` (`thymus/thymus_immunopeptidome.tsv.gz`,
-`ligandome/viral_foreign_iedb.tsv.gz`) and the reference proteomes (`proteome/human.fasta.gz`,
-`proteome/mouse.fasta.gz`) — no fitting, no parameters, nothing measured here.
+`isalgo/pmhc_data` and the reference proteomes — no fitting, no parameters, nothing measured here.
+Which deposit stands behind a key is `mimics.ref_path(category, species)`, and the three categories
+resolve differently per species:
 
-| key | N (reference windows) | build |
-|---|--:|--:|
-| `mhc1\|thymus\|human\|3` | 140,482 | 0.7 s |
-| `mhc1\|self\|human\|3` | 121,968,158 | 51.4 s |
-| `mhc1\|self\|mouse\|3` | 112,565,681 | 35.3 s |
-| `mhc1\|viral\|human\|3` | 136,618 | 0.7 s |
-| `mhc2\|thymus\|human\|3` | 1,996,006 | 1.6 s |
-| `mhc2\|self\|human\|3` | 110,932,623 | 14.5 s |
-| `mhc2\|self\|mouse\|3` | 101,989,053 | 10.0 s |
-| `mhc2\|viral\|human\|3` | 1,205,107 | 1.4 s |
+| component | human reference | mouse reference | how the species is selected |
+|---|---|---|---|
+| `thymus` | `thymus/thymus_immunopeptidome.tsv.gz` | `thymus/thymus_immunopeptidome_mmu.tsv.gz` | two files, `mimics.SPECIES_REFS` |
+| `viral` | `ligandome/viral_foreign_iedb.tsv.gz` | the same file | one file, filtered on `mhc_species` |
+| `self` | `proteome/human.fasta.gz` | `proteome/mouse.fasta.gz` | two files, `PROTEOME_REFS` |
+
+| key | N (reference windows) | 3-mer cells filled, of 8,000 | build |
+|---|--:|--:|--:|
+| `mhc1\|thymus\|human\|3` | 140,482 | 6,083 (76.0 %) | 0.7 s |
+| `mhc1\|thymus\|mouse\|3` | 25,264 | 3,877 (48.5 %) | — |
+| `mhc1\|self\|human\|3` | 121,968,158 | 8,000 (100 %) | 51.4 s |
+| `mhc1\|self\|mouse\|3` | 112,565,681 | 8,000 (100 %) | 35.3 s |
+| `mhc1\|viral\|human\|3` | 136,618 | 7,340 (91.8 %) | 0.7 s |
+| `mhc1\|viral\|mouse\|3` | 40,244 | 5,424 (67.8 %) | — |
+| `mhc2\|thymus\|human\|3` | 1,996,006 | 7,311 (91.4 %) | 1.6 s |
+| `mhc2\|thymus\|mouse\|3` | 186,758 | 5,011 (62.6 %) | — |
+| `mhc2\|self\|human\|3` | 110,932,623 | 8,000 (100 %) | 14.5 s |
+| `mhc2\|self\|mouse\|3` | 101,989,053 | 8,000 (100 %) | 10.0 s |
+| `mhc2\|viral\|human\|3` | 1,205,107 | 7,866 (98.3 %) | 1.4 s |
+| `mhc2\|viral\|mouse\|3` | 162,916 | 6,058 (75.7 %) | — |
+
+The four mouse `thymus` and `viral` keys shipped in the artifact and appeared in no row of this
+table until 2026-09-03; the build column is blank for them because its timings come from the build
+in which only the eight human-and-self keys existed, and inventing a number for the others would be
+worse than leaving it out. Rerun `mhcmatch build corpus` to fill them.
+
+**Read the filled-cell column before reading a mouse corpus coefficient.** `self` is a proteome in
+both species and fills every cell, so `C_corpus_self` is on the same footing in either host. The
+two assayed channels are not: the mouse thymic deposit is **8,151 rows / 6,791 distinct peptides**
+against the human file's 53,878, drawn from PRIDE PXD008733 (`H-2Db`, `H-2Kb`) and MassIVE
+MSV000087031 (`I-Ab`), and the mouse slice of the viral file is **3,112 MHC-I rows against
+51,972**. More than half of `mhc1|thymus|mouse|3` is therefore exactly zero, so a mouse
+candidate's thymic density is read against a table with 4,123 empty cells and two H-2 allotypes
+behind it. That is a property of what has been deposited in mouse, not of the construction, and it
+is why the mouse-fitted corpus coefficients are reported nowhere.
 
 **Why it is vendored: 145.4 kB of artifact against 115.6 s of per-process rebuild.** Regenerate on
 a version bump, a deposit change or a change to what a face is:
