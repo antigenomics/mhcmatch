@@ -460,10 +460,17 @@ ignored rather than rejected, so renaming them would silently drop every deploye
 - **`params.mhcmatch_vector_n0` is required and has no default.** Per-allotype capacity is not
   fitted by anything in the public record, so the value is yours to defend; it is recorded in the
   output. The process fails fast rather than picking one.
-- **`params.mhcmatch_vector_screen` defaults to `true` here** (the library default is opt-in).
-  Without it *no safety check runs at all* and the cassette carries whatever it was handed. It costs
-  one whole-proteome index per register length — ~12 GB peak each, a few minutes apiece, four for
-  class I — which is why `nextflow.config` gives this process its own memory and time.
+- **`params.mhcmatch_vector_screen` is OFF by default**, matching the library, and **turn it on
+  before you manufacture anything**: without it *no safety check runs at all* and the cassette
+  carries whatever it was handed. Every task prints a line saying it did not run, so the absence is
+  never silent. It was `true` here until 2026-09-03, and what changed is the measurement, not the
+  judgement of how much the check is worth: on four samples, both arms, the screen was **701 s and
+  496 s of a 26:48 run** while nothing else exceeded 186 s. The cost is an artefact —
+  `Proteome._index` caches per *process*, so four cassette tasks at four register lengths rebuild
+  the index **sixteen times** where four would do, each a Python loop over 68.4 M windows at L=9.
+  Measured on one donor's 20 units, same command both ways: **6.11 s** without it, **179.22 s** with -- **29x**. `seqtree.Index`
+  has `save`/`load` (mouse proteome: 27.5 s to build, 0.3 s to load the 1.3 GB it writes), so a disk
+  cache turns this back into a default — that is the fix, and this flag goes back to `true` with it.
 - **The map (v0.16.0)** is one row per unit, linker and predicted epitope, in 1-based inclusive
   coordinates over the cassette. It is emitted by default because it re-scores one short sequence
   and costs almost nothing next to the screen. Three properties are structural: a **heterozygote is
@@ -538,7 +545,7 @@ and never think about it.
 | `mhcmatch_neoag_max_subs` | `2` | `neoag` search radius |
 | `mhcmatch_mimicry_annotate` | `false` | append the nearest reference peptide per channel |
 | `mhcmatch_vector_n0` | `null` | **required** per-allotype capacity |
-| `mhcmatch_vector_screen` | `true` | run the essential-tissue / self-origin exclusion |
+| `mhcmatch_vector_screen` | `false` | run the essential-tissue / self-origin exclusion. **Off by default and the one default that costs you something**: without it no unit is withdrawn and every task says so in its log. Set it `true` before manufacturing. Off because the index is rebuilt per task rather than cached — 701 s of a 26:48 run — not because the check is cheap to skip |
 | `mhcmatch_vector_map` | `true` | emit the cassette map (`*.cassette.map.tsv` / `.json`) |
 | `mhcmatch_vector_map_binder` | `weak` | which **NetMHCpan** cut-off the map annotates. NetMHCpan: class I strong `%rank <= 0.5`, weak `<= 2.0`. NetMHCIIpan: class II strong `<= 2.0`, weak `<= 10.0`. **The two classes do not share a number** — a single `2.0` is weak for class I and *strong* for class II, which is why one mouse construct reported 0 class-II epitopes with its best window at `%rank 4.095`. `weak` is the default because the map reports and selects nothing |
 | `mhcmatch_vector_map_threshold` | *(from the tier)* | explicit class-I `%rank` override |

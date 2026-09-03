@@ -1,8 +1,16 @@
 #!/bin/bash -l
 #SBATCH --job-name=mhcmatch
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=48G
-#SBATCH --time=08:00:00
+#SBATCH --mem=24G
+#SBATCH --time=02:00:00
+# **Sized from measurement, not headroom-on-headroom.** Measured on Aldan-3 2026-09-03, on the
+# published 1.7.2, both arms with the screen ON: two human donors plus two mouse lines ran in
+# **26:48** at **16.3 GB** peak RSS, and two mouse lines alone in **12:30** at **12.7 GB**. The
+# longest single task was the whole-proteome screen at **701 s**; nothing else exceeded 186 s.
+# These asked 48 GB / 8 h -- 2.9x the memory and 18x the wall clock actually used, which on a
+# shared cluster is time spent queueing behind a quota for capacity the job never touches. Raise
+# them for a genuinely larger cohort, and raise the TIME first: memory tracks how many tasks the
+# local executor runs at once, not how many samples you have.
 #SBATCH --output=mhcmatch-human-%j.out
 #
 #   sbatch --partition <your-partition> run_human.sbatch
@@ -68,9 +76,10 @@ conda run -n "$ENV" --no-capture-output nextflow run "$MODULE/pipeline.nf" \
     --mhcmatch_tumor      $TUMOR \
     -resume
 
-# `--mhcmatch_vector_screen` defaults to TRUE and should stay that way. With it off, NO safety
-# check runs at all and the cassette carries whatever it was handed. It is what the 48 GB and the
-# 8 h above are for: one whole-proteome index per register length, ~12 GB peak each. Adding
-# `--mhcmatch_vector_screen false` makes the run minutes instead of hours and is for iterating on
-# the plumbing -- never for a cassette anyone will manufacture.
+# **`--mhcmatch_vector_screen` is OFF by default, and the run above did NOT safety-screen.** No
+# unit was withdrawn for essential-tissue self-origin; the cassette carries whatever it was handed.
+# Every task says so in its log. Add `--mhcmatch_vector_screen true` before anything is
+# manufactured, and expect the run to go from minutes to hours when you do: the whole-proteome
+# index is rebuilt per task, four register lengths each, ~12 GB peak apiece. Raise --mem to 48G and
+# --time to 08:00:00 for that arm.
 echo "RUN OK"

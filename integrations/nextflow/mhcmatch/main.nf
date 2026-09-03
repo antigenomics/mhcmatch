@@ -313,7 +313,15 @@ process MHCMATCH_CASSETTE {
     // rule IS its answer to "how many units".
     def verb   = task.ext.verb ?: 'build'
     def n0     = params.mhcmatch_vector_n0
+    // **The off state announces itself, on every task.** `--screen` off is a missing safety check,
+    // and a missing safety check that says nothing looks exactly like one that ran and found
+    // nothing -- which is the failure this module keeps finding in other guises. Default is off
+    // (see nextflow.config for the measurement); this is what makes that visible in the log.
     def screen = isOn(params.mhcmatch_vector_screen) ? '--screen' : ''
+    def screenoff = screen ? '' : (
+        "echo '# NO SAFETY SCREEN RAN: --mhcmatch_vector_screen is off (the default), so no unit " +
+        "was withdrawn for essential-tissue self-origin and this cassette carries whatever it was " +
+        "handed. Pass --mhcmatch_vector_screen true before manufacturing anything.' >&2")
     def ctx    = context.name != 'NO_FILE' ? "--context ${context}" : ''
     // The long window WITHOUT a context FASTA: a reranked candidate table already carries it in a
     // column (`epitope_context`, 27 aa, which is `--unit-length` exactly). `--context` is for the
@@ -375,6 +383,7 @@ process MHCMATCH_CASSETTE {
     def tier   = params.mhcmatch_tier ?: 'full'
     if (verb != 'order' && n0 == null) error "params.mhcmatch_vector_n0 is required and has no default: per-allotype capacity is not fitted by anything in the public record, so the value is yours to set and it is recorded in the output"
     """
+    ${screenoff}
     mhcmatch cassette ${verb} \\
         --candidates ${candidates} ${ctx} ${ucol} \\
         ${n0arg} \\
