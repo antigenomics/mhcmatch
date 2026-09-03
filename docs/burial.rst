@@ -455,8 +455,8 @@ other which receptor residues the potential was averaged over.
 Reproducing all of it
 ---------------------
 
-Scripts live in `2026-mhcmatch-benchmark <https://github.com/antigenomics/2026-mhcmatch-benchmark>`_
-and write to ``bench/results/``:
+Scripts live in ``2026-mhcmatch-code`` (private; released with the manuscript) and write to
+``bench/results/``:
 
 .. list-table::
    :header-rows: 1

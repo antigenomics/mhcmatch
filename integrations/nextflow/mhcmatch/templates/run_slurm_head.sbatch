@@ -55,6 +55,16 @@ mkdir -p "$HF_HOME" "$TMPDIR" "$NXF_HOME"
 # also where `.nextflow.log` lands, which you want separate when something fails.
 mkdir -p work_cohort && cd work_cohort
 
+# **On THIS path the three exports above are not enough, and the three `--mhcmatch_*` flags below
+# are what actually place the data.** `-profile slurm` loads slurm.config, whose `env {}` block
+# *sets* the task environment from `params.mhcmatch_{pmhc_dir,calibration_cache,hf_home}` rather
+# than inheriting this shell's. Each task is its own sbatch, so the exports reach only the head
+# process. Pass `--mhcmatch_hf_home` and the tasks write to `$REF/hf`; omit it and every one of
+# them falls back to the param default `${projectDir}/reference/hf` -- ~250 MB inside the module
+# checkout, which is the one directory that may be read-only or on a home quota. The local-executor
+# templates (run_human/run_mouse.sbatch) need no flags: they never load slurm.config, so tasks
+# inherit the exported environment.
+
 conda run -n "$ENV" --no-capture-output nextflow run "$MODULE/pipeline.nf" \
     -profile slurm \
     --indir   "$IN" \
@@ -62,6 +72,7 @@ conda run -n "$ENV" --no-capture-output nextflow run "$MODULE/pipeline.nf" \
     --mhcmatch_slurm_queue       "$QUEUE" \
     --mhcmatch_pmhc_dir          "$REF/pmhc_data" \
     --mhcmatch_calibration_cache "$REF/calibration" \
+    --mhcmatch_hf_home           "$REF/hf" \
     --mhcmatch_vector_n0  $N0 \
     --mhcmatch_cassette_k $K \
     --mhcmatch_tumor      $TUMOR \

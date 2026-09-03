@@ -239,7 +239,7 @@ def _(mo):
     ### Where the numbers come from
 
     Every measured figure quoted here is generated in
-    [`2026-mhcmatch-benchmark`](https://github.com/antigenomics/2026-mhcmatch-benchmark) under
+    [`2026-mhcmatch-code`](https://github.com/repseq/2026-mhcmatch-code) (private; released to reviewers) under
     `bench/vector/portfolio_*.py` and recorded in `bench/results/vector_portfolio_*.md`. The
     derivations are in the appendix chapter *Cassette composition as a portfolio*.
     """)

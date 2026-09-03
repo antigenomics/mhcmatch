@@ -251,7 +251,7 @@ that a per-peptide invocation pays again every time: the presentation and affini
 ~5 s, the binder calibrator ~45 s, a human-proteome length index ~70 s. All of it is cached for the
 life of the process, so one process over a whole list is the difference between 49 s per peptide and
 thousands per second. Measured, both ways, in
-[`bench/cli/`](https://github.com/antigenomics/2026-mhcmatch-benchmark).
+`bench/cli/` in [`2026-mhcmatch-code`](https://github.com/repseq/2026-mhcmatch-code) (private; released to reviewers).
 
 ```bash
 mhcmatch binder     --peptides peptides.txt --alleles "$ALLELES" --top 1 --out binders.tsv
@@ -688,6 +688,14 @@ missing. Four more are used when present (`wt_peptide`, `gene`/`gene_name`, `tpm
 Everything else may be named in any style and is emitted unchanged, in your order, ahead of ours; a
 name that collides with one of ours is an **error**, because two columns under one name are resolved
 silently and differently by every reader that keys a row by name.
+
+**`cassette select` resolves a collision the other way, and on purpose.** By that point the run has
+committed to a selection, so erroring out would throw away the work rather than protect it: your
+column keeps its value under `<name>_in`, ours takes the plain name — it is what `cassette build`,
+`cassette score` and the map read — and one line names every column that moved. So the rule across
+the pipeline is *never silently*, not *always the same way*: `rank --passthrough` refuses before it
+starts, `cassette select --passthrough` renames and says so. Before 1.7.2 the latter overwrote
+yours without a word.
 
 **`MHCMATCH_ALLELES` is not optional plumbing.** Every HLA caller writes the G-group form
 (`A*01:01:01G`), which is keyed at three fields where the pseudosequence tables are keyed at two, so

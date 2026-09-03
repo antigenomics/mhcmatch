@@ -17,6 +17,24 @@ prior evidence, safety, cassette selection and cassette assembly.
 > pip install "mhcmatch==1.7.2"
 > ```
 >
+> **Behind an HTTP proxy, take the tarball instead — `git clone` can fail where `git ls-remote`
+> works.** A proxy that passes the refs advertisement (`GET .../info/refs`) but refuses the pack
+> transfer (`POST .../git-upload-pack`) makes git report a **401 as a credential prompt**:
+> `fatal: could not read Username for 'https://github.com'` on a repository that is public and
+> needs none. Measured on Aldan-3 2026-09-03, on the login node and on a compute node, while
+> `git ls-remote` returned the `v1.7.2` tag from both. The release tarball is a plain GET and goes
+> straight through, giving the identical tree:
+>
+> ```bash
+> curl -sSL -o mhcmatch-1.7.2.tar.gz https://github.com/antigenomics/mhcmatch/archive/refs/tags/v1.7.2.tar.gz
+> tar xzf mhcmatch-1.7.2.tar.gz     # -> mhcmatch-1.7.2/integrations/nextflow/mhcmatch/
+> ```
+>
+> Chase the proxy only if you need git history; for running the pipeline the tarball is the whole
+> requirement. `pip` reaches PyPI through the same proxy, though it may need its retries to get
+> there — a run of four `ReadTimeoutError`s that then succeeds is normal on that cluster, and
+> `templates/setup.sbatch`'s `WHEELHOUSE` block is for when they do not.
+>
 > **Requires mhcmatch >= 1.7.2.** `MHCMATCH_ALLELES` calls `mhcmatch alleles` and the rerank arm
 > calls `rank --passthrough`; neither exists in 1.6.0, and 1.6.1 was stamped in the tree but never
 > published. Every pin in this directory — `environment.yml`, the `Dockerfile`,

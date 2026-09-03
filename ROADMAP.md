@@ -10,9 +10,8 @@ the build plan. Phase sections marked _(TBD)_ await detail.
 
 
 > **Benchmarks live in a separate repo.** `bench/` moved to
-> `2026-mhcmatch-benchmark` (local checkout; remote `repseq/2026-mhcmatch-code`, **private**) — the head-to-head harness, the `bench/results/*.md`
-
-(The same dead URL appears at ROADMAP.md:365, skills/mhcmatch/SKILL.md:237, README.md:233 and :631, docs/burial.rst:458 and docs/safety.rst:142; fix them in one pass or the repo keeps two answers to the same question.)
+> `2026-mhcmatch-benchmark` (local checkout; remote `repseq/2026-mhcmatch-code`, **private**) — the
+> head-to-head harness, the `bench/results/*.md`
 > tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
 > below resolve there, not here.
 
@@ -63,10 +62,12 @@ line, a top-level `def x = { ... }` closure (a `def f(x) { }` function is fine),
 `workflow.onComplete`. A script's own params are declared in `nextflow.config`, not assigned in the
 script.
 
-**Open loop.** The version stays at **1.6.1**. Bumping it makes `mhcmatch build --check` demand a
-regeneration of the four vendored artifacts, and that rebuild is a release-time step and the
-author's to take. `predict.SCORER_EPOCH` is deliberately **not** bumped: nothing here changes what a
-scoring head returns.
+**Closed 2026-09-02: released as 1.7.2**, tagged `v1.7.2` and published to PyPI, after 1.7.0 and
+1.7.1. The artifact regeneration that a bump demands was taken at release and moved no score
+(`build --check`: 0 stale of 27). `predict.SCORER_EPOCH` was deliberately **not** bumped across any
+of the three: nothing in them changes what a scoring head returns, so a calibration cache built
+under 1.6.1 is still valid. What 1.7.2 itself fixed is in `CHANGELOG.md` — the caller's column that
+`cassette select --passthrough` overwrote, and the single `%rank` cut-off applied to both classes.
 
 ## Where this stands, 2026-08-31 — two library additions, and the vaccine rows moved
 
