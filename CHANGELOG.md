@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased — post-release audit: two SLURM-path defects and a guard that had stopped guarding
+
+No library behaviour changes; the fixes are in the Nextflow SLURM path, the test suite and the docs.
+
+**`run_slurm_head.sbatch` exported `HF_HOME` and never passed `--mhcmatch_hf_home`.** On
+`-profile slurm` the `env {}` block in `slurm.config` *sets* each task's environment from
+`params.mhcmatch_{pmhc_dir,calibration_cache,hf_home}` rather than inheriting the head shell's, and
+every task is its own sbatch — so the export reached the head process alone and each task fell back
+to the default `${projectDir}/reference/hf`, putting ~250 MB inside the module checkout instead of
+the shared reference root. The README's SLURM example had the flag; the template did not. Measured
+on Aldan-3: 249 MB in `$HOME` on a run that omitted it.
+
+**`MHCMATCH_CASSETTE_SCORE` matched no `withName:` selector**, because the `$` anchor on
+`.*MHCMATCH_CASSETTE(_DN)?$` excludes it and the `process {}` defaults carry no cpus/memory/time.
+It now joins the light tier (1 cpu, 2 GB, 20 m) — a two-donor cohort scores in under one second on
+41 kB. All nine processes and all five `_DN` aliases now match exactly one selector.
+
+**`test_nextflow_pins_match_pyproject` had passed vacuously since 1.0.0**, scanning for
+`\b0\.\d+\.\d+\b` — a pattern no 1.x pin can match — and never opening `nextflow.config` or
+`templates/*.sbatch`, the two files whose pins have actually drifted. It now anchors on the four
+spellings of a mhcmatch pin and fails if it ever matches nothing again.
+
+**Five dead links to `github.com/antigenomics/2026-mhcmatch-benchmark`** (a 404) in the README, two
+doc pages, two notebooks and the shipped `PROVENANCE.md`; the repo is `repseq/2026-mhcmatch-code`,
+private. The NetMHCpan strong/weak convention now also appears in `docs/cli.rst` and `SKILL.md`,
+not only in the Nextflow layer, and the module README records that `git clone` fails behind a proxy
+that passes `ls-remote` but blocks the pack POST — take the release tarball there.
+
 ## [1.7.2] — 2026-09-02 — the cassette map, on NetMHCpan's terms
 
 *(1.7.0 was tagged and superseded before publication. 1.7.1 **was** published, on 2026-09-02, and
