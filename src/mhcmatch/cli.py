@@ -1746,7 +1746,45 @@ def cmd_bootstrap(a):
         print(f"# proteome {name}: {fetch_proteome(name)}")
     for rel in (REFERENCE_FILES if a.reference else ()):
         print(f"# reference {rel}: {fetch_file(rel)}")
+    for spec in (x.strip() for x in (getattr(a, "index", None) or "").split(",") if x.strip()):
+        _bootstrap_index(spec)
     print(f"# cached from HF dataset {PMHC_REPO}")
+
+
+#: Class-I register lengths -- the four a `cassette --screen` asks for, and the default when a
+#: `--index` spec names a species without lengths. Class II is a fifteen-length ladder and nobody
+#: wants it fetched by accident, so it is opt-in per length.
+INDEX_LENGTHS = (8, 9, 10, 11)
+
+
+def _bootstrap_index(spec: str) -> None:
+    """Pre-fetch (or build) the whole-proteome window index for one ``species[:lengths]`` spec.
+
+    Reports per length whether it came from the published dataset or had to be built, and how long
+    it took, because those differ by two orders of magnitude and a user who sees "minutes" needs to
+    know which of the two they are watching.
+    """
+    import time
+    from .proteome import Proteome, index_cache_dir
+    from .store import fetch_proteome
+
+    name, _, lens = spec.partition(":")
+    lengths = [int(x) for x in lens.split("|") if x.strip()] if lens else list(INDEX_LENGTHS)
+    if index_cache_dir() is None:
+        print(f"# index {name}: caching is OFF ($MHCMATCH_CALIBRATION_CACHE), nothing to stage",
+              file=sys.stderr)
+        return
+    pm = Proteome.from_fasta(fetch_proteome(name))
+    for L in lengths:
+        paths = pm._index_paths(L)
+        if paths and all(os.path.exists(p) for p in paths):
+            print(f"# index {name} L={L}: already staged")
+            continue
+        t0 = time.time()
+        got = pm._index_from_hf(L)
+        how = "fetched" if got else "BUILT locally (not published for this proteome)"
+        pm._index(L)                      # loads the fetch, or builds and writes the local entry
+        print(f"# index {name} L={L}: {how} in {time.time() - t0:.1f} s")
 
 
 def cmd_build(a):
@@ -2403,6 +2441,11 @@ def main(argv=None):
     bs.add_argument("--reference", action="store_true",
                     help="also fetch the corpora and reference tables the docs, notebooks and "
                          "expression/mimicry lookups read (~115 MB) — everything offline in one call")
+    bs.add_argument("--index", metavar="SPEC",
+                    help="also fetch PREBUILT whole-proteome window indexes, so a safety screen "
+                         "loads instead of building. `human` / `mouse` / `human:8,9,10,11`; "
+                         "comma-separated. Each is GB-scale, so ask for the lengths you need -- "
+                         "class I is 8-11. Falls back to building locally if one is not published")
     bs.set_defaults(fn=cmd_bootstrap)
 
     al = sub.add_parser("alleles",

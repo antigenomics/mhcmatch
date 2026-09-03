@@ -64,6 +64,7 @@ recovers 0.08-0.34 of a screen's positives where exact lookup recovers 0.00-0.26
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib import resources
@@ -238,6 +239,14 @@ def load_references(pmhc_dir=None, cls: str = "mhc1", with_self: bool = True,
 
     admitted = sorted(mimics._LEN[cls])
     lengths = admitted if lengths is None else sorted(set(admitted) & {int(L) for L in lengths})
+    # The disk cache: this build is 63.9 s for the four class-I lengths, and it is per PROCESS, so
+    # every task in a fan-out paid it again -- 200 s of a 200 s `mhcmatch mimicry` task on Aldan-3.
+    # A miss is only slower, never wrong, so every failure below falls through to the build.
+    _key = _refs_key(cls, with_self, self_species, lengths) if pmhc_dir is None else None
+    if _key:
+        _hit = _refs_from_disk(_key)
+        if _hit is not None:
+            return _hit
     out: dict = {}
     for comp in COMPONENTS:
         src = {}
@@ -286,6 +295,8 @@ def load_references(pmhc_dir=None, cls: str = "mhc1", with_self: bool = True,
                 out[(comp, ch, L)] = (
                     Index.build([k.decode("ascii") for k in keys], alphabet="aa"),
                     len(keys), _Backing(win[first], [srcs[i] for i in first]))
+    if _key:
+        _refs_to_disk(_key, out)
     return out
 
 
@@ -1120,3 +1131,112 @@ def safety(scores, top: int = 5, symbols=None) -> list[dict]:
                              "mimic": n["peptide"], "source": src, "gene": gene, "profile": prof})
         out.append({"peptide": s.peptide, "autoimmune_logodds": s.autoimmune, "hits": hits})
     return out
+
+
+# ---- the on-disk half of `load_references` -------------------------------------------------
+#
+# `load_references` is the second whole-proteome index build in the package, and it is per process
+# like the first one was. Measured on Aldan-3 2026-09-03, four class-I lengths: **63.9 s** of a
+# 200 s `mhcmatch mimicry` task, paid by every task in a Nextflow fan-out. Same discipline as
+# `Proteome._index_to_disk` and `calibrate._write_atomic`: content key, temp-then-`os.replace`, no
+# lock, 0644, and any failure falls through to the build.
+
+def _refs_key(cls: str, with_self: bool, self_species: str, lengths) -> str:
+    """Digest of everything `load_references` reads. The deposits are content-addressed HF files,
+    so name+size identifies them without opening any of them."""
+    import hashlib
+    from . import mimics
+    h = hashlib.blake2b(digest_size=16)
+    h.update(f"1|{cls}|{int(with_self)}|{self_species}|{','.join(map(str, lengths))}|".encode())
+    for comp in COMPONENTS:
+        if comp == "self":
+            if not with_self:
+                continue
+            h.update(("self" if self_species == "human" else "self_mouse").encode())
+        else:
+            rel = mimics.ref_path("thymus" if comp == "thymus" else "viral", self_species)
+            try:
+                p = mimics._resolve(rel) if hasattr(mimics, "_resolve") else rel
+                h.update(f"{rel}:{os.path.getsize(p)}".encode())
+            except Exception:
+                h.update(rel.encode())
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def _refs_dir(key: str):
+    from .proteome import index_cache_dir
+    d = index_cache_dir()
+    if d is None:
+        return None
+    d = os.path.join(os.path.dirname(d), "mimicry_refs", key)
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        return None
+    return d
+
+
+def _refs_from_disk(key: str):
+    """The cached `load_references` mapping, or ``None``. Never partial: the manifest is written
+    last, so its presence means every index beside it landed."""
+    d = _refs_dir(key)
+    if d is None or not os.path.exists(os.path.join(d, "manifest.npz")):
+        return None
+    try:
+        import numpy as np
+        from seqtree import Index
+        out = {}
+        with np.load(os.path.join(d, "manifest.npz"), allow_pickle=False) as z:
+            names = z["entries"].tobytes().decode("utf-8").split("\n")
+            counts = z["counts"]
+            for i, nm in enumerate(names):
+                comp, ch, L = nm.split("|")
+                win = z[f"win{i}"]
+                src = z[f"src{i}"].tobytes().decode("utf-8").split("\n") if int(z[f"nsrc{i}"]) else []
+                out[(comp, ch, int(L))] = (Index.load(os.path.join(d, f"{i}.idx")),
+                                           int(counts[i]), _Backing(win, src))
+        return out
+    except Exception:
+        return None
+
+
+def _refs_to_disk(key: str, refs: dict) -> None:
+    """Write every index, then the manifest, then rename the manifest into place last -- so a
+    reader either sees a complete entry or none. Failures are swallowed: this is derived data."""
+    d = _refs_dir(key)
+    if d is None:
+        return
+    try:
+        import numpy as np
+        import tempfile
+        from .proteome import _unlink
+        items = sorted(refs.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2]))
+        payload = {"entries": np.frombuffer(
+            "\n".join(f"{c}|{ch}|{L}" for (c, ch, L), _ in items).encode("utf-8"), dtype="u1"),
+            "counts": np.asarray([n for _, (_, n, _) in items], dtype="i8")}
+        for i, ((c, ch, L), (idx, n, bk)) in enumerate(items):
+            fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-", suffix=".idx")
+            os.close(fd)
+            try:
+                idx.save(tmp)
+                os.chmod(tmp, 0o644)
+                os.replace(tmp, os.path.join(d, f"{i}.idx"))
+            except BaseException:
+                _unlink(tmp)
+                raise
+            payload[f"win{i}"] = bk._win
+            payload[f"nsrc{i}"] = np.asarray(len(bk._src), dtype="i8")
+            payload[f"src{i}"] = np.frombuffer("\n".join(bk._src).encode("utf-8"), dtype="u1")
+        fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-", suffix=".npz")
+        os.close(fd)
+        try:
+            with open(tmp, "wb") as fh:
+                np.savez(fh, **payload)
+            os.chmod(tmp, 0o644)
+            os.replace(tmp, os.path.join(d, "manifest.npz"))   # committed last, on purpose
+        except BaseException:
+            _unlink(tmp)
+            raise
+    except Exception:
+        return
