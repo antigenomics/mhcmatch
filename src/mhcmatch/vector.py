@@ -1891,11 +1891,18 @@ def _windows(seq: str, lengths) -> list:
 #: *weak* cut for class I and the *strong* cut for class II, which is what the cassette map shipped
 #: with -- and it is why one mouse construct reported zero class-II epitopes while its best window
 #: sat at %rank 4.095, comfortably a weak binder and outside a strong cut.
-RANK_STRONG: dict = {"mhc1": 0.5, "mhc2": 2.0}
-RANK_WEAK: dict = {"mhc1": 2.0, "mhc2": 10.0}
-#: What the map annotates unless asked otherwise. Weak, because the map is a *report* -- it selects
-#: nothing and removes nothing -- and under-reporting help a construct genuinely carries is the more
-#: costly error here.
+#: Re-exported from :mod:`mhcmatch.predict`, where the cut is applied. **One definition**: two
+#: copies of a published constant is how one of them goes stale, and this pair is already the
+#: subject of the paragraph above.
+from .predict import RANK_STRONG, RANK_WEAK  # noqa: E402,F401
+#: What the **cassette map** annotates unless asked otherwise. Weak, because the map is a *report*
+#: -- it selects nothing and removes nothing -- and under-reporting help a construct genuinely
+#: carries is the more costly error here.
+#:
+#: **Not the same thing as** :data:`mhcmatch.predict.RANK_DEFAULT_TIER`, which is ``"none"``. Same
+#: name, two jobs: this one chooses a *label*, that one chooses what to *delete*. A report should
+#: default to the generous convention and a filter should default to off, so the two differ on
+#: purpose -- see ``--block-live`` in ``CLAUDE.md`` for the last time one name covered two knobs.
 RANK_DEFAULT_TIER: str = "weak"
 
 

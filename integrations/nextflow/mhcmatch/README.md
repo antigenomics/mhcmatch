@@ -13,8 +13,8 @@ prior evidence, safety, cassette selection and cassette assembly.
 > `mhcmatch --version` cannot warn you, because both print the same string. So:
 >
 > ```bash
-> git clone --branch v1.7.3 --depth 1 https://github.com/antigenomics/mhcmatch.git
-> pip install "mhcmatch==1.7.3"
+> git clone --branch v1.8.0 --depth 1 https://github.com/antigenomics/mhcmatch.git
+> pip install "mhcmatch==1.8.0"
 > ```
 >
 > **Behind an HTTP proxy, take the tarball instead — `git clone` can fail where `git ls-remote`
@@ -22,12 +22,12 @@ prior evidence, safety, cassette selection and cassette assembly.
 > transfer (`POST .../git-upload-pack`) makes git report a **401 as a credential prompt**:
 > `fatal: could not read Username for 'https://github.com'` on a repository that is public and
 > needs none. Measured on Aldan-3 2026-09-03, on the login node and on a compute node, while
-> `git ls-remote` returned the `v1.7.3` tag from both. The release tarball is a plain GET and goes
+> `git ls-remote` returned the `v1.8.0` tag from both. The release tarball is a plain GET and goes
 > straight through, giving the identical tree:
 >
 > ```bash
-> curl -sSL -o mhcmatch-1.7.3.tar.gz https://github.com/antigenomics/mhcmatch/archive/refs/tags/v1.7.3.tar.gz
-> tar xzf mhcmatch-1.7.3.tar.gz     # -> mhcmatch-1.7.3/integrations/nextflow/mhcmatch/
+> curl -sSL -o mhcmatch-1.8.0.tar.gz https://github.com/antigenomics/mhcmatch/archive/refs/tags/v1.8.0.tar.gz
+> tar xzf mhcmatch-1.8.0.tar.gz     # -> mhcmatch-1.8.0/integrations/nextflow/mhcmatch/
 > ```
 >
 > Chase the proxy only if you need git history; for running the pipeline the tarball is the whole
@@ -35,10 +35,10 @@ prior evidence, safety, cassette selection and cassette assembly.
 > there — a run of four `ReadTimeoutError`s that then succeeds is normal on that cluster, and
 > `templates/setup.sbatch`'s `WHEELHOUSE` block is for when they do not.
 >
-> **Requires mhcmatch >= 1.7.3.** `MHCMATCH_ALLELES` calls `mhcmatch alleles` and the rerank arm
+> **Requires mhcmatch >= 1.8.0.** `MHCMATCH_ALLELES` calls `mhcmatch alleles` and the rerank arm
 > calls `rank --passthrough`; neither exists in 1.6.0, and 1.6.1 was stamped in the tree but never
 > published. Every pin in this directory — `environment.yml`, the `Dockerfile`,
-> `params.mhcmatch_container` — names 1.7.3, and `templates/setup.sbatch` asserts the version it
+> `params.mhcmatch_container` — names 1.8.0, and `templates/setup.sbatch` asserts the version it
 > installed rather than letting the run discover the mismatch inside a task log.
 
 ```
@@ -128,7 +128,7 @@ are two different answers and one must not overwrite the other:
 
 | file | what |
 |---|---|
-| `<id>.{rerank,denovo}.vaccine.units.tsv` | one row per **selected epitope** (default *k* = 20, `--mhcmatch_cassette_k`) — **this is the input table filtered to what the cassette carries, nothing removed from the row.** On the rerank arm it holds every one of your own columns and every `mm_` column, plus the selection's own (`slot`, `p`, `k`, `pool_n`, `offset`, `energy`, `lam`, `rho`); on the de novo arm, every column of `*.mhcmatch.ranked.tsv`. Measured on one donor: 53 caller + 32 `mm_` + 22 selection = 107 columns over 20 rows, with 0 caller columns dropped. **If one of your column names collides with one `cassette select` emits** (`score`, `p`, `k`, `slot`, …), ours keeps the plain name — it is what `cassette build`, `cassette score` and the map read — and **yours is preserved beside it as `<name>_in`**, with a line naming what moved. Before 1.7.3 yours was overwritten silently |
+| `<id>.{rerank,denovo}.vaccine.units.tsv` | one row per **selected epitope** (default *k* = 20, `--mhcmatch_cassette_k`) — **this is the input table filtered to what the cassette carries, nothing removed from the row.** On the rerank arm it holds every one of your own columns and every `mm_` column, plus the selection's own (`slot`, `p`, `k`, `pool_n`, `offset`, `energy`, `lam`, `rho`); on the de novo arm, every column of `*.mhcmatch.ranked.tsv`. Measured on one donor: 53 caller + 32 `mm_` + 22 selection = 107 columns over 20 rows, with 0 caller columns dropped. **If one of your column names collides with one `cassette select` emits** (`score`, `p`, `k`, `slot`, …), ours keeps the plain name — it is what `cassette build`, `cassette score` and the map read — and **yours is preserved beside it as `<name>_in`**, with a line naming what moved. Before 1.8.0 yours was overwritten silently |
 | `<id>.{rerank,denovo}.cassette.faa` | assembled, with the linker chosen by minimising junctional binding |
 | `<id>.{rerank,denovo}.cassette.fna` | the CDS, deslipped |
 | `<id>.{rerank,denovo}.cassette.map.{tsv,json}` | unit / linker / epitope in 1-based coordinates |
@@ -563,7 +563,8 @@ and never think about it.
 | param | default | what it does |
 |---|---|---|
 | `mhcmatch_tier` | `full` | reference panel tier (`full` \| `shortlist`). Passed to **`MHCMATCH_PREDICT`, `MHCMATCH_RANK`, `MHCMATCH_RERANK` and `MHCMATCH_CASSETTE`** — the four whose subcommands take `--tier`. `neoag`, `mimicry`, `alleles`, `cassette select` and `cassette score` do not accept it and are not given it; handing it to one exits 2 |
-| `mhcmatch_rank_threshold` | `2.0` | %rank below which `predict` emits a row |
+| `mhcmatch_rank_threshold` | **`none`** | what to **drop**, and **nothing is dropped by default**. `sb`/`wb` are the published NetMHCpan cut-offs and are **per class** (`sb`: 0.5 mhc1 / 2.0 mhc2; `wb`: 2.0 / 10.0); a number is a %rank percentile used as given. It was a bare `2.0` through 1.7.3 — and a bare number cannot be class-aware, so it was the *strong* cut for class II: measured on one window pair against DRB1\*15:01, **0 of 56** scored pairs survived and the best window was discarded at %rank 2.364. Applies to the **de novo** arm only; rerank never drops a caller's row |
+| `mhcmatch_keep` | `null` | gene symbols and/or peptide sequences that are **never** dropped, whatever the threshold says. Comma-separated or a path to a file with one per line; case-insensitive; each entry is matched against **both** the gene and the peptide, so one list covers both. Matched rows carry `keep = 1` — surviving a cut and being whitelisted are different facts |
 | `mhcmatch_rank_mode` | `fasta` | `rank` input kind: `fasta` or `table` |
 | `mhcmatch_rank_score` | `aggregate` | which model scores: the fitted aggregate, or `gate` (the pre-0.19.0 product-of-sigmoids) |
 | `mhcmatch_prevalence` | `null` (→ 0.0602) | assumed responding fraction of the candidate pool, the anchor for `p_response`. **A prior about your cohort** |
@@ -613,10 +614,10 @@ From `slurm.config` only:
 ## Build the image (only for `-profile docker`)
 
 ```zsh
-docker build -t <YOUR_REGISTRY>/mhcmatch:1.7.3 \
-    --build-arg MHCMATCH_VERSION=1.7.3 \
+docker build -t <YOUR_REGISTRY>/mhcmatch:1.8.0 \
+    --build-arg MHCMATCH_VERSION=1.8.0 \
     integrations/nextflow/mhcmatch/
-docker push <YOUR_REGISTRY>/mhcmatch:1.7.3
+docker push <YOUR_REGISTRY>/mhcmatch:1.8.0
 ```
 
 **The build stages both the reference tables and the two proteomes**, ~170 MB in the image's
@@ -632,7 +633,7 @@ One tag, four files, and they must move together on a release: `Dockerfile`'s
 `params.mhcmatch_container` default, and this block. The container default sat on `1.6.0` while
 the other two were on `1.6.1`, which is the drift this note exists to stop -- and `1.6.1` was
 itself never published, so every one of those pins named a distribution that did not exist until
-1.7.3 was cut.
+1.8.0 was cut.
 
 No data staging: the build runs `mhcmatch bootstrap --reference`, which fetches the ligand panel
 **and** the known-epitope sets, mimicry references and expression tables (~115 MB total) from the
@@ -727,7 +728,7 @@ a conda interpreter is enough and is what `-profile conda` sidesteps entirely:
 
 ```bash
 conda create -n mhcmatch -c bioconda python=3.12 nextflow
-conda run -n mhcmatch --no-capture-output pip install mhcmatch==1.7.3
+conda run -n mhcmatch --no-capture-output pip install mhcmatch==1.8.0
 ```
 
 (The `docker build` block above pins the same version and must move with it.)

@@ -112,7 +112,8 @@ The commands, by axis
      - does
    * - ``predict``
      - score a variant peptide-window FASTA into the native table plus the fixed 57-column
-       pipeline ``.scored.csv``
+       pipeline ``.scored.csv``. **Drops nothing by default** --- see :ref:`rank-tiers` for
+       ``--rank-threshold`` and the ``--keep`` whitelist
    * - ``restriction``
      - rank presenting alleles for a peptide; ``--calibrated`` gives cross-allele-comparable
        ``%rank``, ``p_present`` and a band
@@ -215,6 +216,69 @@ rather than a neighbour search (0.24.0), so no proteome index is on the ranking 
 ``--annotate`` do build one, because they report what a candidate resembles; since 1.7.3 that index
 is cached on disk and can be staged prebuilt, so it is paid once per machine
 (:ref:`bootstrap-tiers`).
+
+.. _rank-tiers:
+
+What gets dropped, and what can never be
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``--rank-threshold`` on ``predict`` and ``rank fasta`` is the **only** thing that removes a
+candidate, and **it removes nothing by default**.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 18 18 44
+
+   * - value
+     - class I
+     - class II
+     - what it means
+   * - ``none`` **(default)**
+     - --
+     - --
+     - every scored pair is emitted; the ``band`` column carries the verdict
+   * - ``wb``
+     - ``<= 2.0``
+     - ``<= 10.0``
+     - the conventional cut --- NetMHCpan / NetMHCIIpan weak binder
+   * - ``sb``
+     - ``<= 0.5``
+     - ``<= 2.0``
+     - strong binder
+   * - ``25``
+     - ``<= 25``
+     - ``<= 25``
+     - any number is a percentile, used as given in either class
+
+**A number cannot be class-aware and a name can**, which is the whole reason the tiers are named.
+``2.0`` is the *weak* cut for class I and the *strong* cut for class II, so one number applied to
+both silently discards ordinary class-II binders --- and until 1.8.0 ``2.0`` was the default.
+Measured on one class-II window pair against ``DRB1*15:01``: **0 of 56** scored pairs survived, the
+best window discarded at ``%rank 2.364``, and the de novo arm returned an empty table with
+returncode 0.
+
+The ``band`` column is the class's own verdict too (:func:`mhcmatch.predict.band_for`). It took
+class-I cut-offs regardless of class, so a class-II ligand at ``%rank 5.0`` --- a textbook weak
+binder --- was labelled ``non-binder``. ``n_alleles_presenting`` does **not** follow the threshold:
+an allele counts as presenting at its class's weak cut, a published convention that must not move
+when a caller changes their own filter.
+
+**The whitelist: ``--keep``.** Gene symbols and/or peptide sequences that are never dropped, however
+strict the threshold. Comma-separated or a path to a file with one per line; case-insensitive; each
+entry is matched against **both** the gene and the peptide, so one list covers both kinds and
+nothing is classified by shape --- ``MET``, ``MAX``, ``KIT`` and ``FAS`` are gene symbols spelled
+entirely in the amino-acid alphabet, and a rule that guessed would file one of them as a peptide
+that matches nothing.
+
+Matched rows carry ``keep = 1``, because *surviving a cut* and *being whitelisted* are different
+facts and survival alone cannot separate them:
+
+.. code-block:: bash
+
+   mhcmatch predict w.fasta --cls mhc2 --alleles DRB1_1501                       # keeps everything
+   mhcmatch predict w.fasta --cls mhc2 --alleles DRB1_1501 --rank-threshold wb   # published cut
+   mhcmatch predict w.fasta --cls mhc2 --alleles DRB1_1501 \
+       --rank-threshold sb --keep 'TP53,KRAS,GILGFVFTL'                          # strict, not for these
 
 ``genes`` — why an unkeyed table scores two terms at a constant
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

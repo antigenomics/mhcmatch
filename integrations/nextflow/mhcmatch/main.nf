@@ -76,7 +76,8 @@ process MHCMATCH_PREDICT {
     def args   = task.ext.args ?: ''
     def prefix = task.ext.prefix ?: "${meta.id}"
     def tier   = params.mhcmatch_tier ?: 'full'
-    def rank   = params.mhcmatch_rank_threshold ?: 2.0
+    def rank   = params.mhcmatch_rank_threshold ?: 'none'
+    def keep   = params.mhcmatch_keep ? "--keep '${params.mhcmatch_keep}' " : ''
     def core   = isOn(params.mhcmatch_predict_core) ? '--core ' : ''
     """
     mhcmatch predict ${fasta} \\
@@ -84,7 +85,7 @@ process MHCMATCH_PREDICT {
         --cls ${cls} \\
         --tier ${tier} \\
         --rank-threshold ${rank} \\
-        ${core}${args} \\
+        ${keep}${core}${args} \\
         --scored-csv ${prefix}.${cls}.mhcmatch.scored.csv \\
         --native ${prefix}.${cls}.mhcmatch.native.tsv
 
@@ -144,12 +145,15 @@ process MHCMATCH_RANK {
     def extra  = (isOn(params.mhcmatch_rank_extended) ? '--extended ' : '') +
                  (isOn(params.mhcmatch_rank_annotate) ? '--annotate ' : '') +
                  (isOn(params.mhcmatch_rank_core)     ? '--core '     : '')
+    def rank   = params.mhcmatch_rank_threshold ?: 'none'
+    def keep   = params.mhcmatch_keep ? "--keep '${params.mhcmatch_keep}' " : ''
     """
     mhcmatch rank ${mode} ${input} \\
         --alleles '${alleles}' \\
         --cls ${cls} \\
         --tier ${tier} \\
-        ${tumor} ${score}${prev}${extra}${args} \\
+        --rank-threshold ${rank} \\
+        ${keep}${tumor} ${score}${prev}${extra}${args} \\
         --out ${prefix}.${cls}.mhcmatch.ranked.tsv
 
     cat <<-END_VERSIONS > versions.yml
@@ -635,12 +639,16 @@ process MHCMATCH_RERANK {
     def extra  = (isOn(params.mhcmatch_rank_extended) ? '--extended ' : '') +
                  (isOn(params.mhcmatch_rank_annotate) ? '--annotate ' : '') +
                  (isOn(params.mhcmatch_rank_core)     ? '--core '     : '')
+    // No `--rank-threshold` on the rerank path: it is the caller's own table and every row of it
+    // comes back, which is the contract this arm exists for. `--keep` still applies -- it only
+    // ever sets a flag column here, never removes anything.
+    def keep   = params.mhcmatch_keep ? "--keep '${params.mhcmatch_keep}' " : ''
     """
     mhcmatch rank pairs ${table} \\
         --cls ${cls} \\
         --tier ${tier} \\
         --passthrough --prefix '${pre}' \\
-        ${ctx} ${tumor} ${prev}${extra}${args} \\
+        ${keep}${ctx} ${tumor} ${prev}${extra}${args} \\
         --out ${prefix}.${cls}.epitopes.mhcmatch.tsv
 
     cat <<-END_VERSIONS > versions.yml

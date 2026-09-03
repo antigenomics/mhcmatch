@@ -72,6 +72,8 @@ mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor 
 | your question | command | Python |
 |---|---|---|
 | Which of these peptides does an allele present? | `mhcmatch predict f.fasta --alleles 'HLA-A*02:01' --cls mhc1` | `predict.predict_fasta` |
+| …keeping only conventional binders | `mhcmatch predict ... --rank-threshold wb` | `predict.resolve_rank_threshold` |
+| …never dropping these genes or peptides | `mhcmatch predict ... --keep 'TP53,GILGFVFTL'` | `predict.keep_set` |
 | Which allele presents this peptide? | `mhcmatch restriction PEP --calibrated` | `store.restriction` |
 | Is it a binder at all, one number? | `mhcmatch binder PEP` | `store.binder_score` |
 | What is the IC50, and vs its wild type? | `mhcmatch affinity PEP --allele A --wt WTPEP` | `store.affinity_model` |
@@ -106,6 +108,13 @@ mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor 
 | How viral-like is it, as a soft sum not a cutoff? | — | `luksza.viral_r` |
 
 Full command reference, grouped by task: [the CLI page](https://antigenomics.github.io/mhcmatch/cli.html).
+
+**`predict` and `rank fasta` drop nothing by default.** `--rank-threshold` takes `sb` / `wb` /
+`none` / a percentage, and the tiers are **class-aware** because a bare number cannot be: `2.0` is
+the weak cut for class I and the *strong* cut for class II. That number was the default through
+1.7.3, and on class II it kept **0 of 56** scored pairs in a measured case, discarding the best
+window at `%rank 2.364` — an empty table, returncode 0. `--keep 'TP53,GILGFVFTL'` whitelists gene
+symbols and peptide sequences that survive any cut and are flagged `keep = 1`.
 
 **Two module names for the cassette, because they are two jobs.** `cassette` *chooses* the units and
 scores a finished construct (`select`, `score`, `lam`); `vector` *assembles* one that has been chosen

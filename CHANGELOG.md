@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.8.0] — 2026-09-03 — nothing is dropped by default, and the cut-off knows its class
+
+**Nothing is dropped by default, and the cut-off knows which class it is on.**
+
+`predict` and `rank fasta` took a bare `rank_threshold = 2.0`, and a bare number cannot be
+class-aware. NetMHCpan calls class I weak at `%rank <= 2.0`; NetMHCIIpan calls class II *strong*
+there. So the default was the strong cut on class II and it **filtered** rather than reported --
+measured on one window pair against `DRB1*15:01`, **0 of 56** scored pairs survived, the best window
+discarded at `%rank 2.364`, and the de novo arm returned an empty table with returncode 0. Nothing
+about that says "your filter removed everything".
+
+- **`--rank-threshold` now takes `sb` / `wb` / `none` / a percentage, and defaults to `none`.**
+  `sb` is 0.5 (mhc1) / 2.0 (mhc2); `wb` is 2.0 / 10.0; a number is used as given in either class.
+  Named tiers exist precisely because a number cannot carry the class. `mhcmatch_rank_threshold`
+  moves with it, `'none'`.
+- **`--keep LIST|FILE`** whitelists gene symbols **and** peptide sequences that no cut removes;
+  matched rows carry a `keep` column set to `1`. One list holds both kinds and each entry is tested
+  against both fields -- `MET`, `MAX`, `KIT` and `FAS` are gene symbols spelled entirely in the
+  amino-acid alphabet, so classifying by shape would file one of them as a peptide matching nothing.
+  The flag column is the point: *surviving a cut* and *being whitelisted* are different facts.
+  `mhcmatch_keep` on the pipeline; on the rerank arm it only ever flags, since that arm returns
+  every row of the caller's table by contract.
+- **`band` is the class's own verdict** (`predict.band_for`). It took class-I cut-offs regardless of
+  class, so a class-II ligand at `%rank 5.0` -- a textbook weak binder -- came back `non-binder`.
+- **`n_alleles_presenting` no longer follows the caller's threshold.** An allele counts as presenting
+  at its class's weak cut, which is a published convention and must not move when someone changes
+  their own filter. Under `--rank-threshold none` it would otherwise have counted the whole panel.
+- `RANK_STRONG` / `RANK_WEAK` moved from `vector` to `predict`, where the cut is applied; `vector`
+  re-exports both names, so nothing that learned them there breaks.
+
+Scores are unchanged -- this moves what is emitted and how it is labelled, not what anything scores.
+`SCORER_EPOCH` is deliberately **not** bumped: no scoring head returns a different number, so the
+calibration cache is still valid.
+
 ## [1.7.3] — 2026-09-03 — the pipeline runs in 197 s, and three things stopped being rebuilt per process
 
 **553 s -> 197 s** on two donors, both arms, 8 cpu / 24 GB (Aldan-3), longest single task 60 s

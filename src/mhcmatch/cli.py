@@ -500,6 +500,7 @@ def cmd_predict(a):
     store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
     alleles = [x.strip() for x in a.alleles.split(",") if x.strip()]
     preds = P.predict_fasta(store, a.cls, a.fasta, alleles, rank_threshold=a.rank_threshold,
+                            keep=getattr(a, "keep", None),
                             top=a.top, background=a.background, footprint=a.footprint, seed=a.seed)
     if a.native:
         P.write_native(preds, a.native, core=a.core)
@@ -508,7 +509,11 @@ def cmd_predict(a):
         P.write_scored_csv(preds, a.scored_csv, core=a.core)
         say(f"wrote {a.scored_csv}")
     if not a.native and not a.scored_csv:
-        print(f"# {len(preds)} predicted binder(s) (%rank <= {a.rank_threshold}) over "
+        _cut = P.resolve_rank_threshold(a.rank_threshold, a.cls)
+        _nk = sum(1 for p in preds if getattr(p, "keep", 0))
+        _how = ("no %rank cut" if _cut >= P.RANK_NONE else f"%rank <= {_cut:g}")
+        _wl = f", {_nk} kept by --keep" if _nk else ""
+        print(f"# {len(preds)} predicted binder(s) ({_how}{_wl}) over "
               f"{len(alleles)} allele(s)")
         for p in preds[:(a.top or 20)]:
             print(f"{p.peptide:<15} {_allele(a, p.allele):<18} %rank={p.percent_rank:<6} {p.band:<11} "
@@ -831,7 +836,8 @@ def cmd_rank(a):
         store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
         rows = R.rank_fasta(store, a.input, _read_alleles(a.alleles), cls=a.cls,
                             tissue=a.tissue, tumor=a.tumor, refs=refs,
-                            rank_threshold=a.rank_threshold, score=a.score,
+                            rank_threshold=a.rank_threshold, keep=getattr(a, "keep", None),
+                            score=a.score,
                             prevalence=a.prevalence,
                             channels=_aggregate_channels(a.cls, a.no_self, a.species)
                             if a.score == "aggregate" else None)
@@ -909,7 +915,7 @@ def cmd_rank(a):
                      "1" if r.expression_imputed else "0",
                      str(r.n_alleles_presenting), r.alleles_presenting,
                      r.imputed, r.wt_peptide,
-                     r.known_epitope, r.variant_type]
+                     r.known_epitope, r.variant_type, str(r.keep)]
             if a.score == "aggregate":
                 # `.get`: an artifact that does not declare an expression term never sets it, and
                 # an absent term is an empty cell rather than a KeyError or a fabricated 0.
@@ -2486,7 +2492,13 @@ def main(argv=None):
     pr.add_argument("--cls", required=True, choices=("mhc1", "mhc2"))
     pr.add_argument("--native", help="write the native TSV here")
     pr.add_argument("--scored-csv", dest="scored_csv", help="write the pipeline .scored.csv here")
-    pr.add_argument("--rank-threshold", type=float, default=2.0, help="keep binders with %%rank <= this")
+    pr.add_argument("--rank-threshold", default=None, metavar="TIER|PCT",
+                    help="what to DROP, and nothing is dropped by default. `sb`/`wb` are the published NetMHCpan cut-offs and are per class (sb: 0.5 mhc1 / 2.0 mhc2; wb: 2.0 / 10.0); `none` keeps everything; a number is a %%rank percentile used as given. A bare number cannot be class-aware -- `2.0` is the WEAK cut for class I and the STRONG cut for class II -- which is why the tiers are named")
+    pr.add_argument("--keep", metavar="LIST|FILE",
+                    help="whitelist of gene symbols AND/OR peptide sequences that are NEVER "
+                         "dropped, whatever --rank-threshold says. Comma-separated or a file with "
+                         "one per line; case-insensitive; each entry is matched against both the "
+                         "gene and the peptide. Matched rows carry `keep = 1`")
     pr.add_argument("--top", type=int, help="cap binders kept per window (strongest first)")
     pr.add_argument("--background", default="proteome", choices=("ligand", "ligand-pooled", "proteome", "markov"))
     pr.add_argument("--footprint", default="adaptive", choices=("anchor", "core", "adaptive"))
@@ -2559,8 +2571,18 @@ def main(argv=None):
                          "neoantigens, IEDB-immunogenic, thymic self, viral)")
     rk.add_argument("--refs", help="override the built-in known-epitope sets: "
                                    "name=path[,name=path]; one peptide per line or TSV col 1")
-    rk.add_argument("--rank-threshold", type=float, default=2.0,
-                    help="keep binders with presentation %%rank <= this (mode=fasta)")
+    rk.add_argument("--keep", metavar="LIST|FILE",
+                    help="whitelist of gene symbols AND/OR peptide sequences that are NEVER "
+                         "dropped, whatever --rank-threshold says. Comma-separated or a file with "
+                         "one per line; case-insensitive; each entry is matched against both the "
+                         "gene and the peptide. Matched rows carry `keep = 1`")
+    rk.add_argument("--rank-threshold", default=None, metavar="TIER|PCT",
+                    help="what to DROP, and nothing is dropped by default. `sb`/`wb` are the "
+                         "published NetMHCpan cut-offs and are per class (sb: 0.5 mhc1 / 2.0 mhc2; "
+                         "wb: 2.0 / 10.0); `none` keeps everything; a number is a %%rank percentile "
+                         "used as given. A bare number cannot be class-aware -- `2.0` is the WEAK "
+                         "cut for class I and the STRONG cut for class II -- which is why the "
+                         "tiers are named")
     rk.add_argument("--recompute-presentation", action="store_true",
                     help="mode=table: rescore presentation with mhcmatch instead of trusting the "
                          "table's own columns")

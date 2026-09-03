@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import csv
 import math
+import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -35,6 +36,110 @@ from .calibrate import RankCalibrator, band as band_of
 #: Binding-length k-mers tiled per class (pipeline ``params.mhcI_epit_len`` / ``mhcII_epit_len``).
 KMER_LENS = {"mhc1": (8, 9, 10, 11), "mhc2": (15,)}
 _AA = set("ACDEFGHIKLMNPQRSTVWY")
+
+#: **%rank cut-offs, per class, in the NetMHCpan vocabulary.** Strong and weak binder are not the
+#: same number in the two classes, and one threshold for both is the mistake this pair exists to
+#: stop: NetMHCpan calls class I strong at ``%rank <= 0.5`` and weak at ``<= 2.0``; NetMHCIIpan
+#: calls class II strong at ``<= 2.0`` and weak at ``<= 10.0``. A single ``2.0`` is therefore the
+#: *weak* cut for class I and the *strong* cut for class II.
+#:
+#: They live here, not in :mod:`mhcmatch.vector`, because ``vector`` imports *from* this module and
+#: the cut belongs to whatever applies it. ``vector`` re-exports both names, so a caller that
+#: learned them there keeps working.
+RANK_STRONG: dict = {"mhc1": 0.5, "mhc2": 2.0}
+RANK_WEAK: dict = {"mhc1": 2.0, "mhc2": 10.0}
+
+#: ``none``: every scored pair is emitted. A %rank is a percentile, so 100 is "no cut" exactly.
+RANK_NONE: float = 100.0
+
+#: What ``predict``/``rank`` keep unless told otherwise. **No cut.** A tier here does not *report*,
+#: it *filters* -- a dropped row is gone before ranking, and a caller cannot tell an empty table
+#: from a donor with nothing to offer. Measured on one class-II window pair against DRB1\\*15:01:
+#: the old flat ``2.0`` default kept **0 of 56** scored pairs, discarding a best window at %rank
+#: 2.364 -- an ordinary weak binder by the published convention, and the de novo arm returned an
+#: empty table with returncode 0. Choose the cut deliberately; ``wb`` is the conventional one.
+RANK_DEFAULT_TIER: str = "none"
+
+#: Spellings accepted by :func:`resolve_rank_threshold`, NetMHCpan's on the left.
+RANK_TIERS: dict = {"sb": RANK_STRONG, "strong": RANK_STRONG,
+                    "wb": RANK_WEAK, "weak": RANK_WEAK}
+
+
+def band_for(percent_rank: float, cls: str = "mhc1") -> str:
+    """``strong``/``weak``/``non-binder`` at **this class's** published cut-offs.
+
+    :func:`mhcmatch.calibrate.band` defaults to the class-I pair (0.5 / 2.0) and every call site
+    here used to take the default, so a class-II ligand at %rank 5.0 -- a textbook weak binder --
+    came back labelled ``non-binder``. The label is the thing a reader trusts without checking the
+    number beside it, so getting it wrong is worse than not printing it.
+    """
+    return band_of(percent_rank, RANK_STRONG[cls], RANK_WEAK[cls])
+
+
+#: Name of the flag column a whitelist writes. ``1`` where the row matched, ``0`` everywhere else.
+KEEP_COLUMN: str = "keep"
+
+
+def keep_set(spec) -> frozenset:
+    """A whitelist of gene symbols and/or peptide sequences, from a comma list or a file.
+
+    One list holds both kinds and an entry is matched against **both** fields, because classifying
+    a token by shape is where this would go wrong: ``MET``, ``MAX``, ``KIT`` and ``FAS`` are gene
+    symbols spelled entirely in the amino-acid alphabet, and a rule that guessed would quietly file
+    one of them as a peptide that matches nothing. Matching both ways costs one extra set lookup
+    per row and cannot mis-classify anything.
+
+    Case is folded, so ``tp53`` and ``TP53`` are the same entry and a lowercase peptide still
+    matches. Returns an empty set for ``None`` / ``""``, which every caller reads as "no whitelist".
+    """
+    if not spec:
+        return frozenset()
+    if isinstance(spec, (set, frozenset, list, tuple)):
+        items = spec
+    else:
+        s = str(spec)
+        if os.path.exists(s):
+            with open(s) as fh:
+                items = [ln.split("\t")[0] for ln in fh.read().splitlines()]
+        else:
+            items = s.split(",")
+    return frozenset(x.strip().upper() for x in items if x and x.strip() and not x.startswith("#"))
+
+
+def is_kept(keep: frozenset, peptide: str = "", gene: str = "") -> bool:
+    """Does this row match the whitelist, by peptide **or** by gene symbol?"""
+    if not keep:
+        return False
+    return (peptide or "").upper() in keep or (gene or "").upper() in keep
+
+
+def resolve_rank_threshold(spec, cls: str = "mhc1") -> float:
+    """A tier name or a bare percentage to the ``%rank`` cut **for this class**.
+
+    ``sb``/``strong`` and ``wb``/``weak`` resolve per class off :data:`RANK_STRONG` and
+    :data:`RANK_WEAK`; ``none``/``all`` is :data:`RANK_NONE`; anything numeric is taken as a
+    percentage and used as given, so ``25`` means ``%rank <= 25`` in either class.
+
+    The point of naming the tiers is that a *number* cannot be class-aware and a *name* can. A
+    caller who writes ``2.0`` gets 2.0 in both classes, which is the weak cut in one and the strong
+    cut in the other; a caller who writes ``wb`` gets 2.0 and 10.0 respectively, which is what they
+    meant. Numbers stay honoured because "top 25%" is a real request that no tier expresses.
+    """
+    if spec is None:
+        spec = RANK_DEFAULT_TIER
+    if isinstance(spec, (int, float)):
+        return float(spec)
+    s = str(spec).strip().lower()
+    if s in ("none", "all", ""):
+        return RANK_NONE
+    if s in RANK_TIERS:
+        return float(RANK_TIERS[s][cls])
+    try:
+        return float(s)
+    except ValueError:
+        raise ValueError(
+            f"--rank-threshold: {spec!r} is not a tier or a percentage. Use `sb`/`strong`, "
+            f"`wb`/`weak`, `none`, or a number like `25`.") from None
 
 #: The pipeline's ``.epitopes.scored.csv`` header (57 columns, exact order). mhcmatch fills the
 #: variant-annotation and presentation columns; the rest are left empty for downstream modules.
@@ -58,7 +163,7 @@ NATIVE_COLUMNS = ("source", "type", "variant_type", "gene_name", "chrom", "pos",
                   "best_allele", "cls", "percent_rank", "p_present", "band", "affinity_nm",
                   "affinity_rank", "binder_rank", "binder_band",
                   "wt_peptide", "wt_affinity_nm", "agretopicity", "amplitude", "dai",
-                  "synth_peptide", "model_peptide", "anchors", "tcr_facing")
+                  "synth_peptide", "model_peptide", "anchors", "tcr_facing", "keep")
 
 #: Appended by ``--core`` to every output that carries it. Never in a default header: the 57-column
 #: :data:`SCORED_COLUMNS` is a pipeline contract, and ``write_scored_csv``'s ``extrasaction="ignore"``
@@ -105,6 +210,11 @@ class Prediction:
     #: :meth:`mhcmatch.diffusion.AnchorModel.best_register`, and `heuristic` when it came from the
     #: allele-agnostic one-pass scan. The provenance is a column and not a docs sentence because the
     #: two registers disagree often on real ligands, and a core nobody can attribute is not evidence.
+    #: ``1`` when a ``--keep`` whitelist named this peptide or its gene. Such a row is **never**
+    #: dropped by a ``--rank-threshold``, however strict, and says so in its own column rather than
+    #: only by surviving -- a reader cannot tell "kept because whitelisted" from "kept because it
+    #: scored well" without one.
+    keep: int = 0
     core: str = ""
     core_offset: int = -1
     core_source: str = ""
@@ -496,7 +606,7 @@ def binder_score(store, peptide, alleles="all", cls=None, background="proteome",
             continue
         br = ccal.percent_rank(a, cstat)               # calibrated -> a true combined %rank
         out.append(BinderScore(peptide, a, cls, round(pr, 3), _round(aff.predict_ic50(peptide, a)),
-                               round(ar, 3), round(br, 3), band_of(br),
+                               round(ar, 3), round(br, 3), band_for(br, cls),
                                round(ccal.p_present(a, cstat), 4),
                                round(model.score_sd(peptide, a), 3)))
     out.sort(key=lambda b: b.binder_rank)
@@ -599,17 +709,26 @@ def _round(x, n=1):
     return round(x, n) if x == x else float("nan")
 
 
-def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
-                    background="proteome", footprint="adaptive", seed=0):
+def predict_windows(store, cls, records, alleles, rank_threshold=None, top=None,
+                    background="proteome", footprint="adaptive", seed=0, keep=None):
     """Predict presented epitopes over ``records`` (``[(header, sequence)]``) for ``alleles``.
 
     For each window k-mer the best-presenting allele is chosen (lowest %rank); k-mers whose best
-    %rank is above ``rank_threshold`` are dropped (non-binders). Each kept binder is annotated with
+    %rank is above ``rank_threshold`` are dropped -- **and nothing is dropped by default**, because
+    ``rank_threshold=None`` resolves to :data:`RANK_DEFAULT_TIER`. Pass ``"wb"``/``"sb"`` for the
+    published class-aware cut, a number for an arbitrary percentile, or a ``keep`` whitelist of gene
+    symbols and peptides that survive any cut and are flagged in the ``keep`` column. Each binder is
+    annotated with
     its IC50 (nM), the wild-type counterpart's IC50 + agretopicity / Luksza amplitude / DAI (when the
     k-mer spans the mutation), and the synthesise / model peptides. ``top`` optionally caps binders
     per window (strongest first). Returns ``list[Prediction]``.
     """
     from .store import binding_core as _binding_core
+    # **The cut is resolved once, per class, and defaults to keeping everything.** A bare number
+    # cannot be class-aware, so `2.0` -- the old default -- was the weak cut for class I and the
+    # STRONG cut for class II, and a class-II de novo arm returned an empty table with returncode 0.
+    _cut = resolve_rank_threshold(rank_threshold, cls)
+    _keep = keep if isinstance(keep, frozenset) else keep_set(keep)
     model, cal, aff = build_scorer(store, cls, background, footprint, seed)
     # the calibrated combined %rank (presentation x affinity) needs the affinity + Fisher calibrators;
     # both are cached on the store and only fill their per-allele background lazily.
@@ -634,21 +753,23 @@ def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
                 pr = cal.percent_rank(a, s)
                 if pr != pr:                       # nan: allele has no background
                     continue
-                if pr <= rank_threshold:
-                    presenting.append((pr, a))
+                if pr <= RANK_WEAK[cls]:      # "presented" is the published weak cut, per class,
+                    presenting.append((pr, a))  # and never the caller's drop threshold
                 if best is None or pr < best[1]:
                     best = (a, pr, cal.p_present(a, s))
             if best is None:
                 continue
             a, pr, pp = best
-            if pr > rank_threshold:
+            kept = is_kept(_keep, pep, var.get("gene_name", ""))
+            if pr > _cut and not kept:
                 continue
             # annotate anchors from the SAME register the model scored (MHC-II), not the heuristic one,
             # so reported anchors/tcr_facing match the scored core (and the WT-vs-mutant agretopicity).
             rstart = model.best_register(pep, a)[0] if cls == "mhc2" else None
             d = store.decompose(pep, cls, a, register_start=rstart)
-            p = Prediction(header, pep, a, off, cls, round(pr, 3), round(pp, 4), band_of(pr),
+            p = Prediction(header, pep, a, off, cls, round(pr, 3), round(pp, 4), band_for(pr, cls),
                            d.anchors, d.tcr_facing, var=var)
+            p.keep = 1 if kept else 0
             presenting.sort()
             p.n_alleles_presenting = len(presenting)
             p.alleles_presenting = ";".join(x[1] for x in presenting)
@@ -666,7 +787,7 @@ def predict_windows(store, cls, records, alleles, rank_threshold=2.0, top=None,
                     br = ccal.percent_rank(a, cstat)
                     if br == br:
                         p.binder_rank = round(br, 3)
-                        p.binder_band = band_of(br)
+                        p.binder_band = band_for(br, cls)
                 if wt_seq is not None:
                     wtk = wt_seq[off:off + len(pep)]
                     if wtk != pep and set(wtk) <= _AA:       # k-mer spans the mutation
@@ -727,7 +848,7 @@ def write_native(preds, path: str, core: bool = False) -> None:
                         _blank_nan(p.affinity_rank), _blank_nan(p.binder_rank), p.binder_band,
                         p.wt_peptide, p.wt_affinity_nm, p.agretopicity, p.amplitude, p.dai,
                         p.synth_peptide, p.model_peptide,
-                        ";".join(str(i) for i in p.anchors), p.tcr_facing]
+                        ";".join(str(i) for i in p.anchors), p.tcr_facing, p.keep]
                        + ([p.core, p.core_offset, p.core_source] if core else []))
 
 

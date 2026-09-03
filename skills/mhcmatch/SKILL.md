@@ -148,6 +148,16 @@ form (`A*01:01:01G`), the pseudosequence tables are keyed at two fields, and `St
 drops what it cannot find **silently** -- so a raw typing file scores against an empty panel and
 exits 0. This trims, splits the classes, joins the DP/DQ alpha-beta pair, and reports every drop.
 
+**`predict` / `rank fasta` drop nothing by default, and the tier is class-aware.**
+`--rank-threshold sb|wb|<pct>|none` (default `none`). `wb` is 2.0 on class I and **10.0** on class
+II; a bare number is the same in both, which is why `2.0` -- the pre-1.8.0 default -- was the
+*strong* class-II cut and kept 0 of 56 scored pairs in a measured case, returncode 0 and an empty
+table. `band` is class-aware for the same reason (`predict.band_for`), and `n_alleles_presenting`
+deliberately is **not** tied to the caller's threshold -- it uses the class's weak cut.
+`--keep 'TP53,GILGFVFTL'` (or a file) whitelists gene symbols **and** peptide sequences that no cut
+removes; matched rows carry `keep = 1`. One list holds both kinds and each entry is tested against
+both fields, because `MET`/`MAX`/`KIT`/`FAS` are gene symbols spelled in the AA alphabet.
+
 **Pass `--peptides FILE`, never loop the shell.** The setup a per-peptide invocation re-pays is the
 whole cost: the presentation/affinity calibrators ~5 s, a human-proteome length index 64.6 s -- the
 one of those that now also survives the process, cached on disk under `$MHCMATCH_CALIBRATION_CACHE`

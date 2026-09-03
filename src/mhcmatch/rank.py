@@ -65,7 +65,7 @@ BASE_COLUMNS: tuple = ("rank", "peptide", "allele", "allele_scored", "gene", "sc
                        # document an API wart.
                        "agretopicity", "physchem", "expression", "expr_pct", "expr_imputed",
                        "n_alleles_presenting", "alleles_presenting",
-                       "imputed", "wt_peptide", "known_epitope", "variant_type")
+                       "imputed", "wt_peptide", "known_epitope", "variant_type", "keep")
 #: The aggregate's recognition features, emitted whenever the aggregate is what scored. A model
 #: emits the features it used and refuses to run without them.
 #:
@@ -637,6 +637,11 @@ class Ranked:
     allele_scored: str = ""
     gene: str = ""
     source: str = ""
+    #: ``1`` when a ``keep`` whitelist named this peptide or its gene. Such a row survives any
+    #: ``rank_threshold`` and says so in its own column: "kept because whitelisted" and "kept
+    #: because it scored well" are different facts, and a reader cannot separate them from
+    #: survival alone.
+    keep: int = 0
     #: -log10(presentation %rank); larger = better presented.
     presentation: float = float("nan")
     #: -log10(calibrated combined binder %rank) -- the aggregate's ``B``. Distinct from
@@ -938,8 +943,12 @@ def _known(peptide: str, refs: dict | None) -> str:
 def _finish(rows: list, gate: dict | None, score: str = "aggregate",
             prevalence: float = POOL_PREVALENCE,
             expr_floor: float | None = None, expr_prefilter: float = 0.0,
-            tumor: str | None = None, tissue: str | None = None) -> list:
+            tumor: str | None = None, tissue: str | None = None, keep=None) -> list:
     """Score, then order: known epitopes first, then by score descending.
+
+    The ``keep`` whitelist is applied **here**, once, rather than at each of the four places a
+    ``Ranked`` is constructed -- the flag is a property of the finished row, every path arrives
+    here, and one place to set it is one place to get it wrong.
 
     ``score="aggregate"``, the default, uses the **fitted** model in
     ``data/aggregate_mhc1.json`` -- the one the benchmark fitted, so ``mhcmatch rank`` and the
@@ -1099,6 +1108,12 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
     seen: dict = {}
     for r in sorted(rows, key=lambda r: -r.score if r.score == r.score else float("inf")):
         r.rank = seen.setdefault(r.score, len(seen) + 1)
+    if keep:
+        from . import predict as P
+        _keep = keep if isinstance(keep, frozenset) else P.keep_set(keep)
+        for r in rows:
+            if P.is_kept(_keep, r.peptide, r.gene):
+                r.keep = 1
     rows.sort(key=lambda r: (r.known_epitope == "", -r.score))
     return rows
 
@@ -1124,9 +1139,9 @@ def _fill_channels(rows: list, channels) -> None:
 
 
 def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: str | None = None,
-               tumor: str | None = None, refs: dict | None = None, rank_threshold: float = 2.0,
+               tumor: str | None = None, refs: dict | None = None, rank_threshold=None,
                top: int | None = None, gate: dict | None = None, score: str = "aggregate",
-               channels=None, prevalence: float = POOL_PREVALENCE, **kw) -> list[Ranked]:
+               channels=None, prevalence: float = POOL_PREVALENCE, keep=None, **kw) -> list[Ranked]:
     """Rank every presented k-mer in a mutation-spanning window FASTA.
 
     ``store`` is a :class:`mhcmatch.Store`; ``alleles`` the donor's HLA types in pipeline form.
@@ -1143,11 +1158,16 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
     ``channels`` supplies the aggregate's three corpus features (:data:`CHANNEL_COLUMNS`) as a
     callable ``list[peptide] -> {name: sequence}``. With ``score="aggregate"`` it is **required**:
     the model scores on the features it declares or not at all. ``score="gate"`` does not use them.
-    ``rank_threshold`` doubles as the band for ``n_alleles_presenting`` -- an allele counts as
-    presenting when its own presentation %rank clears the same bar the candidate had to clear."""
+    ``rank_threshold`` **drops nothing by default** (``None`` -> :data:`mhcmatch.predict.
+    RANK_DEFAULT_TIER`); pass ``"wb"``/``"sb"`` for the published class-aware cut or a number for an
+    arbitrary percentile. ``keep`` is a whitelist of gene symbols and peptide sequences that survive
+    any cut and are flagged in the ``keep`` column. ``n_alleles_presenting`` no longer follows this
+    threshold: an allele counts as presenting at its **class's weak cut**, which is the published
+    convention and does not move when a caller changes their own filter."""
     from . import predict as P
+    keep = P.keep_set(keep)
     preds = P.predict_fasta(store, cls, fasta_path, list(alleles),
-                            rank_threshold=rank_threshold, top=top, **kw)
+                            rank_threshold=rank_threshold, top=top, keep=keep, **kw)
     rows = []
     for p in preds:
         var = getattr(p, "var", {}) or {}
@@ -1168,7 +1188,7 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
         if wt_nm is not None and p.affinity_nm == p.affinity_nm and p.affinity_nm > 0:
             dai = math.log10(wt_nm / p.affinity_nm)
         rows.append(Ranked(peptide=p.peptide, allele=p.allele, allele_scored=p.allele,
-                           gene=gene, source=p.source,
+                           gene=gene, source=p.source, keep=getattr(p, "keep", 0),
                            variant_type=P.variant_product(var),
                            presentation=_neglog10(p.percent_rank),
                            binder=_neglog10(p.binder_rank) if p.binder_rank == p.binder_rank
@@ -1184,7 +1204,7 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
                            alleles_presenting=p.alleles_presenting,
                            core=p.core, core_offset=p.core_offset, core_source=p.core_source))
     _fill_channels(rows, channels)
-    return _finish(rows, gate, score, prevalence, tumor=tumor, tissue=tissue)
+    return _finish(rows, gate, score, prevalence, tumor=tumor, tissue=tissue, keep=keep)
 
 
 def _presents_better(a: "Ranked", b: "Ranked") -> bool:
@@ -1326,7 +1346,7 @@ def wt_from_windows(rows, fasta_path: str) -> int:
     return n
 
 
-def rank_pairs(store, rows, cls: str = "mhc1", *, tissue: str | None = None,
+def rank_pairs(store, rows, cls: str = "mhc1", *, keep=None, tissue: str | None = None,
                tumor: str | None = None, refs: dict | None = None, gate: dict | None = None,
                score: str = "aggregate", channels=None,
                prevalence: float = POOL_PREVALENCE) -> list[Ranked]:
@@ -1436,10 +1456,10 @@ def rank_pairs(store, rows, cls: str = "mhc1", *, tissue: str | None = None,
             out[r["_i"]] = _unscored(r, cls, tissue, tumor, refs, binding_core, phys)
     rows_out = [out[i] for i in sorted(out)]
     _fill_channels(rows_out, channels)
-    return _finish(rows_out, gate, score, prevalence, tumor=tumor, tissue=tissue)
+    return _finish(rows_out, gate, score, prevalence, tumor=tumor, tissue=tissue, keep=keep)
 
 
-def rank_table(path: str, *, channels=None,
+def rank_table(path: str, *, channels=None, keep=None,
                tissue: str | None = None, tumor: str | None = None,
                refs: dict | None = None, store=None, cls: str = "mhc1",
                gate: dict | None = None, score: str = "aggregate",
@@ -1506,4 +1526,4 @@ def rank_table(path: str, *, channels=None,
                 r.components["score_builtin"] = None
             rows.append(r)
     _fill_channels(rows, channels)
-    return _finish(rows, gate, score, prevalence, tumor=tumor, tissue=tissue)
+    return _finish(rows, gate, score, prevalence, tumor=tumor, tissue=tissue, keep=keep)
