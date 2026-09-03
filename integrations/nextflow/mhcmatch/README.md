@@ -470,9 +470,14 @@ ignored rather than rejected, so renaming them would silently drop every deploye
   duplicated by construction** (a row is a *(peptide, allele)* pair, which is what a coverage count
   needs); **junction-spanning epitopes carry `unit=0`** and no gene, because they are an artefact of
   assembly; and **`self_help` per unit** records whether a class-II epitope in that unit contains one
-  of its own class-I epitopes. `self_help` needs `params.mhcmatch_vector_map_alleles_mhc2` — without
-  the recipient's class-II allotypes there is nothing to compute it from, and the process says so
-  on stderr rather than emitting a silently empty column.
+  of its own class-I epitopes. **It is in the `.map.json`, not the `.map.tsv`** — `write_map` puts
+  the feature rows in both and the per-unit summary in the JSON alone, so the TSV has no
+  `self_help` column to look for and its absence there means nothing. Read
+  `summary.n_units_with_self_help`, or `summary.units[i].self_help` for one unit. It needs
+  `params.mhcmatch_vector_map_alleles_mhc2` — without the recipient's class-II allotypes there is
+  nothing to compute it from, and the process says so on stderr. Measured on Aldan-3 2026-09-03,
+  mouse line M1 through `templates/run_mouse.sbatch` as written: **20 of 20 units** carried their
+  own class-II help, over 117 class-I and 1,759 class-II epitopes on a 540 aa cassette.
 - **With `mhcmatch_vector_quota` set, `.cassette.faa` and `.cassette.fna` carry two records** —
   `cassette_composed` and `cassette_topk`. The first fills each arm's slots to maximise
   `P(at least target responses)` under the block model; the second fills the same budgets by score

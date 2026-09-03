@@ -652,7 +652,7 @@ Both arms end in a cassette, published as six files per donor and arm:
 | `<id>.<arm>.vaccine.units.tsv` | the *k* selected **epitopes** (default **k = 20**) — **your own table filtered to what the cassette carries, with nothing removed from the row**: every one of your columns, every `mm_` column, plus the selection's own |
 | `<id>.<arm>.cassette.faa` | the assembled construct, with whichever spacer the junction sweep chose |
 | `<id>.<arm>.cassette.fna` | its CDS, deslipped |
-| `<id>.<arm>.cassette.map.tsv` / `.map.json` | unit / linker / epitope in 1-based coordinates |
+| `<id>.<arm>.cassette.map.tsv` / `.map.json` | unit / linker / epitope in 1-based coordinates. Both carry the feature rows; **only the JSON carries the per-unit summary**, which is where `self_help` is — `summary.n_units_with_self_help` |
 | `<id>.<arm>.cassette.tsv` | the assembly **report** (`section, i, key, value, detail`) — where the safety screen records what it withdrew and why. **Not** the epitope table |
 | `cohort.<arm>.cassette_score.tsv` | one per run and per arm, because `rank` anchors `p_response` on the batch it is handed |
 

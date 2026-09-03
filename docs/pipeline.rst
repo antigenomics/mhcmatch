@@ -83,7 +83,10 @@ different answers and one must not overwrite the other:
    * - ``<id>.{rerank,denovo}.cassette.fna``
      - the CDS, deslipped
    * - ``<id>.{rerank,denovo}.cassette.map.{tsv,json}``
-     - unit / linker / epitope in 1-based coordinates
+     - unit / linker / epitope in 1-based coordinates. **The two are not the same content**: both
+       carry the feature rows, and the JSON carries the cassette sequence and the per-unit summary
+       as well -- ``summary.n_units_with_self_help`` and ``summary.units[i].self_help`` live there
+       and in no column of the TSV, so their absence from the TSV means nothing
    * - ``<id>.{rerank,denovo}.cassette.tsv``
      - the assembly **report**, long-form (``section, i, key, value, detail``): a ``withdrawn``
        section naming every unit the safety screen removed and the clause that fired, plus
