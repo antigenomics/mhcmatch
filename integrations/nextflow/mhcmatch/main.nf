@@ -282,6 +282,9 @@ process MHCMATCH_CASSETTE {
     // `--screen` builds one whole-proteome index per register length: ~12 GB peak each and a few
     // minutes apiece, which is why this process carries `process_high` and why the flag is a param.
     // WITHOUT IT NO SAFETY CHECK RUNS AT ALL and the cassette carries whatever it was handed.
+    //
+    // `alleles` is the class-I list as a String, or a `[mhc1: '...', mhc2: '...']` Map when the
+    // caller has a per-donor class-II list too -- see the comment at `def a2` in the script block.
     input:
     tuple val(meta), path(candidates), path(context), val(alleles), val(cls)
 
@@ -319,25 +322,25 @@ process MHCMATCH_CASSETTE {
     def ucol   = (context.name == 'NO_FILE' && params.mhcmatch_vector_unit_column)
                      ? "--unit-column ${params.mhcmatch_vector_unit_column}" : ''
     // The cassette MAP: one row per unit, linker and predicted epitope in 1-based coordinates.
-    // `mhcmatch_vector_map_alleles_mhc2` is what makes it worth more than a coordinate listing --
-    // without the recipient's class-II allotypes the map carries class I only and `self_help`
-    // (does this unit's CD8 epitope have CD4 help from the SAME unit?) cannot be computed at all.
-    // Falls back to `--alleles_mhc2`, the ONE literal class-II panel a run may use for every sample
-    // (the mouse case, and any cohort typed once) -- it is the recipient's list, so the map gets it
-    // for free and `self_help` becomes computable. Resolved here rather than in the config because a
-    // config statement runs before Nextflow applies `--param`. A PER-DONOR list cannot travel this
-    // way: it would have to be a sixth element of this process's input tuple, which is a breaking
-    // change to a signature other pipelines include -- so a per-donor run gets a class-I-only map,
-    // and the process says so on stderr.
-    // The recipient's class-II allotypes. Without them the map is class I only and `self_help` --
-    // whether a unit's CD8 epitope has CD4 help from the SAME unit -- is not computed at all.
+    // The recipient's class-II allotypes are what make it worth more than a coordinate listing --
+    // without them the map carries class I only and `self_help` (does this unit's CD8 epitope have
+    // CD4 help from the SAME unit?) is not computed at all.
     //
-    // Set it explicitly. A fallback to `pipeline.nf`'s `--alleles_mhc2` was tried and **does not
-    // work**: that param is not visible inside this module's scope, so the fallback silently
-    // produced nothing -- which is the failure mode this whole module has spent a day removing, so
-    // it is not worth keeping for the convenience. `templates/run_mouse.sbatch` passes it.
-    def map2   = params.mhcmatch_vector_map_alleles_mhc2
-                     ? "--map-alleles-mhc2 '${params.mhcmatch_vector_map_alleles_mhc2}'" : ''
+    // **`val(alleles)` is a String OR a Map, and that is how a PER-DONOR class-II list gets here**
+    // without a sixth tuple element -- which would be a breaking change to a signature
+    // `subworkflows/mhcmatch.nf` and outside pipelines `include`. A String is the class-I list and
+    // means exactly what it always meant; a `[mhc1: '...', mhc2: '...']` Map carries both, and
+    // `subworkflows/rerank.nf` and `denovo.nf` build one per donor. A caller who passes the String
+    // gets a byte-identical command line.
+    //
+    // `params.mhcmatch_vector_map_alleles_mhc2` stays, as the ONE literal panel a run may use for
+    // every sample -- the mouse case, and any cohort typed once -- and answers when the tuple
+    // carries no class-II list. Read here rather than in the config because a config statement runs
+    // before Nextflow applies `--param`.
+    def a1     = alleles instanceof Map ? (alleles.mhc1 ?: '') : alleles
+    def a2     = (alleles instanceof Map ? alleles.mhc2 : null) ?:
+                     params.mhcmatch_vector_map_alleles_mhc2
+    def map2   = a2 ? "--map-alleles-mhc2 '${a2}'" : ''
     def mapArg = isOn(params.mhcmatch_vector_map)
                      ? "--map ${prefix}.cassette.map.tsv --map-json ${prefix}.cassette.map.json " +
                        "--map-threshold ${params.mhcmatch_vector_map_threshold ?: 2.0} ${map2}" : ''
@@ -360,7 +363,7 @@ process MHCMATCH_CASSETTE {
     mhcmatch cassette ${verb} \\
         --candidates ${candidates} ${ctx} ${ucol} \\
         ${n0arg} \\
-        --alleles '${alleles}' \\
+        --alleles '${a1}' \\
         --cls ${cls} \\
         ${screen} ${quota} ${mapArg} ${args} \\
         --fasta ${prefix}.cassette.faa \\

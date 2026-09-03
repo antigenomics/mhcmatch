@@ -138,8 +138,20 @@ workflow {
                   .filter { meta, tsv, fa -> tsv != null }
                   .map { meta, tsv, fa ->
                       [ meta, tsv, fa ?: file("${projectDir}/NO_FILE"), meta.cls ] },
-            ch_alleles.filter { id, cls, a -> cls == 'mhc1' }
-                      .map { id, cls, a -> [ [id: id, cls: cls], a ] }
+            // The donor's class-I list AND their class-II list, as one value. MHCMATCH_CASSETTE
+            // takes `[mhc1:, mhc2:]` and computes `self_help` from the second -- whether a unit's
+            // CD8 epitope has CD4 help from the SAME unit, which is what the cassette map is for.
+            // A per-donor class-II list has no other way in: a sixth element on that process's
+            // input tuple would break every pipeline that `include`s it.
+            //
+            // `remainder: true` keeps a donor with no class-II input, who simply gets no
+            // `self_help`; the filter drops the mirror case, an id with class II and no class I,
+            // which has nothing to build a cassette from.
+            ch_alleles.filter { id, cls, a -> cls == 'mhc1' }.map { id, cls, a -> [ id, a ] }
+                      .join( ch_alleles.filter { id, cls, a -> cls == 'mhc2' }
+                                       .map { id, cls, a -> [ id, a ] }, remainder: true )
+                      .filter { id, a1, a2 -> a1 != null }
+                      .map { id, a1, a2 -> [ [id: id, cls: 'mhc1'], [ mhc1: a1, mhc2: a2 ?: '' ] ] }
         )
     }
 

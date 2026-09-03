@@ -51,13 +51,28 @@ workflow MHCMATCH_DENOVO_ARM {
     ch_versions = ch_versions.mix( MHCMATCH_NEOAG_DN.out.versions.first() )
     ch_versions = ch_versions.mix( MHCMATCH_MIMICRY_DN.out.versions.first() )
 
-    // The class-I window FASTA and allele list, keyed by sample, for the two cassette steps.
+    // The class-I window FASTA and allele list, keyed by sample, for the two cassette steps -- with
+    // the SAME donor's class-II list folded in beside it, because this arm already has it: a de novo
+    // run over both classes carries a `cls == 'mhc2'` row for the same sample, holding exactly the
+    // allotypes the cassette map needs for `self_help`. MHCMATCH_CASSETTE takes the pair as a Map
+    // (../main.nf), which is what keeps a per-donor list off the input tuple.
+    //
+    // Joined on `meta.id`, not on `meta`, because the two rows' metas differ by `cls`. And
+    // `remainder: true`: a donor with no class-II windows still gets a cassette, with the map
+    // falling back to `params.mhcmatch_vector_map_alleles_mhc2` and saying so if that is unset too.
+    ch_a2  = ch_windows.filter { meta, fa, alleles, cls -> cls == 'mhc2' }
+                       .map    { meta, fa, alleles, cls -> [ meta.id, alleles ] }
     ch_ctx = ch_windows.filter { meta, fa, alleles, cls -> cls == 'mhc1' }
-                       .map    { meta, fa, alleles, cls -> [ meta, fa, alleles ] }
+                       .map    { meta, fa, alleles, cls -> [ meta.id, meta, fa, alleles ] }
+                       .join( ch_a2, remainder: true )
+                       .filter { id, meta, fa, a1, a2 -> meta != null }
+                       .map    { id, meta, fa, a1, a2 ->
+                           [ meta, fa, [ mhc1: a1, mhc2: a2 ?: '' ] ] }
 
+    // The selector prices class-I allotype coverage, so it takes the class-I half only.
     MHCMATCH_CASSETTE_SELECT_DN(
         ch_mhc1.map { meta, cls, tsv -> [ meta, tsv ] }
-               .join( ch_ctx.map { meta, fa, alleles -> [ meta, alleles ] } )
+               .join( ch_ctx.map { meta, fa, alleles -> [ meta, alleles.mhc1 ] } )
     )
     ch_versions = ch_versions.mix( MHCMATCH_CASSETTE_SELECT_DN.out.versions.first() )
 

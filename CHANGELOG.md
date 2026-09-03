@@ -115,6 +115,28 @@ runnable Nextflow entry point over a directory of files.
   `params.mhcmatch_container` moved 1.6.0 -> 1.6.1, which is where `Dockerfile` and
   `environment.yml` already were.
 
+- **The cassette map gets the donor's OWN class-II allotypes, and `self_help` with them.**
+  `MHCMATCH_CASSETTE`'s `val(alleles)` now takes either a String -- the class-I list, exactly as
+  before -- or a `[mhc1: '...', mhc2: '...']` Map. The input tuple is unchanged, which is the point:
+  a sixth element would break every pipeline that `include`s the process, and
+  `subworkflows/mhcmatch.nf` passes the String and is byte-identical.
+
+  `params.mhcmatch_vector_map_alleles_mhc2` covered the mouse case and a cohort typed once, being
+  one literal panel for the whole run. It could not cover a per-donor human run, where each donor
+  has their own class-II list -- so those runs got a class-I-only map and `self_help`, whether a
+  unit's CD8 epitope has overlapping CD4 help from the SAME unit, was not computed at all. Both arms
+  of `pipeline.nf` now build the Map from something they already hold: the rerank arm from
+  `ch_alleles`, which carries a row per class, and the de novo arm from the same sample's
+  `cls == 'mhc2'` window row. A donor with no class-II input still gets a cassette, without
+  `self_help`, and the param remains as the fallback.
+
+  Measured end to end on one donor (human, own typing file resolving to 6 class-I and 10 class-II
+  allotypes, `--mode both`, **no** `--mhcmatch_vector_map_alleles_mhc2` on the command line, so the
+  whole class-II half came through the channel): the rerank arm's map covers 184 class-I and 558
+  class-II epitopes over a 597 aa cassette, with **18 of 20 units** carrying their own class-II
+  help; the de novo arm's covers 101 class-I and 364 class-II over 351 aa, **12 of 13 units**.
+  Before this change the same command line produced no class-II half at all.
+
 - **`docs/pipeline.rst`** is the new cohort page: the two arms, the file-naming contract, the
   expression rule, the mouse preset, and the SLURM runbook.
 

@@ -24,11 +24,20 @@ include { MHCMATCH_CASSETTE_SELECT } from '../main.nf'
 include { MHCMATCH_CASSETTE        } from '../main.nf'
 include { MHCMATCH_CASSETTE_SCORE  } from '../main.nf'
 
+//: The class-I list, whichever of the two shapes the allele value has. Only MHCMATCH_CASSETTE reads
+//: the class-II half, so every other consumer goes through this.
+def mhc1Of(a) {
+    a instanceof Map ? (a.mhc1 ?: '') : (a ?: '')
+}
+
 workflow MHCMATCH_RERANK_ARM {
 
     take:
     ch_tables         // [ val(meta), path(table), path(context|NO_FILE), val(cls) ]
-    ch_alleles        // [ val(meta), val(alleles) ] -- the donor's DISTINCT class-I allotypes
+    ch_alleles        // [ val(meta), val(alleles) ] -- the donor's DISTINCT class-I allotypes as a
+                      // String, or `[mhc1: '...', mhc2: '...']` to give the cassette map the same
+                      // donor's class-II allotypes and with them `self_help`. ../pipeline.nf builds
+                      // the Map; a String keeps working and is what an outside caller passes.
 
     main:
     ch_versions = Channel.empty()
@@ -57,11 +66,14 @@ workflow MHCMATCH_RERANK_ARM {
     // nothing to rerank. Handing that through gives the process a null path, so it is filtered.
     MHCMATCH_CASSETTE_SELECT( ch_pool.join( ch_alleles, remainder: true )
                                      .filter { meta, tsv, alleles -> tsv != null }
-                                     .map { meta, tsv, alleles -> [ meta, tsv, alleles ?: '' ] } )
+                                     .map { meta, tsv, alleles -> [ meta, tsv, mhc1Of(alleles) ] } )
     ch_versions = ch_versions.mix( MHCMATCH_CASSETTE_SELECT.out.versions.first() )
 
     // The chosen units carry the caller's columns through `select --passthrough`, so the long
     // window is still there for CASSETTE to build from. `NO_FILE` for context: there is none.
+    //
+    // `alleles` goes in WHOLE here, where the selector got only the class-I half: this is the one
+    // process that reads the class-II list, to compute `self_help` for the cassette map.
     MHCMATCH_CASSETTE(
         MHCMATCH_CASSETTE_SELECT.out.units
             .join( ch_alleles, remainder: true )

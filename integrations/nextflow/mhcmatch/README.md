@@ -411,7 +411,7 @@ a deprioritisation signal and the autoimmunity flag, so report it, do not bury i
 
 | | |
 |---|---|
-| **in** | `tuple val(meta), path(candidates), path(context), val(alleles), val(cls)` — `context` may be `NO_FILE` if `candidates` already carries long windows |
+| **in** | `tuple val(meta), path(candidates), path(context), val(alleles), val(cls)` — `context` may be `NO_FILE` if `candidates` already carries long windows; `alleles` is the class-I list as a String, **or** `[mhc1: '…', mhc2: '…']` to give the map this donor's own class-II allotypes |
 | **out** | `report` → `${prefix}.cassette.tsv` · `protein` → `.cassette.faa` · `cds` → `.cassette.fna` · `map` → `.cassette.map.tsv` · `map_json` → `.cassette.map.json` · `versions` |
 
 Runs `mhcmatch cassette build` — screen → select → order → back-translate. The report is long-form
@@ -435,9 +435,13 @@ ignored rather than rejected, so renaming them would silently drop every deploye
   duplicated by construction** (a row is a *(peptide, allele)* pair, which is what a coverage count
   needs); **junction-spanning epitopes carry `unit=0`** and no gene, because they are an artefact of
   assembly; and **`self_help` per unit** records whether a class-II epitope in that unit contains one
-  of its own class-I epitopes. `self_help` needs `params.mhcmatch_vector_map_alleles_mhc2` — without
-  the recipient's class-II allotypes there is nothing to compute it from, and the process says so
-  on stderr rather than emitting a silently empty column.
+  of its own class-I epitopes. `self_help` needs the recipient's class-II allotypes, and
+  `pipeline.nf` now supplies them **per donor**: the same donor's class-II list travels beside the
+  class-I one as `[mhc1: '…', mhc2: '…']` in `MHCMATCH_CASSETTE`'s existing `val(alleles)`, so a
+  cohort typed one donor at a time gets `self_help` with no parameter set.
+  `params.mhcmatch_vector_map_alleles_mhc2` is the fallback and stays for the caller who wires the
+  processes themselves. With neither, the map carries class I only and the process says so on
+  stderr rather than emitting a silently empty column.
 - **With `mhcmatch_vector_quota` set, `.cassette.faa` and `.cassette.fna` carry two records** —
   `cassette_composed` and `cassette_topk`. The first fills each arm's slots to maximise
   `P(at least target responses)` under the block model; the second fills the same budgets by score
@@ -485,7 +489,7 @@ cassette with no safety check and no error.
 | `mhcmatch_vector_screen` | `true` | run the essential-tissue / self-origin exclusion |
 | `mhcmatch_vector_map` | `true` | emit the cassette map (`*.cassette.map.tsv` / `.json`) |
 | `mhcmatch_vector_map_threshold` | `2.0` | %rank at or below which a window enters the map |
-| `mhcmatch_vector_map_alleles_mhc2` | `null` — **pass it** | the recipient's class-II allotypes. Without them the map is class I only and **`self_help` is not computed** — whether a unit's CD8 epitope has CD4 help from the *same* unit, which is the difference between a long peptide that raises both responses and one that needs a borrowed universal helper. Pass it explicitly (`templates/run_mouse.sbatch` does, with the same list it scores against). Measured on one mouse line: **0 → 451 class-II epitopes** over a 540 aa cassette, and **12 of 20 units** shown to carry their own class-II help. Deriving it from `pipeline.nf`'s `--alleles_mhc2` was tried and **does not work** — that param is not visible in the module's scope and the fallback silently produced nothing. A **per-donor** list cannot travel this way at all today: it would have to be a sixth element of `MHCMATCH_CASSETTE`'s input tuple |
+| `mhcmatch_vector_map_alleles_mhc2` | `null` — the **fallback**, not the usual route | one literal class-II panel for every sample, for a caller who drives `MHCMATCH_CASSETTE` from their own topology. Under `pipeline.nf` the class-II list is per donor and needs no parameter (below). Without a list from either source the map is class I only and **`self_help` is not computed** — whether a unit's CD8 epitope has CD4 help from the *same* unit, which is the difference between a long peptide that raises both responses and one that needs a borrowed universal helper. Measured on one mouse line: **0 → 451 class-II epitopes** over a 540 aa cassette, and **12 of 20 units** shown to carry their own class-II help |
 | `mhcmatch_vector_quota` | `null` | compose to quotas instead of the ranked top, e.g. `mhc1=14:2,mhc2=4:1,nonconventional=2:1`. **Emits two cassettes** — the composed one and the same slot budgets filled by score alone |
 | `mhcmatch_vector_block_live` | `0.5` | `P(a block is live)` in the response model behind the quota |
 | `mhcmatch_vector_evenness` | `0.0` | weight on class-I allotype evenness (H/H\ :sub:`max`) in the quota objective |

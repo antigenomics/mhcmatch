@@ -169,6 +169,35 @@ Measured on 40 donor typing files: every one yields 3–6 class-I and 3–10 cla
 The non-classical loci among the dropped are correct — the panel carries no pseudosequence for
 HLA-E, -F or -G.
 
+The class-II half is what makes the cassette map say ``self_help``
+------------------------------------------------------------------
+
+``self_help`` — whether a unit's CD8 epitope has overlapping CD4 help from the **same** unit — is
+what the map is for: a unit without it is the configuration that needed a borrowed universal helper
+(PADRE, HBVcore), and the map is what identifies those units. It needs the recipient's class-II
+allotypes, and under ``pipeline.nf`` those are the donor's own, with nothing to set.
+
+``MHCMATCH_CASSETTE``'s input tuple is unchanged — a sixth element would break every pipeline that
+``include``\ s the process. Its existing ``val(alleles)`` carries either shape:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - the allele value
+     - what the process does with it
+   * - ``'HLA-A*02:01,…'`` — a String
+     - the class-I list, exactly as before. The map takes
+       ``params.mhcmatch_vector_map_alleles_mhc2`` if set, and is class I only if not
+   * - ``[mhc1: '…', mhc2: '…']`` — a Map
+     - the same class-I list to ``--alleles``, and this donor's class-II list to
+       ``--map-alleles-mhc2``
+
+Both arms build the Map, from something they already hold: the rerank arm from ``ch_alleles``, which
+carries a row per class, and the de novo arm from the same sample's ``cls == 'mhc2'`` window row. A
+donor with no class-II input still gets a cassette — without ``self_help``, which is the honest
+state rather than an imputed one.
+
 Why the rerank arm wants the window FASTA too
 ---------------------------------------------
 
