@@ -34,6 +34,22 @@ workflow MHCMATCH {
     ch_windows        // [ val(meta), path(fasta), val(alleles), val(cls) ]
 
     main:
+    // **This subworkflow is the documented integration surface, and including it is not enough on
+    // its own -- the module's `nextflow.config` has to be loaded too.** Nextflow auto-loads the
+    // config beside the ENTRY script, so `nextflow run pipeline.nf` gets it for free and an
+    // outside pipeline that only `include`s this file does not. Every `params.mhcmatch_*` is then
+    // undefined, which Nextflow reports as a WARN among many and evaluates as null -- and
+    // `isOn(null)` is FALSE, so `mhcmatch_vector_screen` reads as *off* and MHCMATCH_CASSETTE
+    // builds a cassette with **no safety screen at all**, exactly the direction main.nf's `isOn`
+    // comment calls the one that matters. A WARN is not enough warning for that, so this is an
+    // error. `containsKey`, not truth: a caller who deliberately set `false` has made a choice and
+    // is left alone; only an ABSENT param means the wiring is wrong.
+    if( !params.containsKey('mhcmatch_vector_screen') )
+        error "mhcmatch: params.mhcmatch_vector_screen is not defined, so the module's config was " +
+              "never loaded -- and the cassette safety screen would run OFF without saying so. Add " +
+              "`includeConfig 'integrations/nextflow/mhcmatch/nextflow.config'` to your pipeline's " +
+              "config (after your own params), or define the mhcmatch_* params yourself."
+
     ch_versions = Channel.empty()
 
     MHCMATCH_PREDICT( ch_windows )

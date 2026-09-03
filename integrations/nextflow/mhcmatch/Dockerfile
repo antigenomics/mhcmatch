@@ -29,9 +29,20 @@ RUN pip install --no-cache-dir "mhcmatch==${MHCMATCH_VERSION}"
 # worst possible time, rather than here at build time.
 RUN mhcmatch bootstrap --reference
 
-# Sanity: the CLI and panel resolve at build time (fails the build early if the panel is wrong).
+# **The proteomes, which `--reference` does NOT stage and the safety screen cannot run without.**
+# `cassette build --screen` calls `fetch_proteome(species)` to build its whole-proteome window
+# index, and the screen is ON by default -- so without this line the one process that most needs to
+# be offline reaches for HuggingFace from a compute node, hours into a run, which is the exact
+# failure the paragraph above says this image exists to prevent. Both species, because the module
+# routes `--genome GRCm39` to `--species mouse`. `templates/setup.sbatch` stages the same two.
+RUN mhcmatch bootstrap --proteome human,mouse
+
+# Sanity: the CLI, the panel AND the proteome resolve at build time, so a missing bootstrap fails
+# the build rather than a run. The proteome check is `fetch_proteome`, the same call the screen
+# makes -- checking only the panel is what let the missing `--proteome` above go unnoticed.
 RUN mhcmatch --help >/dev/null && \
-    python -c "from mhcmatch import Store; Store.from_pmhc(tier='shortlist', species='human', classes=('mhc1',))"
+    python -c "from mhcmatch import Store; Store.from_pmhc(tier='shortlist', species='human', classes=('mhc1',))" && \
+    python -c "from mhcmatch.store import fetch_proteome; [fetch_proteome(s) for s in ('human', 'mouse')]"
 
 ENTRYPOINT ["mhcmatch"]
 CMD ["--help"]

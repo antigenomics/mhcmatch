@@ -581,6 +581,14 @@ docker build -t <YOUR_REGISTRY>/mhcmatch:1.7.2 \
 docker push <YOUR_REGISTRY>/mhcmatch:1.7.2
 ```
 
+**The build stages both the reference tables and the two proteomes**, ~170 MB in the image's
+HuggingFace cache, so a compute node needs no network. The proteomes are not optional and are not
+part of `--reference`: `cassette build --screen` calls `fetch_proteome(species)` to build its
+whole-proteome window index, and the screen is on by default -- so an image without them reaches
+for HuggingFace from inside the longest process in the pipeline. The Dockerfile's final `RUN` now
+calls `fetch_proteome` for both species, which is the same call the screen makes, so a missing
+bootstrap fails the build instead of a run.
+
 One tag, four files, and they must move together on a release: `Dockerfile`'s
 `ARG MHCMATCH_VERSION`, `environment.yml`'s pin, `nextflow.config`'s
 `params.mhcmatch_container` default, and this block. The container default sat on `1.6.0` while
@@ -595,6 +603,18 @@ optional now that `rank`, `neoag` and `mimicry` exist: without it those three re
 from a compute node and fail there rather than at build time.
 
 ## Wiring it in
+
+**Two things, not one: the `include` in your script AND the `includeConfig` in your config.** The
+include alone gives you the processes with every `params.mhcmatch_*` undefined, because Nextflow
+auto-loads the config beside the **entry** script and yours is not it. Undefined evaluates as null,
+`isOn(null)` is false, and `mhcmatch_vector_screen` therefore reads as *off* -- a cassette built
+with **no safety screen**, reported as one WARN among a dozen. `subworkflows/mhcmatch.nf` now stops
+with an error instead, but the fix is the config line:
+
+```groovy
+// your nextflow.config, AFTER your own params so a value you set is not clobbered
+includeConfig 'integrations/nextflow/mhcmatch/nextflow.config'
+```
 
 ```groovy
 include { MHCMATCH } from './integrations/nextflow/mhcmatch/subworkflows/mhcmatch.nf'

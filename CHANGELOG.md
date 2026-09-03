@@ -1,8 +1,34 @@
 # Changelog
 
-## Unreleased — post-release audit: two SLURM-path defects and a guard that had stopped guarding
+## Unreleased — the donor's own class-II allotypes, and a post-release audit
 
-No library behaviour changes; the fixes are in the Nextflow SLURM path, the test suite and the docs.
+**Not in any release yet, and the distinction matters here**: the Nextflow module is cloned by tag,
+so none of this reaches anyone until the next release is cut. **The library itself is unchanged** --
+every change below is in the Nextflow module, the test suite or the docs, so a `pip install
+mhcmatch==1.7.2` behaves exactly as it did.
+
+- **The cassette map gets the donor's OWN class-II allotypes, and `self_help` with them.**
+  `MHCMATCH_CASSETTE`'s `val(alleles)` now takes either a String -- the class-I list, exactly as
+  before -- or a `[mhc1: '...', mhc2: '...']` Map. The input tuple is unchanged, which is the point:
+  a sixth element would break every pipeline that `include`s the process, and
+  `subworkflows/mhcmatch.nf` passes the String and is byte-identical.
+
+  `params.mhcmatch_vector_map_alleles_mhc2` covered the mouse case and a cohort typed once, being
+  one literal panel for the whole run. It could not cover a per-donor human run, where each donor
+  has their own class-II list -- so those runs got a class-I-only map and `self_help`, whether a
+  unit's CD8 epitope has overlapping CD4 help from the SAME unit, was not computed at all. Both arms
+  of `pipeline.nf` now build the Map from something they already hold: the rerank arm from
+  `ch_alleles`, which carries a row per class, and the de novo arm from the same sample's
+  `cls == 'mhc2'` window row. A donor with no class-II input still gets a cassette, without
+  `self_help`, and the param remains as the fallback.
+
+  Measured end to end on one donor (human, own typing file resolving to 6 class-I and 10 class-II
+  allotypes, `--mode both`, **no** `--mhcmatch_vector_map_alleles_mhc2` on the command line, so the
+  whole class-II half came through the channel): the rerank arm's map covers 184 class-I and 558
+  class-II epitopes over a 597 aa cassette, with **18 of 20 units** carrying their own class-II
+  help; the de novo arm's covers 101 class-I and 364 class-II over 351 aa, **12 of 13 units**.
+  Before this change the same command line produced no class-II half at all.
+
 
 **`run_slurm_head.sbatch` exported `HF_HOME` and never passed `--mhcmatch_hf_home`.** On
 `-profile slurm` the `env {}` block in `slurm.config` *sets* each task's environment from
@@ -195,32 +221,15 @@ runnable Nextflow entry point over a directory of files.
   `params.mhcmatch_container` moved 1.6.0 -> 1.6.1, which is where `Dockerfile` and
   `environment.yml` already were.
 
-- **The cassette map gets the donor's OWN class-II allotypes, and `self_help` with them.**
-  `MHCMATCH_CASSETTE`'s `val(alleles)` now takes either a String -- the class-I list, exactly as
-  before -- or a `[mhc1: '...', mhc2: '...']` Map. The input tuple is unchanged, which is the point:
-  a sixth element would break every pipeline that `include`s the process, and
-  `subworkflows/mhcmatch.nf` passes the String and is byte-identical.
-
-  `params.mhcmatch_vector_map_alleles_mhc2` covered the mouse case and a cohort typed once, being
-  one literal panel for the whole run. It could not cover a per-donor human run, where each donor
-  has their own class-II list -- so those runs got a class-I-only map and `self_help`, whether a
-  unit's CD8 epitope has overlapping CD4 help from the SAME unit, was not computed at all. Both arms
-  of `pipeline.nf` now build the Map from something they already hold: the rerank arm from
-  `ch_alleles`, which carries a row per class, and the de novo arm from the same sample's
-  `cls == 'mhc2'` window row. A donor with no class-II input still gets a cassette, without
-  `self_help`, and the param remains as the fallback.
-
-  Measured end to end on one donor (human, own typing file resolving to 6 class-I and 10 class-II
-  allotypes, `--mode both`, **no** `--mhcmatch_vector_map_alleles_mhc2` on the command line, so the
-  whole class-II half came through the channel): the rerank arm's map covers 184 class-I and 558
-  class-II epitopes over a 597 aa cassette, with **18 of 20 units** carrying their own class-II
-  help; the de novo arm's covers 101 class-I and 364 class-II over 351 aa, **12 of 13 units**.
-  Before this change the same command line produced no class-II half at all.
-
 - **`docs/pipeline.rst`** is the new cohort page: the two arms, the file-naming contract, the
   expression rule, the mouse preset, and the SLURM runbook.
 
-## Unreleased — cassette v2: select on the degeneracy
+## [1.7.0] — 2026-09-02 — cassette v2: select on the degeneracy, and the delivery path
+
+*(Labelled `Unreleased` until 2026-09-03, in two separate headings, though every item below shipped
+in 1.7.0 on 2026-09-02 — `not_worse` is absent at v1.6.0 and present at v1.7.0, and the module items
+are commit 8247641, which is the tag itself. 1.7.0 had no section of its own as a result.)*
+
 
 **The headline objective changed shape.** `p_i` is a probability, so the number of units that
 respond is a random variable and many size-*k* sets are indistinguishable in it. A sort already
@@ -336,8 +345,6 @@ audit of it found five defects that every local check passes straight through.
 - `NO_FILE` resolves against `moduleDir` rather than `projectDir`, so an integrator who includes
   `subworkflows/rerank.nf` from their own pipeline no longer resolves the sentinel against their
   own repo root.
-
-## [Unreleased]
 
 ### Fixed
 
