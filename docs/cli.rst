@@ -113,7 +113,7 @@ The commands, by axis
    * - ``predict``
      - score a variant peptide-window FASTA into the native table plus the fixed 57-column
        pipeline ``.scored.csv``. **Drops nothing by default** --- see :ref:`rank-tiers` for
-       ``--rank-threshold`` and the ``--keep`` whitelist
+       ``--rank-threshold`` and the two whitelists
    * - ``restriction``
      - rank presenting alleles for a peptide; ``--calibrated`` gives cross-allele-comparable
        ``%rank``, ``p_present`` and a band
@@ -263,22 +263,60 @@ binder --- was labelled ``non-binder``. ``n_alleles_presenting`` does **not** fo
 an allele counts as presenting at its class's weak cut, a published convention that must not move
 when a caller changes their own filter.
 
-**The whitelist: ``--keep``.** Gene symbols and/or peptide sequences that are never dropped, however
-strict the threshold. Comma-separated or a path to a file with one per line; case-insensitive; each
-entry is matched against **both** the gene and the peptide, so one list covers both kinds and
-nothing is classified by shape --- ``MET``, ``MAX``, ``KIT`` and ``FAS`` are gene symbols spelled
-entirely in the amino-acid alphabet, and a rule that guessed would file one of them as a peptide
-that matches nothing.
+**Two whitelists, because they make two different claims.** A row kept because its *gene* is a
+driver is not evidence that its *peptide* works; a row kept because its peptide is a validated
+neoantigen is. One list matched against both fields --- what ``--keep`` did in 1.8.0 --- cannot say
+which claim a surviving row rests on, so there are two flags and a column that names the rule.
 
-Matched rows carry ``keep = 1``, because *surviving a cut* and *being whitelisted* are different
-facts and survival alone cannot separate them:
+.. list-table::
+   :header-rows: 1
+   :widths: 26 22 52
+
+   * - flag
+     - ``keep_reason``
+     - what it whitelists
+   * - ``--keep-genes LIST|FILE``
+     - ``gene``
+     - **gene symbols** --- the driver-gene list. Comma-separated or a file with one per line
+       (``#`` comments allowed); case-insensitive. No built-in driver list ships yet
+   * - ``--keep-epitopes builtin``
+     - ``epitope``
+     - the **23,299 peptides an assay called immunogenic** --- :mod:`mhcmatch.known`'s
+       ``neoantigen`` set, shipped as a pre-built index
+   * - ``--keep-epitopes LIST|FILE``
+     - ``epitope``
+     - **your own peptides** --- the ones with a validated response in your hands
+   * - ``--keep-mismatch 1``
+     - ``epitope~1``
+     - widens the epitope list to **one substitution**. Equal length only: a 9-mer never matches a
+       20-mer by containment, which is a different question
+
+Both flags compose, and when more than one rule fires the reported one is the strongest evidence:
+``epitope`` (this peptide), then ``epitope~1`` (a neighbour of it), then ``gene`` (the gene, which
+says nothing about the peptide). Matched rows carry ``keep = 1`` **and** ``keep_reason``, because
+*surviving a cut*, *being whitelisted*, and *why* are three different facts:
 
 .. code-block:: bash
 
    mhcmatch predict w.fasta --cls mhc2 --alleles DRB1_1501                       # keeps everything
    mhcmatch predict w.fasta --cls mhc2 --alleles DRB1_1501 --rank-threshold wb   # published cut
-   mhcmatch predict w.fasta --cls mhc2 --alleles DRB1_1501 \
-       --rank-threshold sb --keep 'TP53,KRAS,GILGFVFTL'                          # strict, not for these
+   mhcmatch predict w.fasta --cls mhc2 --alleles DRB1_1501 --rank-threshold sb \
+       --keep-genes 'TP53,KRAS' --keep-epitopes builtin --keep-mismatch 1        # strict, not for these
+
+**The built-in index ships; it is never built at run time.** Its peptides come from five deposits
+totalling ~950,000 rows, so assembling them is a download plus a full-file scan. A thousand-sample
+Nextflow run would pay that a thousand times, or race on whatever cache it wrote to avoid doing so.
+Pre-built by ``mhcmatch build known``, it reloads in **~1 ms** and answers **~1.45 M queries/s**
+through ``seqtree.Index.search_batch``, which releases the GIL and uses every core --- one call per
+table, never one per row. Concurrent tasks share nothing but a read-only file.
+
+**A gene symbol has to reach the row before it can be matched.** The rerank and de novo arms carry
+one in the variant header; a bare peptide table does not. ``mhcmatch genes`` resolves the parent
+gene from the sequence against the same ``seqtree`` proteome index (:ref:`parent-gene`) --- run it
+first, then ``--keep-genes`` has something to match.
+
+``--keep`` is the deprecated 1.8.0 spelling: one list, matched against gene and peptide alike, exact
+only. It still runs, and folds into both lists.
 
 ``genes`` — why an unkeyed table scores two terms at a constant
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -397,9 +435,11 @@ convention, outside a strong cut. Override either class alone with ``--map-thres
      - stage reference data ahead of the run that needs it --- ``--tier``, ``--proteome``,
        ``--reference``, ``--index``. Nothing requires it; see :ref:`bootstrap-tiers`
    * - ``build``
-     - rebuild the shipped artifacts in-process. Sub-verbs ``all`` (the default), ``anchor``,
-       ``corpus`` and ``recognition`` name one family; ``--check`` builds nothing and exits 1 if
-       any of the 29 artifact files is stale against ``__version__`` --- this is what CI runs
+     - rebuild the shipped artifacts in-process. The sub-verb names one family and the choices are
+       derived from ``_build.TARGETS``, so every target ``--check`` reports on can also be named
+       (``anchor``, ``corpus``, ``known``, ``recognition`` build here; the rest print the external
+       command that regenerates them); ``--check`` builds nothing and exits 1 if any of the 31
+       artifact files is stale against ``__version__`` --- this is what CI runs
 
 .. _bootstrap-tiers:
 

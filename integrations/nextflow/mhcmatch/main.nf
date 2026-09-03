@@ -47,6 +47,28 @@ def isOn(v) {
     v != null && !(v.toString().toLowerCase() in ['false', '0', 'no', ''])
 }
 
+// The whitelist flags, in one place. Two lists, because they make two different claims about a row:
+// a gene hit says the gene is of interest, an epitope hit is evidence about the peptide itself. The
+// deprecated `--mhcmatch_keep` folds into both, which is exactly what it did in 1.8.0.
+//
+// `--keep-epitopes builtin` loads a PRE-BUILT seqtree index off disk (~1 ms). Nothing here builds
+// an index, writes a cache, or shares state between tasks, so N concurrent samples cannot race:
+// every task reads the same read-only file the wheel shipped.
+def keepArgs() {
+    def g = params.mhcmatch_keep_genes    ?: params.mhcmatch_keep
+    def e = params.mhcmatch_keep_epitopes ?: params.mhcmatch_keep
+    def out = ''
+    if (g) { out += "--keep-genes '${g}' " }
+    if (e) { out += "--keep-epitopes '${e}' " }
+    // Coerced at the point of USE via this module's own `isOn`, because a config statement is
+    // evaluated before Nextflow applies `--param`: `--mhcmatch_keep_mismatch 1` arrives as the
+    // STRING "1". The value is passed THROUGH rather than folded to 1 -- an out-of-range radius
+    // should be refused by name by the CLI, not silently narrowed here.
+    def mm = params.mhcmatch_keep_mismatch
+    if (e && isOn(mm)) { out += "--keep-mismatch ${mm} " }
+    out
+}
+
 
 process MHCMATCH_PREDICT {
     tag "${meta.id}:${cls}"
@@ -77,7 +99,7 @@ process MHCMATCH_PREDICT {
     def prefix = task.ext.prefix ?: "${meta.id}"
     def tier   = params.mhcmatch_tier ?: 'full'
     def rank   = params.mhcmatch_rank_threshold ?: 'none'
-    def keep   = params.mhcmatch_keep ? "--keep '${params.mhcmatch_keep}' " : ''
+    def keep   = keepArgs()
     def core   = isOn(params.mhcmatch_predict_core) ? '--core ' : ''
     """
     mhcmatch predict ${fasta} \\
@@ -146,7 +168,7 @@ process MHCMATCH_RANK {
                  (isOn(params.mhcmatch_rank_annotate) ? '--annotate ' : '') +
                  (isOn(params.mhcmatch_rank_core)     ? '--core '     : '')
     def rank   = params.mhcmatch_rank_threshold ?: 'none'
-    def keep   = params.mhcmatch_keep ? "--keep '${params.mhcmatch_keep}' " : ''
+    def keep   = keepArgs()
     """
     mhcmatch rank ${mode} ${input} \\
         --alleles '${alleles}' \\
@@ -640,9 +662,9 @@ process MHCMATCH_RERANK {
                  (isOn(params.mhcmatch_rank_annotate) ? '--annotate ' : '') +
                  (isOn(params.mhcmatch_rank_core)     ? '--core '     : '')
     // No `--rank-threshold` on the rerank path: it is the caller's own table and every row of it
-    // comes back, which is the contract this arm exists for. `--keep` still applies -- it only
-    // ever sets a flag column here, never removes anything.
-    def keep   = params.mhcmatch_keep ? "--keep '${params.mhcmatch_keep}' " : ''
+    // comes back, which is the contract this arm exists for. The whitelists still apply -- here
+    // they only ever set `keep` / `keep_reason`, never remove anything.
+    def keep   = keepArgs()
     """
     mhcmatch rank pairs ${table} \\
         --cls ${cls} \\

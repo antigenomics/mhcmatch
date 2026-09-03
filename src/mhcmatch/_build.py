@@ -154,6 +154,54 @@ def corpus_tables(say=print) -> list:
 #: ``target -> (human name, builder or None, the files it owns)``. ``None`` means the artifact is
 #: real and shipped but cannot be built in-process; ``--check`` still validates it and ``build``
 #: prints the command that does build it.
+
+def known_epitopes(say=print) -> list:
+    """Rebuild the shipped 1-mismatch index of **validated immunogenic neoantigens**.
+
+    Why it ships rather than being built on demand: the peptides come from four deposits totalling
+    ~950,000 rows, so assembling them is a download plus a full-file scan, and a thousand-sample
+    Nextflow run would pay that a thousand times over -- or race on whatever cache it wrote to avoid
+    doing so. Built once here, the index reloads in **~1 ms** and is queried concurrently by
+    ``seqtree`` with the GIL released. Nothing on the predict path ever builds it.
+
+    The peptide set is exactly :func:`mhcmatch.known.load`'s ``neoantigen`` set -- an assay called
+    each one positive -- so this artifact adds an index, never a second definition of the corpus.
+
+    Two files: the ``seqtree`` index, which is opaque binary and cannot carry a version, and a JSON
+    sidecar that carries it. ``--check`` reads the sidecar.
+    """
+    import seqtree
+
+    import mhcmatch
+    from . import known
+
+    idx_path = os.path.join(DATA, "known_neoantigens.idx")
+    meta_path = os.path.join(DATA, "known_neoantigens.json")
+    t0 = time.time()
+    peptides = sorted(known.load(("neoantigen",))["neoantigen"])
+    say(f"  {len(peptides):,} validated immunogenic neoantigen peptides in {time.time() - t0:.1f}s")
+
+    ok = set(seqtree.alphabet_symbols("aa"))
+    usable = [p for p in peptides if p and set(p) <= ok]
+    if len(usable) != len(peptides):
+        say(f"  {len(peptides) - len(usable):,} peptide(s) carry a symbol outside "
+            f"{''.join(sorted(ok))} and are not indexable")
+    t0 = time.time()
+    idx = seqtree.Index.build(usable, "aa")
+    idx.save(idx_path)
+    say(f"  index built + saved in {time.time() - t0:.2f}s "
+        f"({os.path.getsize(idx_path) / 1e6:.2f} MB)")
+
+    lens = sorted({len(p) for p in usable})
+    json.dump({"version": mhcmatch.__version__,
+               "n_peptides": len(usable),
+               "lengths": [lens[0], lens[-1]],
+               "sets": ["neoantigen"],
+               "sources": [rel for rel, _, _ in known.SOURCES["neoantigen"]],
+               "generator": "mhcmatch build known"},
+              open(meta_path, "w"), indent=1)
+    return [idx_path, meta_path]
+
 TARGETS = {
     "anchor": ("vendored AnchorModel pickles", anchor_models,
                ["anchor_model_mhc1_proteome_adaptive.pkl.gz",
@@ -162,6 +210,8 @@ TARGETS = {
                 "anchor_model_mhc1_ligand_anchor.pkl.gz",
                 "anchor_model_mhc2_ligand_anchor.pkl.gz"]),
     "corpus": ("corpus k-mer count tables", corpus_tables, ["corpus_tables.npz"]),
+    "known": ("1-mismatch index of validated immunogenic neoantigens", known_epitopes,
+              ["known_neoantigens.idx", "known_neoantigens.json"]),
     "recognition": ("recognition heads (needs ESM2)", None,
                     ["recognition_esm64_glm_mhc1_human.json",
                      "recognition_esm64_glm_mhc1_mouse.json",

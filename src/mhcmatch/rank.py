@@ -65,7 +65,7 @@ BASE_COLUMNS: tuple = ("rank", "peptide", "allele", "allele_scored", "gene", "sc
                        # document an API wart.
                        "agretopicity", "physchem", "expression", "expr_pct", "expr_imputed",
                        "n_alleles_presenting", "alleles_presenting",
-                       "imputed", "wt_peptide", "known_epitope", "variant_type", "keep")
+                       "imputed", "wt_peptide", "known_epitope", "variant_type", "keep", "keep_reason")
 #: The aggregate's recognition features, emitted whenever the aggregate is what scored. A model
 #: emits the features it used and refuses to run without them.
 #:
@@ -637,11 +637,15 @@ class Ranked:
     allele_scored: str = ""
     gene: str = ""
     source: str = ""
-    #: ``1`` when a ``keep`` whitelist named this peptide or its gene. Such a row survives any
-    #: ``rank_threshold`` and says so in its own column: "kept because whitelisted" and "kept
-    #: because it scored well" are different facts, and a reader cannot separate them from
-    #: survival alone.
+    #: ``1`` when a whitelist rule named this row. Such a row survives any ``rank_threshold`` and
+    #: says so in its own column: "kept because whitelisted" and "kept because it scored well" are
+    #: different facts, and a reader cannot separate them from survival alone.
     keep: int = 0
+    #: **Which** rule kept it: ``epitope`` (exact hit against a validated immunogenic neoantigen),
+    #: ``epitope~1`` (one substitution from one), ``gene`` (whitelisted symbol), or ``""``. A gene
+    #: hit says the *gene* is of interest and nothing about this peptide; an epitope hit is direct
+    #: evidence about this peptide. Collapsing both into ``keep`` would file one as the other.
+    keep_reason: str = ""
     #: -log10(presentation %rank); larger = better presented.
     presentation: float = float("nan")
     #: -log10(calibrated combined binder %rank) -- the aggregate's ``B``. Distinct from
@@ -946,9 +950,9 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
             tumor: str | None = None, tissue: str | None = None, keep=None) -> list:
     """Score, then order: known epitopes first, then by score descending.
 
-    The ``keep`` whitelist is applied **here**, once, rather than at each of the four places a
-    ``Ranked`` is constructed -- the flag is a property of the finished row, every path arrives
-    here, and one place to set it is one place to get it wrong.
+    The ``keep`` whitelist (a :class:`mhcmatch.predict.Keep`) is applied **here**, once, rather
+    than at each of the four places a ``Ranked`` is constructed -- the flag is a property of the
+    finished row, every path arrives here, and one place to set it is one place to get it wrong.
 
     ``score="aggregate"``, the default, uses the **fitted** model in
     ``data/aggregate_mhc1.json`` -- the one the benchmark fitted, so ``mhcmatch rank`` and the
@@ -1109,11 +1113,12 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
     for r in sorted(rows, key=lambda r: -r.score if r.score == r.score else float("inf")):
         r.rank = seen.setdefault(r.score, len(seen) + 1)
     if keep:
-        from . import predict as P
-        _keep = keep if isinstance(keep, frozenset) else P.keep_set(keep)
-        for r in rows:
-            if P.is_kept(_keep, r.peptide, r.gene):
-                r.keep = 1
+        # **One batched C++ call for the whole table.** `Keep.reasons` hands every peptide to
+        # `seqtree.Index.search_batch` in one go -- GIL released, all cores -- rather than querying
+        # the index once per row.
+        for r, why in zip(rows, keep.reasons([r.peptide for r in rows], [r.gene for r in rows])):
+            r.keep = 1 if why else 0
+            r.keep_reason = why
     rows.sort(key=lambda r: (r.known_epitope == "", -r.score))
     return rows
 
@@ -1160,12 +1165,13 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
     the model scores on the features it declares or not at all. ``score="gate"`` does not use them.
     ``rank_threshold`` **drops nothing by default** (``None`` -> :data:`mhcmatch.predict.
     RANK_DEFAULT_TIER`); pass ``"wb"``/``"sb"`` for the published class-aware cut or a number for an
-    arbitrary percentile. ``keep`` is a whitelist of gene symbols and peptide sequences that survive
-    any cut and are flagged in the ``keep`` column. ``n_alleles_presenting`` no longer follows this
+    arbitrary percentile. ``keep`` is a :class:`mhcmatch.predict.Keep` -- separate gene-symbol and
+    epitope whitelists -- whose rows survive any cut and are flagged in ``keep`` / ``keep_reason``.
+    ``n_alleles_presenting`` no longer follows this
     threshold: an allele counts as presenting at its **class's weak cut**, which is the published
     convention and does not move when a caller changes their own filter."""
     from . import predict as P
-    keep = P.keep_set(keep)
+    keep = P.as_keep(keep)
     preds = P.predict_fasta(store, cls, fasta_path, list(alleles),
                             rank_threshold=rank_threshold, top=top, keep=keep, **kw)
     rows = []
@@ -1204,7 +1210,8 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
                            alleles_presenting=p.alleles_presenting,
                            core=p.core, core_offset=p.core_offset, core_source=p.core_source))
     _fill_channels(rows, channels)
-    return _finish(rows, gate, score, prevalence, tumor=tumor, tissue=tissue, keep=keep)
+    return _finish(rows, gate, score, prevalence, tumor=tumor, tissue=tissue,
+                   keep=P.as_keep(keep))
 
 
 def _presents_better(a: "Ranked", b: "Ranked") -> bool:
@@ -1456,7 +1463,8 @@ def rank_pairs(store, rows, cls: str = "mhc1", *, keep=None, tissue: str | None 
             out[r["_i"]] = _unscored(r, cls, tissue, tumor, refs, binding_core, phys)
     rows_out = [out[i] for i in sorted(out)]
     _fill_channels(rows_out, channels)
-    return _finish(rows_out, gate, score, prevalence, tumor=tumor, tissue=tissue, keep=keep)
+    return _finish(rows_out, gate, score, prevalence, tumor=tumor, tissue=tissue,
+                   keep=P.as_keep(keep))
 
 
 def rank_table(path: str, *, channels=None, keep=None,
@@ -1526,4 +1534,5 @@ def rank_table(path: str, *, channels=None, keep=None,
                 r.components["score_builtin"] = None
             rows.append(r)
     _fill_channels(rows, channels)
-    return _finish(rows, gate, score, prevalence, tumor=tumor, tissue=tissue, keep=keep)
+    return _finish(rows, gate, score, prevalence, tumor=tumor, tissue=tissue,
+                   keep=P.as_keep(keep))

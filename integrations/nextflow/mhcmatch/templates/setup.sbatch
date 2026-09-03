@@ -20,7 +20,7 @@ set -euo pipefail
 
 # ---------------------------------------------------------------- EDIT THESE
 ENV=mhcmatch          # conda env name. Created below if it does not exist yet
-VERSION=1.8.0         # the mhcmatch release to install. PIN IT -- the pipeline calls
+VERSION=1.9.0         # the mhcmatch release to install. PIN IT -- the pipeline calls
                       # subcommands (`mhcmatch alleles`) and flags (`rank --passthrough`)
                       # that do not exist before 1.8.0, and an unpinned `--upgrade` on a
                       # cluster with a stale index resolves to whatever it already has

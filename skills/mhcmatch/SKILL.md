@@ -106,7 +106,7 @@ aliases the parser still answers to and this table omits — `vector` for `casse
 | recognition | `complement` · `mimics` · `mimicry` · `neoag` |
 | integration | `rank` · `explain` · `expression` · `source` · `genes` |
 | cassette | `cassette select` · `cassette score` · `cassette build` · `cassette order` · `cassette linkers` · `cassette deslip` |
-| setup | `alleles` · `bootstrap` · `build` (`build --check` = are any of the 29 shipped artifact files stale?) |
+| setup | `alleles` · `bootstrap` · `build` (`build --check` = are any of the 31 shipped artifact files stale?) |
 
 `mhcmatch binder <peptide> --alleles ... --cls mhc1` ranks alleles by the generalized binder score.
 `mhcmatch cassette select --candidates pool.tsv -k 20 [--tol 3]` chooses the units; give it the
@@ -154,9 +154,19 @@ II; a bare number is the same in both, which is why `2.0` -- the pre-1.8.0 defau
 *strong* class-II cut and kept 0 of 56 scored pairs in a measured case, returncode 0 and an empty
 table. `band` is class-aware for the same reason (`predict.band_for`), and `n_alleles_presenting`
 deliberately is **not** tied to the caller's threshold -- it uses the class's weak cut.
-`--keep 'TP53,GILGFVFTL'` (or a file) whitelists gene symbols **and** peptide sequences that no cut
-removes; matched rows carry `keep = 1`. One list holds both kinds and each entry is tested against
-both fields, because `MET`/`MAX`/`KIT`/`FAS` are gene symbols spelled in the AA alphabet.
+**Two whitelists, and `keep_reason` names which fired.** `--keep-genes 'TP53,KRAS'` (a driver list)
+and `--keep-epitopes builtin|LIST|FILE` (a validated-response list) are separate flags because they
+make different claims: a gene hit says the *gene* is of interest and nothing about the peptide.
+Matched rows carry `keep = 1` plus `keep_reason` = `gene` / `epitope` / `epitope~1`, reported
+strongest-evidence-first. `--keep-mismatch 1` widens the epitope list to one substitution, equal
+length only. `builtin` is the shipped `seqtree` index of the 23,299 peptides an assay called
+immunogenic (`known`'s `neoantigen` set): **pre-built by `mhcmatch build known`, reloaded in ~1 ms,
+never built at run time** -- so N concurrent samples pay a read, not a build, and share no cache to
+race on. `--keep` is the deprecated 1.8.0 one-list spelling and still runs.
+
+A gene symbol has to *reach the row* first: the rerank/de novo arms carry one in the variant header,
+a bare peptide table does not -- run `mhcmatch genes` (same `seqtree` proteome index) before
+`--keep-genes`.
 
 **Pass `--peptides FILE`, never loop the shell.** The setup a per-peptide invocation re-pays is the
 whole cost: the presentation/affinity calibrators ~5 s, a human-proteome length index 64.6 s -- the

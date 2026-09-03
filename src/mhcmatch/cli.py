@@ -124,6 +124,28 @@ def _allele(a, name):
             if getattr(a, "cls", None) == "mhc2" else name)
 
 
+def _keep(a):
+    """One :class:`mhcmatch.predict.Keep` for the whole invocation, or ``None``.
+
+    Built **once here**, not per row and not per sample: ``--keep-epitopes builtin`` loads a
+    pre-built ``seqtree`` index off disk, and a run that rebuilt it per sample would pay for it a
+    thousand times over and race on any cache it wrote to avoid that.
+
+    ``--keep`` is the deprecated 1.8.0 spelling and folds into both lists, which is exactly what it
+    used to do.
+    """
+    from . import predict as P
+    genes = getattr(a, "keep_genes", None) or getattr(a, "keep", None)
+    peps = getattr(a, "keep_epitopes", None) or getattr(a, "keep", None)
+    if not genes and not peps:
+        return None
+    k = P.Keep(genes=genes, epitopes=peps, mismatch=getattr(a, "keep_mismatch", 0) or 0)
+    say(f"whitelist: {len(k.genes)} gene symbol(s)"
+        + (f", epitope index loaded (Hamming <= {k.mismatch})" if k.index is not None else ""),
+        level=1)
+    return k
+
+
 def _store(a):
     with step(f"loading the {a.species} pmhc panel ({a.tier})"):
         return Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species)
@@ -500,7 +522,7 @@ def cmd_predict(a):
     store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
     alleles = [x.strip() for x in a.alleles.split(",") if x.strip()]
     preds = P.predict_fasta(store, a.cls, a.fasta, alleles, rank_threshold=a.rank_threshold,
-                            keep=getattr(a, "keep", None),
+                            keep=_keep(a),
                             top=a.top, background=a.background, footprint=a.footprint, seed=a.seed)
     if a.native:
         P.write_native(preds, a.native, core=a.core)
@@ -512,7 +534,7 @@ def cmd_predict(a):
         _cut = P.resolve_rank_threshold(a.rank_threshold, a.cls)
         _nk = sum(1 for p in preds if getattr(p, "keep", 0))
         _how = ("no %rank cut" if _cut >= P.RANK_NONE else f"%rank <= {_cut:g}")
-        _wl = f", {_nk} kept by --keep" if _nk else ""
+        _wl = f", {_nk} whitelisted" if _nk else ""
         print(f"# {len(preds)} predicted binder(s) ({_how}{_wl}) over "
               f"{len(alleles)} allele(s)")
         for p in preds[:(a.top or 20)]:
@@ -836,7 +858,7 @@ def cmd_rank(a):
         store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
         rows = R.rank_fasta(store, a.input, _read_alleles(a.alleles), cls=a.cls,
                             tissue=a.tissue, tumor=a.tumor, refs=refs,
-                            rank_threshold=a.rank_threshold, keep=getattr(a, "keep", None),
+                            rank_threshold=a.rank_threshold, keep=_keep(a),
                             score=a.score,
                             prevalence=a.prevalence,
                             channels=_aggregate_channels(a.cls, a.no_self, a.species)
@@ -915,7 +937,7 @@ def cmd_rank(a):
                      "1" if r.expression_imputed else "0",
                      str(r.n_alleles_presenting), r.alleles_presenting,
                      r.imputed, r.wt_peptide,
-                     r.known_epitope, r.variant_type, str(r.keep)]
+                     r.known_epitope, r.variant_type, str(r.keep), r.keep_reason]
             if a.score == "aggregate":
                 # `.get`: an artifact that does not declare an expression term never sets it, and
                 # an absent term is an empty cell rather than a KeyError or a fabricated 0.
@@ -2494,11 +2516,26 @@ def main(argv=None):
     pr.add_argument("--scored-csv", dest="scored_csv", help="write the pipeline .scored.csv here")
     pr.add_argument("--rank-threshold", default=None, metavar="TIER|PCT",
                     help="what to DROP, and nothing is dropped by default. `sb`/`wb` are the published NetMHCpan cut-offs and are per class (sb: 0.5 mhc1 / 2.0 mhc2; wb: 2.0 / 10.0); `none` keeps everything; a number is a %%rank percentile used as given. A bare number cannot be class-aware -- `2.0` is the WEAK cut for class I and the STRONG cut for class II -- which is why the tiers are named")
+    pr.add_argument("--keep-genes", dest="keep_genes", metavar="LIST|FILE",
+                    help="gene symbols whose rows are NEVER dropped, whatever --rank-threshold "
+                         "says: the driver-gene whitelist. Comma-separated or a file with one per "
+                         "line ('#' comments allowed); case-insensitive. Matched rows carry "
+                         "`keep = 1` and `keep_reason = gene`. No built-in driver list ships yet")
+    pr.add_argument("--keep-epitopes", dest="keep_epitopes", metavar="builtin|LIST|FILE",
+                    help="peptide sequences whose rows are NEVER dropped: the validated-response "
+                         "whitelist. `builtin` is the shipped index of every peptide an assay "
+                         "called immunogenic (mhcmatch.known `neoantigen` set); otherwise a comma "
+                         "list or a file. Matched rows carry `keep = 1` and `keep_reason = "
+                         "epitope` (or `epitope~1` under --keep-mismatch 1)")
+    pr.add_argument("--keep-mismatch", dest="keep_mismatch", type=int, default=0, choices=(0, 1),
+                    metavar="0|1",
+                    help="Hamming radius for --keep-epitopes: 0 (default) is exact, 1 also keeps a "
+                         "peptide one substitution from a whitelisted one. Equal length only -- a "
+                         "9-mer never matches a 20-mer by containment")
     pr.add_argument("--keep", metavar="LIST|FILE",
-                    help="whitelist of gene symbols AND/OR peptide sequences that are NEVER "
-                         "dropped, whatever --rank-threshold says. Comma-separated or a file with "
-                         "one per line; case-insensitive; each entry is matched against both the "
-                         "gene and the peptide. Matched rows carry `keep = 1`")
+                    help="DEPRECATED (1.8.0): one list matched against gene AND peptide alike. "
+                         "Equivalent to passing the same list to both --keep-genes and "
+                         "--keep-epitopes. Use those instead -- they say which claim kept a row")
     pr.add_argument("--top", type=int, help="cap binders kept per window (strongest first)")
     pr.add_argument("--background", default="proteome", choices=("ligand", "ligand-pooled", "proteome", "markov"))
     pr.add_argument("--footprint", default="adaptive", choices=("anchor", "core", "adaptive"))
@@ -2571,11 +2608,26 @@ def main(argv=None):
                          "neoantigens, IEDB-immunogenic, thymic self, viral)")
     rk.add_argument("--refs", help="override the built-in known-epitope sets: "
                                    "name=path[,name=path]; one peptide per line or TSV col 1")
+    rk.add_argument("--keep-genes", dest="keep_genes", metavar="LIST|FILE",
+                    help="gene symbols whose rows are NEVER dropped, whatever --rank-threshold "
+                         "says: the driver-gene whitelist. Comma-separated or a file with one per "
+                         "line ('#' comments allowed); case-insensitive. Matched rows carry "
+                         "`keep = 1` and `keep_reason = gene`. No built-in driver list ships yet")
+    rk.add_argument("--keep-epitopes", dest="keep_epitopes", metavar="builtin|LIST|FILE",
+                    help="peptide sequences whose rows are NEVER dropped: the validated-response "
+                         "whitelist. `builtin` is the shipped index of every peptide an assay "
+                         "called immunogenic (mhcmatch.known `neoantigen` set); otherwise a comma "
+                         "list or a file. Matched rows carry `keep = 1` and `keep_reason = "
+                         "epitope` (or `epitope~1` under --keep-mismatch 1)")
+    rk.add_argument("--keep-mismatch", dest="keep_mismatch", type=int, default=0, choices=(0, 1),
+                    metavar="0|1",
+                    help="Hamming radius for --keep-epitopes: 0 (default) is exact, 1 also keeps a "
+                         "peptide one substitution from a whitelisted one. Equal length only -- a "
+                         "9-mer never matches a 20-mer by containment")
     rk.add_argument("--keep", metavar="LIST|FILE",
-                    help="whitelist of gene symbols AND/OR peptide sequences that are NEVER "
-                         "dropped, whatever --rank-threshold says. Comma-separated or a file with "
-                         "one per line; case-insensitive; each entry is matched against both the "
-                         "gene and the peptide. Matched rows carry `keep = 1`")
+                    help="DEPRECATED (1.8.0): one list matched against gene AND peptide alike. "
+                         "Equivalent to passing the same list to both --keep-genes and "
+                         "--keep-epitopes. Use those instead -- they say which claim kept a row")
     rk.add_argument("--rank-threshold", default=None, metavar="TIER|PCT",
                     help="what to DROP, and nothing is dropped by default. `sb`/`wb` are the "
                          "published NetMHCpan cut-offs and are per class (sb: 0.5 mhc1 / 2.0 mhc2; "
@@ -2945,8 +2997,12 @@ def main(argv=None):
 
     bl = sub.add_parser("build",
                         help="regenerate the shipped data artifacts (release task), or --check them")
+    # Derived from `_build.TARGETS`, never listed again here. The literal that used to sit here
+    # named three of the eleven targets and had drifted: `mhcmatch build aggregate` -- a target
+    # `--check` reports on -- was rejected as an invalid choice.
+    from ._build import TARGETS as _BUILD_TARGETS
     bl.add_argument("target", nargs="?", default="all",
-                    choices=("all", "anchor", "corpus", "recognition"),
+                    choices=("all", *_BUILD_TARGETS),
                     help="what to rebuild (default: all)")
     bl.add_argument("--check", action="store_true",
                     help="do not build: report artifacts whose version stamp is behind "

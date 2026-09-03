@@ -27,6 +27,7 @@ import csv
 import math
 import os
 import re
+import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -76,26 +77,36 @@ def band_for(percent_rank: float, cls: str = "mhc1") -> str:
     return band_of(percent_rank, RANK_STRONG[cls], RANK_WEAK[cls])
 
 
-#: Name of the flag column a whitelist writes. ``1`` where the row matched, ``0`` everywhere else.
+#: Name of the flag column a whitelist writes. ``1`` where a rule matched, ``0`` everywhere else.
 KEEP_COLUMN: str = "keep"
 
+#: Name of the column saying **which** rule matched. Two whitelists make two different claims about
+#: a row -- "this gene is a driver" and "this peptide is one substitution from a validated
+#: immunogenic neoantigen" -- and a single ``1`` cannot tell them apart. A reader who cannot see
+#: which rule fired will read a gene hit as evidence about the epitope, which it is not.
+KEEP_REASON_COLUMN: str = "keep_reason"
 
-def keep_set(spec) -> frozenset:
-    """A whitelist of gene symbols and/or peptide sequences, from a comma list or a file.
+#: The name that selects a shipped corpus instead of a caller-supplied list.
+KEEP_BUILTIN: str = "builtin"
 
-    One list holds both kinds and an entry is matched against **both** fields, because classifying
-    a token by shape is where this would go wrong: ``MET``, ``MAX``, ``KIT`` and ``FAS`` are gene
-    symbols spelled entirely in the amino-acid alphabet, and a rule that guessed would quietly file
-    one of them as a peptide that matches nothing. Matching both ways costs one extra set lookup
-    per row and cannot mis-classify anything.
+#: The shipped 1-mismatch index of validated immunogenic neoantigens, and its version sidecar.
+#: A ``seqtree.Index`` is opaque binary and cannot carry a version, so the stamp lives beside it.
+KEEP_INDEX_FILE: str = "known_neoantigens.idx"
+KEEP_INDEX_META: str = "known_neoantigens.json"
 
-    Case is folded, so ``tp53`` and ``TP53`` are the same entry and a lowercase peptide still
-    matches. Returns an empty set for ``None`` / ``""``, which every caller reads as "no whitelist".
+#: Report order when more than one rule fires. An exact hit against a validated epitope is direct
+#: evidence about *this peptide*; a one-substitution hit is an inference from a neighbour; a gene
+#: symbol says nothing about the peptide at all. Same principle as :func:`mhcmatch.known.lookup`.
+KEEP_REASONS: tuple = ("epitope", "epitope~1", "gene")
+
+
+def _tokens(spec) -> list:
+    """A comma list, a sequence, or the first tab-column of a file, as raw strings.
+
+    ``#`` starts a comment line, so a file can carry provenance beside its entries.
     """
-    if not spec:
-        return frozenset()
     if isinstance(spec, (set, frozenset, list, tuple)):
-        items = spec
+        items = list(spec)
     else:
         s = str(spec)
         if os.path.exists(s):
@@ -103,13 +114,161 @@ def keep_set(spec) -> frozenset:
                 items = [ln.split("\t")[0] for ln in fh.read().splitlines()]
         else:
             items = s.split(",")
-    return frozenset(x.strip().upper() for x in items if x and x.strip() and not x.startswith("#"))
+    return [x.strip() for x in items if x and x.strip() and not x.lstrip().startswith("#")]
 
 
-def is_kept(keep: frozenset, peptide: str = "", gene: str = "") -> bool:
-    """Does this row match the whitelist, by peptide **or** by gene symbol?"""
+def keep_genes(spec) -> frozenset:
+    """Gene symbols that survive any %rank cut, from a comma list or a file.
+
+    Case is folded, so ``tp53`` and ``TP53`` are one entry. ``None``/``""``/``"none"`` is an empty
+    set, which every caller reads as "no gene whitelist".
+
+    ``"builtin"`` is **not** available: no driver-gene list ships yet. It raises rather than
+    resolving to nothing, because a silent empty whitelist is indistinguishable from one that
+    matched no row -- the caller would see a table with every driver dropped and no way to tell why.
+    """
+    if not spec or str(spec).strip().lower() in ("none", ""):
+        return frozenset()
+    if str(spec).strip().lower() == KEEP_BUILTIN:
+        raise ValueError(
+            "no built-in driver-gene list ships yet; pass a file or a comma list of symbols "
+            "(one per line, '#' comments allowed)")
+    return frozenset(x.upper() for x in _tokens(spec))
+
+
+def keep_epitope_index(spec, mismatch: int = 0, quiet: bool = False):
+    """A :class:`seqtree.Index` over the epitope whitelist, or ``None`` for no whitelist.
+
+    Three sources, and one match path for all three:
+
+    ``none`` / ``None``
+        no epitope whitelist.
+    ``builtin``
+        the shipped index of **validated immunogenic neoantigens** -- every peptide that
+        :mod:`mhcmatch.known` collects into its ``neoantigen`` set, i.e. an assay called it
+        positive. Loaded from a pre-built file in ~1 ms and **never rebuilt at run time**: a
+        thousand-sample Nextflow run would otherwise pay the build a thousand times and race on
+        any cache it wrote.
+    a file or comma list
+        the caller's own peptides, indexed here.
+
+    ``mismatch`` is the Hamming radius: ``0`` is exact, ``1`` also matches one substitution.
+    Insertions and deletions are always off, so a hit is an equal-length peptide -- a 9-mer query
+    never matches a 20-mer known epitope by containment, which is a different question.
+
+    The index is C++ (``seqtree``), built once and queried concurrently; there is no Python
+    dictionary anywhere on this path and no per-row rebuild.
+    """
+    if not spec or str(spec).strip().lower() in ("none", ""):
+        return None
+    import seqtree
+    s = str(spec).strip()
+    if s.lower() == KEEP_BUILTIN:
+        path = os.path.join(os.path.dirname(__file__), "data", KEEP_INDEX_FILE)
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"{path} is missing; run `mhcmatch build known` to rebuild it")
+        return seqtree.Index.load(path)
+    ok = set(seqtree.alphabet_symbols("aa"))
+    toks = [x.upper() for x in _tokens(spec)]
+    peptides = sorted({t for t in toks if t and set(t) <= ok})
+    dropped = len(set(toks)) - len(peptides)
+    if dropped and not quiet:
+        # Named, never silent: an entry seqtree cannot index would otherwise match nothing and be
+        # indistinguishable from one that matched no row.
+        print(f"[mhcmatch] keep: {dropped} epitope whitelist entr(ies) are not peptides over "
+              f"{''.join(sorted(ok))} and were not indexed", file=sys.stderr)
+    if not peptides:
+        return None
+    return seqtree.Index.build(peptides, "aa")
+
+
+class Keep:
+    """Two independent whitelists -- gene symbols and epitope sequences -- and a Hamming radius.
+
+    Independent on purpose: a gene symbol keeps every candidate in a driver gene, and an epitope
+    sequence keeps the ones with a validated response. They answer different questions, so one list
+    matched against both fields (which is what ``--keep`` did in 1.8.0) cannot say which claim a
+    surviving row rests on.
+    """
+    __slots__ = ("genes", "index", "params", "mismatch")
+
+    def __init__(self, genes=None, epitopes=None, mismatch: int = 0, quiet: bool = False):
+        import seqtree
+        self.genes = keep_genes(genes)
+        self.mismatch = int(mismatch)
+        if self.mismatch not in (0, 1):
+            raise ValueError(f"keep mismatch must be 0 or 1, got {mismatch!r}")
+        self.index = keep_epitope_index(epitopes, self.mismatch, quiet)
+        self.params = seqtree.SearchParams(max_subs=self.mismatch, max_ins=0, max_dels=0,
+                                           engine="seqtm") if self.index is not None else None
+
+    def __bool__(self) -> bool:
+        return bool(self.genes) or self.index is not None
+
+    def reasons(self, peptides, genes=()) -> list:
+        """Why each row is kept, ``""`` where it is not -- **one batched C++ call for the table**.
+
+        ``search_batch`` releases the GIL and uses every core, so the epitope side costs one call
+        for N rows rather than N calls. Returns a list as long as ``peptides``.
+        """
+        peptides = list(peptides)
+        genes = list(genes) + [""] * (len(peptides) - len(genes))
+        out = ["gene" if g and g.upper() in self.genes else "" for g in genes]
+        if self.index is None:
+            return out
+        hits = self.index.search_batch([p.upper() for p in peptides], self.params, 0)
+        for i, hs in enumerate(hits):
+            if not hs:
+                continue
+            # `search_batch` returns every hit within the radius; the best one is the smallest
+            # substitution count, and an exact hit outranks a neighbour.
+            out[i] = "epitope" if min(h.n_subs for h in hs) == 0 else "epitope~1"
+        return out
+
+    def reason(self, peptide: str = "", gene: str = "") -> str:
+        """Why this one row is kept, ``""`` where it is not. Prefer :meth:`reasons` for a table."""
+        if self.index is not None and peptide:
+            hs = self.index.search_top(peptide.upper(), self.params, 1)
+            if hs:
+                return "epitope" if hs[0].n_subs == 0 else "epitope~1"
+        return "gene" if gene and gene.upper() in self.genes else ""
+
+
+def as_keep(spec):
+    """Whatever a caller passed, as a :class:`Keep` or ``None`` -- **built once, never per row**.
+
+    A ``Keep`` passes through; ``None`` stays ``None``; anything else is the deprecated flat
+    ``--keep`` list and becomes one ``Keep`` with the same entries on both sides, which is exactly
+    what 1.8.0 did with it.
+    """
+    if spec is None or isinstance(spec, Keep):
+        return spec
+    if not spec:
+        return None
+    # `quiet`: the deprecated list is *documented* to hold gene symbols too, so reporting each
+    # one as "not a peptide" is noise about behaviour the caller asked for.
+    return Keep(genes=spec, epitopes=spec, quiet=True)
+
+
+def keep_set(spec) -> frozenset:
+    """**Deprecated** -- the 1.8.0 ``--keep`` list, matched against gene *and* peptide alike.
+
+    Kept so a command line written against 1.8.0 still runs. Use :class:`Keep` with separate
+    ``genes=`` and ``epitopes=``: one list matched both ways cannot report which claim kept a row,
+    and it cannot do the 1-substitution epitope match at all.
+    """
+    if not spec:
+        return frozenset()
+    return frozenset(x.upper() for x in _tokens(spec))
+
+
+def is_kept(keep, peptide: str = "", gene: str = "") -> bool:
+    """Does this row match the whitelist? Accepts a :class:`Keep` or a deprecated flat set."""
     if not keep:
         return False
+    if isinstance(keep, Keep):
+        return bool(keep.reason(peptide, gene))
     return (peptide or "").upper() in keep or (gene or "").upper() in keep
 
 
@@ -163,7 +322,7 @@ NATIVE_COLUMNS = ("source", "type", "variant_type", "gene_name", "chrom", "pos",
                   "best_allele", "cls", "percent_rank", "p_present", "band", "affinity_nm",
                   "affinity_rank", "binder_rank", "binder_band",
                   "wt_peptide", "wt_affinity_nm", "agretopicity", "amplitude", "dai",
-                  "synth_peptide", "model_peptide", "anchors", "tcr_facing", "keep")
+                  "synth_peptide", "model_peptide", "anchors", "tcr_facing", "keep", "keep_reason")
 
 #: Appended by ``--core`` to every output that carries it. Never in a default header: the 57-column
 #: :data:`SCORED_COLUMNS` is a pipeline contract, and ``write_scored_csv``'s ``extrasaction="ignore"``
@@ -215,6 +374,11 @@ class Prediction:
     #: only by surviving -- a reader cannot tell "kept because whitelisted" from "kept because it
     #: scored well" without one.
     keep: int = 0
+    #: **Which** whitelist rule kept the row: ``epitope`` (exact hit against a validated
+    #: immunogenic neoantigen), ``epitope~1`` (one substitution from one), ``gene`` (the gene
+    #: symbol is whitelisted), or ``""``. A gene hit is not evidence about the peptide, so the
+    #: two claims are reported apart rather than collapsed into the ``keep`` flag.
+    keep_reason: str = ""
     core: str = ""
     core_offset: int = -1
     core_source: str = ""
@@ -728,7 +892,9 @@ def predict_windows(store, cls, records, alleles, rank_threshold=None, top=None,
     # cannot be class-aware, so `2.0` -- the old default -- was the weak cut for class I and the
     # STRONG cut for class II, and a class-II de novo arm returned an empty table with returncode 0.
     _cut = resolve_rank_threshold(rank_threshold, cls)
-    _keep = keep if isinstance(keep, frozenset) else keep_set(keep)
+    # One `Keep` for the whole call: the epitope index is loaded/built once here, never per row and
+    # never per sample -- a thousand-sample run must not pay the build a thousand times.
+    _keep = keep if isinstance(keep, Keep) or keep is None else Keep(epitopes=keep, genes=keep)
     model, cal, aff = build_scorer(store, cls, background, footprint, seed)
     # the calibrated combined %rank (presentation x affinity) needs the affinity + Fisher calibrators;
     # both are cached on the store and only fill their per-allele background lazily.
@@ -743,7 +909,13 @@ def predict_windows(store, cls, records, alleles, rank_threshold=None, top=None,
         protein = _strip_marker(var.get("mut_window", "")) or seq
         base = protein.find(seq)
         base = base if base >= 0 else 0
-        for pep, off in tile(seq, lengths):
+        # **One batched C++ call per record, not one per window.** `Keep.reasons` hands every tile
+        # of this record to `seqtree.Index.search_batch`, which releases the GIL and uses all cores.
+        tiles = list(tile(seq, lengths))
+        gene = var.get("gene_name", "")
+        whys = (_keep.reasons([p for p, _ in tiles], [gene] * len(tiles))
+                if _keep else [""] * len(tiles))
+        for (pep, off), why in zip(tiles, whys):
             best = None
             presenting: list = []
             for a in alleles:
@@ -760,8 +932,7 @@ def predict_windows(store, cls, records, alleles, rank_threshold=None, top=None,
             if best is None:
                 continue
             a, pr, pp = best
-            kept = is_kept(_keep, pep, var.get("gene_name", ""))
-            if pr > _cut and not kept:
+            if pr > _cut and not why:
                 continue
             # annotate anchors from the SAME register the model scored (MHC-II), not the heuristic one,
             # so reported anchors/tcr_facing match the scored core (and the WT-vs-mutant agretopicity).
@@ -769,7 +940,8 @@ def predict_windows(store, cls, records, alleles, rank_threshold=None, top=None,
             d = store.decompose(pep, cls, a, register_start=rstart)
             p = Prediction(header, pep, a, off, cls, round(pr, 3), round(pp, 4), band_for(pr, cls),
                            d.anchors, d.tcr_facing, var=var)
-            p.keep = 1 if kept else 0
+            p.keep = 1 if why else 0
+            p.keep_reason = why
             presenting.sort()
             p.n_alleles_presenting = len(presenting)
             p.alleles_presenting = ";".join(x[1] for x in presenting)
@@ -848,7 +1020,7 @@ def write_native(preds, path: str, core: bool = False) -> None:
                         _blank_nan(p.affinity_rank), _blank_nan(p.binder_rank), p.binder_band,
                         p.wt_peptide, p.wt_affinity_nm, p.agretopicity, p.amplitude, p.dai,
                         p.synth_peptide, p.model_peptide,
-                        ";".join(str(i) for i in p.anchors), p.tcr_facing, p.keep]
+                        ";".join(str(i) for i in p.anchors), p.tcr_facing, p.keep, p.keep_reason]
                        + ([p.core, p.core_offset, p.core_source] if core else []))
 
 

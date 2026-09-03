@@ -131,6 +131,30 @@ includes the shared tail as `MHCMATCH_*_DN`; `subworkflows/rerank.nf` takes the 
 selector spelled as the bare name sizes one arm and silently misses the other -- which for
 `MHCMATCH_CASSETTE` means 8 GB instead of 48 and an OOM kill hours in.
 
+**A flag that answers two questions cannot report which one it answered.** `--keep` matched one
+list against the gene *and* the peptide, so `keep = 1` could not say whether the row survived
+because its gene is a driver or because its peptide has a validated response -- and those are
+different claims, one of which is evidence about the peptide and one of which is not. Two flags and
+a `keep_reason` column, from 1.9.0. The general shape is the `--block-live` trap again: **one name
+over two meanings**, and the fix is always two names, never a smarter default.
+
+**Anything a hot path needs per sample gets built at release, not at run time.** The validated-
+epitope whitelist is a `seqtree.Index` shipped as `known_neoantigens.idx` because assembling its
+23,299 peptides means downloading five deposits and scanning ~950,000 rows. Built once:
+**0.02 s build, 1 ms load, 1.45 M queries/s** through `search_batch`. The alternative is not "a
+slower run" -- it is a thousand Nextflow tasks each rebuilding it, or racing on the cache they wrote
+to avoid rebuilding it. **The race-free design is the one with nothing to race on**: eight concurrent
+`predict` processes were measured writing zero shared state, because the index is a read-only file
+the wheel shipped. A `seqtree` index is opaque binary and cannot carry a version, so the stamp
+`--check` reads lives in a `.json` sidecar beside it.
+
+**A `choices=` literal that restates a registry drifts, and argparse turns the drift into a
+refusal.** `mhcmatch build` listed `("all", "anchor", "corpus", "recognition")` -- three of eleven
+targets -- so `mhcmatch build aggregate`, a target `--check` reports on by name, was rejected as an
+invalid choice. It is derived from `_build.TARGETS` now. Same class as the shipped-artifact count
+written into three documents, which is why that one is pinned by a test -- and that test caught the
+sentence you are reading, which quoted the stale number as an example.
+
 This file captures only *how we work in the repo*.
 
 ## Git worktrees — one worktree + branch per task
@@ -309,7 +333,7 @@ mhcmatch build corpus -v    # one target, with per-step wall clock
   reports every head stale at every release, which is why `.json` was once blanket-exempted — and
   the exemption cost the check *all* of them. `mimicry_fit.py` wrote `"0.12.0"` as a model version,
   the one file that made the shapes ambiguous; it now writes `1`, and the rule holds by construction.
-- **`--check` covers all 29 shipped artifact files, not 11.** Until 2026-08-23 the `TARGETS` table listed
+- **`--check` covers all 31 shipped artifact files, not 11.** Until 2026-08-23 the `TARGETS` table listed
   only the anchors, the corpus tables and the recognition heads, so sixteen files — including
   `aggregate_mhc1.json` (EPIC itself) and `affinity_potts_mhc{1,2}.npz` (the source of `occupancy`)
   — could go missing or ship half-copied and nothing would say so. Entries whose generator lives in

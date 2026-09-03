@@ -1,0 +1,19 @@
+{
+ "version": "1.9.0",
+ "n_peptides": 23299,
+ "lengths": [
+  4,
+  50
+ ],
+ "sets": [
+  "neoantigen"
+ ],
+ "sources": [
+  "neoantigens/nci_gartner_mmp.tsv.gz",
+  "neoantigens/neoantigens_tested_peptides.tsv.gz",
+  "neoantigens/neoag_tested.tsv.gz",
+  "neoantigens/neoag_tested_hsa.tsv.gz",
+  "neoantigens/neoag_tested_mmu.tsv.gz"
+ ],
+ "generator": "mhcmatch build known"
+}

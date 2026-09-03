@@ -521,3 +521,35 @@ screens where the measurement is thin -- ITSNdb sits near chance under *both* ar
 also blocks the currently-shipped v9 by the same bar. Against them stand NCI +0.0134 over 449,998
 discordant pairs, TESLA +0.0320 and Gfeller_GBM +0.0285. The bar is not relaxed and the verdict is
 not rewritten; the artifact carries its own dissent.
+
+## `known_neoantigens.idx` / `known_neoantigens.json` — the validated-epitope whitelist index
+
+**What it is.** A `seqtree.Index` over every peptide `mhcmatch.known.load()` collects into its
+`neoantigen` set: 23,299 sequences, lengths 4 to 50, each one an assay called **positive**. It backs
+`--keep-epitopes builtin`, the whitelist of candidates with a validated T-cell response that no
+`--rank-threshold` may drop. The `.json` is a version sidecar; a `seqtree` index is opaque binary and
+cannot carry a stamp, so `build --check` reads the sidecar beside it.
+
+**Source.** Five deposits, listed in `known.SOURCES["neoantigen"]` and repeated in the sidecar, all
+fetched from `isalgo/pmhc_data`:
+
+| deposit | what it contributes |
+|---|---|
+| `neoantigens/neoag_tested.tsv.gz` | the aggregated cohorts (CEDAR, Gfeller, Neopep, ITSNdb, TESLA, GBM, VACCIMEL), positive rows |
+| `neoantigens/neoantigens_tested_peptides.tsv.gz` | the epitope-resolution screens (NCI, HiTIDE, TESLA), positive rows |
+| `neoantigens/nci_gartner_mmp.tsv.gz` | the NCI/Gartner deconvolved minimal peptides |
+| `neoantigens/neoag_tested_hsa.tsv.gz` | IEDB neoantigen records, human |
+| `neoantigens/neoag_tested_mmu.tsv.gz` | IEDB neoantigen records, mouse |
+
+**Regenerate.** `mhcmatch build known` — 1.3 s, of which 1.2 s is the deposit scan and 0.02 s the
+index build and save.
+
+**Why it ships rather than being assembled on demand.** The five deposits carry roughly 950,000 rows
+between them, so building the set is a download plus a full-file scan. A thousand-sample Nextflow run
+would pay that a thousand times, or race on whatever cache it wrote to avoid doing so. Pre-built, the
+index reloads in **~1 ms** and answers **~1.45 M queries/s** through `search_batch`, which releases
+the GIL and uses every core. Nothing on the predict path ever builds it.
+
+**Provenance is derived, not experimental**: the peptides are experimental (each is an assay result),
+the index over them is computed. It adds no peptide that `known.load` does not already return, so it
+is an index and never a second definition of the corpus.

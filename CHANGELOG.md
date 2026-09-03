@@ -1,5 +1,46 @@
 # Changelog
 
+## [1.9.0] — 2026-09-03 — two whitelists, because they make two different claims
+
+**A gene whitelist and an epitope whitelist are not one whitelist.** 1.8.0's `--keep` matched a
+single list against the gene *and* the peptide, so a surviving row could not say which claim kept
+it. They are different assertions: *this gene is a driver* says nothing about the peptide, while
+*this peptide is one an assay called immunogenic* is direct evidence about it. Collapsing both into
+one `keep = 1` files one as the other.
+
+- **`--keep-genes LIST|FILE`** — gene symbols whose rows no `--rank-threshold` removes: the
+  driver-gene list. **No built-in driver list ships yet**; `--keep-genes builtin` raises and names
+  that, rather than resolving to an empty set a caller cannot tell from "matched no row".
+- **`--keep-epitopes builtin|LIST|FILE`** — peptide sequences: the validated-response list.
+  `builtin` is the **23,299 peptides an assay called immunogenic** (`mhcmatch.known`'s `neoantigen`
+  set, over five deposits).
+- **`--keep-mismatch 0|1`** — Hamming radius for the epitope list. `1` also keeps a peptide one
+  substitution from a whitelisted one. Equal length only: a 9-mer never matches a 20-mer by
+  containment, which is a different question.
+- **`keep_reason` joins `keep`** in both the native and the ranked schema: `gene`, `epitope`,
+  `epitope~1`, or empty. When several rules fire the strongest evidence is reported —
+  `epitope` > `epitope~1` > `gene` — the same ordering rule as `known.lookup`.
+- **`predict.Keep`** is the API; `rank_fasta` / `rank_pairs` / `rank_table` / `predict_windows` all
+  take one. `--keep` still runs and folds into both lists, exactly as it did.
+- Nextflow: `mhcmatch_keep_genes`, `mhcmatch_keep_epitopes`, `mhcmatch_keep_mismatch`.
+  `mhcmatch_keep` stays as the deprecated spelling.
+
+**The built-in index ships pre-built and is never built at run time.** Its peptides come from five
+deposits totalling ~950,000 rows, so assembling the set is a download plus a full-file scan — a
+thousand-sample run would pay that a thousand times, or race on whatever cache it wrote to avoid
+doing so. `mhcmatch build known` writes a `seqtree.Index` once at release: **build 0.02 s, load
+1 ms, 1.45 M queries/s** through `search_batch`, which releases the GIL and uses every core. There
+is no Python dictionary on this path and no per-row query — `predict_windows` batches one call per
+record, `rank._finish` one call per table. Concurrent Nextflow tasks share nothing but a read-only
+file the wheel shipped.
+
+- New shipped artifacts `known_neoantigens.idx` + `known_neoantigens.json` (a version sidecar; a
+  `seqtree` index is opaque binary and cannot carry a stamp). `build --check` now covers **31**
+  files, and `PROVENANCE.md` records the five deposits.
+- **`mhcmatch build`'s target list is derived from `_build.TARGETS`.** The literal that used to sit
+  in the parser named three of eleven targets and had drifted: `mhcmatch build aggregate` — a target
+  `--check` reports on — was rejected as an invalid choice.
+
 ## [1.8.0] — 2026-09-03 — nothing is dropped by default, and the cut-off knows its class
 
 **Nothing is dropped by default, and the cut-off knows which class it is on.**
