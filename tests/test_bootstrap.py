@@ -144,7 +144,7 @@ def test_the_documented_artifact_count_is_the_real_one():
     # plural keeps "the four vendored artifacts" out. Both were false positives on the first pass.
     pat = re.compile(r"\b(\d+)\s+(?:shipped\s+)?artifact\s+files\b")
     checked = []
-    for rel in ("docs/cli.rst", "skills/mhcmatch/SKILL.md", "CLAUDE.md"):
+    for rel in ("docs/cli/commands.rst", "skills/mhcmatch/SKILL.md", "CLAUDE.md"):
         p = root / rel
         if not p.exists():
             continue

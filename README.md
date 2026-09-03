@@ -133,7 +133,7 @@ names appear in it.
 
 **Chaining `rank` into a cassette takes two flags** — `--prefix` renames the column the next step
 looks for, and `rank`'s peptide is the minimal epitope where the assembly wants the long window.
-[The tested four-command chain is on the CLI page](https://antigenomics.github.io/mhcmatch/cli.html#rerank-chain).
+[The tested four-command chain is on the CLI page](https://antigenomics.github.io/mhcmatch/cli/commands.html#rerank-chain).
 
 `predict` is the presentation axis (**is it presented at all**, the NetMHCpan `%Rank_EL` analogue);
 `restriction` is the specificity axis (**which allele**). They answer different questions and a
