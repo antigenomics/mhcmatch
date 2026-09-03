@@ -5,6 +5,42 @@ predict` replaces a neoantigen pipeline's binding predictors (MHCflurry class I,
 II); the rest cover the steps that come after and have no incumbent — allele resolution, ranking,
 prior evidence, safety, cassette selection and cassette assembly.
 
+> **The module and the library must be the same version — clone the tag, not `master`.** The
+> module calls the CLI, so a checkout ahead of the installed release passes flags that release
+> has never heard of, and the failure is a bare argparse error deep inside a task log. It
+> happened on 2026-09-02: PyPI served 1.7.1 while `master` had gained `--map-binder`, and both
+> `MHCMATCH_CASSETTE` tasks died with `unrecognized arguments: --map-binder weak`.
+> `mhcmatch --version` cannot warn you, because both print the same string. So:
+>
+> ```bash
+> git clone --branch v1.7.2 --depth 1 https://github.com/antigenomics/mhcmatch.git
+> pip install "mhcmatch==1.7.2"
+> ```
+>
+> **Behind an HTTP proxy, take the tarball instead — `git clone` can fail where `git ls-remote`
+> works.** A proxy that passes the refs advertisement (`GET .../info/refs`) but refuses the pack
+> transfer (`POST .../git-upload-pack`) makes git report a **401 as a credential prompt**:
+> `fatal: could not read Username for 'https://github.com'` on a repository that is public and
+> needs none. Measured on Aldan-3 2026-09-03, on the login node and on a compute node, while
+> `git ls-remote` returned the `v1.7.2` tag from both. The release tarball is a plain GET and goes
+> straight through, giving the identical tree:
+>
+> ```bash
+> curl -sSL -o mhcmatch-1.7.2.tar.gz https://github.com/antigenomics/mhcmatch/archive/refs/tags/v1.7.2.tar.gz
+> tar xzf mhcmatch-1.7.2.tar.gz     # -> mhcmatch-1.7.2/integrations/nextflow/mhcmatch/
+> ```
+>
+> Chase the proxy only if you need git history; for running the pipeline the tarball is the whole
+> requirement. `pip` reaches PyPI through the same proxy, though it may need its retries to get
+> there — a run of four `ReadTimeoutError`s that then succeeds is normal on that cluster, and
+> `templates/setup.sbatch`'s `WHEELHOUSE` block is for when they do not.
+>
+> **Requires mhcmatch >= 1.7.2.** `MHCMATCH_ALLELES` calls `mhcmatch alleles` and the rerank arm
+> calls `rank --passthrough`; neither exists in 1.6.0, and 1.6.1 was stamped in the tree but never
+> published. Every pin in this directory — `environment.yml`, the `Dockerfile`,
+> `params.mhcmatch_container` — names 1.7.2, and `templates/setup.sbatch` asserts the version it
+> installed rather than letting the run discover the mismatch inside a task log.
+
 ```
 integrations/nextflow/mhcmatch/
   pipeline.nf              RUNNABLE from a directory of files: `nextflow run pipeline.nf --indir ...`
@@ -39,8 +75,7 @@ nextflow run integrations/nextflow/mhcmatch/pipeline.nf \
     --mhcmatch_tumor     SKCM
 ```
 
-**The file naming is the entire input contract**, and the sample id is the filename up to its first
-dot. A file that does not match is ignored:
+**The file naming is the entire input contract.** For the epitope and window files the sample id is the filename up to its first dot; for a **typing** file it is what remains after stripping the `[._-]?(norma|normal)?[._-]?alleles.tsv` suffix, so `D1.alleles.tsv`, `D1_norma.alleles.tsv` and `D1_alleles.tsv` all key to `D1`. A typing file that matches the glob but joins no sample is named in a warning rather than dropped silently. A file that does not match is ignored:
 
 | file | feeds |
 |---|---|
@@ -93,7 +128,7 @@ are two different answers and one must not overwrite the other:
 
 | file | what |
 |---|---|
-| `<id>.{rerank,denovo}.vaccine.units.tsv` | one row per **selected epitope** (default *k* = 20, `--mhcmatch_cassette_k`) |
+| `<id>.{rerank,denovo}.vaccine.units.tsv` | one row per **selected epitope** (default *k* = 20, `--mhcmatch_cassette_k`) — **this is the input table filtered to what the cassette carries, nothing removed from the row.** On the rerank arm it holds every one of your own columns and every `mm_` column, plus the selection's own (`slot`, `p`, `k`, `pool_n`, `offset`, `energy`, `lam`, `rho`); on the de novo arm, every column of `*.mhcmatch.ranked.tsv`. Measured on one donor: 53 caller + 32 `mm_` + 22 selection = 107 columns over 20 rows, with 0 caller columns dropped. **If one of your column names collides with one `cassette select` emits** (`score`, `p`, `k`, `slot`, …), ours keeps the plain name — it is what `cassette build`, `cassette score` and the map read — and **yours is preserved beside it as `<name>_in`**, with a line naming what moved. Before 1.7.2 yours was overwritten silently |
 | `<id>.{rerank,denovo}.cassette.faa` | assembled, with the linker chosen by minimising junctional binding |
 | `<id>.{rerank,denovo}.cassette.fna` | the CDS, deslipped |
 | `<id>.{rerank,denovo}.cassette.map.{tsv,json}` | unit / linker / epitope in 1-based coordinates |
@@ -414,7 +449,7 @@ a deprioritisation signal and the autoimmunity flag, so report it, do not bury i
 | **in** | `tuple val(meta), path(candidates), path(context), val(alleles), val(cls)` — `context` may be `NO_FILE` if `candidates` already carries long windows; `alleles` is the class-I list as a String, **or** `[mhc1: '…', mhc2: '…']` to give the map this donor's own class-II allotypes |
 | **out** | `report` → `${prefix}.cassette.tsv` · `protein` → `.cassette.faa` · `cds` → `.cassette.fna` · `map` → `.cassette.map.tsv` · `map_json` → `.cassette.map.json` · `versions` |
 
-Runs `mhcmatch cassette build` — screen → select → order → back-translate. The report is long-form
+Runs `mhcmatch cassette ${task.ext.verb}` — `build` (screen → select → order → back-translate) is the process default and what `subworkflows/mhcmatch.nf` uses, but `nextflow.config` sets `ext.verb = 'order'` for **both arms of `pipeline.nf`**, because `MHCMATCH_CASSETTE_SELECT` has already chosen exactly `-k` units and `build` would re-select them under `--n0`. `order` drops the sizing rule only; the safety screen, the junction sweep and the back-translation all still run, and `--n0` is neither required nor passed on that path. The report is long-form
 (`section, i, key, value, detail`) with sections `withdrawn`, `allotype`, `not selected`, `unit`,
 `junction`, `cassette`, `sequence`.
 
@@ -435,13 +470,19 @@ ignored rather than rejected, so renaming them would silently drop every deploye
   duplicated by construction** (a row is a *(peptide, allele)* pair, which is what a coverage count
   needs); **junction-spanning epitopes carry `unit=0`** and no gene, because they are an artefact of
   assembly; and **`self_help` per unit** records whether a class-II epitope in that unit contains one
-  of its own class-I epitopes. `self_help` needs the recipient's class-II allotypes, and
-  `pipeline.nf` now supplies them **per donor**: the same donor's class-II list travels beside the
-  class-I one as `[mhc1: '…', mhc2: '…']` in `MHCMATCH_CASSETTE`'s existing `val(alleles)`, so a
-  cohort typed one donor at a time gets `self_help` with no parameter set.
-  `params.mhcmatch_vector_map_alleles_mhc2` is the fallback and stays for the caller who wires the
-  processes themselves. With neither, the map carries class I only and the process says so on
-  stderr rather than emitting a silently empty column.
+  of its own class-I epitopes. **It is in the `.map.json`, not the `.map.tsv`** — `write_map` puts
+  the feature rows in both and the per-unit summary in the JSON alone, so the TSV has no
+  `self_help` column to look for and its absence there means nothing. Read
+  `summary.n_units_with_self_help`, or `summary.units[i].self_help` for one unit.
+
+  It needs the recipient's class-II allotypes, and `pipeline.nf` supplies them **per donor**: the
+  same donor's class-II list travels beside the class-I one as `[mhc1: '…', mhc2: '…']` in
+  `MHCMATCH_CASSETTE`'s existing `val(alleles)`, so a cohort typed one donor at a time gets
+  `self_help` with nothing set. `params.mhcmatch_vector_map_alleles_mhc2` is the fallback, and stays
+  for the caller who wires the processes themselves. With neither, the map carries class I only and
+  the process says so on stderr. Measured on Aldan-3 2026-09-03, mouse line M1 through
+  `templates/run_mouse.sbatch` as written: **20 of 20 units** carried their own class-II help, over
+  117 class-I and 1,759 class-II epitopes on a 540 aa cassette.
 - **With `mhcmatch_vector_quota` set, `.cassette.faa` and `.cassette.fna` carry two records** —
   `cassette_composed` and `cassette_topk`. The first fills each arm's slots to maximise
   `P(at least target responses)` under the block model; the second fills the same budgets by score
@@ -467,19 +508,30 @@ alleles is unaffected by the default.
 **Boolean parameters accept `false` / `0` / `no` on the command line.** That is not free in Nextflow:
 `--some_flag false` arrives as the *string* `"false"`, which is truthy in Groovy, so the plain
 `params.x ? '--flag' : ''` idiom passes the flag a user just tried to disable. Every boolean here is
-coerced once in `nextflow.config` after its default is set. The direction that matters is the
+coerced **at the point of use**, never in `nextflow.config` — a config statement is parsed before Nextflow applies `--param`, so a coercion written there is overwritten by the very value it exists to coerce. `isOn()` in `main.nf` does it for the script blocks, and the resource closures repeat the test inline because a closure is evaluated per task. The direction that matters is the
 reverse one — somebody who believes they enabled `--mhcmatch_vector_screen` and did not gets a
 cassette with no safety check and no error.
+
+**Three params the module reads but does not own** -- `outdir`, `genome` and `publish_dir_mode` --
+belong to the calling pipeline, as in every nf-core module, and are defaulted here only when absent
+so a caller who set them is never clobbered. `publish_dir_mode` is the one worth naming: it is the
+only one of the three evaluated eagerly at config-parse time (`publishDir mode:`; the other two sit
+inside closures and resolve per task), so leaving it unset aborts the run **before the first
+process** rather than at the first publish, with `Unknown config attribute
+process.withName:MHCMATCH_*.params.publish_dir_mode`. Running `pipeline.nf` directly you get `copy`
+and never think about it.
 
 
 | param | default | what it does |
 |---|---|---|
-| `mhcmatch_tier` | `full` | reference panel tier |
+| `mhcmatch_tier` | `full` | reference panel tier (`full` \| `shortlist`). Passed to **`MHCMATCH_PREDICT`, `MHCMATCH_RANK`, `MHCMATCH_RERANK` and `MHCMATCH_CASSETTE`** — the four whose subcommands take `--tier`. `neoag`, `mimicry`, `alleles`, `cassette select` and `cassette score` do not accept it and are not given it; handing it to one exits 2 |
 | `mhcmatch_rank_threshold` | `2.0` | %rank below which `predict` emits a row |
 | `mhcmatch_rank_mode` | `fasta` | `rank` input kind: `fasta` or `table` |
 | `mhcmatch_rank_score` | `aggregate` | which model scores: the fitted aggregate, or `gate` (the pre-0.19.0 product-of-sigmoids) |
 | `mhcmatch_prevalence` | `null` (→ 0.0602) | assumed responding fraction of the candidate pool, the anchor for `p_response`. **A prior about your cohort** |
 | `mhcmatch_rank_core` | `false` | append `core` / `core_offset` / `core_source` |
+| `mhcmatch_predict_core` | `false` | the same for `predict` |
+| `mhcmatch_neoag_core` | `false` | the same for `neoag` |
 | `mhcmatch_tumor` | `null` | TCGA study code for tumour-matched expression — **set this** |
 | `mhcmatch_rank_extended` | `false` | append the six mimicry channels to `ranked.tsv` |
 | `mhcmatch_rank_annotate` | `false` | append nearest-reference and known-neoantigen columns |
@@ -488,11 +540,13 @@ cassette with no safety check and no error.
 | `mhcmatch_vector_n0` | `null` | **required** per-allotype capacity |
 | `mhcmatch_vector_screen` | `true` | run the essential-tissue / self-origin exclusion |
 | `mhcmatch_vector_map` | `true` | emit the cassette map (`*.cassette.map.tsv` / `.json`) |
-| `mhcmatch_vector_map_threshold` | `2.0` | %rank at or below which a window enters the map |
-| `mhcmatch_vector_map_alleles_mhc2` | `null` — the **fallback**, not the usual route | one literal class-II panel for every sample, for a caller who drives `MHCMATCH_CASSETTE` from their own topology. Under `pipeline.nf` the class-II list is per donor and needs no parameter (below). Without a list from either source the map is class I only and **`self_help` is not computed** — whether a unit's CD8 epitope has CD4 help from the *same* unit, which is the difference between a long peptide that raises both responses and one that needs a borrowed universal helper. Measured on one mouse line: **0 → 451 class-II epitopes** over a 540 aa cassette, and **12 of 20 units** shown to carry their own class-II help |
+| `mhcmatch_vector_map_binder` | `weak` | which **NetMHCpan** cut-off the map annotates. NetMHCpan: class I strong `%rank <= 0.5`, weak `<= 2.0`. NetMHCIIpan: class II strong `<= 2.0`, weak `<= 10.0`. **The two classes do not share a number** — a single `2.0` is weak for class I and *strong* for class II, which is why one mouse construct reported 0 class-II epitopes with its best window at `%rank 4.095`. `weak` is the default because the map reports and selects nothing |
+| `mhcmatch_vector_map_threshold` | *(from the tier)* | explicit class-I `%rank` override |
+| `mhcmatch_vector_map_threshold_mhc2` | *(from the tier)* | explicit class-II `%rank` override |
+| `mhcmatch_vector_map_alleles_mhc2` | `null` — the **fallback**, not the usual route | one literal class-II panel for every sample, for a caller who drives `MHCMATCH_CASSETTE` from their own topology. **Under `pipeline.nf` the class-II list is per donor and needs no parameter** — it travels in the allele value the process already takes, as `[mhc1:, mhc2:]`. Without a list from either source the map is class I only and **`self_help` is not computed** — whether a unit's CD8 epitope has CD4 help from the *same* unit, which is the difference between a long peptide that raises both responses and one that needs a borrowed universal helper. `templates/run_mouse.sbatch` still passes it, because an inbred line has no typing file for the channel to carry. Measured on one mouse line: **0 → 451 class-II epitopes** over a 540 aa cassette. Deriving it from `pipeline.nf`'s `--alleles_mhc2` was tried and does **not** work — that param is not visible in the module's scope and the fallback silently produced nothing, which is why the list travels through the channel instead |
 | `mhcmatch_vector_quota` | `null` | compose to quotas instead of the ranked top, e.g. `mhc1=14:2,mhc2=4:1,nonconventional=2:1`. **Emits two cassettes** — the composed one and the same slot budgets filled by score alone |
-| `mhcmatch_vector_block_live` | `0.5` | `P(a block is live)` in the response model behind the quota |
-| `mhcmatch_vector_evenness` | `0.0` | weight on class-I allotype evenness (H/H\ :sub:`max`) in the quota objective |
+| `mhcmatch_vector_block_live` | `0.5` | `P(a block is live)` in the response model behind the quota. **Emitted only with `--mhcmatch_vector_quota`** — without a quota there is no response model to price, and `MHCMATCH_CASSETTE` drops it silently. Not to be confused with `mhcmatch_cassette_block_live`, which `cassette select` always receives |
+| `mhcmatch_vector_evenness` | `0.0` | weight on class-I allotype evenness (H/H\ :sub:`max`) in the quota objective. **Emitted only with `--mhcmatch_vector_quota`**, same as `block_live` |
 
 `pipeline.nf` only — the file-driven entry point:
 
@@ -516,20 +570,23 @@ From `slurm.config` only:
 | `mhcmatch_slurm_queue` | `normal` | the partition every mhcmatch task is submitted to |
 | `mhcmatch_pmhc_dir` | `${projectDir}/reference/pmhc_data` | shared reference mirror; pre-stage with `mhcmatch bootstrap --reference` |
 | `mhcmatch_calibration_cache` | `${projectDir}/reference/calibration` | shared per-allele %rank calibration, safe to share under concurrency |
+| `mhcmatch_hf_home` | `${projectDir}/reference/hf` | **the one that decides where reference data physically lands.** `mhcmatch_pmhc_dir` is a *read* override — consulted first, used when the file is already staged; when it is not, the fetch falls through to `hf_hub_download`, which writes to the HuggingFace cache and ignores it. Leave this unset and ~250 MB goes to each node's `$HOME`. Measured both ways on Aldan-3: unset, 249 MB landed in `$HOME` **with `mhcmatch_pmhc_dir` set and honoured**; set, 244 MB landed in the shared root and `$HOME` did not grow at all (249 MB before, 249 MB after) |
 
 ## Build the image (only for `-profile docker`)
 
 ```zsh
-docker build -t <YOUR_REGISTRY>/mhcmatch:1.6.1 \
-    --build-arg MHCMATCH_VERSION=1.6.1 \
+docker build -t <YOUR_REGISTRY>/mhcmatch:1.7.2 \
+    --build-arg MHCMATCH_VERSION=1.7.2 \
     integrations/nextflow/mhcmatch/
-docker push <YOUR_REGISTRY>/mhcmatch:1.6.1
+docker push <YOUR_REGISTRY>/mhcmatch:1.7.2
 ```
 
 One tag, four files, and they must move together on a release: `Dockerfile`'s
 `ARG MHCMATCH_VERSION`, `environment.yml`'s pin, `nextflow.config`'s
 `params.mhcmatch_container` default, and this block. The container default sat on `1.6.0` while
-the other two were on `1.6.1`, which is the drift this note exists to stop.
+the other two were on `1.6.1`, which is the drift this note exists to stop -- and `1.6.1` was
+itself never published, so every one of those pins named a distribution that did not exist until
+1.7.2 was cut.
 
 No data staging: the build runs `mhcmatch bootstrap --reference`, which fetches the ligand panel
 **and** the known-epitope sets, mimicry references and expression tables (~115 MB total) from the
@@ -591,6 +648,7 @@ Then point the run at them:
 nextflow run . -profile slurm \
     --mhcmatch_pmhc_dir          /shared/ref/mhcmatch/pmhc_data \
     --mhcmatch_calibration_cache /shared/ref/mhcmatch/calibration \
+    --mhcmatch_hf_home           /shared/ref/mhcmatch/hf \
     --mhcmatch_slurm_queue       <partition> \
     --mhcmatch_vector_n0         6 \
     --mhcmatch_tumor             SKCM
@@ -611,7 +669,7 @@ a conda interpreter is enough and is what `-profile conda` sidesteps entirely:
 
 ```bash
 conda create -n mhcmatch -c bioconda python=3.12 nextflow
-conda run -n mhcmatch --no-capture-output pip install mhcmatch==1.6.1
+conda run -n mhcmatch --no-capture-output pip install mhcmatch==1.7.2
 ```
 
 (The `docker build` block above pins the same version and must move with it.)
@@ -694,8 +752,8 @@ register length and a re-run without it repeats hours of work that has not chang
 
 | | |
 |---|---|
-| **in** | `path tables`, `path pools` — the **collected** cassette reports and ranked tables of every sample in the run |
-| **out** | `score` → `cohort.cassette_score.tsv` (one file per run) · `versions` |
+| **in** | `path tables`, `path pools` — the **collected** `*.vaccine.units.tsv` of every sample (`MHCMATCH_CASSETTE_SELECT.out.units`) and the candidate pool each was chosen from. **Not** the `.cassette.tsv` reports: those are long-form (`section, i, key, value, detail`) with no peptide and no score column, and `cassette score` cannot read them — handing it the report is what kept this process from ever completing |
+| **out** | `score` → `cohort.<arm>.cassette_score.tsv` — **one per run and per arm**, so a `--mode both` run writes `cohort.rerank.…` and `cohort.denovo.…` · `versions` |
 
 **The one process that is not per sample, and that is the point.** `mhcmatch rank` anchors
 `p_response` on the batch it is handed, so a per-donor call makes every donor's mean candidate
@@ -726,10 +784,14 @@ task slower.
 
 ## A note on the stubs
 
-**No stub in this module types a column header.** Each asks the installed library for its own schema
+**Almost no stub in this module types a column header**, and the exceptions are named below. Each of the rest asks the installed library for its own schema
 (`predict.SCORED_COLUMNS`, `predict.NATIVE_COLUMNS`, `rank.columns()`, `rank.CORE_COLUMNS`,
 `rank.MIMICRY_PAIRS`, `mimicry.NEOAG_COLUMNS`, `vector.MAP_COLUMNS`), so `-stub-run` produces files with exactly the real shape and cannot drift
-from it. One thing a stub cannot know: `neoag` and `mimicry` carry every non-`peptide` column of a
+from it. **Three do type it literally**, because the library exposes no constant for their
+shape: `MHCMATCH_CASSETTE_SELECT`, `MHCMATCH_CASSETTE` and `MHCMATCH_CASSETTE_SCORE`. That is
+the drift this convention exists to prevent, and it has already happened once — the cohort
+score stub types 9 columns against a real 18. Giving the library a `cassette.SCORE_COLUMNS`
+to ask for is the fix; until then those three are the ones to distrust under `-stub-run`. One thing a stub cannot know: `neoag` and `mimicry` carry every non-`peptide` column of a
 `--peptides` TSV through unchanged, so a real run fed `ranked.tsv` emits those ahead of the schema
 the command adds. The stub types what the command adds. That is a repair, not a flourish: this
 module shipped an 18-column `scored.csv` stub against a 57-column real table, and a 5-column

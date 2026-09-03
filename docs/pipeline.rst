@@ -4,6 +4,13 @@ Running a cohort
 Two arms, one command, from a directory of files. This page is the pipeline; :doc:`cli` is the
 commands it runs and :doc:`cassette` is what the last stage decides.
 
+.. note::
+
+   **Requires mhcmatch >= 1.7.2.** The first process calls ``mhcmatch alleles`` and the rerank arm
+   calls ``rank --passthrough``; neither exists in 1.6.0, and 1.6.1 was never published. An
+   unpinned install on a stale index resolves to a release that cannot run the first process, so
+   ``templates/setup.sbatch`` pins the version and asserts what it got.
+
 .. code-block:: bash
 
    nextflow run integrations/nextflow/mhcmatch/pipeline.nf \
@@ -60,20 +67,77 @@ different answers and one must not overwrite the other:
    * - file
      - what
    * - ``<id>.{rerank,denovo}.vaccine.units.tsv``
-     - the *k* units to manufacture (default **k = 20**)
+     - one row per **selected epitope** (default **k = 20**, ``--mhcmatch_cassette_k``) — your
+       input table filtered to what the cassette carries, with nothing removed from the row: on
+       the rerank arm every one of your own columns and every ``mm_`` column survive, plus the
+       selection's own (``slot``, ``p``, ``k``, ``pool_n``, ``offset``, ``energy``, ``lam``,
+       ``rho``). Measured on one donor: 53 caller + 32 ``mm_`` + 22 selection = 107 columns over
+       20 rows, 0 caller columns dropped. If one of your names collides with a column
+       ``cassette select`` emits (``score``, ``p``, ``k``, ``slot``, …), **ours keeps the plain
+       name and yours is preserved beside it as** ``<name>_in``, with a line naming what moved —
+       ours has to keep the name because ``cassette build``, ``cassette score`` and the map read
+       it. Before 1.7.2 yours was overwritten silently. See ``-k`` counts epitopes, not
+       manufactured units below
    * - ``<id>.{rerank,denovo}.cassette.faa``
      - assembled, with the linker chosen by minimising junctional binding
    * - ``<id>.{rerank,denovo}.cassette.fna``
      - the CDS, deslipped
    * - ``<id>.{rerank,denovo}.cassette.map.{tsv,json}``
-     - unit / linker / epitope in 1-based coordinates
+     - unit / linker / epitope in 1-based coordinates. **The two are not the same content**: both
+       carry the feature rows, and the JSON carries the cassette sequence and the per-unit summary
+       as well -- ``summary.n_units_with_self_help`` and ``summary.units[i].self_help`` live there
+       and in no column of the TSV, so their absence from the TSV means nothing
+   * - ``<id>.{rerank,denovo}.cassette.tsv``
+     - the assembly **report**, long-form (``section, i, key, value, detail``): a ``withdrawn``
+       section naming every unit the safety screen removed and the clause that fired, plus
+       ``unit``, ``junction``, ``allotype``, ``cassette`` and ``sequence``. **Not** the epitope
+       table — that is ``vaccine.units.tsv`` above
    * - ``cohort.{rerank,denovo}.cassette_score.tsv``
-     - **one per run and per arm**
+     - **one per run and per arm**, because ``rank`` anchors ``p_response`` on the batch it is
+       handed: scored per donor, no two donors would be comparable
+
+What the cassette map counts as an epitope
+------------------------------------------
+
+The map annotates against the **NetMHCpan** cut-offs, and the two classes do not share a number:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 24 24 26
+
+   * - tier
+     - class I (NetMHCpan)
+     - class II (NetMHCIIpan)
+     - flag
+   * - strong
+     - ``%rank <= 0.5``
+     - ``%rank <= 2.0``
+     - ``--mhcmatch_vector_map_binder strong``
+   * - **weak** (default)
+     - ``%rank <= 2.0``
+     - ``%rank <= 10.0``
+     - ``--mhcmatch_vector_map_binder weak``
+
+**One number for both classes is the mistake this replaces.** A single ``2.0`` is the *weak* cut for
+class I and the *strong* cut for class II, so a construct carrying an ordinary class-II weak binder
+reports none at all. Measured on one mouse cassette: 4,239 class-II windows scored, best
+``%rank 4.095``, and therefore **0** class-II epitopes at ``2.0`` against **78** at ``10.0`` — with
+``self_help`` moving from 0 of 18 units to 3 of 18.
+
+**This is a reporting cut-off and nothing else.** It does not choose units, does not change the
+cassette sequence, and does not touch the ranked candidate tables — class-II candidates are scored
+and ranked in their own ``<id>.mhc2.*`` files regardless. When a class ends up empty the map says so
+explicitly, giving the number of windows it scored and the best ``%rank`` it saw, so a zero can never
+be mistaken for a ranker that failed to run.
 
 The file naming is the whole input contract
 -------------------------------------------
 
-The sample id is the filename up to its first dot. A file that does not match is ignored.
+For the epitope and window files the sample id is the filename up to its first dot. For a
+**typing** file it is what remains after stripping the ``[._-]?(norma|normal)?[._-]?alleles.tsv``
+suffix, so ``D1.alleles.tsv``, ``D1_norma.alleles.tsv`` and ``D1_alleles.tsv`` all key to ``D1``.
+A file that does not match is ignored; a typing file that matches but joins no sample is named
+in a warning rather than dropped silently.
 
 .. list-table::
    :header-rows: 1
@@ -321,6 +385,7 @@ background 200 times and re-downloads the same references 200 times.
        --mhcmatch_slurm_queue       <partition> \
        --mhcmatch_pmhc_dir          /shared/ref/mhcmatch/pmhc_data \
        --mhcmatch_calibration_cache /shared/ref/mhcmatch/calibration \
+       --mhcmatch_hf_home           /shared/ref/mhcmatch/hf \
        --mhcmatch_vector_n0 8 -resume
 
 ``--mhcmatch_slurm_queue`` **has no safe default.** It falls back to ``normal``, which is a common

@@ -215,7 +215,7 @@ enumerate; that is the only warrant the :math:`O(kN)` rule has and it is a test 
 .. note::
 
    ``bench/results/...`` paths on this page resolve in the benchmark repository,
-   `2026-mhcmatch-benchmark <https://github.com/antigenomics/2026-mhcmatch-benchmark>`_, not in the
+   ``2026-mhcmatch-code`` (private; released with the manuscript), not in the
    library repo.
 
 **``--tol`` is spent on the objective, not on the largest size that fits.** A mean–variance

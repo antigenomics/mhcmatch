@@ -1,6 +1,86 @@
 # Changelog
 
-## Unreleased — a caller's own table, and the allele step that was failing silently
+## Unreleased — post-release audit: two SLURM-path defects and a guard that had stopped guarding
+
+No library behaviour changes; the fixes are in the Nextflow SLURM path, the test suite and the docs.
+
+**`run_slurm_head.sbatch` exported `HF_HOME` and never passed `--mhcmatch_hf_home`.** On
+`-profile slurm` the `env {}` block in `slurm.config` *sets* each task's environment from
+`params.mhcmatch_{pmhc_dir,calibration_cache,hf_home}` rather than inheriting the head shell's, and
+every task is its own sbatch — so the export reached the head process alone and each task fell back
+to the default `${projectDir}/reference/hf`, putting ~250 MB inside the module checkout instead of
+the shared reference root. The README's SLURM example had the flag; the template did not. Measured
+on Aldan-3: 249 MB in `$HOME` on a run that omitted it.
+
+**`MHCMATCH_CASSETTE_SCORE` matched no `withName:` selector**, because the `$` anchor on
+`.*MHCMATCH_CASSETTE(_DN)?$` excludes it and the `process {}` defaults carry no cpus/memory/time.
+It now joins the light tier (1 cpu, 2 GB, 20 m) — a two-donor cohort scores in under one second on
+41 kB. All nine processes and all five `_DN` aliases now match exactly one selector.
+
+**`test_nextflow_pins_match_pyproject` had passed vacuously since 1.0.0**, scanning for
+`\b0\.\d+\.\d+\b` — a pattern no 1.x pin can match — and never opening `nextflow.config` or
+`templates/*.sbatch`, the two files whose pins have actually drifted. It now anchors on the four
+spellings of a mhcmatch pin and fails if it ever matches nothing again.
+
+**Five dead links to `github.com/antigenomics/2026-mhcmatch-benchmark`** (a 404) in the README, two
+doc pages, two notebooks and the shipped `PROVENANCE.md`; the repo is `repseq/2026-mhcmatch-code`,
+private. The NetMHCpan strong/weak convention now also appears in `docs/cli.rst` and `SKILL.md`,
+not only in the Nextflow layer, and the module README records that `git clone` fails behind a proxy
+that passes `ls-remote` but blocks the pack POST — take the release tarball there.
+
+## [1.7.2] — 2026-09-02 — the cassette map, on NetMHCpan's terms
+
+*(1.7.0 was tagged and superseded before publication. 1.7.1 **was** published, on 2026-09-02, and
+is the reason 1.7.2 is urgent: `master` gained `--map-binder` after that wheel was cut, so a
+checkout of `master` against an installed 1.7.1 dies in both `MHCMATCH_CASSETTE` tasks with
+`unrecognized arguments: --map-binder weak`. **Clone the tag that matches the release you
+installed** — `mhcmatch --version` cannot tell the two apart, because both print `1.7.1`.)*
+
+**One %rank cut-off was applied to both classes, and the two classes do not share one.** NetMHCpan
+calls class I strong at `%rank <= 0.5` and weak at `<= 2.0`; NetMHCIIpan calls class II strong at
+`<= 2.0` and weak at `<= 10.0`. The map's single `--map-threshold 2.0` was therefore the *weak* cut
+for class I and the *strong* cut for class II — holding class II to a stricter standard than class I
+without saying so.
+
+What that cost, measured on one mouse construct: the de novo cassette reported **0** class-II
+epitopes while its best of 4,239 scored windows sat at `%rank 4.095`, an ordinary weak binder.
+Across cut-offs, rerank vs de novo: 72 / 0 at 2.0, 77 / 8 at 5.0, 153 / 78 at 10.0.
+
+- **`vector.RANK_STRONG` / `RANK_WEAK` / `rank_cutoffs(tier)`** carry the NetMHCpan numbers, and
+  `epitope_map` takes `threshold2` so the classes are cut separately. `--map-binder {strong,weak}`
+  selects the tier and **defaults to `weak`**, because the map reports and selects nothing, so
+  under-reporting help a construct genuinely carries is the costlier error. `--map-threshold` and
+  the new `--map-threshold-mhc2` override per class.
+- **`cassette select --passthrough` overwrote a caller column instead of preserving it.** Its own
+  `score` (and `p`, `k`, `slot`, …) won any name clash, so a candidate table carrying its own
+  `score` got ours in that cell — measured on a real table, `3.9703657700079718` replaced by
+  `4.866210` — with nothing in the file or the log to say so. That is the exact opposite of the
+  contract the rerank arm advertises. Ours still keeps the plain name, because `cassette build`,
+  `cassette score` and the map read it; the caller's is now emitted beside it as `<name>_in` and the
+  swap is announced once. The clash set is computed from the caller's real **header**, not from the
+  parsed row, so the keys `_cassette_rows` resolves internally (`epitope` -> `peptide`,
+  `best_allele` -> `allele`, `gene_name` -> `gene`) are not mistaken for the caller's own and do not
+  sprout spurious `_in` twins.
+
+- **A zero is never printed bare again.** `epitope_map` fills an optional `stats` dict with, per
+  class, the windows offered, the pairs scored, the number kept and the **best `%rank` seen**; the
+  CLI prints it whenever a class comes back empty, distinguishing "the ranker never ran", "the
+  allele list resolved to nothing" and "the best window missed the cut by a hair" — three facts a
+  bare `0 class-II epitope(s)` collapses into one. It also states, in that line, that the cut-off is
+  a *reporting* one: nothing is removed from the cassette, the units table or the ranked candidates.
+
+Through the pipeline on the same mouse data: de novo class II **0 → 78** and `self_help`
+**0/18 → 3/18**; rerank class II **72 → 153** and `self_help` **2/20 → 4/20**. Class I is unchanged
+at 98 and 117, because 2.0 was already its weak cut.
+
+**Nothing else moves.** Cassette selection is class-I only by design, so class II never entered it;
+the class-II candidates were always scored and ranked in full in their own `<id>.mhc2.*` tables.
+
+
+### Also in this release — a caller's own table, and the allele step that was failing silently
+
+*(1.7.0 was tagged and then superseded before it reached PyPI; nothing was ever published
+under that number, so its contents are folded in here rather than split across two entries.)*
 
 **The library can now be the last stage of somebody else's pipeline, rather than a replacement for
 it.** Four additive changes, each closing a gap a private one-off script had been covering, and one
@@ -178,6 +258,84 @@ versioning is [SemVer](https://semver.org).
 
 > Note: 0.4.0–0.4.2 shipped without entries here. This file jumps 0.3.0 → 0.5.0; see `git log` for
 > the 0.4.x range.
+
+
+### Documentation, audited against the shipped CLI rather than read
+
+Every fenced command in the README, the module README and the docs was executed against a clean
+install of the built wheel. Three did not run, and the cause was one library mismatch rather than
+three doc defects:
+
+- **`rank` wrote `p_response`; `cassette build`/`order` read `p`.** Two names for one number. The
+  error message told the caller to rename the column by hand, which made the README's own
+  two-command cassette chain exit 1 as written. `cli.RESPONSE_COLUMNS` now resolves either spelling
+  the way `PEPTIDE_COLUMNS` already resolved `peptide`/`epitope`, and `p` is what the row carries
+  afterwards. Verified on real window input: `rank fasta` → 46 candidates → `cassette build
+  --context` → `units=11 spacer=AAY`, 327 aa, both FASTAs written, with no rename step.
+- **`--mhcmatch_tier` never reached `MHCMATCH_CASSETTE`**, although `cassette build`/`order` accept
+  `--tier` — `_add_vector_opts` carries `--pmhc/--tier/--species` alongside the assembly flags. A run
+  set to `shortlist` therefore scored its candidates against one panel and screened its cassette
+  against another. It is passed now; `--tier full` is a no-op, confirmed by re-running the four
+  cassette tasks (`completed=4 cached=26`, outputs unchanged).
+- **`--mhcmatch_vector_n0` is not read on the `pipeline.nf` path at all** — both arms run `cassette
+  order`, which does not size, and `cassette select` sizes by fixed `-k`. It was the headline knob in
+  all three run templates and the Deployment example. `--mhcmatch_cassette_k` is the construct-size
+  commitment there; `--n0` belongs to `cassette build`.
+- **`--mhcmatch_vector_block_live` is emitted only alongside `--mhcmatch_vector_quota`**, so the
+  mouse template passed a value that was silently dropped. Not to be confused with
+  `mhcmatch_cassette_block_live`, which `cassette select` always receives.
+- `MHCMATCH_CASSETTE_SCORE`'s documented input was the `.cassette.tsv` reports — the one wiring that
+  cannot work, and the reason that process never completed. It is the collected `*.vaccine.units.tsv`.
+- The `vaccine.units.tsv` was described only as "one row per selected epitope", never as what it is:
+  **the caller's own table filtered to what the cassette carries, with nothing removed from the row**
+  (53 caller + 32 `mm_` + 22 selection = 107 columns over 20 rows on one donor, 0 caller columns
+  dropped). Both READMEs, the docs and the Russian instructions now say so.
+- Two README table rows were nested inside their own code span and rendered with no command at all;
+  the calibration-cache paragraph contradicted itself 35 lines apart; `MHCMATCH_PREDICT`'s drop-in
+  channel is a 4-tuple, not 3; the sample-id rule is a first-dot split for data files and a suffix
+  strip for typing files; `neoag`/`mimicry` take a TSV with a header where `complement`/`mimics`/
+  `source` take a bare list; and the "no stub types a column header" convention is broken by three
+  stubs, one of which types 9 columns against a real 18.
+
+### Deployment — the delivery path itself, which had never been exercised end to end
+
+The library changes above were verified; the *documented route to running them* was not, and an
+audit of it found five defects that every local check passes straight through.
+
+- **A minor bump, not `1.6.1`.** `1.6.1` was stamped in the tree but never tagged and never published, and
+  39 further commits landed on top of that dated changelog entry — so the string named two different
+  code states and no distribution. Meanwhile `environment.yml`, the `Dockerfile` and
+  `params.mhcmatch_container` all pinned `1.6.1`, and `templates/setup.sbatch` installed unpinned
+  `--upgrade`, which resolves to **1.6.0** — a release with no `mhcmatch alleles` and no
+  `rank --passthrough`, i.e. one that cannot run the first process of the pipeline. Every pin now
+  names the shipped version, and `setup.sbatch` asserts the version it got rather than discovering the mismatch
+  several minutes later inside a task log.
+
+- **`-profile slurm` did not exist.** `slurm.config` documents how a *calling* pipeline wires the
+  include into its own `profiles` block; nothing defined the profile in the config that
+  `nextflow run pipeline.nf` actually loads, so the cohort template aborted at startup with
+  `Unknown configuration profile: slurm`. `nextflow.config` now declares it.
+
+- **The typing-file id rule was narrower than the glob feeding it.** The glob `*alleles.tsv` admits
+  `<id>_alleles.tsv`, which the strip left as `D1_alleles`; that key joined no sample, the sample
+  lost its allele list, and the de novo arm dropped it — warning about missing alleles, which names
+  the symptom rather than the cause. One permissive suffix strip now covers every spelling the glob
+  admits, and a typing file that joins nothing says so by name.
+
+- **`HF_HOME`, not `MHCMATCH_PMHC_DIR`, decides where the reference data lands.** The latter is a
+  *read* override, consulted first and used when a file is already staged; when it is not, the fetch
+  falls through to `hf_hub_download`, which writes to the HuggingFace cache and never reads it. A
+  cluster run with the shared root correctly set therefore put **249 MB in `$HOME`** — the quota the
+  setting exists to avoid. All four templates and the SLURM `env` block now set `HF_HOME`.
+
+- **`setup.sbatch` assumed the conda environment already existed**, which is true for whoever wrote
+  it and false for its reader. It now creates the env (python 3.12 + nextflow) when absent, so a
+  working `conda` is the single prerequisite. The four templates also no longer write
+  `#SBATCH --output` into a `logs/` directory that nothing creates before Slurm resolves the path.
+
+- `NO_FILE` resolves against `moduleDir` rather than `projectDir`, so an integrator who includes
+  `subworkflows/rerank.nf` from their own pipeline no longer resolves the sentinel against their
+  own repo root.
 
 ## [Unreleased]
 

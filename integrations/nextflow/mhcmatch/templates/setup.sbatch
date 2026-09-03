@@ -3,7 +3,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --time=01:00:00
-#SBATCH --output=logs/mhcmatch-setup-%j.out
+#SBATCH --output=mhcmatch-setup-%j.out
 #
 # Run this ONCE, before the first pipeline run, and never again.
 #
@@ -19,7 +19,11 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------- EDIT THESE
-ENV=mhcmatch          # conda env name
+ENV=mhcmatch          # conda env name. Created below if it does not exist yet
+VERSION=1.7.2         # the mhcmatch release to install. PIN IT -- the pipeline calls
+                      # subcommands (`mhcmatch alleles`) and flags (`rank --passthrough`)
+                      # that do not exist before 1.7.2, and an unpinned `--upgrade` on a
+                      # cluster with a stale index resolves to whatever it already has
 REF=/shared/ref/mhcmatch
                       # the shared reference + calibration root. A filesystem EVERY compute node can
                       # see, and a large one -- not a home quota, which on a shared cluster is
@@ -31,10 +35,34 @@ WHEELHOUSE=""         # optional: a directory of .whl files, for a node whose eg
                       # PyPI. See the note further down
 # -----------------------------------------------------------------------------
 
+# **This script is the whole prerequisite.** It used to assume `$ENV` already existed with
+# nextflow in it, which is true on a cluster where someone had already done it by hand and false
+# for the colleague this template is written for. Creating an env that exists is an error, so the
+# existence check comes first.
+if ! conda env list | awk '{print $1}' | grep -qx "$ENV"; then
+    echo "== creating conda env '$ENV' (python 3.12 + nextflow) =="
+    # `--override-channels` is not tidiness. Without it conda also consults Anaconda's own
+    # `defaults` channels, which are behind a Terms-of-Service acceptance gate; on a machine where
+    # that has not been accepted the solve dies with "Terms of Service have not been accepted" and
+    # creates nothing. conda-forge and bioconda carry everything needed and have no such gate.
+    conda create -y -n "$ENV" --override-channels \
+        -c conda-forge -c bioconda python=3.12 nextflow
+    # conda can report success having created nothing; check rather than trust.
+    conda env list | awk '{print $1}' | grep -qx "$ENV" || {
+        echo "ERROR: conda reported success but '$ENV' does not exist" >&2; exit 1; }
+fi
+
+# **`MHCMATCH_PMHC_DIR` is a READ override, not a download destination.** It is consulted first
+# and used when the file is already there; when it is not, the fetch goes through
+# `hf_hub_download`, which writes to the HuggingFace cache and ignores this variable entirely. So
+# `HF_HOME` is the one that decides where ~250 MB of reference data actually lands -- without it
+# that is your home directory, which on a shared cluster is the small quota this block exists to
+# avoid. Measured on one cluster: 249 MB in $HOME with MHCMATCH_PMHC_DIR set and honoured.
+export HF_HOME="$REF/hf"
 export MHCMATCH_PMHC_DIR="$REF/pmhc_data"
 export MHCMATCH_CALIBRATION_CACHE="$REF/calibration"
 export TMPDIR="${TMPDIR:-$REF/tmp}"
-mkdir -p "$MHCMATCH_PMHC_DIR" "$MHCMATCH_CALIBRATION_CACHE" "$TMPDIR" logs
+mkdir -p "$HF_HOME" "$MHCMATCH_PMHC_DIR" "$MHCMATCH_CALIBRATION_CACHE" "$TMPDIR"
 
 # **This is the only place that installs.** Two runs sharing one conda env race on
 # `pip install --force-reinstall` and one clobbers the other's entry point mid-write.
@@ -44,13 +72,20 @@ if [ -n "$WHEELHOUSE" ]; then
     # the same node. Build the wheelhouse where the network works:
     #   pip download --dest wheels --platform manylinux2014_x86_64 --python-version 3.12 \
     #       --implementation cp --only-binary=:all: mhcmatch
-    conda run -n "$ENV" --no-capture-output pip install -q --no-index --find-links "$WHEELHOUSE" --force-reinstall mhcmatch
+    conda run -n "$ENV" --no-capture-output pip install -q --no-index --find-links "$WHEELHOUSE" --force-reinstall "mhcmatch==$VERSION"
 else
-    conda run -n "$ENV" --no-capture-output pip install -q --upgrade mhcmatch
+    conda run -n "$ENV" --no-capture-output pip install -q --upgrade "mhcmatch==$VERSION"
 fi
 
 echo "== versions =="
 conda run -n "$ENV" --no-capture-output mhcmatch --version
+# A wrong version does not fail loudly on its own: the pipeline's first process calls
+# `mhcmatch alleles`, which simply does not exist before 1.7.2, and the run dies several minutes
+# later inside a task log. Check it here, where the message can say what actually happened.
+conda run -n "$ENV" --no-capture-output mhcmatch --version 2>&1 | grep -q "$VERSION" || {
+    echo "ERROR: expected mhcmatch $VERSION; the pipeline needs >=1.7.2 for \`alleles\` and \`rank --passthrough\`" >&2
+    exit 1
+}
 conda run -n "$ENV" --no-capture-output nextflow -version 2>&1 | grep -i version || true
 
 echo "== references (~115 MB: ligand panel, thymic/viral sets, neoantigen deposits, expression) =="

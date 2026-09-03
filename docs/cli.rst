@@ -18,7 +18,13 @@ Machine-readable output
 -----------------------
 
 Every command whose result is a table takes ``--out FILE`` and writes tab-separated values with a
-header row; progress and provenance go to stderr behind ``#``. ``scan``, ``logo`` and ``expression``
+header row; progress and provenance go to stderr behind ``#``.
+
+``--peptides`` is read two ways, and the difference is not cosmetic. ``complement``, ``mimics`` and
+``source`` take a **bare list**, one peptide per line. ``neoag`` and ``mimicry`` take a **TSV with a
+header**, because they carry every non-``peptide`` column of that file through into their output ---
+so the column naming the peptide has to be identifiable, and it may be spelled ``peptide`` or
+``epitope``. Handing them a bare list fails with ``no `peptide` / `epitope` column``. ``scan``, ``logo`` and ``expression``
 print an aligned, human-readable form by default and switch to TSV under ``--out`` or ``--tsv`` ---
 the aligned form of ``expression`` writes ``median 0.33`` and ``IQR 0.1-0.9`` *inside* cells, which
 reads well and parses badly, and the aligned form of ``logo`` keeps only the top three residues per
@@ -60,11 +66,11 @@ Routine tasks
    * - Why did *this* candidate rank where it did?
      - ``mhcmatch explain PEP --allele 'HLA-A*02:01'``
    * - Has this, or something within 1-2 substitutions, already been tested?
-     - ``mhcmatch neoag --peptides p.txt``
+     - ``mhcmatch neoag --peptides p.tsv``
    * - What self / viral / bacterial peptide does it resemble?
      - ``mhcmatch mimics --peptides p.txt --threads 0``
    * - Does that resemblance raise or lower the risk, and through which channel?
-     - ``mhcmatch mimicry --peptides p.txt``
+     - ``mhcmatch mimicry --peptides p.tsv``
    * - Where in the proteome does it come from?
      - ``mhcmatch source --peptides p.txt --proteome human --threads 0``
    * - Which gene does this candidate come from?
@@ -204,14 +210,17 @@ The commands, by axis
    * - ``cassette select``
      - choose *k* units (± ``--tol``) from a donor's **whole** candidate pool, maximising the
        mean-variance objective rather than sorting on the score (:doc:`cassette`).
-       ``--passthrough`` keeps your columns on the chosen units, including the long window
-       ``cassette build --unit-column`` then assembles from
+       ``--passthrough`` keeps your columns on the chosen units, including the long window that
+       ``cassette build --unit-column`` then assembles from. On a name clash yours is preserved as
+       ``<name>_in`` and the swap is announced -- see :doc:`pipeline`
    * - ``cassette score``
      - score finished cassettes across donors and across sizes: expected responding units,
-       ``P(X >= target)`` under the block model, ``target`` being ``--target`` (default 1),, and ``lam`` (:doc:`cassette`)
+       ``P(X >= target)`` under the block model, ``target`` being ``--target`` (default 1), and ``lam`` (:doc:`cassette`)
    * - ``cassette build``
      - assemble a polyepitope cassette: withdraw on safety, choose how many units per allotype,
-       order them, pick the spacer, and optionally emit the cassette map
+       order them, pick the spacer, and optionally emit the cassette map (``--map``/``--map-json``).
+       The map annotates epitopes at the **NetMHCpan** cut-off named by ``--map-binder`` --
+       see below
    * - ``cassette order``
      - the assembly half alone, on units already chosen — so ``--n0`` is not required
    * - ``cassette linkers``
@@ -221,6 +230,35 @@ The commands, by axis
    * - ``vector`` · ``deslip``
      - **deprecated** aliases for ``cassette build`` and ``cassette deslip``. They still work and
        print a deprecation line; they will be removed after 1.x
+
+**The cassette map uses NetMHCpan's binder vocabulary, and the two classes do not share a number.**
+``--map-binder`` picks the tier; the cut-offs are the published ones:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 20 20 40
+
+   * - tier
+     - class I ``%rank``
+     - class II ``%rank``
+     - source
+   * - ``strong`` (SB)
+     - ``<= 0.5``
+     - ``<= 2.0``
+     - NetMHCpan / NetMHCIIpan
+   * - ``weak`` (WB), **default**
+     - ``<= 2.0``
+     - ``<= 10.0``
+     - NetMHCpan / NetMHCIIpan
+
+``weak`` is the default because the map **reports** and never selects — nothing downstream drops a
+unit because the map left an epitope out. A single shared number is the trap the split exists to
+avoid: ``2.0`` is the weak cut for class I and the *strong* cut for class II, so one threshold
+applied to both silently discards ordinary class-II binders. It did: one mouse construct reported
+**0** class-II epitopes with its best window at ``%rank 4.095`` — a weak binder by the published
+convention, outside a strong cut. Override either class alone with ``--map-threshold`` (class I) or
+``--map-threshold-mhc2``. A class that keeps nothing reports how many windows it scored and the best
+``%rank`` it saw, so an empty map is never a bare zero.
 
 **Setup.**
 

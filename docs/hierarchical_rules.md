@@ -6,7 +6,7 @@ built and benchmarked; so are the per-position tau (`prior_strength="auto"`) and
 **Not a Sphinx page.** This file is a design record, not library documentation: it is markdown, the
 docs build reads reStructuredText only, and it is deliberately outside `index.rst`'s toctree. Every
 `bench/...` path and every `*.md` result table cited below resolves in the **benchmark repository**,
-[2026-mhcmatch-benchmark](https://github.com/antigenomics/2026-mhcmatch-benchmark), under
+[`2026-mhcmatch-code`](https://github.com/repseq/2026-mhcmatch-code) (private; released to reviewers), under
 `bench/results/` — not in this repo.
 
 ## The observation

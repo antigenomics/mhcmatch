@@ -341,9 +341,18 @@ process MHCMATCH_CASSETTE {
     def a2     = (alleles instanceof Map ? alleles.mhc2 : null) ?:
                      params.mhcmatch_vector_map_alleles_mhc2
     def map2   = a2 ? "--map-alleles-mhc2 '${a2}'" : ''
+    // **The two classes do not share a %rank cut-off**, which is why this passes a NetMHCpan
+    // *tier* and not a number. NetMHCpan calls class I strong at <= 0.5 and weak at <= 2.0;
+    // NetMHCIIpan calls class II strong at <= 2.0 and weak at <= 10.0. The old `--map-threshold 2.0`
+    // was therefore the weak cut for class I and the STRONG cut for class II, and it is why one
+    // mouse construct reported zero class-II epitopes with its best window at %rank 4.095.
+    // `weak` is the default because the map reports and selects nothing.
+    def mbind = params.mhcmatch_vector_map_binder ?: 'weak'
+    def mt1   = params.mhcmatch_vector_map_threshold      ? "--map-threshold ${params.mhcmatch_vector_map_threshold}" : ''
+    def mt2   = params.mhcmatch_vector_map_threshold_mhc2 ? "--map-threshold-mhc2 ${params.mhcmatch_vector_map_threshold_mhc2}" : ''
     def mapArg = isOn(params.mhcmatch_vector_map)
                      ? "--map ${prefix}.cassette.map.tsv --map-json ${prefix}.cassette.map.json " +
-                       "--map-threshold ${params.mhcmatch_vector_map_threshold ?: 2.0} ${map2}" : ''
+                       "--map-binder ${mbind} ${mt1} ${mt2} ${map2}" : ''
     // Quota composition: fill declared slot budgets so that at least k of each arm is expected to
     // respond, rather than taking the ranked top. Off unless a quota is given, because the arms and
     // their targets are a trial-design decision and there is no defensible default for them.
@@ -358,6 +367,12 @@ process MHCMATCH_CASSETTE {
                        "--evenness ${params.mhcmatch_vector_evenness ?: 0.0}" : ''
     // `order` does not size, so it needs no capacity estimate.
     def n0arg  = verb == 'order' ? '' : "--n0 ${n0}"
+    // The reference panel tier, which `cassette build`/`order` DO accept -- they take
+    // `_add_vector_opts`, and that helper carries `--pmhc/--tier/--species` alongside the assembly
+    // flags. Without this the cassette silently used `full` while `predict`, `rank` and `neoag`
+    // used whatever `--mhcmatch_tier` said, so a run set to `shortlist` scored its candidates
+    // against one panel and screened its cassette against another.
+    def tier   = params.mhcmatch_tier ?: 'full'
     if (verb != 'order' && n0 == null) error "params.mhcmatch_vector_n0 is required and has no default: per-allotype capacity is not fitted by anything in the public record, so the value is yours to set and it is recorded in the output"
     """
     mhcmatch cassette ${verb} \\
@@ -365,6 +380,7 @@ process MHCMATCH_CASSETTE {
         ${n0arg} \\
         --alleles '${a1}' \\
         --cls ${cls} \\
+        --tier ${tier} \\
         ${screen} ${quota} ${mapArg} ${args} \\
         --fasta ${prefix}.cassette.faa \\
         --fasta-nt ${prefix}.cassette.fna \\

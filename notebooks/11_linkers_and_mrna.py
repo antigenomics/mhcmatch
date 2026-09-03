@@ -212,7 +212,7 @@ def _(mo):
 
     Nothing here. The four units are written by hand so every figure is reproducible without a
     download; the backbone elements are placeholders. Measured cassette figures live in
-    [`2026-mhcmatch-benchmark`](https://github.com/antigenomics/2026-mhcmatch-benchmark) under
+    [`2026-mhcmatch-code`](https://github.com/repseq/2026-mhcmatch-code) (private; released to reviewers) under
     `bench/results/`.
     """)
     return

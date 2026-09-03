@@ -288,6 +288,16 @@ mhcmatch build corpus -v    # one target, with per-step wall clock
   i.e. 4.4 s for all 363,324 pairs. The 1,314 s is per-allele calibrator construction -- 0.95 s cold
   x 203 alleles, per worker -- plus `Store.from_pmhc` at 4.5 s per worker per host. Batch the
   calibrator builds, not the peptide loop.
+- **A version bump needs a REINSTALL before the rebuild, or the artifacts are stamped with the old
+  version.** `__version__` is `importlib.metadata.version("mhcmatch")` -- the *installed dist-info*,
+  not `pyproject.toml`. Editing the version and running `mhcmatch build` therefore stamps every
+  artifact with the version still recorded in the editable install, and `build --check` then agrees
+  with itself: measured 2026-09-02 on the 1.6.1 -> 1.7.0 bump, a full 326 s rebuild produced
+  "shipped artifacts now stamped 1.6.1" and `--check` reported "0 stale of 27 checked against
+  1.6.1". CI installs fresh, sees 1.7.0, and calls all four stale. Reinstall first (`pip install -e
+  .` into an env whose metadata you control), confirm `mhcmatch --version`, then build. This is the
+  same self-comparison that made the 0.25.0 -> 0.26.0 guard test pass while shipping stale models --
+  the guard and the thing it guards were both read from the stale install.
 - On a version bump, regenerate rather than reasoning about whether it matters, then *verify* the
   scores did not move. Both existing builders are instrumented for this: `corpus_tables` prints
   `** MOVED **` for any cell that changed, and the anchor rebuild is checked against the previous

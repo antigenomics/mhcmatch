@@ -27,7 +27,8 @@
 //   <id>.mhcI.epitopes.scored.tsv    /  <id>.mhcII.epitopes.scored.tsv     -> --mode rerank
 //   <id>.mhcI.peptide.fasta          /  <id>.mhcII.peptide.fasta           -> --mode denovo,
 //                                                                    and --context for rerank
-//   <id>.alleles.tsv  (anything matching <id>*alleles.tsv)                 -> the allele list
+//   <id>.alleles.tsv / <id>_norma.alleles.tsv / <id>_alleles.tsv          -> the allele list
+//                    (any `<id>*alleles.tsv`; the id is what remains after the suffix)
 //
 // A file that does not match is ignored, and the run says how many of each it found. Pass explicit
 // globs (--epitopes/--windows/--typing) when your names differ.
@@ -105,8 +106,31 @@ workflow {
             [ id, cls, (cls == 'mhc2' ? params.alleles_mhc2 : params.alleles) ?: '' ] }
     }
     else if( typGlob ) {
+        // **The id rule has to be as wide as the glob that feeds it.** The glob is `*alleles.tsv`,
+        // which also admits `<id>_alleles.tsv` and `<id>_norma.alleles.tsv`. A narrower strip left
+        // the id as `D1_alleles`, that key joined no sample, the sample lost its allele list, and
+        // the de novo filter below dropped it -- warning about missing alleles, which names the
+        // symptom and not the cause. One permissive suffix strip covers every spelling the glob
+        // can admit, so the two can no longer disagree.
         ch_typing = Channel.fromPath(typGlob, checkIfExists: false)
-                           .map { f -> [ f.name.replaceFirst(/(_norma)?\.alleles\.tsv$/, ''), f ] }
+                           .map { f -> [ f.name.replaceFirst(/[._-]?(norma|normal)?[._-]?alleles\.tsv$/, ''), f ] }
+
+        // A typing file that matched the glob but joins no (sample, class) key is a naming
+        // mismatch, not an absence. Say so, and name the id that was derived -- silence here is
+        // exactly what turns one typo into "the panel came back empty".
+        // One param and an index, NOT `{ kids, tids -> }`: `map` destructures a tuple into a
+        // multi-parameter closure, `subscribe` hands the item over whole, and the two-param form
+        // silently binds the entire pair to the first name.
+        ch_keys.map { id, cls -> id }.unique().toList()
+               .combine( ch_typing.map { id, f -> id }.unique().toList() )
+               .subscribe { pair ->
+                   def kids = pair[0] as List
+                   def tids = pair[1] as List
+                   def orphan = tids.findAll { !kids.contains(it) }
+                   if( orphan )
+                       log.warn "typing file(s) matched but no input sample carries that id: " +
+                                "${orphan.join(', ')} -- samples seen: ${kids.join(', ')}"
+               }
         MHCMATCH_ALLELES( ch_keys.combine( ch_typing, by: 0 )
                                  .map { id, cls, f -> [ [id: id, cls: cls], f, cls ] } )
         ch_alleles = MHCMATCH_ALLELES.out.alleles
@@ -137,7 +161,7 @@ workflow {
                   .join( ch_win.map { id, cls, f -> [ [id: id, cls: cls], f ] }, remainder: true )
                   .filter { meta, tsv, fa -> tsv != null }
                   .map { meta, tsv, fa ->
-                      [ meta, tsv, fa ?: file("${projectDir}/NO_FILE"), meta.cls ] },
+                      [ meta, tsv, fa ?: file("${moduleDir}/NO_FILE"), meta.cls ] },
             // The donor's class-I list AND their class-II list, as one value. MHCMATCH_CASSETTE
             // takes `[mhc1:, mhc2:]` and computes `self_help` from the second -- whether a unit's
             // CD8 epitope has CD4 help from the SAME unit, which is what the cassette map is for.

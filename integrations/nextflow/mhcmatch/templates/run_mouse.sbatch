@@ -3,7 +3,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
 #SBATCH --time=08:00:00
-#SBATCH --output=logs/mhcmatch-mouse-%j.out
+#SBATCH --output=mhcmatch-mouse-%j.out
 #
 #   sbatch --partition <your-partition> run_mouse.sbatch
 #
@@ -26,8 +26,12 @@ MODULE=/path/to/mhcmatch/integrations/nextflow/mhcmatch
 REF=/shared/ref/mhcmatch
 IN=/path/to/mouse_files
 OUT=$PWD/results_mouse
-N0=8
-K=20
+N0=8                               # per-allotype capacity. NOT read on this path -- both arms
+                                   # run `cassette order`, which does not size, and
+                                   # `cassette select` sizes by fixed -k. Only
+                                   # `cassette build` reads it.
+K=20                               # EPITOPES selected -- the construct-size lever here. The
+                                   # cassette carries no more units than this, usually fewer.
 # BALB/c (H-2d) below. C57BL/6 (H-2b) is 'H2-K*b,H2-D*b' and 'H-2-IAb'. All three spellings resolve
 # -- `H2-K*d`, `H-2Kb`, `I-Ab` -- so pass whatever your own tables carry.
 ALLELES_MHC1='H2-K*d,H2-D*d,H2-L*d'
@@ -39,16 +43,27 @@ ALLELES_MHC2='H-2-IAd,H-2-IEd'
 # P(an allotype is live) in the response model behind the quota. 0.999 for mouse against 0.95 for
 # human is what the shipped bundles used: a stated design parameter, not a fitted one. Measure your
 # own with mhcmatch.portfolio.betabinom_rho before trusting either.
-BLOCK_LIVE=0.999
+BLOCK_LIVE=0.999   # P(allotype alive) behind a QUOTA. Inert unless you also set
+                                   # --mhcmatch_vector_quota: MHCMATCH_CASSETTE emits
+                                   # --block-live only alongside --quota, and drops it
+                                   # otherwise. `cassette select` uses the separate
+                                   # --mhcmatch_cassette_block_live (default 1.0).
 # -----------------------------------------------------------------------------
 
+# **`MHCMATCH_PMHC_DIR` is a READ override, not a download destination.** It is consulted first
+# and used when the file is already there; when it is not, the fetch goes through
+# `hf_hub_download`, which writes to the HuggingFace cache and ignores this variable entirely. So
+# `HF_HOME` is the one that decides where ~250 MB of reference data actually lands -- without it
+# that is your home directory, which on a shared cluster is the small quota this block exists to
+# avoid. Measured on one cluster: 249 MB in $HOME with MHCMATCH_PMHC_DIR set and honoured.
+export HF_HOME="$REF/hf"
 export MHCMATCH_PMHC_DIR="$REF/pmhc_data"
 export MHCMATCH_CALIBRATION_CACHE="$REF/calibration"
 export TMPDIR="${TMPDIR:-$REF/tmp}"
 export NXF_ANSI_LOG=false
 export NXF_OPTS='-Xms1g -Xmx4g'
 export NXF_HOME="$REF/.nextflow"
-mkdir -p "$TMPDIR" "$NXF_HOME" logs
+mkdir -p "$HF_HOME" "$TMPDIR" "$NXF_HOME"
 
 # **Each run gets its own launch directory.** Nextflow keeps its session cache under the directory
 # it was launched from, so two runs started from the same one -- human and mouse side by side --

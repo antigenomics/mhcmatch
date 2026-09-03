@@ -163,6 +163,12 @@ def _read_seq(arg):
 #: therefore accepted by `rank` and refused by `neoag`, `mimicry` and `cassette select` in the same
 #: chain. A caller should not have to rename a column between two of our own commands.
 PEPTIDE_COLUMNS: tuple = ("peptide", "epitope")
+#: The per-unit response probability, under either spelling. `rank` writes `p_response`;
+#: `cassette build/order` read `p`. They were two names for one number, and the error message
+#: for the mismatch told the caller to rename the column by hand -- which made the worked
+#: example in the README exit 1 as written. Resolved like :data:`PEPTIDE_COLUMNS`: the first
+#: spelling present wins, and `p` is what the row carries afterwards.
+RESPONSE_COLUMNS: tuple = ("p", "p_response")
 
 
 def _read_peptides(path, inline=()):
@@ -668,9 +674,12 @@ def _aggregate_channels(cls: str, no_self: bool, species: str = "human"):
     which report *which* reference peptide was nearest and do need the index, and for the safety
     scan.
 
-    ``species`` picks the ``self`` proteome, so a mouse run scores mouse self. The ``thymus`` and
-    ``viral`` deposits are human-only; that is stated in :func:`mhcmatch.mimicry.corpus_spectrum`
-    and is a roadmap item, not a silent substitution.
+    ``species`` keys every corpus channel, not only ``self``: all six ``thymus``/``self``/``viral``
+    tables ship for each of mouse and human, so a mouse run is scored against mouse references
+    throughout. The mouse thymic and viral tables are *thinner* than their human counterparts --
+    25,264 and 40,244 reference windows against 140,482 and 136,618 for class I -- which is a
+    precision statement about a mouse score, not a substitution. This used to read "the thymus and
+    viral deposits are human-only", which stopped being true when those tables shipped.
 
     The ``C_phys`` pair is deliberately absent: :func:`mhcmatch.rank._finish` computes both, because
     they are matrix products against published residue vectors and need no deposit at all.
@@ -1318,14 +1327,17 @@ def _read_units(path, unit_column: str = "peptide"):
 
     with _open_text(path) as fh:
         cols = fh.readline().rstrip("\n").split("\t")
-        need = (unit_column, "gene", "allele", "p")
-        missing = [c for c in need if c not in cols]
+        pcol = next((c for c in RESPONSE_COLUMNS if c in cols), None)
+        need = (unit_column, "gene", "allele")
+        missing = [c for c in need if c not in cols] + ([] if pcol else ["p"])
         if missing:
             raise SystemExit(f"{path}: missing column(s) {', '.join(missing)}; a unit table needs "
-                             f"{', '.join(need)} (+ optional mutation_index, cls). `rank` gives you "
-                             f"gene, allele and a score -- `{unit_column}` must be the long window "
-                             "around the mutation, not the minimal epitope")
+                             f"{', '.join(need)} and one of {' / '.join(RESPONSE_COLUMNS)} "
+                             f"(+ optional mutation_index, cls). `rank` gives you gene, allele and "
+                             f"a score -- `{unit_column}` must be the long window around the "
+                             "mutation, not the minimal epitope")
         ix = {c: cols.index(c) for c in cols}
+        ix.setdefault("p", ix[pcol])
         units = []
         for line in fh:
             f = line.rstrip("\n").split("\t")
@@ -1353,18 +1365,21 @@ def _read_unit_rows(path):
     """
     with _open_text(path) as fh:
         cols = fh.readline().rstrip("\n").split("\t")
-        need = ("peptide", "gene", "allele", "p")
-        missing = [c for c in need if c not in cols]
+        pcol = next((c for c in RESPONSE_COLUMNS if c in cols), None)
+        need = ("peptide", "gene", "allele")
+        missing = [c for c in need if c not in cols] + ([] if pcol else ["p"])
         if missing:
             raise SystemExit(f"{path}: missing column(s) {', '.join(missing)}; with --context a "
-                             f"candidate table needs {', '.join(need)}, which is what `rank` emits "
-                             "(rename its `p_response` column to `p`)")
+                             f"candidate table needs {', '.join(need)} and one of "
+                             f"{' / '.join(RESPONSE_COLUMNS)}, which is what `rank` emits")
         rows = []
         for line in fh:
             f = line.rstrip("\n").split("\t")
             if len(f) < len(cols) or not f[cols.index("peptide")].strip():
                 continue
-            rows.append(dict(zip(cols, f)))
+            d = dict(zip(cols, f))
+            d.setdefault("p", d[pcol])
+            rows.append(d)
         return rows
 
 
@@ -1611,12 +1626,35 @@ def cmd_vector(a):
             print("# no --map-alleles-mhc2: the map is class I only, so `self_help` -- whether a "
                   "unit's CD8 epitope has overlapping CD4 help from the same unit -- is not "
                   "computed", file=sys.stderr)
-        feats = V.epitope_map(cas, r1, r2, threshold=a.map_threshold)
+        cut = V.rank_cutoffs(a.map_binder)
+        t1 = a.map_threshold if a.map_threshold is not None else cut["mhc1"]
+        t2 = a.map_threshold_mhc2 if a.map_threshold_mhc2 is not None else cut["mhc2"]
+        mstats: dict = {}
+        feats = V.epitope_map(cas, r1, r2, threshold=t1, threshold2=t2, stats=mstats)
         summ = V.write_map(cas, feats, tsv_path=a.map_tsv, json_path=a.map_json)
-        print(f"# map: {summ['n_mhc1']} class-I and {summ['n_mhc2']} class-II epitope(s) over "
+        print(f"# map ({a.map_binder} binders: class I %rank <= {t1:g}, class II <= {t2:g}): "
+              f"{summ['n_mhc1']} class-I and {summ['n_mhc2']} class-II epitope(s) over "
               f"{summ['length_aa']} aa, {summ['n_junction_spanning']} spanning a junction; "
               f"{summ['n_units_with_self_help']}/{summ['n_units']} unit(s) carry their own "
               f"class-II help", file=sys.stderr)
+        # **A zero is never left bare.** "0 class-II epitopes" cannot otherwise be told apart from
+        # a ranker that never ran, a panel that resolved to nothing, and a construct whose best
+        # window missed the cut by a hair. Say which, every time, and say it is a reporting cut --
+        # nothing is removed from the cassette, the units table or the ranked candidates by it.
+        for cls, st in sorted(mstats.items()):
+            if st["n_kept"]:
+                continue
+            if not st["n_scored"]:
+                print(f"# map: no {cls} window could be scored at all ({st['n_windows']} window(s) "
+                      f"offered) -- the panel or the allele list is the thing to check, not the "
+                      f"threshold", file=sys.stderr)
+            else:
+                print(f"# map: no {cls} epitope at %rank <= {st['threshold']:g}, and the best of "
+                      f"{st['n_scored']:,} scored window(s) was %rank {st['best_rank']:.3f}. "
+                      f"This is the MAP cut-off only: nothing was removed from the cassette, from "
+                      f"the units table or from the ranked candidates. Widen it with "
+                      f"--map-threshold{'-mhc2' if cls == 'mhc2' else ''} to annotate them",
+                      file=sys.stderr)
         for path in (a.map_tsv, a.map_json):
             if path:
                 print(f"# wrote {path}", file=sys.stderr)
@@ -1819,6 +1857,14 @@ def _by_donor(rows):
     return out
 
 
+#: The columns `cassette select` emits itself. Any of these appearing in a `--passthrough` table is
+#: a name clash, and the caller's copy is preserved as ``<name>_in`` rather than overwritten.
+_SELECT_COLUMNS: frozenset = frozenset((
+    "donor", "slot", "peptide", "allele", "gene", "score", "p", "k", "pool_n", "offset", "energy",
+    "lam", "rho", "gamma", "channels", "block_live", "selectivity", "rule", "pi", "not_worse",
+    "diversity", "n_covered", "n_allotypes"))
+
+
 def cmd_cassette_select(a):
     """Choose k units from a donor's pool by maximising the mean-variance objective."""
     import numpy as np
@@ -1826,6 +1872,12 @@ def cmd_cassette_select(a):
     from . import cassette as CA
 
     rows, col = _cassette_rows(a.candidates, a.score_column)
+    # The caller's OWN column names, read from the header rather than from the parsed row:
+    # `_cassette_rows` resolves `epitope` -> `peptide`, `best_allele` -> `allele` and
+    # `gene_name` -> `gene` into the dict, and those keys are ours, not theirs.
+    with _open_text(a.candidates) as _fh:
+        _their_cols = set(_fh.readline().rstrip("\n").split("\t"))
+    _clash = sorted(_their_cols & _SELECT_COLUMNS) if getattr(a, "passthrough", False) else []
     groups = _by_donor(rows)
     kw = {k: v for k, v in (("prevalence", a.prevalence), ("rho", a.rho), ("gamma", a.gamma))
           if v is not None}
@@ -1914,6 +1966,7 @@ def cmd_cassette_select(a):
             say(f"{donor}: pool of {c.pool_n} trimmed to {c.pool_n - c.trimmed} before the "
                 f"coupling matrix (see mhcmatch.cassette.MAX_POOL)", level=1)
         chosen += c.k
+        _select_clash_said: list = []
         for slot, (i, pi) in enumerate(zip(c.index, c.p), start=1):
             r = dict(g[i])
             r.pop("_score", None)
@@ -1923,6 +1976,24 @@ def cmd_cassette_select(a):
             # Without it those have to be joined back on the peptide, and a pool may hold the same
             # peptide on two allotypes.
             carried = r if getattr(a, "passthrough", False) else {}
+            # **A carried column that shares a name with one of ours is not allowed to vanish.**
+            # Ours has to keep the name -- `score`, `p` and `peptide` are what `cassette build`,
+            # `cassette score` and the map read -- so the caller's copy is emitted alongside under
+            # `<name>_in`, and the swap is announced once. It used to be a silent overwrite: a
+            # caller table carrying its own `score` got ours in that cell, values differing in the
+            # first decimal, with nothing in the output or the log to say so.
+            if carried and _clash:
+                if not _select_clash_said:
+                    say(f"{len(_clash)} of your column(s) share a name with this command's own "
+                        f"and would have been overwritten: {', '.join(_clash)}. Yours are "
+                        f"preserved as {', '.join(x + '_in' for x in _clash)}; the unsuffixed "
+                        f"name carries ours, because that is what `cassette build`, `cassette "
+                        f"score` and the map read.", level=0)
+                    _select_clash_said.append(True)
+                carried = dict(carried)
+                for _cname in _clash:          # NOT `c`: that is the selection this loop is over
+                    if _cname in carried:
+                        carried[_cname + "_in"] = carried.pop(_cname)
             out.append({**carried,
                         "donor": donor, "slot": slot, "peptide": r["peptide"],
                         "allele": r.get("allele", ""), "gene": r.get("gene", ""),
@@ -2192,8 +2263,17 @@ def _add_vector_opts(p, require_n0: bool = True) -> None:
     p.add_argument("--map-json", metavar="FILE",
                     help="the same map as JSON, plus the per-unit summary and the sequence, which "
                          "is what a viewer needs to draw the cassette without recomputing anything")
-    p.add_argument("--map-threshold", type=float, default=2.0, metavar="F",
-                    help="%%rank at or below which a window enters the map (default 2.0)")
+    p.add_argument("--map-binder", choices=("strong", "weak"), default="weak",
+                    help="which NetMHCpan cut-off the map annotates. NetMHCpan calls class I strong "
+                         "at %%rank <= 0.5 and weak at <= 2.0; NetMHCIIpan calls class II strong at "
+                         "<= 2.0 and weak at <= 10.0 -- so the two classes do NOT share a number. "
+                         "Default `weak`, because the map reports and never selects (default: weak)")
+    p.add_argument("--map-threshold", type=float, default=None, metavar="F",
+                    help="override the class-I %%rank cut-off for the map (default: from "
+                         "--map-binder, so 2.0 weak / 0.5 strong)")
+    p.add_argument("--map-threshold-mhc2", type=float, default=None, metavar="F",
+                    help="override the class-II %%rank cut-off (default: from --map-binder, so "
+                         "10.0 weak / 2.0 strong)")
     p.add_argument("--map-alleles-mhc2", metavar="LIST",
                     help="the recipient's class-II allotypes (comma-separated or a file). Without "
                          "them the map carries class I only, and a unit's `self_help` column -- "
@@ -2617,16 +2697,20 @@ def main(argv=None):
                          "the statistic it corresponds to fits ATTRACTIVE on the observational "
                          "arm, where the greedy 1-1/e guarantee does not hold")
     cs.add_argument("--score-column", default="score", metavar="COL",
-                    help="which column holds the aggregate log-odds (default: score; `rank` writes "
-                         "`aggregate`)")
+                    help="which column holds the aggregate log-odds (default: score, which is "
+                         "what `rank` writes; for a `rank --passthrough --prefix mm_` table "
+                         "pass `mm_score`)")
     cs.add_argument("--no-allele", action="store_true",
                     help="ignore the allele column, so the overlap has no allotype channel. What a "
                          "trial that published no per-patient genotype is left with")
     cs.add_argument("--passthrough", action="store_true",
                     help="emit every column of --candidates ahead of this command's own, so the "
                          "chosen units keep the long window a cassette is built from and the "
-                         "variant class `--quota` reads. This command's own columns win a name "
-                         "clash, because they are the ones downstream reads")
+                         "variant class `--quota` reads. On a name clash this command's own "
+                         "column keeps the plain name -- `score`, `p` and `peptide` are what "
+                         "`cassette build`, `cassette score` and the map read -- and YOUR "
+                         "column is preserved beside it as `<name>_in`, with a line saying "
+                         "which ones moved. Nothing is overwritten")
     cs.add_argument("--out", metavar="FILE", help="write the chosen units here instead of stdout")
     cs.set_defaults(fn=cmd_cassette_select)
 

@@ -31,6 +31,9 @@ pip install mhcmatch
 mhcmatch bootstrap                                   # pre-fetch the panel (optional; ~16 MB)
 ```
 
+The library examples below run on any recent release. **The Nextflow pipeline needs >= 1.7.2** --
+its first process calls `mhcmatch alleles`, which does not exist before then.
+
 **Optional extras.** The base install is `seqtree`, `numpy` and `huggingface_hub` — nothing heavy,
 and every model that ships by default runs on it.
 
@@ -64,10 +67,10 @@ mhcmatch rank fasta candidates.fasta --alleles donor.alleles --cls mhc1 --tumor 
 
 | your question | command | Python |
 |---|---|---|
-| Which of these peptides does an allele present? | `| Which of these peptides does an allele present? | `mhcmatch predict f.fasta --alleles 'HLA-A*02:01' --cls mhc1` | `predict.predict_fasta` |` | `predict.predict_fasta` |
+| Which of these peptides does an allele present? | `mhcmatch predict f.fasta --alleles 'HLA-A*02:01' --cls mhc1` | `predict.predict_fasta` |
 | Which allele presents this peptide? | `mhcmatch restriction PEP --calibrated` | `store.restriction` |
 | Is it a binder at all, one number? | `mhcmatch binder PEP` | `store.binder_score` |
-| What is the IC50, and vs its wild type? | `| What is the IC50, and vs its wild type? | `mhcmatch affinity PEP --allele A --wt WTPEP` | `store.affinity_model` |` | `store.affinity_model` |
+| What is the IC50, and vs its wild type? | `mhcmatch affinity PEP --allele A --wt WTPEP` | `store.affinity_model` |
 | Will a T cell respond to it? | `mhcmatch complement --peptides p.txt` | `complement.score` |
 | Rank neoantigen candidates for a donor | `mhcmatch rank fasta ...` | `rank.rank_fasta` |
 | How many of the donor's own allotypes present it? | (a `rank` column) | `predict.Prediction.n_alleles_presenting` |
@@ -239,7 +242,7 @@ fleet to buy nothing.
 The key covers the library version, class, background, footprint, head, panel size, draw count,
 seed and the positives feeding the isotonic fit. A cache keyed on less than that would be worse
 than none, because it would serve a background drawn against a different model as though it were
-this one. Unset the variable and nothing is cached; the directory is disposable.
+this one. Set it to `off` and nothing is cached; leave it unset and entries go to `~/.cache/mhcmatch/calibration`. Either directory is disposable -- and use a fresh one for any run meant to establish a number rather than iterate.
 
 ## Batch and threads — read this before scripting a loop
 
@@ -248,7 +251,7 @@ that a per-peptide invocation pays again every time: the presentation and affini
 ~5 s, the binder calibrator ~45 s, a human-proteome length index ~70 s. All of it is cached for the
 life of the process, so one process over a whole list is the difference between 49 s per peptide and
 thousands per second. Measured, both ways, in
-[`bench/cli/`](https://github.com/antigenomics/2026-mhcmatch-benchmark).
+`bench/cli/` in [`2026-mhcmatch-code`](https://github.com/repseq/2026-mhcmatch-code) (private; released to reviewers).
 
 ```bash
 mhcmatch binder     --peptides peptides.txt --alleles "$ALLELES" --top 1 --out binders.tsv
@@ -633,7 +636,7 @@ entry point over a directory of files:
 ```bash
 nextflow run integrations/nextflow/mhcmatch/pipeline.nf \
     --indir donor_files --outdir results --mode both \
-    --mhcmatch_vector_n0 8 --mhcmatch_tumor SKCM
+    --mhcmatch_cassette_k 20 --mhcmatch_tumor SKCM
 ```
 
 | `--mode` | in | the deliverable is |
@@ -642,8 +645,24 @@ nextflow run integrations/nextflow/mhcmatch/pipeline.nf \
 | `denovo` | your mutation-window FASTA | **our** table: binding called from scratch, ranked, annotated |
 | `both` | both | both, independently; each arm builds its own cassette |
 
-Both arms end in a cassette: the *k* units to manufacture as a TSV (default **k = 20**), the
-assembled construct as amino acids with its linker, the CDS, and the epitope map.
+Both arms end in a cassette, published as six files per donor and arm:
+
+| file | what |
+|---|---|
+| `<id>.<arm>.vaccine.units.tsv` | the *k* selected **epitopes** (default **k = 20**) — **your own table filtered to what the cassette carries, with nothing removed from the row**: every one of your columns, every `mm_` column, plus the selection's own |
+| `<id>.<arm>.cassette.faa` | the assembled construct, with whichever spacer the junction sweep chose |
+| `<id>.<arm>.cassette.fna` | its CDS, deslipped |
+| `<id>.<arm>.cassette.map.tsv` / `.map.json` | unit / linker / epitope in 1-based coordinates. Both carry the feature rows; **only the JSON carries the per-unit summary**, which is where `self_help` is — `summary.n_units_with_self_help` |
+| `<id>.<arm>.cassette.tsv` | the assembly **report** (`section, i, key, value, detail`) — where the safety screen records what it withdrew and why. **Not** the epitope table |
+| `cohort.<arm>.cassette_score.tsv` | one per run and per arm, because `rank` anchors `p_response` on the batch it is handed |
+
+The construct carries no more *units* than *k* and usually fewer — several epitopes can share one
+27-mer window, and the safety screen withdraws some — so read `units=` from the FASTA header rather
+than assuming *k*.
+
+> **The pipeline requires mhcmatch >= 1.7.2.** Its first process calls `mhcmatch alleles` and the
+> rerank arm calls `rank --passthrough`; neither exists in 1.6.0, and 1.6.1 was never published.
+> `templates/setup.sbatch` pins the version and asserts what it installed.
 
 On a cluster, start from **`integrations/nextflow/mhcmatch/templates/`** — four SLURM scripts
 (`setup.sbatch` once, then `run_human.sbatch` / `run_mouse.sbatch` for a few samples or
@@ -656,8 +675,10 @@ variant calling, HLA typing and expression quantification should `include` the p
 is unchanged, so an existing include keeps working.
 
 `MHCMATCH_PREDICT` drops in for MHCflurry class I and the class-II binding subworkflow, consuming
-the same `(meta, peptide.fasta, alleles)` channel and emitting a pipeline-compatible 57-column
-`.scored.csv`. No stub types a column header — each asks the installed library for its own schema,
+the same `(meta, peptide.fasta, alleles, cls)` channel — one element more than MHCflurry's,
+because `cls` selects the panel and names the outputs — and emitting a pipeline-compatible
+57-column `.scored.csv`. **Almost** no stub types a column header: each asks the installed
+library for its own schema,
 so `-stub-run` cannot drift from the real shape. The image bootstraps its panel at **build** time,
 so compute nodes need no network.
 
@@ -667,6 +688,14 @@ missing. Four more are used when present (`wt_peptide`, `gene`/`gene_name`, `tpm
 Everything else may be named in any style and is emitted unchanged, in your order, ahead of ours; a
 name that collides with one of ours is an **error**, because two columns under one name are resolved
 silently and differently by every reader that keys a row by name.
+
+**`cassette select` resolves a collision the other way, and on purpose.** By that point the run has
+committed to a selection, so erroring out would throw away the work rather than protect it: your
+column keeps its value under `<name>_in`, ours takes the plain name — it is what `cassette build`,
+`cassette score` and the map read — and one line names every column that moved. So the rule across
+the pipeline is *never silently*, not *always the same way*: `rank --passthrough` refuses before it
+starts, `cassette select --passthrough` renames and says so. Before 1.7.2 the latter overwrote
+yours without a word.
 
 **`MHCMATCH_ALLELES` is not optional plumbing.** Every HLA caller writes the G-group form
 (`A*01:01:01G`), which is keyed at three fields where the pseudosequence tables are keyed at two, so

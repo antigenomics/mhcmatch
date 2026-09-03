@@ -145,12 +145,30 @@ def test_nextflow_pins_match_pyproject():
     nf = root / "integrations" / "nextflow" / "mhcmatch"
     if not nf.is_dir():                       # sdist/wheel checkouts do not carry integrations/
         return
-    stale = {}
-    for p in list(nf.rglob("*.nf")) + [nf / "Dockerfile", nf / "environment.yml"]:
-        for v in set(re.findall(r"\b0\.\d+\.\d+\b", p.read_text())):
+    # **Match the pin, not any version-shaped string.** This scan used to be
+    # ``re.findall(r"\b0\.\d+\.\d+\b", ...)``, which made it VACUOUS the day 1.0.0 shipped: every
+    # pin it guards has been ``1.x.y`` since, so it found nothing and passed. It also never opened
+    # the two files whose pins actually drifted -- ``nextflow.config`` is not ``*.nf``, so
+    # ``params.mhcmatch_container`` went unchecked (it sat on 1.6.0 while the rest were on 1.6.1),
+    # and ``templates/*.sbatch`` was never in the list at all, though ``setup.sbatch`` asserts the
+    # installed version equals its own ``VERSION=`` and so installs the wrong release when stale.
+    # Anchoring on the four spellings of a *mhcmatch* pin also keeps Nextflow's own ``21.10.6`` in
+    # main.nf from reading as a stale pin, which a bare ``\d+\.\d+\.\d+`` would.
+    PINS = re.compile(r"(?:mhcmatch==|mhcmatch:|MHCMATCH_VERSION=|^VERSION=)(\d+\.\d+\.\d+)", re.M)
+    scanned, stale = [], {}
+    for p in sorted(list(nf.rglob("*.nf")) + list(nf.rglob("*.config"))
+                    + list(nf.glob("templates/*.sbatch"))
+                    + [nf / "Dockerfile", nf / "environment.yml"]):
+        if not p.is_file():
+            continue
+        for v in set(PINS.findall(p.read_text())):
+            scanned.append(str(p.relative_to(root)))
             if v != want:
                 stale.setdefault(str(p.relative_to(root)), set()).add(v)
     assert not stale, f"version pins behind pyproject {want}: {stale}"
+    # A guard that matches nothing is the failure mode this test just had. Fail loudly instead.
+    assert scanned, ("found no mhcmatch version pin at all under integrations/nextflow/mhcmatch -- "
+                     "the pin spelling changed and this guard has gone vacuous again")
 
 
 # --- what `bootstrap` stages must remain ingestible by ------------------------------------------
