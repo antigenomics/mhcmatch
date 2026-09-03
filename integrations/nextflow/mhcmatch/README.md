@@ -551,7 +551,7 @@ From `slurm.config` only:
 | `mhcmatch_slurm_queue` | `normal` | the partition every mhcmatch task is submitted to |
 | `mhcmatch_pmhc_dir` | `${projectDir}/reference/pmhc_data` | shared reference mirror; pre-stage with `mhcmatch bootstrap --reference` |
 | `mhcmatch_calibration_cache` | `${projectDir}/reference/calibration` | shared per-allele %rank calibration, safe to share under concurrency |
-| `mhcmatch_hf_home` | `${projectDir}/reference/hf` | **the one that decides where reference data physically lands.** `mhcmatch_pmhc_dir` is a *read* override — consulted first, used when the file is already staged; when it is not, the fetch falls through to `hf_hub_download`, which writes to the HuggingFace cache and ignores it. Leave this unset and ~250 MB goes to each node's `$HOME` |
+| `mhcmatch_hf_home` | `${projectDir}/reference/hf` | **the one that decides where reference data physically lands.** `mhcmatch_pmhc_dir` is a *read* override — consulted first, used when the file is already staged; when it is not, the fetch falls through to `hf_hub_download`, which writes to the HuggingFace cache and ignores it. Leave this unset and ~250 MB goes to each node's `$HOME`. Measured both ways on Aldan-3: unset, 249 MB landed in `$HOME` **with `mhcmatch_pmhc_dir` set and honoured**; set, 244 MB landed in the shared root and `$HOME` did not grow at all (249 MB before, 249 MB after) |
 
 ## Build the image (only for `-profile docker`)
 

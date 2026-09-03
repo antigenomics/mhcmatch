@@ -95,7 +95,10 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 
 ## CLI
 
-Twenty-two commands, one of them with sub-verbs. Full reference: [docs/cli.rst](../../docs/cli.rst).
+**Twenty-one** commands, one of them (`cassette`) with six sub-verbs, plus two DEPRECATED
+aliases the parser still answers to and this table omits — `vector` for `cassette build` and
+`deslip` for `cassette deslip`. `mhcmatch --help` therefore lists 23. Full reference:
+[docs/cli.rst](../../docs/cli.rst).
 
 | axis | commands |
 |---|---|
@@ -139,6 +142,25 @@ released; elsewhere it is absent rather than accepted and ignored.
 `C_corpus` stopped searching — it contracts a k-mer table, exactly, in milliseconds — so there was
 nothing left to cache. `$MHCMATCH_PMHC_DIR` and `$MHCMATCH_CALIBRATION_CACHE` are the two a cluster
 still wants; `integrations/nextflow/mhcmatch/slurm.config` exports both.
+
+## Running it as a pipeline
+
+`integrations/nextflow/mhcmatch/pipeline.nf` runs the whole chain over a directory of files —
+`nextflow run pipeline.nf --indir <dir> --outdir <dir> --mode rerank|denovo|both` — with nine
+processes and two arms. **It calls this CLI**, so the module and the installed library must be the
+same version: clone the tag, not `master`. Reach for it instead of scripting the commands by hand
+whenever the ask is "run this for a cohort".
+
+- **rerank** takes the caller's candidate table and gives it back annotated (`rank --passthrough`),
+  every column of theirs preserved in their order, ours added under a prefix.
+- **de novo** takes a window FASTA and produces the epitope table itself.
+- Both end in `cassette select` → `cassette order`, and a cohort-level `cassette score`.
+
+`--mhcmatch_vector_map_alleles_mhc2` is the one to remember to pass: without it the cassette map is
+class I only and `self_help` is not computed. A **per-donor** class-II list cannot travel this way
+today — it would need a sixth element on `MHCMATCH_CASSETTE`'s input tuple. Details, the column
+contract and the SLURM templates: [docs/pipeline.rst](../../docs/pipeline.rst) and the module's own
+`README.md`.
 
 ## The shipped scorer
 
