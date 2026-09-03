@@ -180,6 +180,22 @@ Kidera factors — it sits almost entirely in KF4:
      - -0.0468
      - 0.84
 
+**KF4's label is not this page's invention.** `Rackovsky (Proc Natl Acad Sci U S A 2010,
+doi:10.1073/pnas.1001299107 <https://doi.org/10.1073/pnas.1001299107>`_) independently names it
+"hydrophobicity" from a spectral analysis of localized vs. delocalized amino-acid interactions —
+corroborating the :math:`\rho = -0.7761` measured above by an unrelated method. (KF10, "surrounding
+hydrophobicity" in the same table, is a different factor and is not what the -0.7761 above is about.)
+
+Kidera factors reached epitope-immunogenicity prediction through
+`ipred <https://github.com/antigenomics/ipred>`_, introduced by Pogorelyy *et al.* (*Genome Medicine*
+2018, `doi:10.1186/s13073-018-0577-7 <https://doi.org/10.1186/s13073-018-0577-7>`_) to link epitope
+physicochemistry to naive-repertoire precursor TCR frequency and immunogenicity: its classifier
+takes the **sum of all ten** Kidera factors over the peptide as its feature vector — KF4 included,
+not singled out — and returns a probability of T-cell immunogenicity, trained on the Chowell corpus.
+Buckley *et al.* (*Briefings in Bioinformatics* 2022,
+`doi:10.1093/bib/bbac141 <https://doi.org/10.1093/bib/bbac141>`_) benchmarked it against other CD8
+T-cell immunogenicity predictors.
+
 So: use the raw factors, or run PCA over the multi-family union where the collinearity is real.
 Running it over Kidera alone spends compute to scramble an interpretable basis.
 
