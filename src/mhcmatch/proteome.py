@@ -130,6 +130,8 @@ def gene_symbols(path, key: str = "name"):
 
 @dataclass
 class SourceHit:
+    """One near-exact match of a query peptide against a reference window -- the result row of
+    :meth:`Proteome.find_source` / :meth:`find_sources` / :meth:`find_exact_sources`."""
     protein: str
     position: int       # 0-based start in the protein
     ref_peptide: str
@@ -170,6 +172,7 @@ class Proteome:
 
     @classmethod
     def from_fasta(cls, path):
+        """A :class:`Proteome` over a caller-supplied FASTA, overriding :meth:`from_hf`'s fetch."""
         pm = cls(read_fasta(path))
         pm._path = path            # so `window_genes` can re-read the headers for GN=
         return pm

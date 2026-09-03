@@ -1860,6 +1860,7 @@ class Feature:
 
     @property
     def length(self) -> int:
+        """Inclusive span, ``end - start + 1`` -- residue count, not a half-open Python length."""
         return self.end - self.start + 1
 
 

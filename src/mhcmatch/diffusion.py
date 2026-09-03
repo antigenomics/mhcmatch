@@ -1585,15 +1585,19 @@ class RoutedAnchorModel:
         return self.rare if self._counts.get(allele, 0) <= self._rare_max else self.frequent
 
     def score(self, peptide, allele, raw=False, eps=1e-3):
+        """Dispatches to :meth:`AnchorModel.score` on the frequent or rare fit, by ``allele``'s count."""
         return self._for(allele).score(peptide, allele, raw, eps)
 
     def best_register(self, peptide, allele, raw=False, eps=1e-3):
+        """Dispatches to :meth:`AnchorModel.best_register` on the frequent or rare fit."""
         return self._for(allele).best_register(peptide, allele, raw, eps)
 
     def score_sd(self, peptide, allele, raw=False, eps=1e-3):
+        """Dispatches to :meth:`AnchorModel.score_sd` on the frequent or rare fit."""
         return self._for(allele).score_sd(peptide, allele, raw, eps)
 
     def anchor_terms(self, peptide, allele, raw=False, eps=1e-3):
+        """Dispatches to :meth:`AnchorModel.anchor_terms` on the frequent or rare fit."""
         return self._for(allele).anchor_terms(peptide, allele, raw, eps)
 
     def __getattr__(self, name):

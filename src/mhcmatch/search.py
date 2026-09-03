@@ -19,6 +19,8 @@ from seqtree.pmhc import find_mimics as find_mimics  # noqa: F401 (re-export)
 
 @dataclass
 class Match:
+    """One hit from :func:`search` -- ``score`` is the seed-and-gather edit distance under ``mode``
+    (lower is closer), ``shared_kmers`` the count of anchor-masked k-mers the pair have in common."""
     peptide: str
     shared_kmers: int
     score: int

@@ -98,6 +98,8 @@ def infer_class(peptide: str) -> str:
 
 @dataclass
 class Restriction:
+    """One allele's presentation call for a peptide -- one row of :meth:`Store.restriction`'s
+    result, ranked by ``vote`` (or ``anchor_score`` under ``diffuse=True``)."""
     allele: str
     vote: float        # neighbour vote fraction P(allele | neighbours) -- ranking score
     enrichment: float  # -log10 binomial-tail p vs panel background -- confidence
@@ -114,6 +116,7 @@ class Restriction:
 
 @dataclass
 class Decomposition:
+    """A peptide split into its anchor and TCR-facing halves -- :meth:`Store.decompose`'s result."""
     peptide: str
     tcr_facing: str    # anchors masked with X  (recognition readout)
     presentation: str  # TCR-facing masked with X (anchor readout)
@@ -440,6 +443,7 @@ class Store:
         return sum(len(p.epitopes) for p in self._panel.values())
 
     def alleles(self, cls):
+        """Every allele in this class's panel, as loaded (not filtered by frequency or coverage)."""
         return list(self._panel[cls].panel)
 
     # -- forward problem: restriction / presentation --------------------------
@@ -658,6 +662,7 @@ class Store:
         return out[:top]
 
     def is_binder(self, peptide, allele, cls=None, alpha=0.05):
+        """Does this one ``allele`` present ``peptide``? See :meth:`is_presented` for "any allele"."""
         res = self.restriction(peptide, cls=cls, alleles=[allele], top=1, alpha=alpha)
         return bool(res and res[0].binder)
 

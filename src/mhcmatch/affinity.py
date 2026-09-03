@@ -313,6 +313,10 @@ class AffinityModel:
         return [1.0] + z + [1.0 if L == k else 0.0 for k in self.coef["lengths"]]
 
     def predict_y(self, peptide, allele) -> float:
+        """The fitted linear model's raw output -- :func:`y_to_ic50` is what turns this into nM.
+
+        ``nan`` when :meth:`features` cannot build a vector (peptide too short for the allele's
+        anchors, or no background z-scores yet computed)."""
         f = self.features(peptide, allele)
         if f is None:
             return float("nan")

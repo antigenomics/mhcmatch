@@ -495,6 +495,8 @@ class Pseudoseq:
         return s if s and len(s) == _LEN else None
 
     def kernel(self, a, b, anchor=None) -> float:
+        """Groove similarity in ``(0, 1]``, ``exp(-distance(a, b) / h)``; ``0.0`` if either allele's
+        pseudosequence is unresolved."""
         sa, sb = self._lookup(a), self._lookup(b)
         if sa is None or sb is None:
             return 0.0

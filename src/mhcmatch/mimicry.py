@@ -171,6 +171,8 @@ class MimicryScore:
     nearest: dict = field(default_factory=dict)
 
     def as_dict(self) -> dict:
+        """Flat ``{column: value}`` -- one ``{component}_{channel}`` key per score, plus the nearest
+        reference peptide/source/substitution-count for each, ready for a TSV row."""
         out = {"peptide": self.peptide, "logodds": self.logodds, "autoimmune": self.autoimmune,
                **{f"{c}_{ch}": v for c, chs in self.components.items() for ch, v in chs.items()}}
         for c, chs in self.nearest.items():

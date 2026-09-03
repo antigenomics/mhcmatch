@@ -101,7 +101,13 @@ Routine tasks
 The commands, by axis
 ---------------------
 
-**Presentation — is it presented, and by what.**
+Presentation --- is it presented, and by what
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``--cls`` is optional on ``decompose`` and ``restriction``: omitted, it infers ``mhc1`` from a
+peptide of 11 residues or fewer, else ``mhc2``. Every other command below defaults to ``mhc1`` and
+does **not** infer --- a protein (``scan``), an allele name (``logo``), or a multi-length window
+FASTA (``predict``, which requires it) gives the heuristic nothing to key on.
 
 .. list-table::
    :header-rows: 1
@@ -130,7 +136,8 @@ The commands, by axis
    * - ``logo``
      - per-allele information-content motif logo and length distribution
 
-**Recognition — will a T cell see it.**
+Recognition --- will a T cell see it
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
@@ -153,7 +160,8 @@ The commands, by axis
      - annotate against the tested-neoantigen database — nearest validated-immunogenic peptide and
        substitution distance
 
-**Integration — putting it together.**
+Integration --- putting it together
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1

@@ -89,8 +89,10 @@ def _add_verbosity(p) -> None:
 def _add_store_opts(p):
     p.add_argument("--pmhc", help="pmhc_data TSV(.gz); else $MHCMATCH_PMHC/pmhc_<tier>.tsv.gz, "
                                   "else auto-fetched from the public HF dataset isalgo/pmhc_data")
-    p.add_argument("--tier", default="full", choices=("full", "shortlist"))
-    p.add_argument("--species", default="human", choices=("human", "mouse"))
+    p.add_argument("--tier", default="full", choices=("full", "shortlist"),
+                   help="reference panel size (default %(default)s); shortlist is a faster subset")
+    p.add_argument("--species", default="human", choices=("human", "mouse"),
+                   help="which panel to load (default %(default)s)")
 
 
 def _add_batch_opts(p, what="peptide"):
@@ -2284,7 +2286,8 @@ def _add_vector_opts(p, require_n0: bool = True) -> None:
                          "--alleles, so a homozygous locus is not scored as a design flaw")
     p.add_argument("--alleles", help="the recipient's allotypes for junction scoring "
                                       "(comma-separated or a file); default = those in the table")
-    p.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
+    p.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"),
+                   help="the class --cls-filter checks against; does not itself filter anything")
     p.add_argument("--cls-filter", action="store_true",
                     help="select only units whose own `cls` matches --cls")
     p.add_argument("--screen", action="store_true",
@@ -2423,28 +2426,35 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     d = sub.add_parser("decompose", help="split a peptide into anchor / TCR-facing parts (X masks)")
-    d.add_argument("peptide", nargs="?", default="")
-    d.add_argument("--cls", choices=("mhc1", "mhc2"))
+    d.add_argument("peptide", nargs="?", default="",
+                   help="the peptide; omit and pass --peptides FILE for a batch")
+    d.add_argument("--cls", choices=("mhc1", "mhc2"),
+                   help="omitted infers from peptide length (<=11 residues -> mhc1)")
     _add_batch_opts(d)
     d.set_defaults(fn=cmd_decompose)
 
     r = sub.add_parser("restriction", help="rank presenting alleles for a peptide")
-    r.add_argument("peptide", nargs="?", default="")
+    r.add_argument("peptide", nargs="?", default="",
+                   help="the peptide; omit and pass --peptides FILE for a batch")
     r.add_argument("--allele", help="restrict to a single allele")
-    r.add_argument("--cls", choices=("mhc1", "mhc2"))
+    r.add_argument("--cls", choices=("mhc1", "mhc2"),
+                   help="omitted infers from peptide length (<=11 residues -> mhc1)")
     r.add_argument("--diffuse", action="store_true", help="rare-allele-aware (diffusion-shrunk anchors)")
     r.add_argument("--calibrated", action="store_true",
                    help="add per-allele %%rank, P(present), and binding band (implies --diffuse)")
-    r.add_argument("--top", type=int, default=10)
+    r.add_argument("--top", type=int, default=10,
+                   help="cap the number of ranked alleles reported (default %(default)s)")
     _add_store_opts(r)
     _add_batch_opts(r)
     r.set_defaults(fn=cmd_restriction)
     _add_mhc2_report(r)
 
     af = sub.add_parser("affinity", help="predict IC50 (nM) + neoantigen amplitude/DAI for a peptide")
-    af.add_argument("peptide", nargs="?", default="")
-    af.add_argument("--allele", required=True)
-    af.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
+    af.add_argument("peptide", nargs="?", default="",
+                    help="the peptide; omit and pass --peptides FILE for a batch")
+    af.add_argument("--allele", required=True, help="the presenting MHC allele")
+    af.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"),
+                    help="default %(default)s")
     af.add_argument("--wt", help="wild-type peptide -> also report amplitude A=Kd_WT/Kd_MT and DAI")
     af.add_argument("--structure", action="store_true",
                     help="also compute the tcren MJ contact energy / ΔΔG (needs the [structure] extra)")
@@ -2454,20 +2464,25 @@ def main(argv=None):
 
     bd = sub.add_parser("binder",
                         help="generalized binder score (presentation x affinity) ranked over alleles")
-    bd.add_argument("peptide", nargs="?", default="")
+    bd.add_argument("peptide", nargs="?", default="",
+                    help="the peptide; omit and pass --peptides FILE for a batch")
     bd.add_argument("--alleles", help="comma-separated alleles (default: the whole panel)")
-    bd.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
-    bd.add_argument("--top", type=int, default=10)
+    bd.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"),
+                    help="default %(default)s")
+    bd.add_argument("--top", type=int, default=10,
+                    help="cap the number of ranked alleles reported (default %(default)s)")
     _add_store_opts(bd)
     _add_batch_opts(bd)
     bd.set_defaults(fn=cmd_binder)
     _add_mhc2_report(bd)
 
     s = sub.add_parser("scan", help="find presented peptides in a protein (sequence or FASTA path)")
-    s.add_argument("protein")
-    s.add_argument("--allele")
-    s.add_argument("--cls", choices=("mhc1", "mhc2"))
-    s.add_argument("--top", type=int, default=3)
+    s.add_argument("protein", help="the protein sequence, or a FASTA path")
+    s.add_argument("--allele", help="restrict the scan to a single allele (default: the panel)")
+    s.add_argument("--cls", choices=("mhc1", "mhc2"), help="default mhc1; not inferred, a "
+                   "protein has no single length to infer from")
+    s.add_argument("--top", type=int, default=3,
+                   help="cap alleles reported per presented window (default %(default)s)")
     s.add_argument("--correction", choices=("bonferroni", "bh"),
                    help="multiple-testing control over windows x alleles (FWER / BH-FDR)")
     _add_store_opts(s)
@@ -2478,11 +2493,13 @@ def main(argv=None):
     _add_mhc2_report(s)
 
     so = sub.add_parser("source", help="find the self peptide a neoantigen derives from")
-    so.add_argument("peptide", nargs="?", default="")
+    so.add_argument("peptide", nargs="?", default="",
+                    help="the peptide; omit and pass --peptides FILE for a batch")
     so.add_argument("--proteome", required=True,
                     help="reference proteome FASTA(.gz) path, or an HF name auto-fetched from the "
                          "public dataset (human / mouse / a pathogen stem)")
-    so.add_argument("--max-subs", type=int, default=1)
+    so.add_argument("--max-subs", type=int, default=1,
+                    help="substitutions allowed against a proteome window (default %(default)s)")
     so.add_argument("--exclude-exact", action="store_true",
                     help="drop 0-mismatch hits -- the wild-type-origin question, not the "
                          "is-this-self one")
@@ -2492,8 +2509,9 @@ def main(argv=None):
     so.set_defaults(fn=cmd_source)
 
     lg = sub.add_parser("logo", help="motif logo (information content) + length distribution")
-    lg.add_argument("allele")
-    lg.add_argument("--cls", choices=("mhc1", "mhc2"))
+    lg.add_argument("allele", help="the MHC allele, e.g. HLA-A*02:01 or H-2-Kb")
+    lg.add_argument("--cls", choices=("mhc1", "mhc2"), help="default mhc1; not inferred from "
+                    "the allele name")
     _add_store_opts(lg)
     lg.add_argument("--out", help="write TSV here instead of the aligned text")
     lg.add_argument("--tsv", action="store_true",
@@ -2503,7 +2521,11 @@ def main(argv=None):
     sp = sub.add_parser("span", help="extend an MHC-II binding core to the full presented ligand")
     sp.add_argument("core", help="the 9-mer binding core")
     sp.add_argument("--protein", required=True, help="source protein sequence, or a FASTA path")
-    sp.add_argument("--mode", default="auto", choices=("auto", "observed", "modeled", "fixed"))
+    sp.add_argument("--mode", default="auto", choices=("auto", "observed", "modeled", "fixed"),
+                    help="default %(default)s (observed reference ligand, else the modeled "
+                         "span); modeled forces the model even where a reference exists "
+                         "(required for a benchmark, else the metric becomes a coverage "
+                         "statistic); fixed uses --flanks")
     sp.add_argument("--flanks", default="3,3", help="left,right sizes for --mode fixed")
     _add_store_opts(sp)                 # only used to supply the observed-ligand corpus
     sp.set_defaults(fn=cmd_span)
@@ -2511,7 +2533,9 @@ def main(argv=None):
     pr = sub.add_parser("predict", help="score a variant peptide-window FASTA -> native + .scored.csv")
     pr.add_argument("fasta", help="a .peptide.fasta (pipeline schema)")
     pr.add_argument("--alleles", required=True, help="comma-separated HLA alleles (pipeline form)")
-    pr.add_argument("--cls", required=True, choices=("mhc1", "mhc2"))
+    pr.add_argument("--cls", required=True, choices=("mhc1", "mhc2"),
+                    help="required: predict cannot infer it from a multi-length window "
+                         "FASTA the way a single peptide command does")
     pr.add_argument("--native", help="write the native TSV here")
     pr.add_argument("--scored-csv", dest="scored_csv", help="write the pipeline .scored.csv here")
     pr.add_argument("--rank-threshold", default=None, metavar="TIER|PCT",
@@ -2537,9 +2561,19 @@ def main(argv=None):
                          "Equivalent to passing the same list to both --keep-genes and "
                          "--keep-epitopes. Use those instead -- they say which claim kept a row")
     pr.add_argument("--top", type=int, help="cap binders kept per window (strongest first)")
-    pr.add_argument("--background", default="proteome", choices=("ligand", "ligand-pooled", "proteome", "markov"))
-    pr.add_argument("--footprint", default="adaptive", choices=("anchor", "core", "adaptive"))
-    pr.add_argument("--seed", type=int, default=0)
+    pr.add_argument("--background", default="proteome",
+                    choices=("ligand", "ligand-pooled", "proteome", "markov"),
+                    help="the null presentation is scored against (default %(default)s): "
+                         "`proteome` asks is-it-presented-at-all, matching NetMHCpan %%Rank_EL; "
+                         "`ligand` asks which-allele instead. `ligand-pooled` and `markov` are "
+                         "rarely what you want -- see mhcmatch.diffusion.AnchorModel")
+    pr.add_argument("--footprint", default="adaptive", choices=("anchor", "core", "adaptive"),
+                    help="which core positions the model scores (default %(default)s: MHC-I "
+                         "anchors for rare alleles else the full core, MHC-II always the full "
+                         "9-mer core). `anchor` alone understates the model and is never right "
+                         "here -- it backs mhcmatch.store.Store.restriction's vote fraction")
+    pr.add_argument("--seed", type=int, default=0,
+                    help="RNG seed for the calibration background sample (default %(default)s)")
     pr.add_argument("--core", action="store_true",
                     help="append the NetMHCpan-style 9-residue binding core, its 0-based "
                          "offset and the register behind it. Distinct from --footprint core, "
@@ -2598,7 +2632,8 @@ def main(argv=None):
                          "TSV and score nothing")
     rk.add_argument("--alleles", help="comma-separated HLA alleles, or a file holding them "
                                       "(required for mode=fasta)")
-    rk.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
+    rk.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"),
+                    help="default %(default)s")
     rk.add_argument("--tissue", help="GTEx tissue for reference expression, e.g. 'Skin - Sun "
                                      "Exposed (Lower leg)' (the safety read)")
     rk.add_argument("--tumor", help="TCGA cancer_type for tumour expression, e.g. SKCM (melanoma)")
@@ -2695,9 +2730,11 @@ def main(argv=None):
     _add_mhc2_report(rk)
 
     ex = sub.add_parser("explain", help="every component of the aggregate for one (peptide, allele)")
-    ex.add_argument("peptide", nargs="?", default="")
-    ex.add_argument("--allele", required=True)
-    ex.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
+    ex.add_argument("peptide", nargs="?", default="",
+                    help="the peptide; omit and pass --peptides FILE for a batch")
+    ex.add_argument("--allele", required=True, help="the presenting MHC allele")
+    ex.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"),
+                    help="default %(default)s")
     ex.add_argument("--wt", help="wild-type counterpart -> also report agretopicity (DAI)")
     ex.add_argument("--gene", help="source gene symbol, for the expression lookup")
     ex.add_argument("--tissue", help="GTEx tissue")
@@ -2727,7 +2764,8 @@ def main(argv=None):
                         help="annotate candidates against the tested-neoantigen database "
                              "(nearest validated-immunogenic peptide + substitution distance)")
     ng.add_argument("input", nargs="*", help="peptide(s); or use --peptides")
-    ng.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
+    ng.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"),
+                    help="default %(default)s")
     ng.add_argument("--max-subs", type=int, default=2,
                     help="fuzzy search radius. 0 is an exact database lookup; 2 roughly doubles "
                          "the recall of a fresh cohort's true positives over exact lookup")
@@ -2746,7 +2784,8 @@ def main(argv=None):
                         help="the fitted mimicry aggregate: signed viral / self / thymus "
                              "contributions per anchor and TCR-facing channel, and their sum")
     my.add_argument("input", nargs="*", help="peptide(s); or use --peptides")
-    my.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
+    my.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"),
+                    help="default %(default)s")
     my.add_argument("--corpus", nargs="?", const="screens", default=None,
                     help="map the aggregate to a probability against a NAMED fitted corpus "
                          "(default 'screens'). Omit to keep the prior-free log-odds, which is what "
@@ -2771,8 +2810,10 @@ def main(argv=None):
                     help="comma-separated: thymus, viral, neoag (deposits) and self, bacterial "
                          "(reference proteomes). They answer different questions -- see "
                          "mhcmatch.mimics.KINDS -- and are never summed into one score")
-    mi.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"))
-    mi.add_argument("--species", default="human", choices=("human", "mouse"))
+    mi.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"),
+                    help="default %(default)s")
+    mi.add_argument("--species", default="human", choices=("human", "mouse"),
+                    help="which self/pathogen reference to search (default %(default)s)")
     mi.add_argument("--max-subs", type=int, default=2, help="fuzzy search radius")
     mi.add_argument("--near-subs", type=int, default=2, help="count hits within this many subs")
     _add_batch_opts(mi)
@@ -2927,7 +2968,10 @@ def main(argv=None):
                          "zero units is invisible -- which is the inequality the index exists for")
     cq.add_argument("--target", type=int, default=1, metavar="M",
                     help="report P(at least M responses) (default: 1)")
-    cq.add_argument("--score-column", default="score", metavar="COL")
+    cq.add_argument("--score-column", default="score", metavar="COL",
+                    help="which column holds the aggregate log-odds (default: score, "
+                         "which is what `rank` writes; for a `rank --passthrough "
+                         "--prefix mm_` table pass `mm_score`)")
     cq.add_argument("--out", metavar="FILE", help="write the report TSV here instead of stdout")
     cq.set_defaults(fn=cmd_cassette_score)
 
