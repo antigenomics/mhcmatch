@@ -252,6 +252,38 @@ class Proteome:
         k = self._index_key(L)
         return os.path.join(d, f"{k}.idx"), os.path.join(d, f"{k}.meta.npz")
 
+    def _index_to_hf_paths(self, L: int) -> tuple:
+        """The repo-relative names an index is published under: ``proteome_index/<key>.{idx,npz}``.
+
+        The key is content-derived, so the name a publisher computes and the name a user computes
+        are the same string without either being told which proteome it is -- which is the whole
+        reason the digest is over content rather than a filename. Publish with
+        :func:`mhcmatch.store.fetch_file`'s repo (``isalgo/pmhc_data``); a user fetches by simply
+        asking for the length they need."""
+        k = self._index_key(L)
+        return f"proteome_index/{k}.idx", f"proteome_index/{k}.meta.npz"
+
+    def _index_from_hf(self, L: int):
+        """Fetch a **published** index for this ``(proteome, L)``, or ``None``.
+
+        The point is that a screen works out of the box: without this the first run on any machine
+        pays the build (a Python loop over 68.4 M windows at ``L=9``), and on a fresh cluster node
+        every task pays it. The index is a deterministic function of a proteome that already comes
+        from the same HF dataset, so it is publishable data rather than per-user state.
+
+        Never fatal, and never partial: a miss, an offline node or a repo without the entry falls
+        through to the local build, which is always correct. ``huggingface_hub`` caches the
+        download itself, so the second process on the host reads its cache rather than the network,
+        and :meth:`_index_to_disk` still writes the local entry so the third reads that."""
+        try:
+            from huggingface_hub import hf_hub_download
+            from .store import PMHC_REPO
+            got = [hf_hub_download(repo_id=PMHC_REPO, repo_type="dataset", filename=n)
+                   for n in self._index_to_hf_paths(L)]
+            return got[0], got[1]
+        except Exception:
+            return None                # not published, no network, no token: build it locally
+
     def _index_from_disk(self, L: int):
         """``(Index, _Meta)`` from the disk cache, or ``None`` -- never a partial answer.
 
@@ -263,7 +295,10 @@ class Proteome:
             return None
         ipath, mpath = paths
         if not (os.path.exists(ipath) and os.path.exists(mpath)):
-            return None
+            hit = self._index_from_hf(L)
+            if hit is None:
+                return None
+            ipath, mpath = hit
         try:
             import numpy as np
             with np.load(mpath, allow_pickle=False) as z:

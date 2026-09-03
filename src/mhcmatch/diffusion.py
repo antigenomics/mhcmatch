@@ -1525,6 +1525,16 @@ _VENDORED_MODELS = {
     ("mhc1", "adaptive", "proteome"): "anchor_model_mhc1_proteome_adaptive.pkl.gz",
     ("mhc2", "adaptive", "proteome"): "anchor_model_mhc2_proteome_adaptive.pkl.gz",
     ("mhc2", "core", "proteome"): "anchor_model_mhc2_proteome_core.pkl.gz",
+    # **The config `Store._anchor_model` actually asks for, which shipped un-vendored until
+    # 2026-09-03.** `restriction()` and `vote()` take `anchor_model`'s own defaults --
+    # `footprint="anchor", background="ligand"` -- and every entry above is `proteome`, two of them
+    # `adaptive`. So the registry missed on BOTH keys and `restriction` refit from scratch in every
+    # process that called it: measured 87.9 s for mhc2 on the full human panel. It is the path the
+    # cassette map uses, so a Nextflow run paid it once per cassette task -- the dominant cost once
+    # the safety screen came off, and invisible because the fit prints a progress line rather than
+    # an error. Vendoring the pair costs ~2.3 MB in the wheel and makes the map load-only.
+    ("mhc1", "anchor", "ligand"): "anchor_model_mhc1_ligand_anchor.pkl.gz",
+    ("mhc2", "anchor", "ligand"): "anchor_model_mhc2_ligand_anchor.pkl.gz",
 }
 
 
