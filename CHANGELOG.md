@@ -55,6 +55,29 @@ human expression block is built on was not actually available.
   different questions.
 - `predict.SCORER_EPOCH` 5 -> 6: the expression heads return different numbers.
 
+### Added --- model identity, so the manuscript can pin a fit
+
+- **Every shipped aggregate now names itself**: `model_id` (`mhc1.human.neoantigen`), `cls`,
+  `species`, `mode`, an int `version`, and `release` -- **the dotted package version the fit was
+  accepted in, not the one running**. The paper quotes numbers one coefficient set produced while
+  the library keeps moving underneath it, so `mhcmatch 1.11.0` is not a citation and
+  `mhc1.human.neoantigen v11 (release 1.6.1)` is. `rank.models()` lists them; `mhcmatch rank
+  --model` prints the running one's id and release. Coefficients, `mu` and `sigma` are byte-for-byte
+  unchanged -- this is metadata only, and the stamping asserts it.
+
+- **`AGGREGATE_ARTIFACTS` is keyed `(cls, species, mode)`** and `aggregate()` /
+  `aggregate_features()` take `mode="neoantigen"`. **A tumour neoantigen and a pathogen epitope are
+  two mechanisms, not two values of one covariate** -- autoimmunity is not inflammation -- so they
+  are two models and the key says so. Every artifact shipped to date is `neoantigen`, which is what
+  the human artifact was always fitted on. `pathogen` is a registered spelling with **no shipped
+  artifact**, so asking for one refuses by name rather than quietly serving the neoantigen fit.
+
+  Measured on the mouse deposit, before the split existed: pooling the two collapsed class-I
+  held-out within-reference AUROC **0.5930 -> 0.5241** on peptide-grouped folds -- worse on 1,703
+  rows than the 923 it started from. Positive rate is **0.593** on mouse-derived CEDAR rows against
+  **0.262** on pathogen-derived ones (class II: 0.528 against 0.375).
+
+
 ### Fixed
 
 - **The expression resolution chain ended at `nan` instead of at the gene's pan-tissue median.**

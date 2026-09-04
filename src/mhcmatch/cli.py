@@ -775,6 +775,10 @@ def _rank_model(a):
     m = R.aggregate()
     f = m["fit"]
     say(f"{m['model']} v{m['version']}, fitted by {m['generator']}")
+    # The model's own identity, which is what a manuscript cites. It is deliberately not the
+    # library version: the paper pins a fit, and the library keeps moving under it.
+    say(f"model_id {m.get('model_id', '?')}, release {m.get('release', '?')} "
+        f"(the package version this fit was accepted in, not the one running)")
     say(f"{f['rows']:,} rows / {f['positives']:,} positives over {len(f['screens'])} screens; "
         f"BIC {f['bic']:.1f}, ridge tau {f['tau']}")
     say(f"intervals from {f['n_boot']} resamples of {f['bootstrap_unit']}; holdout {f['holdout']}")

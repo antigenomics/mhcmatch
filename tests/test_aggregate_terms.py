@@ -307,7 +307,7 @@ def test_a_species_class_with_no_fitted_artifact_refuses_rather_than_substitutin
     """
     from mhcmatch import rank as R
 
-    assert ("mhc2", "human") not in R.AGGREGATE_ARTIFACTS
+    assert ("mhc2", "human", "neoantigen") not in R.AGGREGATE_ARTIFACTS
     with pytest.raises(ValueError, match="no fitted artifact"):
         R.aggregate("mhc2", "human")
 
@@ -315,8 +315,47 @@ def test_a_species_class_with_no_fitted_artifact_refuses_rather_than_substitutin
 def test_every_registered_artifact_declares_the_features_it_carries_coefficients_for():
     from mhcmatch import rank as R
 
-    for (cls, species) in R.AGGREGATE_ARTIFACTS:
-        a = R.aggregate(cls, species)
+    for (cls, species, mode) in R.AGGREGATE_ARTIFACTS:
+        a = R.aggregate(cls, species, mode)
         n = len(a["features"])
-        assert len(a["coef"]) == n and len(a["mu"]) == n and len(a["sigma"]) == n, (cls, species)
-        assert tuple(a["features"]) == R.aggregate_features(cls, species)
+        assert len(a["coef"]) == n and len(a["mu"]) == n and len(a["sigma"]) == n, \
+            (cls, species, mode)
+        assert tuple(a["features"]) == R.aggregate_features(cls, species, mode)
+
+
+def test_every_shipped_model_names_itself_and_the_release_that_accepted_it():
+    """`model_id`, `cls`, `species`, `mode`, `version`, `release` -- on every artifact, no default.
+
+    **A manuscript pins a fit, not a library version.** The paper quotes numbers one specific
+    coefficient set produced, and the library keeps moving underneath it while mouse and class II
+    are worked on -- so `mhcmatch 1.11.0` is not a citation and `mhc1.human.neoantigen v11
+    (release 1.6.1)` is. `release` is the package version the fit was *accepted* in, which is why
+    it is stored rather than derived from `__version__`.
+    """
+    from mhcmatch import rank as R
+
+    recs = R.models()
+    assert recs, "no shipped aggregate resolved at all"
+    for r in recs:
+        a = R.aggregate(r["cls"], r["species"], r["mode"])
+        for field in ("model_id", "cls", "species", "mode", "version", "release"):
+            assert a.get(field) not in (None, ""), f"{r['file']} has no {field}"
+        assert a["model_id"] == f"{a['cls']}.{a['species']}.{a['mode']}"
+        assert (a["cls"], a["species"], a["mode"]) == (r["cls"], r["species"], r["mode"]), \
+            f"{r['file']} is registered under a key its own metadata contradicts"
+        assert isinstance(a["version"], int), "a model version is an int; a release is dotted"
+        assert a["release"].count(".") == 2, f"{r['file']} release {a['release']!r} is not dotted"
+    assert len({r["model_id"] for r in recs}) == len(recs), "two artifacts share a model_id"
+
+
+def test_a_mode_with_no_shipped_artifact_refuses_by_name():
+    """`pathogen` is a registered spelling with no fit yet, and must not serve the neoantigen one."""
+    import pytest
+
+    from mhcmatch import rank as R
+
+    assert "pathogen" in R.AGGREGATE_MODES
+    with pytest.raises(ValueError, match="pathogen"):
+        R.aggregate("mhc1", "human", "pathogen")
+    with pytest.raises(ValueError, match="not one of"):
+        R.aggregate("mhc1", "human", "tumour")

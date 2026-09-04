@@ -44,7 +44,8 @@ from importlib import resources
 
 __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
            "BASE_COLUMNS", "MIMICRY_PAIRS", "EXTENDED_COLUMNS", "ANNOTATE_COLUMNS", "columns",
-           "aggregate", "aggregate_features", "AGGREGATE_ARTIFACTS",
+           "aggregate", "aggregate_features", "AGGREGATE_ARTIFACTS", "AGGREGATE_MODES",
+           "models",
            "aggregate_score", "probability", "POOL_PREVALENCE",
            "AGGREGATE_FEATURES", "AGGREGATE_COLUMNS", "EXPR_COLUMNS",
            "AGGREGATE_BLOCKS", "CHANNEL_COLUMNS", "PHYS_COLUMNS", "expr_percentile",
@@ -163,13 +164,21 @@ TERMS_MOUSE_EXPECTED: tuple = ("binder", "log10a", "expr_lvl", "expr_norm",
                                "C_corpus_thymus", "C_corpus_self", "C_corpus_viral")
 
 AGGREGATE_ARTIFACTS: dict = {
-    ("mhc1", "human"): "aggregate_mhc1.json",
-    ("mhc1", "mouse"): "aggregate_mhc1_mouse.json",
-    ("mhc2", "mouse"): "aggregate_mhc2_mouse.json",
+    ("mhc1", "human", "neoantigen"): "aggregate_mhc1.json",
+    ("mhc1", "mouse", "neoantigen"): "aggregate_mhc1_mouse.json",
+    ("mhc2", "mouse", "neoantigen"): "aggregate_mhc2_mouse.json",
 }
 
-#: Cached artifacts, one slot per ``(cls, species)``. A single slot served the wrong fit the moment
-#: there was more than one.
+#: **The two immunological modes, and why the key carries one.** A tumour neoantigen and a pathogen
+#: epitope are answered by different mechanisms -- autoimmunity is not inflammation -- so they are
+#: two models, never one model with an extra covariate. Every artifact shipped to date is
+#: ``neoantigen``, which is what the human artifact was always fitted on; ``pathogen`` is a
+#: registered spelling with no shipped artifact yet, so asking for one refuses by name rather than
+#: silently serving the neoantigen fit.
+AGGREGATE_MODES: tuple = ("neoantigen", "pathogen")
+
+#: Cached artifacts, one slot per ``(cls, species, mode)``. A single slot served the wrong fit the
+#: moment there was more than one.
 _AGG: dict = {}
 
 #: The features the shipped aggregate expects, in order. **Read it rather than typing the list.**
@@ -375,16 +384,48 @@ FEATURES_ONLY: dict = {
 }
 
 
-def aggregate_features(cls: str = "mhc1", species: str = "human") -> tuple:
-    """The feature names ``(cls, species)``'s artifact declares, in order.
+def aggregate_features(cls: str = "mhc1", species: str = "human",
+                       mode: str = "neoantigen") -> tuple:
+    """The feature names ``(cls, species, mode)``'s artifact declares, in order.
 
     :data:`AGGREGATE_FEATURES` is the human class-I tuple as a module constant, because it is
     public API and is pinned against the artifact by a test. This is the general form, and it is
     what a caller building a feature dict for a mouse run should read."""
-    return tuple(aggregate(cls, species)["features"])
+    return tuple(aggregate(cls, species, mode)["features"])
 
 
-def aggregate(cls: str = "mhc1", species: str = "human") -> dict:
+def models() -> list:
+    """One record per shipped aggregate: what it is, what version it is, and what it was fitted on.
+
+    **A model version is not the library version, and the manuscript pins the model.** The paper
+    quotes numbers produced by one specific fit; the library keeps moving underneath it while mouse
+    and class II are worked on. So each artifact carries its own identity -- ``model_id``
+    (``mhc1.human.neoantigen``), an integer ``version`` that moves on a specification change, and
+    ``release``, the dotted package version the fit was **accepted** under. Citing
+    ``mhc1.human.neoantigen v11 (release 1.9.0)`` names a fit that no later library version can
+    move, which is exactly what quoting ``mhcmatch 1.11.0`` cannot do.
+
+    Returns records sorted by ``model_id``, each with ``cls``, ``species``, ``mode``, ``model_id``,
+    ``version``, ``release``, ``file``, ``features`` and the fit's own row/positive counts where the
+    artifact records them.
+    """
+    out = []
+    for (cls, species, mode), name in sorted(AGGREGATE_ARTIFACTS.items()):
+        try:
+            a = aggregate(cls, species, mode)
+        except (FileNotFoundError, ValueError):
+            continue
+        fit = a.get("fit", {}) if isinstance(a.get("fit"), dict) else {}
+        out.append({"model_id": a.get("model_id", f"{cls}.{species}.{mode}"),
+                    "cls": cls, "species": species, "mode": mode, "file": name,
+                    "version": a.get("version"), "release": a.get("release"),
+                    "features": tuple(a.get("features", ())),
+                    "rows": fit.get("rows"), "positives": fit.get("positives")})
+    return sorted(out, key=lambda r: r["model_id"])
+
+
+def aggregate(cls: str = "mhc1", species: str = "human",
+              mode: str = "neoantigen") -> dict:
     """The fitted ``EPIC`` artifact for ``(cls, species)``: features, coefficients, standardizer.
 
     **EPIC** -- Expression, Presentation, Immunogenic Complementarity --
@@ -454,18 +495,21 @@ def aggregate(cls: str = "mhc1", species: str = "human") -> dict:
     (ITSNdb, 89 of 149). A probability quoted without naming the corpus is quoting one of those
     prevalences by accident.
     """
-    key = (cls, species)
+    if mode not in AGGREGATE_MODES:
+        raise ValueError(f"aggregate: mode={mode!r} is not one of {AGGREGATE_MODES}.")
+    key = (cls, species, mode)
     name = AGGREGATE_ARTIFACTS.get(key)
     if name is None:
         raise ValueError(
-            f"aggregate: no fitted artifact for cls={cls!r}, species={species!r}. This library "
-            f"ships {sorted(AGGREGATE_ARTIFACTS)}. Scoring with another combination's "
-            "coefficients would report a number computed from the wrong fit.")
+            f"aggregate: no fitted artifact for cls={cls!r}, species={species!r}, mode={mode!r}. "
+            f"This library ships {sorted(AGGREGATE_ARTIFACTS)}. Scoring with another "
+            "combination's coefficients would report a number computed from the wrong fit.")
     if key not in _AGG:
         res = resources.files("mhcmatch.data").joinpath(name)
         if not res.is_file():
             raise FileNotFoundError(
-                f"aggregate: {name} is registered for cls={cls!r}, species={species!r} but is not "
+                f"aggregate: {name} is registered for cls={cls!r}, species={species!r}, "
+                f"mode={mode!r} but is not "
                 "installed. `mhcmatch build --check` lists it; PROVENANCE.md says where it comes "
                 "from.")
         with res.open() as fh:

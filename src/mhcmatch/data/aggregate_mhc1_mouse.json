@@ -361,5 +361,8 @@
     "auprc": 0.5482683982683982
    }
   ]
- }
+ },
+ "mode": "neoantigen",
+ "model_id": "mhc1.mouse.neoantigen",
+ "release": "1.10.0"
 }

@@ -446,5 +446,10 @@
    }
   ],
   "ship": false
- }
+ },
+ "cls": "mhc1",
+ "species": "human",
+ "mode": "neoantigen",
+ "model_id": "mhc1.human.neoantigen",
+ "release": "1.6.1"
 }
