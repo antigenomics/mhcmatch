@@ -69,3 +69,16 @@ html_theme_options = {
     "header_links_before_dropdown": 4,
     "show_toc_level": 2,        # the right-hand on-page TOC: subsections too, not just top level
 }
+
+
+# **The model tables are generated here, on every build, from the artifacts that ship.** They are
+# the one thing these docs used to refuse to print: six pages carried their own copy of the EPIC
+# coefficients and all six went stale together the first time the model was refitted, because
+# nothing read them. Generating removes the class of error rather than the page -- `docs/models.rst`
+# includes what this writes, and `docs/_generated/` is gitignored so there is no committed copy to
+# drift. The README's summary block is the one committed copy, pinned by `tests/test_modeldoc.py`.
+def setup(app):
+    from mhcmatch import _modeldoc
+
+    _modeldoc.write(os.path.abspath(".."))
+    return {"parallel_read_safe": True}

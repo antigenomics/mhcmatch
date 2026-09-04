@@ -1,5 +1,42 @@
 # Changelog
 
+## [Unreleased] --- the four shipped fits are documented, and the tables are generated
+
+> **`docs/models.rst` is new**: all four fitted artifacts on one page --- every coefficient with
+> its bootstrap interval, what each model was fitted on, the discrimination figure each one
+> records, and the caveats that come with each. `README.md` carries the four-row summary.
+> **No artifact changed and no fit was re-run.**
+
+**The tables are generated from the artifacts, not typed.** `mhcmatch._modeldoc` renders them and
+`docs/conf.py` rewrites `docs/_generated/` on every Sphinx build, so `docs/_generated/` is
+gitignored and there is no committed copy to drift. The one committed copy --- the summary block in
+`README.md`, between `<!-- BEGIN shipped-models -->` markers --- is pinned by
+`tests/test_modeldoc.py`, and `python -m mhcmatch._modeldoc` refreshes it.
+
+This closes the reason the docs had refused to print a coefficient at all: six pages once carried
+their own transcription of the EPIC table and all six went stale together at the first refit.
+
+**The AUROC column is two protocols and the page says so in every place it appears.** The human
+class-I fit spans seven screens and reports **leave-one-screen-out**, mean 0.7102. The other three
+are single-deposit fits with no second screen to hold out and report an **in-sample
+within-reference** figure --- the slope term alone, per-reference intercepts excluded from the
+score, macro-averaged over references carrying at least three of each class: mouse class I 0.6335
+(921 rows), human class II 0.6020 (1,112), mouse class II 0.5741 (468). A test asserts the two
+protocol labels never collapse into one column.
+
+**Two human class-I screens read near chance because of how they were built, and the page now says
+which reading answers each.** ITSNdb admits a peptide only on validated MHC-I binding, so
+presentation is equalised by construction and AUROC is the wrong statistic there --- the shipped
+nine-term score reaches AUPRC **0.7256** against the set's prevalence of 0.6497 and precision@10
+**1.00**. VACCIMEL selected its 93 candidates on presentation and expression before any assay; read
+on the recognition blocks alone under the same leave-one-screen-out protocol, the same model
+reaches **0.6447**.
+
+**`mhc2.human.neoantigen` is a CD4 response model over human self proteins**, and that is now
+stated wherever it is offered: 143 of its 1,112 rows are a cancer, 260 are healthy donors, and the
+largest single disease is type 1 diabetes at 364 rows. The composition already ships inside the
+artifact as `fit.population`.
+
 ## [1.13.0] --- 2026-09-04 --- the mouse class-I model reads the human corpus, and fits nine terms
 
 > **The mouse class-I scorer moves to model version 5**: nine free GLM coefficients, matching the

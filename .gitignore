@@ -38,3 +38,4 @@ src/mhcmatch/data/__pycache__/
 # (860 KB, 4,199 lines) and is excluded deliberately rather than by omission. Track it only if
 # CI is ever made to install from it.
 uv.lock
+docs/_generated/
