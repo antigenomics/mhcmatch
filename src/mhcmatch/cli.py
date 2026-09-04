@@ -1286,9 +1286,17 @@ def cmd_expression(a):
         for t in ts:
             print(f"  {t}")
         print(f"# {len(tm)} {sp} tumour models, from {EX.TUMOR_FILE_MOUSE} -- gene-keyed, not")
-        print("# peptide-keyed as the human TCGA half is, and in a different unit from the above.")
+        print("# peptide-keyed as the human TCGA half is. `--tumor` on `expression` reads these.")
         for t in tm:
             print(f"  {t}")
+        _tis, mat = EX._mouse_matrix_contexts()
+        if mat:
+            print(f"# {len(mat)} tumour models in {EX.MATRIX_FILE_MOUSE}, the harmonised "
+                  f"compendium --")
+            print("# what `context_floor()` and `gene_level()` read, and on one scale with the "
+                  "tissues above.")
+            for t in sorted(k.split("|", 1)[1] for k in mat.values()):
+                print(f"  {t}")
         return
     if a.list_contexts:
         print("# TCGA tumour type -> its matched normal GTEx tissue(s), best match first.")
@@ -1353,6 +1361,10 @@ REFERENCE_FILES = (
     "expression/reference_expression.tsv.gz",     # GTEx tissue + TCGA tumour medians (~105 MB)
     "expression/reference_expression_mmu.tsv.gz",  # FANTOM5 mouse, 18,830 genes x 35 tissues (3 MB)
     "expression/tumor_expression_mmu.tsv.gz",     # GSE245293, 24,940 genes x 6 syngeneic models (2 MB)
+    # The harmonised mouse compendium: 26,737 genes x 68 contexts on one scale, which is what makes
+    # a mouse tumour floor and a mouse tissue floor comparable. 2.7 MB between the two.
+    "expression/toil_matrix_mmu.npz",
+    "expression/toil_floors_mmu.tsv",
     "thymus/thymus_immunopeptidome_mmu.tsv.gz",   # the mouse tolerance reference
     # The single-pipeline GTEx/TCGA reference, as the three files scoring actually reads -- 6.6 MB
     # between them. The table they are derived from is 38.6 MB and is deliberately NOT staged here:

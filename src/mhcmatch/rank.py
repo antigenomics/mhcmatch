@@ -987,9 +987,21 @@ def _expression_for(gene: str, observed, tissue: str | None, tumor: str | None,
     except ImportError:                                  # pragma: no cover
         return float("nan"), True
     try:
-        tkey = gene if species != "human" else peptide
-        if tumor and tkey:
-            rec = EX.lookup(tkey, tumor=tumor, species=species)
+        # The tumour half is peptide-keyed in human (TCGA, "has this exact neoantigen been seen
+        # expressed") and gene-keyed in mouse (syngeneic models, no peptide rows anywhere). Same
+        # rung, different key -- and a different accessor, which is the substantive part:
+        #
+        #   human  `lookup`      the peptide-keyed deposit; there is no matrix for peptides
+        #   mouse  `gene_level`  the harmonised matrix, so `expr_lvl` and `expr_norm` come off one
+        #                        scale, and all 33 syngeneic models resolve rather than the six the
+        #                        TSV deposit carries. `P815` is 89 rows of the neoantigen corpus and
+        #                        was unreachable through `lookup`.
+        if tumor and species != "human" and gene:
+            d = EX.gene_level(gene, tumor=tumor, species=species)
+            if d.get("tumor") is not None:
+                return math.log1p(max(0.0, d["tumor"])), True
+        elif tumor and peptide:
+            rec = EX.lookup(peptide, tumor=tumor, species=species)
             if rec:
                 return math.log1p(rec["median_tpm"]), True
         if tissue and gene:

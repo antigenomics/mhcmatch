@@ -1,5 +1,74 @@
 # Changelog
 
+## [1.11.0] --- UNRELEASED --- the E of EPIC for mouse
+
+> **Blocked on one decision, and it is the author's.** Wiring the harmonised matrix into
+> `context_floor` / `gene_level` changes what `expr_lvl` and `expr_norm` return for mouse, so the
+> two mouse artifacts have to be refitted with it. Refitted, **class II gains and class I loses**:
+> `vanilla` within-reference AUROC on peptides goes 0.5620 -> **0.5817** for class II and 0.6206 ->
+> **0.6093** for class I, with every class-I arm down and every class-II arm up.
+> `bench/results/epic_mouse_harmonized_expression.md` has both tables and the three ways it could
+> go. **The 1.10.0 artifacts are unchanged in this checkout and nothing is refitted**; until that
+> decision is made this version is not releasable, because a library whose expression heads moved
+> and whose artifacts did not is exactly the failure `SCORER_EPOCH` exists to catch.
+
+
+**`expr_lvl` and `expr_norm` are on one scale for mouse, for the first time.** 1.10.0 gave mouse a
+tumour rung, and it read GSE245293 (RNA-seq TPM) while the normal rung read FANTOM5 (CAGE tag
+density) -- so the two fitted terms divided by floors from different assays, measured **0.9964
+against 0.8000**, and nothing in either return value said so. The tumour-versus-normal contrast the
+human expression block is built on was not actually available.
+
+### Added
+
+- **`expression.MATRIX_FILE_MOUSE` / `FLOORS_FILE_MOUSE`** -- `expression/toil_matrix_mmu.npz` and
+  `toil_floors_mmu.tsv` on `isalgo/pmhc_data`: **26,737 genes x 68 contexts**, dense float32, the
+  same four arrays and the same `source|context` key shape as the human `toil_matrix.npz`, so one
+  code path reads both. 35 FANTOM5 tissues, 6 GSE245293 syngeneic models, 27 more from the CrownBio
+  panel (`prjna1271699+`).
+
+  **Harmonised across its three sources.** Each source's non-zero values are quantile-mapped onto
+  the mean of the three quantile functions -- per source rather than per context, so between-context
+  structure survives; zero maps to zero; the grid spans each source's support so the map is monotone
+  with no extrapolation and **every within-context rank is preserved exactly**, which is what
+  `rank.expr_level` consumes. Pooled mean `log2(1 + TPM)` went 1.721 / 2.513 / 2.059 to a spread of
+  **0.087**, and the pooled q25 floor now agrees to **0.7174 / 0.7144 / 0.7174**.
+
+- **`matrix_file(species)`, `fetch_matrix(species=)`, `_matrix(path, species)`** -- species-keyed,
+  mirroring `reference_file`. Asking for a species with no matrix raises rather than silently
+  reading the human one.
+
+### Changed
+
+- **`context_floor` and `gene_level` read the matrix for mouse**, with the per-deposit quantile kept
+  as a fallback so an offline mirror carrying only the two TSVs still answers. This is the split
+  human already had -- `lookup` reads the TSV deposit, `context_floor`/`gene_level` read the matrix
+  -- now applied to both species rather than one.
+- **All 33 syngeneic models resolve, against the TSV deposit's 6.** `P815` (89 rows of the IEDB
+  mouse neoantigen deposit), `Renca` and `EMT6` had no tumour rung at all. `rank._expression_for`
+  reads mouse through `gene_level` rather than `lookup` for exactly this reason; human keeps
+  `lookup`, because its tumour half is peptide-keyed and has no matrix equivalent.
+- **`resolve_context(species="mouse")`** resolves both halves -- 35 tissues and 33 models -- and
+  returns them in the human function's `(study codes, tissue contexts)` shape.
+- `mhcmatch bootstrap --reference` stages the two new files; `expression --list-contexts
+  --species mouse` prints the TSV's six models and the matrix's 33 separately, since they answer
+  different questions.
+- `predict.SCORER_EPOCH` 5 -> 6: the expression heads return different numbers.
+
+### Measured, and stated rather than left to be found
+
+- **The floors are one scale now**: tumour 0.709 (B16F10) to 0.895 (EMT6), tissue 0.578 (skin) to
+  0.717, pooled 0.717. `test_the_mouse_tumour_and_tissue_floors_are_finally_one_scale` is the guard.
+- **A gene-specific platform effect survives**, and the harmonisation cannot fix it: `Actb` reads
+  3,032 in B16F10 and 10.4 in FANTOM5 thymus, because CAGE at that promoter genuinely ranks it
+  mid-distribution. A monotone per-source map cannot repair a gene whose *rank* differs by platform.
+- **The detection-rate difference survives too** (65.2 / 78.1 / 65.0 % non-zero), because a
+  monotone map that respects zero cannot move it.
+- **Human needed none of this and that is checked, not assumed.** The same measurement on
+  `toil_matrix.npz` puts `toil_gtex` and `toil_tcga` **0.011** log2 units apart, against 0.565 for
+  the mouse CAGE-vs-RNA-seq seam. Both human halves went through one Toil RSEM recompute. Nothing
+  on the human path is touched by this release.
+
 ## [1.10.0] --- 2026-09-04 --- mouse support
 
 **`species="mouse"` now scores with a mouse model, not a human one.** Every mouse ingredient

@@ -369,3 +369,38 @@ def test_the_human_tumour_half_is_still_peptide_keyed_and_unmoved():
     assert "B16F10" not in EX.tumor_types()
     assert len(EX.tumor_types()) == 19
     assert EX.context_floor(tumor="SKCM") == pytest.approx(0.16, abs=5e-3)
+
+
+@pytest.mark.hfdata
+def test_the_mouse_tumour_and_tissue_floors_are_finally_one_scale():
+    """The point of the harmonised compendium, as a number rather than a claim.
+
+    Before it, a mouse `expr_lvl` divided by a floor taken from RNA-seq TPM (0.9964) and `expr_norm`
+    by one taken from CAGE tag density (0.8000), and nothing in either return value said the two
+    were different quantities. The matrix puts all 68 contexts on one scale.
+    """
+    tum = [EX.context_floor(tumor=m, species="mouse") for m in ("B16F10", "P815", "Renca", "MC38")]
+    tis = [EX.context_floor(tissue=t, species="mouse") for t in ("thymus", "lung", "skin")]
+    pooled = EX.context_floor(species="mouse")
+
+    # every floor within a factor of 2 of the pooled one, both halves alike
+    assert all(0.5 * pooled <= f <= 2.0 * pooled for f in tum + tis), (tum, tis, pooled)
+    # and the two halves' spreads overlap rather than sitting apart
+    assert min(tum) < max(tis) and min(tis) < max(tum), (tum, tis)
+
+
+@pytest.mark.hfdata
+def test_the_matrix_carries_models_the_tsv_deposit_never_had():
+    """`P815`, `Renca` and `EMT6` are named by the neoantigen deposit and absent from GSE245293."""
+    _tis, mat = EX._mouse_matrix_contexts()
+    models = {k.split("|", 1)[1] for k in mat.values()}
+    assert {"P815", "Renca", "EMT6"} <= models
+    assert len(models) == 33 and len(_tis) == 35
+
+    # they resolve all three rungs, on the scale the tissues use
+    d = EX.gene_level("Psmb11", tumor="Renca", tissue="thymus", species="mouse")
+    assert d["found"] and d["normal"] > 50 and d["tumor"] < 1.0      # thymus-restricted, correctly
+
+    # `tumor_types` still reports the TSV deposit's six -- the same split human has, where
+    # `tumor_types()` is 19 TCGA codes and the matrix carries 33
+    assert len(EX.tumor_types(species="mouse")) == 6

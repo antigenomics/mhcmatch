@@ -15,6 +15,66 @@ the build plan. Phase sections marked _(TBD)_ await detail.
 > tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
 > below resolve there, not here.
 
+## Where this stands, 2026-09-04 (later) — 1.11.0, and the E of EPIC finally means something for mouse
+
+**1.10.0 gave mouse a tumour rung and it was not comparable to the normal one.** The tumour rung
+read GSE245293 (RNA-seq TPM) and the normal rung read FANTOM5 (CAGE tag density), so `expr_lvl` and
+`expr_norm` — two of the nine fitted terms — divided by floors from **different assays**, 0.9964
+against 0.8000. Nothing in either return value said so. The `tumor` fit arm came out a wash
+(0.6192 against `vanilla`'s 0.6206 on class I) and *that result stands as measured*; what has
+changed is one of its inputs.
+
+**`toil_matrix_mmu.npz` is the fix and it is a compendium, not a patch.** 26,737 genes × 68
+contexts — 35 FANTOM5 tissues, 6 GSE245293 models, 27 more from the CrownBio panel — harmonised so
+the pooled q25 floor agrees to **0.7174 / 0.7144 / 0.7174** where the three sources' pooled means
+had been 1.721 / 2.513 / 2.059. Built in `public_expression_peptidomes` (the repo formerly called
+`2026-mouse-thymus`); protocol and numbers in its `results/expression_harmonization.md`.
+
+**The identifying argument is the author's and it was tested, not assumed.** A pan-tissue pool and
+a pan-tumour pool should have no meaningful global difference, both being transcriptionally
+diverse, so a difference between their marginals is assay. That is checkable here because
+`gse245293` and `prjna1271699+` both measure the **same five models**: on matched biology their
+marginals differ by **0.410** log2 units, on their full and different model sets by 0.453. Biology
+is ~4 % of a 45 % gap.
+
+**Not ComBat, for two independent reasons.** 33 tumour contexts exist in the RNA-seq sources and
+zero in the CAGE source, so batch is collinear with the tumour-versus-normal axis the model scores
+on — a ComBat fit with batch = source would remove it. And CAGE counts 5′ tags at promoters while
+RNA-seq counts transcript bodies, which is gene-structural rather than the location-scale shift
+ComBat models.
+
+**Two implementation traps, both caught by checks rather than by reading the code.** Carrying zeros
+through the quantile map sends `log2(1+0)=0` onto a *positive* reference value, collapsing every
+silent gene onto one number — all 658,385 FANTOM5 cells became non-zero and the floor became a tie
+(q05 = q10 = q25 = 0.03805). And with zeros held out, extrapolating below the bottom knot goes
+negative, clamps to 0, and ties with the genuine zeros (1.4×10⁻¹ of within-context pairs; the
+earlier clamping variant lost 6.4×10⁻⁴ the same way at the top). Fixed by mapping zero to zero and
+by putting each source's exact min and max in the grid, so nothing is extrapolated. Rank agreement
+is now exactly 0.
+
+**What the library does with it.** `context_floor` and `gene_level` read the matrix for mouse, with
+the per-deposit quantile kept as a fallback for an offline mirror. That is the split human already
+had — `lookup` on the TSV, floors and levels on the matrix — now applied to both species.
+`rank._expression_for` reads mouse through `gene_level` rather than `lookup` for the same reason,
+which is what makes **all 33 syngeneic models** reachable against the TSV deposit's 6: **`P815` is
+89 rows of the neoantigen deposit** and had no tumour rung at all, and `Renca` and `EMT6` likewise.
+
+**What it does not fix, measured and recorded rather than discovered later.** A gene-specific
+platform effect: `Actb` reads 3,032 in B16F10 and 10.4 in FANTOM5 thymus after harmonisation,
+because CAGE at that promoter genuinely ranks it mid-distribution, and a monotone per-source map
+cannot repair a gene whose *rank* differs by platform. And the detection-rate difference
+(65.2 / 78.1 / 65.0 % non-zero), which a monotone map respecting zero cannot move. Fixing the first
+needs the same tissues on both platforms; **E-MTAB-6081** (13 mouse tissues, C57BL/6J, STAR /
+Ensembl 84) overlaps FANTOM5 on **four** — enough to measure the residual per gene, not to correct
+it.
+
+**Human is untouched, and that is checked rather than asserted.** The same measurement on
+`toil_matrix.npz` puts `toil_gtex` and `toil_tcga` **0.011** log2 units apart, against 0.565 for
+the mouse seam. Both human halves went through one Toil RSEM recompute and it worked — which also
+makes it the negative control this diagnostic passes.
+
+---
+
 ## Where this stands, 2026-09-04 — 1.10.0, and mouse is a species rather than a spelling
 
 **`--species mouse` reached the three places it had never reached.** It already routed the H-2

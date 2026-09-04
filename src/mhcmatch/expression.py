@@ -48,8 +48,8 @@ import gzip
 import os
 
 __all__ = ["REFERENCE_FILE", "REFERENCE_FILE_MOUSE", "TUMOR_FILE_MOUSE",
-           "REFERENCE_TOIL_FILE", "MATRIX_FILE",
-           "FLOORS_FILE", "SPECIES", "reference_file",
+           "REFERENCE_TOIL_FILE", "MATRIX_FILE", "MATRIX_FILE_MOUSE",
+           "FLOORS_FILE", "FLOORS_FILE_MOUSE", "SPECIES", "reference_file", "matrix_file",
            "SYNONYMS_FILE", "COLUMNS", "TUMOR_TISSUE", "TUMOR_TISSUE_APPROXIMATE",
            "C_MIN", "C_MAX", "MIN_SHARED", "MIN_COVERAGE", "GAMMA_MIN", "GAMMA_MAX",
            "matched_tissues", "resolve_context",
@@ -297,10 +297,17 @@ def _tumor_context(tumor: str, path: str | None, species: str) -> str:
     known = _tumor_contexts(path, species)
     hit = known.get(_norm_ctx(str(tumor)))
     if hit is None:
+        # The harmonised matrix carries 33 models against the TSV deposit's 6, so a name that
+        # misses the deposit may still be scoreable. Reported together, because "not a model" and
+        # "a model with no per-gene TSV row" are different answers to the same question.
+        _tis, mat = _mouse_matrix_contexts(path)
+        extra = sorted(k.split("|", 1)[1] for k in mat.values())
         have = ", ".join(sorted(known.values())) or "none -- the tumour deposit is not present"
         raise ValueError(
             f"expression: tumor={tumor!r} is not a {species} tumour model in the reference "
-            f"({have}). There is no {species} TCGA, so a study code does not resolve here.")
+            f"({have}). There is no {species} TCGA, so a study code does not resolve here."
+            + (f" The harmonised matrix additionally carries {', '.join(extra)}, which "
+               f"context_floor() and gene_level() can use." if extra else ""))
     return hit
 
 
@@ -512,6 +519,39 @@ MATRIX_FILE = "expression/toil_matrix.npz"
 #: table or a caption cites.
 FLOORS_FILE = "expression/toil_floors.tsv"
 
+#: **The mouse counterpart of the two files above, and the reason mouse now has a tumour-versus-
+#: normal contrast at all.** 26,737 genes x 68 contexts: 35 FANTOM5 tissues, 6 GSE245293 syngeneic
+#: models and 27 more from the CrownBio panel (``prjna1271699+``). Same array names and the same
+#: ``source|context`` key shape as :data:`MATRIX_FILE`, so one code path reads both.
+#:
+#: **Harmonised across its three sources, which the two mouse TSV deposits are not.** They sat on
+#: three scales -- pooled mean ``log2(1 + TPM)`` of 1.721 (CAGE), 2.513 and 2.059 (two RNA-seq
+#: sets) -- so before this file a mouse ``expr_lvl`` and ``expr_norm`` divided by floors from
+#: different assays, 0.9964 against 0.8. Here the pooled q25 floor is 0.7174 / 0.7144 / 0.7174.
+#: Each source's non-zero values are quantile-mapped onto the mean of the three quantile functions,
+#: per source rather than per context, zero maps to zero, and the map's grid spans each source's
+#: support -- so **every within-context rank is preserved exactly**, which is what
+#: :func:`mhcmatch.rank.expr_level` consumes.
+#:
+#: Two things it does not fix, both in the deposit's ``expression/SOURCES.md``: a **gene-specific**
+#: platform effect (``Actb`` reads 3,032 in B16F10 against 10.4 in FANTOM5 thymus, because CAGE at
+#: that promoter ranks it mid-distribution), and the **detection-rate** difference (65.2 / 78.1 /
+#: 65.0 % non-zero), which a monotone map respecting zero cannot move.
+MATRIX_FILE_MOUSE = "expression/toil_matrix_mmu.npz"
+
+#: The 68 contexts' floors at q05/q10/q25 plus a pooled row per source, 71 rows, same seven columns
+#: as :data:`FLOORS_FILE`.
+FLOORS_FILE_MOUSE = "expression/toil_floors_mmu.tsv"
+
+
+def matrix_file(species: str = "human") -> str:
+    """The dense matrix deposit for ``species``. Raises on anything else, as :func:`reference_file`
+    does and for the same reason: silently reading the human matrix for a mouse gene misses every
+    key and imputes the whole column to the training mean."""
+    if species not in SPECIES:
+        raise ValueError(f"species must be one of {list(SPECIES)}, got {species!r}")
+    return MATRIX_FILE if species == "human" else MATRIX_FILE_MOUSE
+
 #: **The floor is clamped to this range, in TPM.** Measured over all 86 human contexts it runs
 #: 0.1000 (whole blood) to 0.4000 (testis), so the clamp is far wider than anything real and exists
 #: only so that a degenerate input -- an empty context, a table read wrong, a caller passing a
@@ -554,9 +594,9 @@ GAMMA_MIN, GAMMA_MAX = 1e-6, 1e6
 SYNONYMS_FILE = "expression/context_synonyms.tsv"
 
 
-def fetch_matrix(path: str | None = None) -> str:
-    """Local path to :data:`MATRIX_FILE`, downloading it from HF on first use."""
-    return fetch_reference(path, file=MATRIX_FILE)
+def fetch_matrix(path: str | None = None, species: str = "human") -> str:
+    """Local path to ``species``' dense matrix, downloading it from HF on first use."""
+    return fetch_reference(path, file=matrix_file(species))
 
 
 def fetch_synonyms(path: str | None = None) -> str:
@@ -580,17 +620,19 @@ def _synonyms(path: str | None = None) -> dict:
     return {k: {kk: tuple(vv) for kk, vv in v.items()} for k, v in out.items()}
 
 
-@functools.lru_cache(maxsize=2)
-def _matrix(path: str | None = None) -> tuple:
+@functools.lru_cache(maxsize=4)
+def _matrix(path: str | None = None, species: str = "human") -> tuple:
     """``(gene index, context index, values, n_samples)``, read once and cached.
 
     Context keys are ``"<source>|<context>"``, so ``toil_tcga|SKCM`` and ``toil_gtex|Liver`` cannot
-    be confused for one another by a caller holding a bare name."""
+    be confused for one another by a caller holding a bare name. The mouse deposit uses the same
+    shape -- ``gse245293|B16F10``, ``fantom5_mouse|thymus`` -- so this function is species-agnostic
+    past the file it opens."""
     import numpy as np
 
     # `allow_pickle` stays off. The deposit stores its label arrays as fixed-width unicode for
     # exactly this reason: a pickled array in a file fetched over the network executes on load.
-    z = np.load(fetch_matrix(path))
+    z = np.load(fetch_matrix(path, species))
     gi = {str(g): i for i, g in enumerate(z["genes"])}
     ci = {str(c): i for i, c in enumerate(z["contexts"])}
     return gi, ci, z["values"], z["n_samples"]
@@ -655,8 +697,29 @@ def coexpression(genes, path: str | None = None, absolute: bool = False):
 
 
 @functools.lru_cache(maxsize=2)
+@functools.lru_cache(maxsize=8)
+def _mouse_matrix_contexts(path: str | None = None) -> tuple:
+    """``({normalised tissue: key}, {normalised tumour model: key})`` from the mouse matrix.
+
+    Two dictionaries rather than one, because the caller always knows which half it is asking for
+    and a model that answered a ``tissue=`` query would be a number from the wrong distribution --
+    the same failure :func:`resolve_context` raises to prevent on the human side.
+
+    Falls back to ``({}, {})`` when the matrix is not staged, so an offline mirror carrying only the
+    two TSV deposits still resolves a tissue through :func:`_mouse_contexts`."""
+    try:
+        _gi, ci, _V, _n = _matrix(path, "mouse")
+    except (FileNotFoundError, OSError, ValueError):
+        return {}, {}
+    tis, tum = {}, {}
+    for k in ci:
+        src, name = k.split("|", 1)
+        (tis if src == "fantom5_mouse" else tum)[_norm_ctx(name)] = k
+    return tis, tum
+
+
 def _mouse_contexts(path: str | None = None) -> dict:
-    """``{normalised name: the context as the mouse table spells it}``.
+    """``{normalised name: the context as the mouse table spells it}`` -- normal tissues only.
 
     Normalisation is lowercasing plus ``_`` -> space plus whitespace collapse, because the deposits
     that name a mouse tissue do not agree on the separator: the tissue self-ligandome writes
@@ -697,7 +760,15 @@ def resolve_context(text: str, path: str | None = None, approximate: bool = True
                          "string is a missing value that looks like a request.")
     if species != "human":
         reference_file(species)                       # validates the species name
-        ctx = _mouse_contexts(path).get(_norm_ctx(s))
+        tis, tum = _mouse_matrix_contexts(path)
+        key = _norm_ctx(s)
+        if key in tum:                                # a syngeneic model, the mouse "study code"
+            if detail:
+                return {"tcga_codes": (tum[key],), "gtex_contexts": (), "exact": True}
+            return (tum[key],), ()
+        ctx = _mouse_contexts(path).get(key)
+        if ctx is None and key in tis:
+            ctx = tis[key].split("|", 1)[1]
         if ctx is None:
             raise ValueError(
                 f"resolve_context: {s!r} is not one of the {len(_mouse_contexts(path))} tissues in "
@@ -759,11 +830,16 @@ def _log_approximate(text: str, alias: str) -> None:
                   "The floor and the matched normal are that organ's.", text, alias)
 
 
-def _floor_from(keys: tuple, q: float, path: str | None = None) -> tuple:
-    """``(q-th percentile of non-zero levels pooled over ``keys``, n genes)``; ``nan`` if too few."""
+def _floor_from(keys: tuple, q: float, path: str | None = None,
+                species: str = "human") -> tuple:
+    """``(q-th percentile of non-zero levels pooled over ``keys``, n genes)``; ``nan`` if too few.
+
+    ``v > 0`` drops ``NaN`` as well as zero, which is what the mouse matrix needs: there a ``NaN``
+    means the gene is absent from that context's source and a ``0.0`` means it was measured silent,
+    and neither belongs in a quantile over expressed genes."""
     import numpy as np
 
-    _, ci, V, _ = _matrix(path)
+    _, ci, V, _ = _matrix(path, species)
     cols = [ci[k] for k in keys if k in ci]
     if not cols:
         return float("nan"), 0
@@ -841,6 +917,41 @@ def context_floor(tumor: str | None = None, tissue: str | None = None, q: float 
 
 
 def _context_floor_species(tumor, tissue, q, path, clamp, prefilter, detail, species):
+    """:func:`context_floor` for a non-human species.
+
+    **Reads the harmonised matrix when it is staged**, which is what makes a mouse tumour floor and
+    a mouse tissue floor the same unit -- measured, the pooled q25 agrees to 0.714--0.717 across the
+    three sources behind it. Before the matrix these came off two deposits on two scales, 0.9964
+    against 0.8, and nothing in the return value said so. Falls back to the per-deposit quantile
+    when the matrix is absent, so an offline mirror still answers."""
+    tis, tum = _mouse_matrix_contexts(path)
+    if tis or tum:
+        keys: tuple = ()
+        if tumor:
+            keys = (tum.get(_norm_ctx(str(tumor))),) if _norm_ctx(str(tumor)) in tum else ()
+            if not keys:
+                _tumor_context(tumor, path, species)        # raises, naming what does resolve
+        elif tissue:
+            k = _norm_ctx(str(tissue))
+            if k not in tis:
+                resolve_context(tissue, path, species=species)   # raises with the vocabulary
+            keys = (tis[k],)
+        v, n = _floor_from(keys, q, path, species)
+        pooled = not keys or v != v
+        if v != v:
+            v, n = _floor_from(tuple(tis.values()) or tuple(tum.values()), q, path, species)
+        raw = v
+        if prefilter and prefilter > 0:
+            v = max(v, float(prefilter))
+        if clamp:
+            v = min(max(v, C_MIN), C_MAX)
+        if not detail:
+            return v
+        return {"floor": v, "contexts": keys, "n_genes": n, "pooled": pooled, "clamped": v != raw}
+    return _context_floor_deposit(tumor, tissue, q, path, clamp, prefilter, detail, species)
+
+
+def _context_floor_deposit(tumor, tissue, q, path, clamp, prefilter, detail, species):
     """:func:`context_floor` off the two gene-keyed deposits, for a species with no dense matrix.
 
     The human path reads :data:`MATRIX_FILE` because 58,581 x 86 float32 is 100x faster to quantile
@@ -936,12 +1047,55 @@ def gene_level(gene: str, tumor: str | None = None, tissue: str | None = None,
 
 
 def _gene_level_species(gene: str, tumor, tissue, path, species: str) -> dict:
-    """:func:`gene_level` off the two gene-keyed deposits.
+    """:func:`gene_level` for a non-human species.
 
-    ``found`` stays a fact about the **normal** reference. A gene present only in the tumour
-    deposit is not a gene whose normal level is zero, and :func:`mhcmatch.rank.expr_norm_level`
-    reads ``found`` to tell silence from ignorance -- so the tumour rung must not vote on it."""
+    **Reads the harmonised matrix when it is staged**, and that is the change that makes
+    ``expr_norm`` mean for mouse what it means for human. Off the two TSV deposits, ``tumor`` was
+    RNA-seq TPM and ``normal`` was CAGE tag density, so their difference was a change of assay as
+    much as a change of tissue. Off the matrix all three rungs are one scale, so the
+    tumour-versus-normal contrast the human expression block is built on is finally available.
+
+    ``found`` stays a fact about the **normal** reference either way. A gene present only in the
+    tumour half is not a gene whose normal level is zero, and
+    :func:`mhcmatch.rank.expr_norm_level` reads ``found`` to tell silence from ignorance -- so the
+    tumour rung must not vote on it.
+    """
     import numpy as np
+
+    tis, tum = _mouse_matrix_contexts(path)
+    if tis or tum:
+        gi, ci, V, _n = _matrix(path, species)
+        i = gi.get(str(gene).strip())
+        if i is None:
+            return {"tumor": None, "normal": None, "pan": None, "found": False}
+        row = V[i]
+
+        def med(keys):
+            cols = [ci[k] for k in keys if k in ci]
+            if not cols:
+                return None
+            v = row[cols]
+            v = v[np.isfinite(v)]
+            return float(np.median(v)) if v.size else None
+
+        out: dict = {"tumor": None, "normal": None}
+        if tumor:
+            k = _norm_ctx(str(tumor))
+            if k not in tum:
+                _tumor_context(tumor, path, species)          # raises, naming what resolves
+            out["tumor"] = med((tum[k],))
+        if tissue:
+            k = _norm_ctx(str(tissue))
+            if k not in tis:
+                resolve_context(tissue, path, species=species)
+            out["normal"] = med((tis[k],))
+        # `pan` is the gene's median over the NORMAL contexts where it is transcribed at all, the
+        # same definition the human path uses, so the last rung of a resolution chain cannot fail.
+        nz = row[[ci[k] for k in tis.values()]]
+        nz = nz[np.isfinite(nz) & (nz > 0)]
+        out["pan"] = float(np.median(nz)) if nz.size else 0.0
+        out["found"] = bool(np.isfinite(row[[ci[k] for k in tis.values()]]).any())
+        return out
 
     g = str(gene).strip()
     tum = None

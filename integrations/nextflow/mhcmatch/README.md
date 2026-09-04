@@ -13,8 +13,8 @@ prior evidence, safety, cassette selection and cassette assembly.
 > `mhcmatch --version` cannot warn you, because both print the same string. So:
 >
 > ```bash
-> git clone --branch v1.10.0 --depth 1 https://github.com/antigenomics/mhcmatch.git
-> pip install "mhcmatch==1.10.0"
+> git clone --branch v1.11.0 --depth 1 https://github.com/antigenomics/mhcmatch.git
+> pip install "mhcmatch==1.11.0"
 > ```
 >
 > **Behind an HTTP proxy, take the tarball instead — `git clone` can fail where `git ls-remote`
@@ -22,12 +22,12 @@ prior evidence, safety, cassette selection and cassette assembly.
 > transfer (`POST .../git-upload-pack`) makes git report a **401 as a credential prompt**:
 > `fatal: could not read Username for 'https://github.com'` on a repository that is public and
 > needs none. Measured on Aldan-3 2026-09-03, on the login node and on a compute node, while
-> `git ls-remote` returned the `v1.10.0` tag from both. The release tarball is a plain GET and goes
+> `git ls-remote` returned the `v1.11.0` tag from both. The release tarball is a plain GET and goes
 > straight through, giving the identical tree:
 >
 > ```bash
-> curl -sSL -o mhcmatch-1.10.0.tar.gz https://github.com/antigenomics/mhcmatch/archive/refs/tags/v1.10.0.tar.gz
-> tar xzf mhcmatch-1.10.0.tar.gz     # -> mhcmatch-1.10.0/integrations/nextflow/mhcmatch/
+> curl -sSL -o mhcmatch-1.11.0.tar.gz https://github.com/antigenomics/mhcmatch/archive/refs/tags/v1.11.0.tar.gz
+> tar xzf mhcmatch-1.11.0.tar.gz     # -> mhcmatch-1.11.0/integrations/nextflow/mhcmatch/
 > ```
 >
 > Chase the proxy only if you need git history; for running the pipeline the tarball is the whole
@@ -35,7 +35,7 @@ prior evidence, safety, cassette selection and cassette assembly.
 > there — a run of four `ReadTimeoutError`s that then succeeds is normal on that cluster, and
 > `templates/setup.sbatch`'s `WHEELHOUSE` block is for when they do not.
 >
-> **This directory pins 1.10.0**, in four places that must agree: `environment.yml`, the
+> **This directory pins 1.11.0**, in four places that must agree: `environment.yml`, the
 > `Dockerfile`, `params.mhcmatch_container` and `templates/setup.sbatch`. A test checks all four
 > against `pyproject.toml`, and `setup.sbatch` asserts the version it installed rather than letting
 > the run discover a mismatch inside a task log.
@@ -127,7 +127,7 @@ are two different answers and one must not overwrite the other:
 
 | file | what |
 |---|---|
-| `<id>.{rerank,denovo}.vaccine.units.tsv` | one row per **selected epitope** (default *k* = 20, `--mhcmatch_cassette_k`) — **this is the input table filtered to what the cassette carries, nothing removed from the row.** On the rerank arm it holds every one of your own columns and every `mm_` column, plus the selection's own (`slot`, `p`, `k`, `pool_n`, `offset`, `energy`, `lam`, `rho`); on the de novo arm, every column of `*.mhcmatch.ranked.tsv`. Measured on one donor: 53 caller + 32 `mm_` + 22 selection = 107 columns over 20 rows, with 0 caller columns dropped. **If one of your column names collides with one `cassette select` emits** (`score`, `p`, `k`, `slot`, …), ours keeps the plain name — it is what `cassette build`, `cassette score` and the map read — and **yours is preserved beside it as `<name>_in`**, with a line naming what moved. Before 1.10.0 yours was overwritten silently |
+| `<id>.{rerank,denovo}.vaccine.units.tsv` | one row per **selected epitope** (default *k* = 20, `--mhcmatch_cassette_k`) — **this is the input table filtered to what the cassette carries, nothing removed from the row.** On the rerank arm it holds every one of your own columns and every `mm_` column, plus the selection's own (`slot`, `p`, `k`, `pool_n`, `offset`, `energy`, `lam`, `rho`); on the de novo arm, every column of `*.mhcmatch.ranked.tsv`. Measured on one donor: 53 caller + 32 `mm_` + 22 selection = 107 columns over 20 rows, with 0 caller columns dropped. **If one of your column names collides with one `cassette select` emits** (`score`, `p`, `k`, `slot`, …), ours keeps the plain name — it is what `cassette build`, `cassette score` and the map read — and **yours is preserved beside it as `<name>_in`**, with a line naming what moved. Before 1.11.0 yours was overwritten silently |
 | `<id>.{rerank,denovo}.cassette.faa` | assembled, with the linker chosen by minimising junctional binding |
 | `<id>.{rerank,denovo}.cassette.fna` | the CDS, deslipped |
 | `<id>.{rerank,denovo}.cassette.map.{tsv,json}` | unit / linker / epitope in 1-based coordinates |
@@ -615,10 +615,10 @@ From `slurm.config` only:
 ## Build the image (only for `-profile docker`)
 
 ```zsh
-docker build -t <YOUR_REGISTRY>/mhcmatch:1.10.0 \
-    --build-arg MHCMATCH_VERSION=1.10.0 \
+docker build -t <YOUR_REGISTRY>/mhcmatch:1.11.0 \
+    --build-arg MHCMATCH_VERSION=1.11.0 \
     integrations/nextflow/mhcmatch/
-docker push <YOUR_REGISTRY>/mhcmatch:1.10.0
+docker push <YOUR_REGISTRY>/mhcmatch:1.11.0
 ```
 
 **The build stages both the reference tables and the two proteomes**, ~170 MB in the image's
@@ -728,7 +728,7 @@ a conda interpreter is enough and is what `-profile conda` sidesteps entirely:
 
 ```bash
 conda create -n mhcmatch -c bioconda python=3.12 nextflow
-conda run -n mhcmatch --no-capture-output pip install mhcmatch==1.10.0
+conda run -n mhcmatch --no-capture-output pip install mhcmatch==1.11.0
 ```
 
 (The `docker build` block above pins the same version and must move with it.)

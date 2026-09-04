@@ -564,7 +564,7 @@ def tile(seq: str, lengths) -> list:
 #: the benchmark's feature frame keys its freshness guard on it, and that frame carries mouse rows
 #: whose `expression` column does change. A frame built under epoch 4 accepted under epoch 5 would
 #: fit mouse coefficients on a human-imputed column.
-SCORER_EPOCH = 5
+SCORER_EPOCH = 6
 
 
 def _fingerprint(store, cls, background, footprint, head):
