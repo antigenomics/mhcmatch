@@ -1,5 +1,73 @@
 # Changelog
 
+## [1.12.0] --- 2026-09-04 --- class II, both species, and no corpus block
+
+> **All four `(cls, species)` cells are fitted.** `mhc2.human.neoantigen` is new; `mhc2.mouse`
+> moves to model version 3. `mhcmatch build --check` reports 0 stale of 39 against 1.12.0, the
+> bump-only rebuild moved no score (`** MOVED **` count 0 over 12 rebuilt artifacts), and the
+> class-I artifacts are untouched.
+
+**The class-II models carry six terms and no corpus block, and that is a statement about the
+reference rather than about the coefficient.** A `C_corpus_*` channel is a Łuksza density over a
+reference set of peptides -- thymic, self, viral -- and all three deposited sets are **class I**.
+Contracting a 15-mer class-II register against a 9-mer density is not a weak feature, it is the
+wrong question. So the block leaves the design: no `C_corpus_*` column is fitted, `blocks` lists
+three entries, and the four corpus-geometry keys are absent rather than declared-and-unused.
+
+### Added
+
+- **`aggregate_mhc2_human.json`** -- the first human class-II EPIC artifact, model version `1`.
+  **1,112 rows / 656 immunogenic (59.0 %) over 157 references and 72 allotypes**, from the new
+  `neoantigens/cedar_neoag_mhc2_hsa.tsv.gz` deposit. Held out within reference, macro-averaged over
+  the 11 references carrying at least three of each class: **0.5271** peptide-grouped, **0.5643**
+  reference-grouped, against 0.6020 in sample. Two coefficients are sign-stable across a 400-resample
+  cluster bootstrap -- `binder` **+0.3773** at 0.98 and `C_phys_buried` **+0.1710** at 0.97 -- and
+  the other four are not.
+
+  **It is human self-antigen CD4 response and not a tumour cohort**, which the artifact says in
+  `fit.population` rather than leaving to a reader: 364 of the 1,112 rows are type 1 diabetes, 260
+  healthy donors, and every cancer together is **143**. A consumer scoring tumour neoantigens with
+  it is extrapolating.
+
+- **`rank.TERMS_MHC2_EXPECTED`** -- the six class-II term names, so the two class-II artifacts stay
+  one specification. `test_both_class_II_artifacts_carry_the_same_six_terms_and_no_corpus_block` is
+  the guard.
+
+- **`("mhc2", "human", "neoantigen")` in `rank.AGGREGATE_ARTIFACTS`**, and
+  `aggregate_mhc2_human.json` in the `aggregate` build target, so `--check` covers **39** files.
+  `EXTERNAL["aggregate"]` now prints all four generator commands.
+
+### Changed
+
+- **`aggregate_mhc2_mouse.json` to model version 3** -- six terms, no corpus block. Arm-vs-arm on
+  the same 468 rows / 177 positives, `vanilla`, v2 → v3: BIC **562.3 → 556.2** (log 468 = 6.15, one
+  parameter's worth), reference-grouped within-reference AUROC **0.4925 → 0.5035**, peptide-grouped
+  **0.4957 → 0.4945**. The block was costing a parameter and buying nothing. Nothing else about the
+  fit moved.
+
+- **A corpus-less artifact no longer declares a corpus geometry.** `corpus_k`, `corpus_mask`,
+  `corpus_kernel` and `corpus_shapes` ship only when a `C_corpus_*` channel does; the artifact
+  agreement test would otherwise have compared a dead declaration against a live one.
+
+- **`test_a_species_class_with_no_fitted_artifact_refuses_rather_than_substituting`** is written
+  against an unregistered *species* now that every `(cls, species)` cell is fitted -- human class II
+  was the gap it named.
+
+### Data
+
+`isalgo/pmhc_data`, `neoantigens/`, by `bench/pmhc_data/clean_neoantigens.py` in the extension repo.
+Three rules, applied to every table: no pathogen epitopes, cross-species only across human and
+mouse, and a source organism on every row resolved against the deposited proteomes rather than
+guessed.
+
+- Removed **8** rows of HCMV pp65 (`Q6SW59`) from `neoag_tested_hsa.tsv.gz` and **3** unattributable
+  rows from `neoag_tested_mmu.tsv.gz`; **21** and **19** null `source_species` were *resolved*
+  rather than dropped.
+- New `cedar_neoag_mhc2_hsa.tsv.gz` (1,112 rows) and `cedar_neoag_mhc2_mmu.tsv.gz` (415). The
+  existing 23,262 human class-II rows in `neoag_tested.tsv.gz` are unusable for a fit -- null
+  `reference_id` on **every** one, no allele on 14,143, no gene column, and 1,328 mouse
+  restrictions carrying `mhc_species = HomoSapiens`.
+
 ## [1.11.0] --- 2026-09-04 --- the E of EPIC for mouse
 
 > **The artifact decision that blocked this version was taken on 2026-09-04** and both mouse

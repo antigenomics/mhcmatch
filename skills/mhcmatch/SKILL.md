@@ -106,7 +106,7 @@ aliases the parser still answers to and this table omits — `vector` for `casse
 | recognition | `complement` · `mimics` · `mimicry` · `neoag` |
 | integration | `rank` · `explain` · `expression` · `source` · `genes` |
 | cassette | `cassette select` · `cassette score` · `cassette build` · `cassette order` · `cassette linkers` · `cassette deslip` |
-| setup | `alleles` · `bootstrap` · `build` (`build --check` = are any of the 38 shipped artifact files stale?) |
+| setup | `alleles` · `bootstrap` · `build` (`build --check` = are any of the 39 shipped artifact files stale?) |
 
 `mhcmatch binder <peptide> --alleles ... --cls mhc1` ranks alleles by the generalized binder score.
 `mhcmatch cassette select --candidates pool.tsv -k 20 [--tol 3]` chooses the units; give it the
@@ -224,13 +224,13 @@ another fit's coefficients — which is the whole reason this is a lookup and no
 | `model_id` | file | model version | release | rows | positives | holdout |
 |---|---|--:|---|--:|--:|---|
 | `mhc1.human.neoantigen` | `aggregate_mhc1.json` | **11** | 1.6.1 | **339,599** | **597** | leave-one-screen-out over 7 |
-| `mhc1.mouse.neoantigen` | `aggregate_mhc1_mouse.json` | 2 | **1.11.0** | 923 | 380 | grouped CV, 61 references |
-| `mhc2.mouse.neoantigen` | `aggregate_mhc2_mouse.json` | 2 | **1.11.0** | 469 | 177 | grouped CV, 30 references |
+| `mhc1.mouse.neoantigen` | `aggregate_mhc1_mouse.json` | 2 | **1.12.0** | 923 | 380 | grouped CV, 61 references |
+| `mhc2.mouse.neoantigen` | `aggregate_mhc2_mouse.json` | 2 | **1.12.0** | 469 | 177 | grouped CV, 30 references |
 
 - **`release` is not `__version__`.** It is the package version the fit was *accepted* in, stored
   rather than derived, so a manuscript can pin `mhc1.human.neoantigen v11 (release 1.6.1)` while
   the library moves. A **model** version is an int; a **release** is dotted.
-- **No `mhc2.human`**: no human class-II aggregate has ever been fitted. **No `pathogen` fit**: it
+- **`mhc2.human` is fitted from 1.12.0** (v1, six terms, no corpus block). **No `pathogen` fit**: it
   is a registered mode with no artifact, because a tumour neoantigen and a pathogen epitope are two
   mechanisms and never one model with an extra covariate.
 - **The mouse fits are nine terms and *seven* free parameters.** Their corpus block is one fitted

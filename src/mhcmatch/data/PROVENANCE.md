@@ -478,20 +478,25 @@ also blocks the currently-shipped v9 by the same bar. Against them stand NCI +0.
 discordant pairs, TESLA +0.0320 and Gfeller_GBM +0.0285. The bar is not relaxed and the verdict is
 not rewritten; the artifact carries its own dissent.
 
-## `aggregate_mhc1_mouse.json` / `aggregate_mhc2_mouse.json` — the mouse scorers
+## `aggregate_mhc1_mouse.json` — the mouse class-I scorer
 
 **Derived, not experimental**, and the same object as the human artifact in every structural
 respect: nine standardised slopes under the same nine feature names in the same order, ridge
 `tau = 0.25`, its own `mu`/`sigma`, a *model* version that is an integer (**`2`**) and a `release`
 that is dotted (`1.11.0` -- the package version the fit was **accepted** in, which is what a
-manuscript cites). `rank.aggregate(cls, species, mode)` resolves them through
-`rank.AGGREGATE_ARTIFACTS`, keyed `(cls, species, mode)`; there is deliberately no
-`("mhc2", "human", ...)` entry, so asking for a human class-II aggregate raises instead of
-returning the class-I one, and `pathogen` is a registered mode with no shipped artifact rather than
-a silent alias for `neoantigen`.
+manuscript cites). `rank.aggregate(cls, species, mode)` resolves it through
+`rank.AGGREGATE_ARTIFACTS`, keyed `(cls, species, mode)`. All four `(cls, species)` cells are
+fitted from 1.12.0; `pathogen` remains a registered mode with no shipped artifact rather than a
+silent alias for `neoantigen`, and an unregistered species raises instead of being served a
+neighbour's coefficients.
 
-**Nine coefficients, seven free parameters, since model version 2.** The corpus block is one fitted
-scalar on the *human* artifact's corpus direction (`+0.3255, -0.8601, +0.3928` after normalising
+The class-II half of this section moved to **`aggregate_mhc2_human.json` /
+`aggregate_mhc2_mouse.json`** below: from 1.12.0 the two class-II fits are one specification with
+six terms and no corpus block, and describing them beside a nine-term class-I fit made the shared
+feature list look like an accident.
+
+**Nine coefficients, seven free parameters, since model version 2.** (Class II is six and six --
+see below.) The corpus block is one fitted scalar on the *human* artifact's corpus direction (`+0.3255, -0.8601, +0.3928` after normalising
 v11's `C_corpus_*`), not three independent coefficients -- a projection with one free scalar **is**
 three coefficients constrained to be proportional. The file lists all nine so one library scores
 both species with no branch. Every per-term array (`coef`, `sd`, `boot_sd`, `z`, `p`, `ci95`,
@@ -502,18 +507,16 @@ added after the first v2 copy shipped five of them at seven and made
 
     # in ~/vcs/projects/2026-mhcmatch-benchmark:
     MHCMATCH_MODEL_RELEASE=1.11.0 python bench/epic/fit_mouse.py --cls mhc1 --model-version 2
-    MHCMATCH_MODEL_RELEASE=1.11.0 python bench/epic/fit_mouse.py --cls mhc2 --model-version 2
     # `--corpus-axis human` is the default and is what version 2 means; `--corpus-axis free`
     # reproduces version 1's three independent corpus coefficients.
     # then, deliberately:
-    cp bench/epic/aggregate_mhc{1,2}_mouse.json ~/vcs/code/mhcmatch/src/mhcmatch/data/
+    cp bench/epic/aggregate_mhc1_mouse.json ~/vcs/code/mhcmatch/src/mhcmatch/data/
 
 **Corpus.** `~/hf/pmhc_data/neoantigens/neoag_tested_mmu.tsv.gz`, the IEDB mouse neoantigen
-deposit, at the class's own peptide lengths and keyed on `mhc_a_pred`. Class I: **923 rows, 380
-immunogenic, 61 references, 6 H-2 allotypes.** Class II: **469 rows, 177 immunogenic, 30
-references, 7 allotypes.** No row is dropped for a missing term: seven of the nine are populated on
-every row and the two expression terms are imputed to the population median, which is the
-convention `rank.aggregate_score` documents.
+deposit, at class I's own peptide lengths and keyed on `mhc_a_pred`: **923 rows, 380 immunogenic,
+61 references, 6 H-2 allotypes.** No row is dropped for a missing term: seven of the nine are
+populated on every row and the two expression terms are imputed to the population median, which is
+the convention `rank.aggregate_score` documents.
 
 Every column is computed by `mhcmatch rank pairs --species mouse --score features`, so the panel,
 the three corpus channels and both expression terms are the library's own **mouse** references
@@ -529,17 +532,12 @@ coefficients came out at or below zero and the held-out figure sat at 0.4633.
 
 **The reported metric is AUROC within a reference**, macro-averaged over the references carrying at
 least three of each class, because a pooled figure over this deposit is mostly a base-rate
-difference between laboratories. Held out on whole peptides: class I **0.6206**, class II
-**0.5620**; held out on whole references: **0.6061** and **0.4564**. Read against 0.4856 -- what
-the human fit gives on mouse rows (`bench/results/epic_mouse_holdout.md`) -- and 0.6963, the human
-model's own held-out per-screen median.
+difference between laboratories. Held out on whole peptides **0.6206**, on whole references
+**0.6061**. Read against 0.4856 -- what the human fit gives on mouse rows
+(`bench/results/epic_mouse_holdout.md`) -- and 0.6963, the human model's own held-out per-screen
+median.
 
-**Two things to know before quoting a coefficient.**
-
-*Class II is thin and is shipped on the author's word.* 469 rows over 7 references that decide, and
-its reference-grouped figure (0.4564) does not clear chance. It is the first class-II EPIC artifact
-in the project for either species, so there is no human counterpart to compare it against and its
-own cross-validation is the whole reference point.
+**One thing to know before quoting a coefficient.**
 
 *`expr_norm` is negative in mouse (-0.2314, z -2.78) where it is positive in human (+0.2155), and
 the two are not measuring the same thing.* There is no mouse tumour transcriptome: a tumour
@@ -550,6 +548,78 @@ arm, where `expr_norm` is the gene's pan-tissue median and by construction never
 the coefficient is **-0.2432 at z -3.31**, larger and more significant. The indicator itself
 (`expr_observed`, +0.3136, z +0.75) is null, so which publication deposited an abundance is not
 carrying it either. `bench/results/epic_mouse_fit_mhc{1,2}.md` has all four arms.
+
+## `aggregate_mhc2_human.json` / `aggregate_mhc2_mouse.json` — the class-II scorers
+
+**Derived.** One specification, two species: **six standardised slopes** under the same six names
+in the same order -- `binder`, `log10a`, `expr_lvl`, `expr_norm`, `C_phys_buried`, `C_phys_charge`
+-- ridge `tau = 0.25`, each with its own `mu`/`sigma`, one unpenalised intercept per reference, and
+no intercept in the shipped file. `rank.TERMS_MHC2_EXPECTED` names the six;
+`test_both_class_II_artifacts_carry_the_same_six_terms_and_no_corpus_block` is the guard that keeps
+the two comparable term by term. Human is model version **`1`**, mouse **`3`**, both `release`
+`1.12.0`.
+
+**There is no corpus block, and that is a statement about the reference and not about the
+coefficient.** A `C_corpus_*` channel is a Łuksza density over a reference set of peptides --
+thymic, self, viral -- and what is deposited for all three is a **class-I** set. Contracting a
+15-mer class-II register against a 9-mer density is not a weak feature, it is the wrong question,
+so the block leaves the design entirely: no `C_corpus_*` column is fitted, `blocks` lists three
+entries rather than four, and the four corpus-geometry keys (`corpus_k`, `corpus_mask`,
+`corpus_kernel`, `corpus_shapes`) are **absent** rather than declared-and-unused. The nine names
+stay in `rank.AGGREGATE_FEATURES`, because a recorded result cites the model version that produced
+it and a registry that drops a name cannot say what those numbers were.
+
+    # in ~/vcs/projects/2026-mhcmatch-benchmark-ext:
+    MHCMATCH_MODEL_RELEASE=1.12.0 python bench/pmhc_data/clean_neoantigens.py
+    MHCMATCH_MODEL_RELEASE=1.12.0 python bench/mhc2_human/fit_human_mhc2.py
+    MHCMATCH_MODEL_RELEASE=1.12.0 python bench/epic/fit_mouse.py --cls mhc2 \
+        --corpus-axis none --model-version 3
+    # then, deliberately:
+    cp bench/epic/aggregate_mhc2_human.json           ~/vcs/code/mhcmatch/src/mhcmatch/data/
+    cp bench/epic/aggregate_mhc2_mouse_axis-none.json \
+       ~/vcs/code/mhcmatch/src/mhcmatch/data/aggregate_mhc2_mouse.json
+
+**Corpus, human.** `~/hf/pmhc_data/neoantigens/cedar_neoag_mhc2_hsa.tsv.gz` -- **1,112 rows, 656
+immunogenic (59.0 %), 157 references, 72 allotypes, 238 genes.** Built from the CEDAR export by
+`bench/mhc2_human/build_cedar_human_mhc2.py`, one row per `(peptide, allele)`, label positive if
+any assay on that pair read `Positive*` and negative only when every one read `Negative` (149 pairs
+disagreed and took the positive). Every antigen is a human self protein: the pathogen rows are a
+different mode and are filtered out, which is also what took gene coverage from 43.6 % to **98.2 %**
+-- a viral peptide has no host gene, so the missingness was never a resolution problem.
+
+**This deposit is human self-antigen CD4 response, and it is not a tumour cohort.** 364 of the
+1,112 rows are type 1 diabetes, 260 are healthy donors, 63 rheumatoid arthritis, 51 multiple
+sclerosis; every cancer together is **143 rows**. The mechanism -- a CD4 response to a self peptide
+-- is the one the model is about, and a consumer scoring tumour neoantigens with it is
+extrapolating. The composition is in the artifact under `fit.population` so that can be read
+without the report, and `bench/results/epic_human_fit_mhc2.md` has all 46 diseases.
+
+**`expr_norm` needs a tissue or it is a copy of `expr_lvl`.** With no `--tissue`, `rank` gives both
+terms the gene's pan-tissue median over the same floor and the design carries one column twice. The
+disease resolves the context, library first: `expression.resolve_context` already maps 21 of
+CEDAR's disease strings -- every cancer it names -- onto TCGA codes and their matched GTEx normals,
+and `fit_human_mhc2.DISEASE_TISSUE` adds 11 autoimmune target organs it cannot know (T1D to
+pancreas, MS to cortex, pemphigus to skin). **686 of 1,112 rows (61.7 %) over 30 contexts**; the
+rest take the pooled human floor and `expr_norm` falls back to the gene's pan-tissue median. RA,
+lupus and Vogt-Koyanagi-Harada are deliberately unmapped: GTEx samples no synovium and no uvea.
+
+**Held out, human class II**, within reference, macro-averaged over the 11 references carrying at
+least three of each class: **0.5271** on peptide-grouped folds and **0.5643** on reference-grouped,
+against in-sample 0.6020. Alone, within reference: `binder` **0.5645**, `C_phys_buried` **0.5485**,
+`log10a` **0.5386** -- and both expression terms below chance (`expr_lvl` 0.4035, `expr_norm`
+0.4393), which is what an autoimmune deposit should look like: an islet antigen's abundance is not
+a neoantigen's. Dropping the presentation block costs 0.5271 → **0.5033**. Two coefficients are
+sign-stable across the cluster bootstrap -- `binder` +0.3773 at 0.98 and `C_phys_buried` +0.1710 at
+0.97 -- and the other four are not; the fit is shipped as the first artifact for this cell, and its
+own cross-validation is the whole reference point.
+
+**Corpus, mouse.** Unchanged from version 2 -- `neoag_tested_mmu.tsv.gz` unioned with CEDAR's
+mouse-derived H-2 assays, **468 rows, 177 immunogenic, 30 references, 7 allotypes**. Only the
+corpus block moved. Arm-vs-arm on that same population, `vanilla`, v2 → v3: BIC **562.3 → 556.2**
+(log 468 = 6.15, one parameter's worth), reference-grouped within-reference AUROC **0.4925 →
+0.5035**, peptide-grouped **0.4957 → 0.4945**. The block was costing a parameter and buying
+nothing. `bench/results/epic_mouse_fit_mhc2_axis-none.md`.
+
 
 ## `anchor_model_*_mouse_*.pkl.gz` — the mouse AnchorModel pickles
 

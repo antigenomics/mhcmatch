@@ -286,9 +286,21 @@ def test_rank_holdout_prints_the_holdout_design_the_artifact_actually_records(ca
 
 
 def test_asking_for_a_model_that_was_never_fitted_is_an_error_not_a_traceback():
-    """No human class-II aggregate exists. `--coefficients --cls mhc2` must refuse in one line."""
-    with pytest.raises(SystemExit, match="no fitted artifact"):
-        cli.main(["rank", "--coefficients", "--cls", "mhc2"])
+    """An unfitted cell refuses in one line rather than tracebacking or serving a neighbour.
+
+    Human class II was the gap this test named until 1.12.0 fitted it. Every `(cls, species)` the
+    CLI can express now resolves, and the refusal has moved *up* to argparse: a species with no
+    panel is rejected by name before `aggregate()` is reached. Both halves are asserted, because
+    "it resolves" and "the unfitted case still refuses" are two different contracts and filling the
+    last cell would otherwise have quietly deleted the second.
+    """
+    from mhcmatch import rank as R
+
+    with pytest.raises(SystemExit):
+        cli.main(["rank", "--coefficients", "--cls", "mhc2", "--species", "rat"])
+    cli.main(["rank", "--coefficients", "--cls", "mhc2"])
+    with pytest.raises(ValueError, match="no fitted artifact"):
+        R.aggregate("mhc2", "human", "pathogen")
 
 
 def test_rank_without_a_mode_and_without_a_dump_flag_is_an_error():

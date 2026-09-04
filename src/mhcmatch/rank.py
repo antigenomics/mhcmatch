@@ -45,7 +45,7 @@ from importlib import resources
 __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
            "BASE_COLUMNS", "MIMICRY_PAIRS", "EXTENDED_COLUMNS", "ANNOTATE_COLUMNS", "columns",
            "aggregate", "aggregate_features", "AGGREGATE_ARTIFACTS", "AGGREGATE_MODES",
-           "TERMS_MOUSE_EXPECTED", "FEATURES_ONLY", "models",
+           "TERMS_MOUSE_EXPECTED", "TERMS_MHC2_EXPECTED", "FEATURES_ONLY", "models",
            "aggregate_score", "probability", "POOL_PREVALENCE",
            "AGGREGATE_FEATURES", "AGGREGATE_COLUMNS", "EXPR_COLUMNS",
            "AGGREGATE_BLOCKS", "CHANNEL_COLUMNS", "PHYS_COLUMNS", "expr_percentile",
@@ -151,14 +151,15 @@ def columns(extended: bool = False, annotate: bool = False, score: str = "aggreg
 #: the digest ``tests/test_aggregate_terms.py`` pins; renaming it to ``_human`` for symmetry would
 #: move all of that and buy nothing.
 #:
-#: **A missing key is a refusal, not a fallback.** There is no ``("mhc2", "human", ...)`` entry
-#: because no human class-II aggregate has ever been fitted, and scoring class-II candidates with
-#: class-I coefficients is the mistake the lookup exists to make impossible.
+#: **A missing key is a refusal, not a fallback.** All four ``(cls, species)`` cells are fitted
+#: from 1.12.0, but an unregistered species or the ``pathogen`` mode still raises rather than being
+#: served a neighbour's coefficients -- scoring class-II candidates with class-I ones is the
+#: mistake the lookup exists to make impossible.
 #:
-#: The term set both mouse artifacts declare. It is :data:`AGGREGATE_FEATURES` -- the mouse fits
-#: were run on the human specification deliberately, so the two are comparable coefficient by
+#: The term set the mouse **class-I** artifact declares. It is :data:`AGGREGATE_FEATURES` -- that
+#: fit was run on the human specification deliberately, so the two are comparable coefficient by
 #: coefficient -- and it is named separately because a mouse refit is free to move it and the
-#: human one is not.
+#: human one is not. Both class-II artifacts declare :data:`TERMS_MHC2_EXPECTED` instead.
 #:
 #: Nine names, **seven** free parameters since mouse model version 2: the last three are one fitted
 #: scalar on the human artifact's corpus direction rather than three independent coefficients, and
@@ -175,7 +176,20 @@ AGGREGATE_ARTIFACTS: dict = {
     ("mhc1", "human", "neoantigen"): "aggregate_mhc1.json",
     ("mhc1", "mouse", "neoantigen"): "aggregate_mhc1_mouse.json",
     ("mhc2", "mouse", "neoantigen"): "aggregate_mhc2_mouse.json",
+    ("mhc2", "human", "neoantigen"): "aggregate_mhc2_human.json",
 }
+
+#: **The class-II artifacts carry six terms, not nine, and that is a specification.** A corpus
+#: channel is a density over a *reference* set of peptides -- thymic, self, viral -- and what is
+#: deposited is a class-I one. Contracting a 15-mer class-II register against a 9-mer density asks
+#: the wrong question rather than answering it weakly, so both class-II fits drop the block
+#: outright: the design has no `C_corpus_*` column, the artifact declares three blocks, and
+#: `aggregate_score` reads only the names the artifact lists, so one library still scores all four
+#: with no branch. The nine names stay registered in :data:`AGGREGATE_FEATURES` because a recorded
+#: result cites the model version that produced it, and a registry that drops a name cannot say
+#: what those numbers were.
+TERMS_MHC2_EXPECTED: tuple = ("binder", "log10a", "expr_lvl", "expr_norm",
+                              "C_phys_buried", "C_phys_charge")
 
 #: **The two immunological modes, and why the key carries one.** A tumour neoantigen and a pathogen
 #: epitope are answered by different mechanisms -- autoimmunity is not inflammation -- so they are

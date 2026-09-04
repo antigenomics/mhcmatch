@@ -270,19 +270,33 @@ def test_the_shipped_artifact_is_pinned_to_the_fit_that_produced_it(art):
         hashlib.sha256(blob).hexdigest()[:16])
 
 
-# --- the mouse artifacts -------------------------------------------------------------------
+# --- the mouse and class-II artifacts ------------------------------------------------------
 
 # v1 was 7658dc52466a27bf (mhc1) and 2982b50ab8b7dd85 (mhc2) -- three free corpus coefficients,
 # nine fitted terms. v2 constrains the corpus block to human v11's direction and fits one scalar
 # for it, so the file still lists nine features and the last three are proportional: SEVEN free
 # parameters. mhc1 within-reference AUROC 0.5930 -> 0.5958 peptide / 0.5950 -> 0.5977 reference,
 # BIC 1078.3 -> 1066.9; mhc2 0.5781 -> 0.5757 / 0.4598 -> 0.4901, BIC 571.5 -> 562.7.
-@pytest.mark.parametrize("cls, species, digest, version, rows, pos", [
-    ("mhc1", "mouse", "ab3b29cd4aa22ad7", 2, 923, 380),
-    ("mhc2", "mouse", "f3f6b38f388a1e5e", 2, 469, 177),
+#
+# **Mouse class II is v3 and has no corpus block at all**, on the author's instruction that neither
+# class-II model carries one: the channels are densities over a class-I thymic, self and viral
+# reference, and contracting a 15-mer register against a 9-mer density asks the wrong question.
+# Arm-vs-arm on the same 468 rows / 177 positives, `vanilla`, v2 -> v3:
+# BIC **562.3 -> 556.2** (log 468 = 6.15, one parameter's worth), reference-grouped within-
+# reference AUROC **0.4925 -> 0.5035**, peptide-grouped **0.4957 -> 0.4945**. The block was
+# costing a parameter and buying nothing.
+#
+# **Human class II is v1**, the first fit for that cell: 1,112 rows / 656 positives over 157
+# references and 72 allotypes, from `neoantigens/cedar_neoag_mhc2_hsa.tsv.gz`. Held out within
+# reference, 0.5271 on peptide-grouped folds and 0.5643 on reference-grouped, over the 11
+# references carrying at least three of each class.
+@pytest.mark.parametrize("cls, species, digest, version, rows, pos, terms", [
+    ("mhc1", "mouse", "ab3b29cd4aa22ad7", 2, 923, 380, "TERMS_MOUSE_EXPECTED"),
+    ("mhc2", "mouse", "9d95c8602bd4fd0c", 3, 468, 177, "TERMS_MHC2_EXPECTED"),
+    ("mhc2", "human", "fb8d861a778571f6", 1, 1112, 656, "TERMS_MHC2_EXPECTED"),
 ])
-def test_the_mouse_artifacts_are_pinned_to_the_fits_that_produced_them(
-        cls, species, digest, version, rows, pos):
+def test_the_fitted_artifacts_are_pinned_to_the_fits_that_produced_them(
+        cls, species, digest, version, rows, pos, terms):
     """The same guard as the human artifact, for the same reason: the copy is a `cp`.
 
     `build --check` presence-checks a model version (an int) and can see nothing else, so a
@@ -297,24 +311,44 @@ def test_the_mouse_artifacts_are_pinned_to_the_fits_that_produced_them(
 
     a = R.aggregate(cls, species)
     assert a["version"] == version, a["version"]
-    assert a["features"] == list(R.TERMS_MOUSE_EXPECTED), a["features"]
+    assert a["features"] == list(getattr(R, terms)), a["features"]
     assert a["fit"]["rows"] == rows and a["fit"]["positives"] == pos, a["fit"]
     blob = json.dumps([a["coef"], a["mu"], a["sigma"]], sort_keys=True).encode()
     assert hashlib.sha256(blob).hexdigest()[:16] == digest, (
         hashlib.sha256(blob).hexdigest()[:16])
 
 
-def test_a_species_class_with_no_fitted_artifact_refuses_rather_than_substituting():
-    """There is no human class-II aggregate, and asking for one must not return the class-I fit.
-
-    The registry is a lookup precisely so this is a `ValueError` at the point of asking rather than
-    a plausible number computed from the wrong coefficients.
+def test_both_class_II_artifacts_carry_the_same_six_terms_and_no_corpus_block():
+    """One specification, two species. A class-II fit that grew a corpus channel would be a
+    different model from the other one, and the two would stop being comparable term by term --
+    which is the whole reason the mouse and human class-I fits share a feature list.
     """
     from mhcmatch import rank as R
 
-    assert ("mhc2", "human", "neoantigen") not in R.AGGREGATE_ARTIFACTS
+    for species in ("human", "mouse"):
+        a = R.aggregate("mhc2", species)
+        assert a["features"] == list(R.TERMS_MHC2_EXPECTED), (species, a["features"])
+        assert [b[0] for b in a["blocks"]] == ["presentation", "expression", "physchem"], species
+        assert not any(c.startswith("C_corpus_") for c in a["features"]), species
+
+
+def test_a_species_class_with_no_fitted_artifact_refuses_rather_than_substituting():
+    """An unfitted `(cls, species)` must raise, not fall back to a neighbouring fit.
+
+    The registry is a lookup precisely so this is a `ValueError` at the point of asking rather than
+    a plausible number computed from the wrong coefficients. Human class II *was* the empty cell
+    this test named until it was fitted; a species with no panel is the standing case, and the
+    assertion is written against the registry rather than against one hardcoded gap so filling the
+    next cell does not silently turn the test into a tautology.
+    """
+    from mhcmatch import rank as R
+
+    assert ("mhc1", "rat", "neoantigen") not in R.AGGREGATE_ARTIFACTS
     with pytest.raises(ValueError, match="no fitted artifact"):
-        R.aggregate("mhc2", "human")
+        R.aggregate("mhc1", "rat")
+    # every registered species-class *does* resolve, which is the other half of the contract
+    for (cls, species, mode) in R.AGGREGATE_ARTIFACTS:
+        assert R.aggregate(cls, species, mode)["cls"] == cls
 
 
 #: Every array in an artifact that is indexed by term. A consumer zips these against `features`,
@@ -436,6 +470,13 @@ def test_every_shipped_artifact_agrees_on_the_corpus_geometry_the_defaults_assum
     geo = {}
     for (cls, species, mode) in R.AGGREGATE_ARTIFACTS:
         a = R.aggregate(cls, species, mode)
+        if not any(c.startswith("C_corpus_") for c in a["features"]):
+            # A fit with no corpus block declares no corpus geometry, and inventing one for it
+            # would assert agreement about an axis it does not use. Both class-II artifacts are
+            # in this branch; see `rank.TERMS_MHC2_EXPECTED`.
+            assert "corpus_shapes" not in a, f"{cls}.{species} declares a geometry it never uses"
+            continue
         geo[f"{cls}.{species}.{mode}"] = (a["corpus_k"], a["corpus_mask"], a["corpus_kernel"],
                                           tuple(sorted(a["corpus_shapes"].items())))
+    assert geo, "no corpus-carrying artifact resolved at all"
     assert len(set(geo.values())) == 1, geo

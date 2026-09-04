@@ -15,6 +15,87 @@ the build plan. Phase sections marked _(TBD)_ await detail.
 > tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
 > below resolve there, not here.
 
+## Where this stands, 2026-09-04 (latest) — 1.12.0, all four cells fitted, class II without a corpus
+
+**Class II carries six terms in both species, and the missing block is a statement about the
+reference rather than about the coefficient.** A `C_corpus_*` channel is a Łuksza density over a
+reference set of peptides — thymic, self, viral — and all three deposited sets are **class I**.
+Contracting a 15-mer class-II register against a 9-mer density is not a weak feature, it is the
+wrong question. So the block leaves the design entirely: no `C_corpus_*` column is fitted, `blocks`
+lists three entries rather than four, and the four corpus-geometry keys are **absent** from the
+file rather than declared-and-unused.
+
+**`mhc2.human.neoantigen` v1 is the first human class-II EPIC artifact.** 1,112 rows / 656
+immunogenic (59.0 %) over 157 references and 72 allotypes. Held out within reference, macro-averaged
+over the 11 references carrying at least three of each class: **0.5271** peptide-grouped, **0.5643**
+reference-grouped, against 0.6020 in sample. Two coefficients are sign-stable over a 400-resample
+cluster bootstrap on the reference — `binder` **+0.3773** at 0.98 and `C_phys_buried` **+0.1710** at
+0.97 — and the other four are not. Alone and within reference, `binder` reaches 0.5645 and
+`C_phys_buried` 0.5485, while **both expression terms sit below chance** (0.4035, 0.4393).
+
+**It is human self-antigen CD4 response and not a tumour cohort, and the artifact says so.**
+`fit.population` records the composition: 364 of the 1,112 rows are type 1 diabetes, 260 healthy
+donors, 63 rheumatoid arthritis, 51 multiple sclerosis, and every cancer together is **143**. Every
+antigen is a human self protein and every row is a CD4 response to one — that is the mechanism the
+model is about — but a consumer scoring tumour neoantigens with it is extrapolating, and that is
+the sentence a reader gets from the file rather than from a report they might not open. The
+below-chance expression terms are the same fact from the other side: an islet antigen's abundance
+is not a neoantigen's.
+
+**`mhc2.mouse.neoantigen` moves to v3**, six terms, arm-vs-arm on the same 468 rows / 177 positives
+against v2's `vanilla`: BIC **562.3 → 556.2** (log 468 = 6.15, one parameter's worth),
+reference-grouped within-reference AUROC **0.4925 → 0.5035**, peptide-grouped **0.4957 → 0.4945**.
+The corpus block was costing a parameter and buying nothing. **`mhc1.mouse` is untouched** — it
+keeps its nine terms and its pinned corpus axis, and making the mouse class-I corpus work is the
+open loop, not a closed one.
+
+**The neoantigen deposit now holds neoantigens.** `bench/pmhc_data/clean_neoantigens.py` (extension
+repo) applies three rules to every table in `~/hf/pmhc_data/neoantigens`: no pathogen epitopes,
+cross-species only across human and mouse, and a source organism on every row **resolved against
+the deposited proteomes rather than guessed**. It removed 8 rows of HCMV pp65 (`Q6SW59`) from
+`neoag_tested_hsa` and 3 unattributable rows from `_mmu`, and *resolved* 21 and 19 null
+`source_species` rather than dropping them. The mouse CEDAR class-II table lost **969 of 1,528**
+rows to the pathogen rule — pertussis 147, HPV16 103, *Coxiella* 97, LCMV 88, vaccinia 45, HBV 78
+— and ovalbumin (`Gallus gallus`, 7) with them.
+
+**Why the class-II deposits were rebuilt from CEDAR rather than taken from `neoag_tested.tsv.gz`.**
+That table does hold 23,262 human class-II rows and they are unusable for a fit, for four reasons
+worth recording once: `reference_id` is **null on every one**, so there is no intercept group and no
+held-out reference; **14,143 of 23,262** are filed as `HLA class II` with no allele; there is no
+`gene_name` column, so the expression block has nothing to key on; and **1,328 rows spelled
+`H2-d class II` / `H2-b class II` / `H2 class II` carry `mhc_species = HomoSapiens`**.
+
+**`expr_norm` needs a tissue or it is a copy of `expr_lvl`**, and the context is resolved
+library-first. `expression.resolve_context` already maps 21 of CEDAR's disease strings — every
+cancer it names — onto TCGA study codes and their matched GTEx normals;
+`fit_human_mhc2.DISEASE_TISSUE` adds only the 11 autoimmune target organs it cannot know (T1D →
+pancreas, MS → cortex, pemphigus → skin). 686 of 1,112 rows (61.7 %) over 30 contexts. RA, lupus
+and Vogt-Koyanagi-Harada are deliberately unmapped: GTEx samples no synovium and no uvea, and
+mapping RA onto `Whole Blood` would be inventing a measurement.
+
+- **1.12.0 is released.** `build --check` 0 stale of **39** against 1.12.0, and the bump-only
+  rebuild of 12 artifacts moved no score (`** MOVED **` count 0). `mhcmatch rank pairs --cls mhc2`
+  scores human and mouse end to end; `rank --coefficients --cls mhc2 [--species mouse]` prints
+  either.
+
+### Open loops
+
+- **Make the corpus work for mouse class I.** Diagnosed and not fixed: reference-corpus *size* is
+  the binding constraint, not the kernel bandwidth. Down-sampling the human corpus to mouse-matched
+  sizes reproduces the collapse on a fit population 368× larger, and retuning `kappa` does not
+  recover it — the argmax does not move and the viral channel's whole deviance span collapses from
+  6.66 to 1.20. `bench/results/epic_corpus_size.md` in the extension repo.
+- **The calibration cache should ship.** 13,709 files / 3.4 GB of JSON over 700+ allele keys is
+  ~2.8 MB as float32 quantiles at 0.1 % resolution, against `STRONG_RANK`/`WEAK_RANK` of 0.5 %/2 %.
+  It would delete the 1,314 s per-worker calibrator construction. Needs a `SCORER_EPOCH`
+  fingerprint, a `build` target with a `PROVENANCE.md` entry, and a compute fallback for alleles
+  outside the shipped panel.
+- **`Proteome.find_sources` builds one seqtree window index per query length**, which is right for
+  a fixed-length class-I register and 82 GB for class II's fifteen. One `mmseqs easy-search` pass
+  over the proteome does the same job in 3 s and no disk (`bench/mhc2_human/mmseqs_sources.py`).
+
+---
+
 ## Where this stands, 2026-09-04 (later) — 1.11.0, and the E of EPIC finally means something for mouse
 
 **1.10.0 gave mouse a tumour rung and it was not comparable to the normal one.** The tumour rung

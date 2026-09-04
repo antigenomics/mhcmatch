@@ -507,15 +507,21 @@ in, and it is stored rather than derived, because a manuscript pins a fit while 
 moving underneath it: `mhc1.human.neoantigen v11 (release 1.6.1)` is a citation and
 `mhcmatch 1.11.0` is not.
 
-**`mhc2.human` is deliberately absent** — no human class-II aggregate has ever been fitted, and
-scoring class-II candidates with class-I coefficients is the mistake the lookup exists to prevent.
-`mode` is `neoantigen` on every artifact so far; `pathogen` is a registered spelling with no fit,
-because a tumour neoantigen and a pathogen epitope are two mechanisms rather than two values of one
-covariate.
+**All four `(cls, species)` cells are fitted from 1.12.0.** An unregistered species still refuses
+rather than being served a neighbour's coefficients, which is the mistake the lookup exists to
+prevent. `mode` is `neoantigen` on every artifact so far; `pathogen` is a registered spelling with
+no fit, because a tumour neoantigen and a pathogen epitope are two mechanisms rather than two
+values of one covariate.
 
-**The mouse fits spend seven free parameters on nine terms.** Their corpus block is one fitted
-scalar on the human artifact's corpus direction rather than three independent coefficients — a
-projection with one free scalar *is* three coefficients constrained to be proportional — so the
+**The two class-II fits carry six terms and no corpus block.** A `C_corpus_*` channel is a density
+over a reference set of peptides — thymic, self, viral — and all three deposited sets are class I;
+contracting a 15-mer class-II register against a 9-mer density asks the wrong question rather than
+answering it weakly. So the block leaves the design, `blocks` lists three entries, and the
+corpus-geometry keys are absent rather than declared-and-unused.
+
+**The mouse class-I fit spends seven free parameters on nine terms.** Its corpus block is one
+fitted scalar on the human artifact's corpus direction rather than three independent coefficients —
+a projection with one free scalar *is* three coefficients constrained to be proportional — so the
 file still lists nine features and one library scores both with no branch.
 
 `rank.AGGREGATE_BLOCKS` is the same block structure at runtime. The letters are a mnemonic for the

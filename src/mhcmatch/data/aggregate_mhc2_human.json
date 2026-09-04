@@ -1,0 +1,426 @@
+{
+ "model": "EPIC",
+ "version": 1,
+ "generator": "bench/mhc2_human/fit_human_mhc2.py",
+ "species": "human",
+ "cls": "mhc2",
+ "mode": "neoantigen",
+ "model_id": "mhc2.human.neoantigen",
+ "release": "1.12.0",
+ "features": [
+  "binder",
+  "log10a",
+  "expr_lvl",
+  "expr_norm",
+  "C_phys_buried",
+  "C_phys_charge"
+ ],
+ "expression_arm": "vanilla",
+ "coef": [
+  0.37731937713714847,
+  -0.11928992223220729,
+  -0.2240414531329872,
+  -0.21198751462967924,
+  0.17095250126822298,
+  -0.1530236041143041
+ ],
+ "sd": [
+  0.1960565078085965,
+  0.27184728466430824,
+  0.3793207738927042,
+  0.4060019227804475,
+  0.1361920281455104,
+  0.1347045610225146
+ ],
+ "boot_sd": [
+  0.3415917047502512,
+  0.41384325445837156,
+  0.7327039787965639,
+  0.6113906975471772,
+  0.12367061690611307,
+  0.15883688449419706
+ ],
+ "z": [
+  1.1045917447351918,
+  -0.28824904344117236,
+  -0.3057734905452077,
+  -0.34673002955417304,
+  1.382321084385023,
+  -0.963400941800106
+ ],
+ "p": [
+  0.2693365297701725,
+  0.7731561098600279,
+  0.7597771138239907,
+  0.7287941478137459,
+  0.1668731348728409,
+  0.33534635386555117
+ ],
+ "ci95": [
+  [
+   0.03216171421827526,
+   1.3341697046629915
+  ],
+  [
+   -0.812590437375974,
+   0.7869723246658491
+  ],
+  [
+   -1.8058611540536573,
+   1.1542460319906114
+  ],
+  [
+   -1.260104768857671,
+   1.2560422548677153
+  ],
+  [
+   0.00027692441091366443,
+   0.49334128880000644
+  ],
+  [
+   -0.42426575903748837,
+   0.19903844382587466
+  ]
+ ],
+ "sign_stability": [
+  0.9775,
+  0.63,
+  0.6475,
+  0.6125,
+  0.975,
+  0.805
+ ],
+ "mu": [
+  -1.0108769559352517,
+  -1.7191569115450087,
+  5.700234951888489,
+  5.676136892446044,
+  0.7298050674460431,
+  -0.15898786042266186
+ ],
+ "sigma": [
+  0.8181263198236797,
+  0.7759231588696646,
+  3.893652774252973,
+  3.8595774451495646,
+  0.033745082171012186,
+  0.5060920867539079
+ ],
+ "intercept": null,
+ "peptide_nm": 10.0,
+ "phys_scale": "Rose",
+ "phys_scale_charge": "ATCHLEY:AF5",
+ "phys_per_residue": true,
+ "expression": {
+  "terms": [
+   "expr_lvl",
+   "expr_norm"
+  ],
+  "formula": "log2(1 + x / c); x is the gene's TPM for expr_lvl and the same gene's median in the disease's target tissue for expr_norm",
+  "floor_quantile": 0.25,
+  "floor_source": "q25 of non-zero gene medians over the GTEx tissue the disease maps to; rows whose disease maps to no tissue take the pooled human floor",
+  "norm_source": "the gene's median in that tissue, falling back to its own pan-tissue median where no tissue resolves -- never to missing",
+  "floor_pooled": 0.18000482022762299,
+  "floor_per_tissue": {
+   "(pooled)": 426,
+   "Artery - Aorta": 11,
+   "B-cell acute lymphoblastic leukemia": 1,
+   "Brain - Cortex": 51,
+   "Brain - Hypothalamus": 10,
+   "Lung": 4,
+   "Muscle - Skeletal": 1,
+   "Pancreas": 369,
+   "Prostate": 40,
+   "Skin - Sun Exposed (Lower leg)": 44,
+   "Small Intestine - Terminal Ileum": 1,
+   "acute myeloid leukemia": 2,
+   "breast cancer": 6,
+   "chronic lymphocytic leukemia": 1,
+   "colorectal cancer": 7,
+   "esophageal cancer": 1,
+   "follicular lymphoma": 3,
+   "gastric adenocarcinoma": 12,
+   "glioblastoma": 40,
+   "head and neck cancer": 1,
+   "head and neck squamous cell carcinoma": 1,
+   "hepatocellular carcinoma": 7,
+   "lymphoma": 1,
+   "melanoma": 27,
+   "ovarian cancer": 2,
+   "pancreatic cancer": 2,
+   "pancreatic ductal adenocarcinoma": 14,
+   "primary biliary cholangitis": 3,
+   "prostate cancer": 15,
+   "skin melanoma": 8,
+   "triple-receptor negative breast cancer": 1
+  },
+  "prefilter_tpm": 0.0,
+  "reference": "expression/reference_expression.tsv.gz"
+ },
+ "blocks": [
+  [
+   "presentation",
+   [
+    "binder",
+    "log10a"
+   ]
+  ],
+  [
+   "expression",
+   [
+    "expr_lvl",
+    "expr_norm"
+   ]
+  ],
+  [
+   "physchem",
+   [
+    "C_phys_buried",
+    "C_phys_charge"
+   ]
+  ]
+ ],
+ "fit": {
+  "rows": 1112,
+  "positives": 656,
+  "screens": [
+   "CEDAR"
+  ],
+  "per_screen_intercept": false,
+  "references": 157,
+  "alleles": 72,
+  "bic": 1595.8030252166852,
+  "deviance": 452.53480282256913,
+  "n_boot": 400,
+  "bootstrap_unit": "reference_id cluster",
+  "clusters": 157,
+  "holdout": "grouped CV on peptide and on reference; no leave-one-screen-out (one screen)",
+  "tau": 0.25,
+  "seed": 20260904,
+  "in_sample_auroc": 0.6020433722213215,
+  "population": {
+   "deposit": "cedar_neoag_mhc2_hsa.tsv.gz",
+   "diseases": 46,
+   "rows_cancer": 143,
+   "rows_healthy_donor": 260,
+   "top": [
+    {
+     "disease": "type 1 diabetes mellitus",
+     "n": 364,
+     "pos": 91
+    },
+    {
+     "disease": "healthy",
+     "n": 260,
+     "pos": 138
+    },
+    {
+     "disease": "rheumatoid arthritis",
+     "n": 63,
+     "pos": 40
+    },
+    {
+     "disease": "(unrecorded)",
+     "n": 53,
+     "pos": 41
+    },
+    {
+     "disease": "multiple sclerosis",
+     "n": 51,
+     "pos": 51
+    },
+    {
+     "disease": "prostatitis",
+     "n": 40,
+     "pos": 40
+    },
+    {
+     "disease": "glioblastoma",
+     "n": 40,
+     "pos": 36
+    },
+    {
+     "disease": "systemic scleroderma",
+     "n": 35,
+     "pos": 35
+    }
+   ]
+  }
+ },
+ "cv_peptide": {
+  "folds": 5,
+  "groups": 804,
+  "auroc": 0.4861099967907574,
+  "auprc": 0.6144591118212982,
+  "within_ref_auroc": 0.5271481639940642,
+  "within_ref_auprc": 0.6226144847514905,
+  "n_refs_decided": 11,
+  "per_reference": [
+   {
+    "ref": "10376440.0",
+    "n": 16,
+    "pos": 10,
+    "auroc": 0.5666666666666667,
+    "auprc": 0.7092748917748917
+   },
+   {
+    "ref": "23063892",
+    "n": 11,
+    "pos": 4,
+    "auroc": 0.5,
+    "auprc": 0.5381944444444444
+   },
+   {
+    "ref": "27895642",
+    "n": 21,
+    "pos": 18,
+    "auroc": 0.4444444444444444,
+    "auprc": 0.8691408980882666
+   },
+   {
+    "ref": "30377343.0",
+    "n": 14,
+    "pos": 11,
+    "auroc": 0.36363636363636365,
+    "auprc": 0.7900861764498128
+   },
+   {
+    "ref": "30455401.0",
+    "n": 17,
+    "pos": 9,
+    "auroc": 0.4305555555555556,
+    "auprc": 0.6139622178837865
+   },
+   {
+    "ref": "31427818",
+    "n": 20,
+    "pos": 8,
+    "auroc": 0.5729166666666666,
+    "auprc": 0.5247229078111432
+   },
+   {
+    "ref": "31457096.0",
+    "n": 258,
+    "pos": 22,
+    "auroc": 0.6325115562403698,
+    "auprc": 0.13486910234635535
+   },
+   {
+    "ref": "32291282",
+    "n": 17,
+    "pos": 5,
+    "auroc": 0.8166666666666667,
+    "auprc": 0.711111111111111
+   },
+   {
+    "ref": "36228153",
+    "n": 40,
+    "pos": 36,
+    "auroc": 0.375,
+    "auprc": 0.8753690880994679
+   },
+   {
+    "ref": "40684438",
+    "n": 47,
+    "pos": 24,
+    "auroc": 0.5362318840579711,
+    "auprc": 0.5370284942571156
+   },
+   {
+    "ref": "9451596",
+    "n": 10,
+    "pos": 5,
+    "auroc": 0.56,
+    "auprc": 0.5449999999999999
+   }
+  ]
+ },
+ "cv_reference": {
+  "folds": 5,
+  "groups": 157,
+  "auroc": 0.41887636392811295,
+  "auprc": 0.5653550266295574,
+  "within_ref_auroc": 0.5643249039666605,
+  "within_ref_auprc": 0.6647844122499222,
+  "n_refs_decided": 11,
+  "per_reference": [
+   {
+    "ref": "10376440.0",
+    "n": 16,
+    "pos": 10,
+    "auroc": 0.6166666666666667,
+    "auprc": 0.7026587301587301
+   },
+   {
+    "ref": "23063892",
+    "n": 11,
+    "pos": 4,
+    "auroc": 0.6428571428571429,
+    "auprc": 0.6349206349206349
+   },
+   {
+    "ref": "27895642",
+    "n": 21,
+    "pos": 18,
+    "auroc": 0.42592592592592593,
+    "auprc": 0.8782412975072935
+   },
+   {
+    "ref": "30377343.0",
+    "n": 14,
+    "pos": 11,
+    "auroc": 0.3939393939393939,
+    "auprc": 0.7966977466977467
+   },
+   {
+    "ref": "30455401.0",
+    "n": 17,
+    "pos": 9,
+    "auroc": 0.5416666666666666,
+    "auprc": 0.7065748521630874
+   },
+   {
+    "ref": "31427818",
+    "n": 20,
+    "pos": 8,
+    "auroc": 0.5,
+    "auprc": 0.4448459526584527
+   },
+   {
+    "ref": "31457096.0",
+    "n": 258,
+    "pos": 22,
+    "auroc": 0.5562403697996918,
+    "auprc": 0.18165992193648198
+   },
+   {
+    "ref": "32291282",
+    "n": 17,
+    "pos": 5,
+    "auroc": 0.85,
+    "auprc": 0.7392857142857142
+   },
+   {
+    "ref": "36228153",
+    "n": 40,
+    "pos": 36,
+    "auroc": 0.3402777777777778,
+    "auprc": 0.8389934267238065
+   },
+   {
+    "ref": "40684438",
+    "n": 47,
+    "pos": 24,
+    "auroc": 0.5,
+    "auprc": 0.5037502576971965
+   },
+   {
+    "ref": "9451596",
+    "n": 10,
+    "pos": 5,
+    "auroc": 0.84,
+    "auprc": 0.885
+   }
+  ]
+ }
+}
