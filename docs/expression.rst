@@ -125,6 +125,46 @@ The module keys the same table two ways because a ranker asks two different thin
 *and* a flag saying whether it was observed, so a caller carries a missing-indicator column instead
 of discarding the candidate. That is the standing rule for every partially covered covariate here.
 
+Mouse
+-----
+
+**Every function in the module takes** ``species=``, **defaulting to** ``"human"``, so no existing
+call moves. ``species="mouse"`` selects different deposits, not a different code path:
+
+.. code-block:: python
+
+   from mhcmatch import expression as EX
+
+   EX.gene_level("Trp53", tissue="thymus", species="mouse")   # normal rung
+   EX.gene_level("Tyr", tumor="B16F10", species="mouse")      # tumour rung
+   EX.context_floor(species="mouse")                          # 0.7174 TPM, pooled
+
+.. code-block:: bash
+
+   mhcmatch expression Trp53 --species mouse --tissue thymus --safety
+   mhcmatch expression --species mouse --list-contexts     # tissues and models, listed apart
+
+Four things differ from human, and each is load-bearing:
+
+**The normal rung is FANTOM5 CAGE**, not GTEx --- EBI E-MTAB-3579, 18,830 gene symbols across 35
+adult tissues including thymus.
+
+**The tumour rung is gene-keyed, where human's is peptide-keyed.** TCGA has per-peptide rows, so
+human can answer *has this exact neoantigen been seen expressed*; no mouse deposit has peptide rows
+anywhere, so the mouse rung answers the gene-level question instead.
+:func:`mhcmatch.rank._expression_for` picks the key from the species rather than growing a branch.
+``lookup(…, tumor=…)`` covers the six GSE245293 syngeneic models; ``context_floor`` and
+``gene_level`` read the harmonised ``toil_matrix_mmu.npz`` --- 26,737 genes by 68 contexts on one
+scale --- and reach **33**, which is what makes ``P815``, ``Renca`` and ``EMT6`` resolvable at all.
+
+**Compare floors within a species, never across one.** Mouse floors run **0.60 TPM (aorta) to 2.00
+(pancreas, stomach, testis)** against human's 0.10--0.40, because CAGE tag density concentrates on
+fewer genes than RSEM TPM does. A mouse floor read against a human one says nothing.
+
+**There is no mouse** ``TUMOR_TISSUE``. The tumour-to-matched-normal map is keyed by TCGA study
+code, so :func:`mhcmatch.expression.tissue_floor` with ``tumor=…, species="mouse"`` **raises**, and
+names ``context_floor`` as what to call instead.
+
 Where it is used elsewhere
 --------------------------
 

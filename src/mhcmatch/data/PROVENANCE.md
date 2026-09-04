@@ -481,15 +481,30 @@ not rewritten; the artifact carries its own dissent.
 ## `aggregate_mhc1_mouse.json` / `aggregate_mhc2_mouse.json` — the mouse scorers
 
 **Derived, not experimental**, and the same object as the human artifact in every structural
-respect: nine standardised slopes, the same nine feature names in the same order, ridge
-`tau = 0.25`, its own `mu`/`sigma`, a *model* version that is an integer (`1`). `rank.aggregate()`
-resolves them through `rank.AGGREGATE_ARTIFACTS`, keyed `(cls, species)`; there is deliberately no
-`("mhc2", "human")` entry, so asking for a human class-II aggregate raises instead of returning the
-class-I one.
+respect: nine standardised slopes under the same nine feature names in the same order, ridge
+`tau = 0.25`, its own `mu`/`sigma`, a *model* version that is an integer (**`2`**) and a `release`
+that is dotted (`1.11.0` -- the package version the fit was **accepted** in, which is what a
+manuscript cites). `rank.aggregate(cls, species, mode)` resolves them through
+`rank.AGGREGATE_ARTIFACTS`, keyed `(cls, species, mode)`; there is deliberately no
+`("mhc2", "human", ...)` entry, so asking for a human class-II aggregate raises instead of
+returning the class-I one, and `pathogen` is a registered mode with no shipped artifact rather than
+a silent alias for `neoantigen`.
+
+**Nine coefficients, seven free parameters, since model version 2.** The corpus block is one fitted
+scalar on the *human* artifact's corpus direction (`+0.3255, -0.8601, +0.3928` after normalising
+v11's `C_corpus_*`), not three independent coefficients -- a projection with one free scalar **is**
+three coefficients constrained to be proportional. The file lists all nine so one library scores
+both species with no branch. Every per-term array (`coef`, `sd`, `boot_sd`, `z`, `p`, `ci95`,
+`sign_stability`, `mu`, `sigma`) is expanded to nine alongside them;
+`test_every_registered_artifact_declares_the_features_it_carries_coefficients_for` is the guard,
+added after the first v2 copy shipped five of them at seven and made
+`rank --coefficients --species mouse` raise `IndexError` on the eighth row.
 
     # in ~/vcs/projects/2026-mhcmatch-benchmark:
-    python bench/epic/fit_mouse.py --cls mhc1
-    python bench/epic/fit_mouse.py --cls mhc2
+    MHCMATCH_MODEL_RELEASE=1.11.0 python bench/epic/fit_mouse.py --cls mhc1 --model-version 2
+    MHCMATCH_MODEL_RELEASE=1.11.0 python bench/epic/fit_mouse.py --cls mhc2 --model-version 2
+    # `--corpus-axis human` is the default and is what version 2 means; `--corpus-axis free`
+    # reproduces version 1's three independent corpus coefficients.
     # then, deliberately:
     cp bench/epic/aggregate_mhc{1,2}_mouse.json ~/vcs/code/mhcmatch/src/mhcmatch/data/
 

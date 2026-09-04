@@ -45,7 +45,7 @@ from importlib import resources
 __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
            "BASE_COLUMNS", "MIMICRY_PAIRS", "EXTENDED_COLUMNS", "ANNOTATE_COLUMNS", "columns",
            "aggregate", "aggregate_features", "AGGREGATE_ARTIFACTS", "AGGREGATE_MODES",
-           "models",
+           "TERMS_MOUSE_EXPECTED", "FEATURES_ONLY", "models",
            "aggregate_score", "probability", "POOL_PREVALENCE",
            "AGGREGATE_FEATURES", "AGGREGATE_COLUMNS", "EXPR_COLUMNS",
            "AGGREGATE_BLOCKS", "CHANNEL_COLUMNS", "PHYS_COLUMNS", "expr_percentile",
@@ -144,25 +144,33 @@ def columns(extended: bool = False, annotate: bool = False, score: str = "aggreg
 
 # ----------------------------------------------------------------- the fitted aggregate (EPIC)
 
-#: **Which artifact scores a ``(cls, species)``.** One library, several fits, resolved by lookup
-#: rather than by branch -- the same shape as :data:`mhcmatch.diffusion._VENDORED_MODELS`.
+#: **The registry's two rules, stated once here because the values below cannot carry them.**
 #:
 #: Human class I keeps the bare legacy name. It is the artifact every recorded number in the
 #: manuscript was produced under, it is named in ``PROVENANCE.md``, in ``_build.TARGETS`` and in
 #: the digest ``tests/test_aggregate_terms.py`` pins; renaming it to ``_human`` for symmetry would
 #: move all of that and buy nothing.
 #:
-#: **A missing key is a refusal, not a fallback.** There is no ``("mhc2", "human")`` entry because
-#: no human class-II aggregate has ever been fitted, and scoring class-II candidates with class-I
-#: coefficients is the mistake the lookup exists to make impossible.
+#: **A missing key is a refusal, not a fallback.** There is no ``("mhc2", "human", ...)`` entry
+#: because no human class-II aggregate has ever been fitted, and scoring class-II candidates with
+#: class-I coefficients is the mistake the lookup exists to make impossible.
+#:
 #: The term set both mouse artifacts declare. It is :data:`AGGREGATE_FEATURES` -- the mouse fits
 #: were run on the human specification deliberately, so the two are comparable coefficient by
 #: coefficient -- and it is named separately because a mouse refit is free to move it and the
 #: human one is not.
+#:
+#: Nine names, **seven** free parameters since mouse model version 2: the last three are one fitted
+#: scalar on the human artifact's corpus direction rather than three independent coefficients, and
+#: a projection with one free scalar *is* three coefficients constrained to be proportional. The
+#: file lists all nine so one library scores both artifacts with no branch.
 TERMS_MOUSE_EXPECTED: tuple = ("binder", "log10a", "expr_lvl", "expr_norm",
                                "C_phys_buried", "C_phys_charge",
                                "C_corpus_thymus", "C_corpus_self", "C_corpus_viral")
 
+#: **Which artifact scores a ``(cls, species, mode)``.** One library, several fits, resolved by
+#: lookup rather than by branch -- the same shape as :data:`mhcmatch.diffusion._VENDORED_MODELS`.
+#: :func:`models` reads it out with each artifact's own identity attached.
 AGGREGATE_ARTIFACTS: dict = {
     ("mhc1", "human", "neoantigen"): "aggregate_mhc1.json",
     ("mhc1", "mouse", "neoantigen"): "aggregate_mhc1_mouse.json",
@@ -365,7 +373,8 @@ def expr_percentile(rows) -> list:
     return out
 
 
-#: **The artifact-shaped stand-in ``score="features"`` uses: every fitted column, no coefficients.**
+#: **Every fitted column, and no coefficients.** The artifact-shaped stand-in that
+#: ``score="features"`` supplies in a real artifact's place.
 #:
 #: Computing the design matrix and scoring it are two things, and until 1.10.0 only the second could
 #: ask for the first -- ``_finish`` drives every column off ``a["features"]``, so a species or class
@@ -402,8 +411,9 @@ def models() -> list:
     and class II are worked on. So each artifact carries its own identity -- ``model_id``
     (``mhc1.human.neoantigen``), an integer ``version`` that moves on a specification change, and
     ``release``, the dotted package version the fit was **accepted** under. Citing
-    ``mhc1.human.neoantigen v11 (release 1.9.0)`` names a fit that no later library version can
-    move, which is exactly what quoting ``mhcmatch 1.11.0`` cannot do.
+    ``mhc1.human.neoantigen v11 (release 1.6.1)`` names a fit that no later library version can
+    move, which is exactly what quoting ``mhcmatch 1.11.0`` cannot do -- and 1.6.1 rather than
+    1.11.0 is the point: this fit was accepted five releases ago and has not moved since.
 
     Returns records sorted by ``model_id``, each with ``cls``, ``species``, ``mode``, ``model_id``,
     ``version``, ``release``, ``file``, ``features`` and the fit's own row/positive counts where the

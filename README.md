@@ -341,6 +341,11 @@ field. Coverage over that corpus goes to **692,349 of 695,811 rows (99.5%)** and
 
 ```bash
 mhcmatch genes pairs.tsv --species human --out annotated.tsv     # + a `gene` column
+mhcmatch rank pairs mouse.tsv --species mouse --tumor B16F10     # mouse: mouse scorer, mouse
+                                                                 #   expression, mouse corpus
+mhcmatch expression Trp53 --species mouse --tissue thymus        # FANTOM5, not GTEx
+mhcmatch rank pairs t.tsv --score features --tissue skin         # every fitted column, no score:
+                                                                 #   what a refit needs first
 mhcmatch rank pairs annotated.tsv --tumor SKCM --out ranked.tsv  # reads it: no join, no rename
 ```
 
@@ -472,15 +477,46 @@ the earlier ones, not in competition with them. Ridge with an unpenalised per-sc
 quoting a superseded set for a full release each time. Ask the artifact, which is the record:
 
 ```bash
-mhcmatch rank --coefficients     # every term, its block, its coefficient
-mhcmatch rank --holdout          # per-screen AUROC, the two grouped CVs, the fit's own corpus
+mhcmatch rank --coefficients                         # every term, its block, its coefficient
+mhcmatch rank --holdout                              # held-out AUROC, the grouped CVs, the corpus
+mhcmatch rank --coefficients --species mouse         # the mouse class-I fit, not the human one
+mhcmatch rank --coefficients --cls mhc2 --species mouse
 ```
 
 ```python
-import json, importlib.resources as R
-d = json.loads(R.files("mhcmatch.data").joinpath("aggregate_mhc1.json").read_text())
-d["model"], d["version"], d["features"], d["coef"], d["fit"]["rows"], d["fit"]["screens"]
+from mhcmatch import rank
+
+rank.models()                       # every shipped fit: model_id, version, release, rows, positives
+a = rank.aggregate("mhc1", "human")  # the artifact itself
+a["model_id"], a["version"], a["release"], a["features"], a["coef"], a["fit"]["rows"]
 ```
+
+### Three shipped fits, and a missing one refuses
+
+There is one artifact per `(cls, species, mode)` and **no fallback**: asking for a combination that
+was never fitted raises rather than scoring it with another fit's coefficients.
+
+| `model_id` | model version | release | rows | positives | corpus |
+|---|--:|---|--:|--:|---|
+| `mhc1.human.neoantigen` | **11** | 1.6.1 | **339,599** | **597** | 7 human neoantigen screens |
+| `mhc1.mouse.neoantigen` | 2 | **1.11.0** | 923 | 380 | IEDB mouse neoantigen deposit, 61 references |
+| `mhc2.mouse.neoantigen` | 2 | **1.11.0** | 469 | 177 | the same deposit, 30 references |
+
+**`release` is not the running library version.** It is the package version the fit was *accepted*
+in, and it is stored rather than derived, because a manuscript pins a fit while the library keeps
+moving underneath it: `mhc1.human.neoantigen v11 (release 1.6.1)` is a citation and
+`mhcmatch 1.11.0` is not.
+
+**`mhc2.human` is deliberately absent** — no human class-II aggregate has ever been fitted, and
+scoring class-II candidates with class-I coefficients is the mistake the lookup exists to prevent.
+`mode` is `neoantigen` on every artifact so far; `pathogen` is a registered spelling with no fit,
+because a tumour neoantigen and a pathogen epitope are two mechanisms rather than two values of one
+covariate.
+
+**The mouse fits spend seven free parameters on nine terms.** Their corpus block is one fitted
+scalar on the human artifact's corpus direction rather than three independent coefficients — a
+projection with one free scalar *is* three coefficients constrained to be proportional — so the
+file still lists nine features and one library scores both with no branch.
 
 `rank.AGGREGATE_BLOCKS` is the same block structure at runtime. The letters are a mnemonic for the
 blocks, **not** the fitting order — presentation enters before expression, and every conditional
@@ -526,6 +562,10 @@ aff.amplitude("NLVPMVATL", "NLVPMVATV", "HLA-A*02:01")   # Kd_WT/Kd_MT (Łuksza 
 complement.score(peptides)                           # vectorised: pass the list, not a loop
 complement.posterior(peptides, prior=4.2e-4)         # the log-odds carries NO prior; supply yours
 complement.score(peptides, species="mouse")          # separate table; the hosts are never pooled
+
+from mhcmatch import expression, rank
+expression.gene_level("Trp53", species="mouse")      # FANTOM5 tissues + the syngeneic models
+rank.aggregate("mhc1", "mouse")                      # the mouse fit; ("mhc2","human") raises
 
 known.lookup("GILGFVFTL")                            # -> 'neoantigen': the FIRST set in
                                                      # SET_NAMES containing it, not the only one

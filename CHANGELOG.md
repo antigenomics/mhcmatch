@@ -1,11 +1,10 @@
 # Changelog
 
-## [1.11.0] --- UNRELEASED --- the E of EPIC for mouse
+## [1.11.0] --- 2026-09-04 --- the E of EPIC for mouse
 
 > **The artifact decision that blocked this version was taken on 2026-09-04** and both mouse
 > scorers are refitted with the harmonised matrix and the corrected expression chain; see
-> *Changed* below. What is still open is the release itself, which is a sign-off, not a
-> measurement: `mhcmatch build --check` reports 0 stale of 38 against 1.11.0, the full suite is
+> *Changed* below. `mhcmatch build --check` reports 0 stale of 38 against 1.11.0, the full suite is
 > green, and the human artifact is byte-identical to `master` on `coef`, `mu` and `sigma`.
 
 
@@ -101,6 +100,48 @@ human expression block is built on was not actually available.
   max |new - old| on `coef`, `mu` and `sigma` against `master` is **0.0**.
 
 
+### Fixed --- found by auditing the release rather than by running it
+
+- **The mouse artifacts were internally ragged: nine feature names against seven statistics.**
+  Model version 2 constrains the corpus block to one scalar and expands it back to three
+  proportional channels, and `bench/epic/fit_mouse.py` did that expansion for
+  `features`/`coef`/`mu`/`sigma`/`sd` and **not** for `boot_sd`/`z`/`p`/`ci95`/`sign_stability`,
+  which were written straight off the bootstrap block. So anything zipping a term name against a
+  statistic read the corpus *axis*'s number under `C_corpus_thymus` and then ran off the end:
+  `mhcmatch rank --coefficients --species mouse` printed seven rows and raised `IndexError` on the
+  eighth.
+
+  Both artifacts are regenerated with every per-term array at nine. Under `c_k = s * u_k`: `sd` and
+  `boot_sd` scale by `|u_k|`, `ci95` scales by `u_k` and re-orders where `u_k < 0`, `z` keeps its
+  magnitude and takes `u_k`'s sign, and `p` and `sign_stability` are **identical** across the three
+  because there is one parameter and therefore one test. **`coef`, `mu` and `sigma` did not move**
+  --- both pinned digests (`ab3b29cd4aa22ad7`, `f3f6b38f388a1e5e`) are unchanged, so the refit
+  reproduced the fit exactly and this was metadata only.
+  `test_every_registered_artifact_declares_the_features_it_carries_coefficients_for` now checks all
+  nine arrays, `ci95` ordering and the `blocks` join; checking `coef` alone could not see this.
+
+- **`rank --coefficients` / `--holdout` ignored `--cls` and `--species`.** `_rank_model` read
+  `aggregate()` bare, so asking for the mouse class-II model printed `mhc1.human.neoantigen` --- and
+  the `model_id` line added in this same release made the wrong answer look authoritative. It now
+  resolves the artifact the flags name, refuses in one line for a pair that was never fitted rather
+  than raising a traceback, prints whichever holdout design the artifact records (the human fit
+  holds out one of seven screens; the mouse fits hold out references inside a single screen, and
+  `m["loo"]` was a `KeyError` there), and names the intercept's actual grouping instead of always
+  saying "screen".
+
+- **The five mouse `AnchorModel` pickles had no currency guard.**
+  `test_vendored_models_load_and_are_current` iterated `_VENDORED_MODELS` only, so a version bump
+  without a rebuild would have shipped them stale in silence --- the exact hole that shipped three
+  stale models in 0.26.0, and the reason that test exists. It iterates both registries now.
+
+- **`expression --tumor`'s help said "Human only -- there is no mouse tumour reference"**, which
+  contradicted the code beside it, the command's own docstring and `bootstrap`'s file list. There
+  are six GSE245293 syngeneic models, gene-keyed.
+
+- **`predict.SCORER_EPOCH` 6 was bumped without a line saying what it was.** It is the harmonised
+  mouse compendium: both expression halves off one matrix instead of RNA-seq TPM against CAGE tag
+  density.
+
 ### Fixed
 
 - **The expression resolution chain ended at `nan` instead of at the gene's pan-tissue median.**
@@ -126,6 +167,22 @@ human expression block is built on was not actually available.
 
 - **`predict.SCORER_EPOCH` 6 -> 7**, because the above changes what `expr_lvl` returns and a feature
   frame built under epoch 6 would otherwise be accepted under epoch 7.
+
+### Documentation
+
+- **`README.md` and `skills/mhcmatch/SKILL.md` carry the model registry**: the three shipped fits
+  with `model_id`, model version, `release`, rows and positives; why `mhc2.human` and `pathogen`
+  are absent by construction; and that the mouse fits spend seven free parameters on nine terms.
+  Both had described one artifact at a hardcoded path.
+- **`docs/expression.rst` has a Mouse section** --- the four things that differ from human (FANTOM5
+  rather than GTEx, a gene-keyed rather than peptide-keyed tumour rung, floors that are only
+  comparable within a species, and no `TUMOR_TISSUE`). `docs/api/ranking.rst` describes the lookup
+  and all three scores rather than one file. Both modules are `automodule`'d, so the new functions
+  were already in the API pages.
+- **`data/PROVENANCE.md`'s mouse entry** was a model version behind and still said the registry was
+  keyed `(cls, species)`; it now records version 2, the release, the corpus-axis constraint, the
+  per-term array guard, and the exact two commands that regenerate the pair.
+- `ci.yml` and `publish.yml` said `--check` covers 27 artifacts; it covers 38.
 
 ### Measured, and stated rather than left to be found
 

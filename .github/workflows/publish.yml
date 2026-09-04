@@ -29,7 +29,7 @@ jobs:
         # `python -m build` runs in an isolated env with no numpy, no seqtree and no panel.
         #
         # `mhcmatch build` is the supported entry point and rebuilds every target that has an
-        # in-process builder; `--check` then fails the release if ANY of the 27 shipped artifacts
+        # in-process builder; `--check` then fails the release if ANY of the 38 shipped artifacts
         # is still stamped behind __version__, including the ones whose generator lives in the
         # benchmark repo and which this step cannot rebuild. ci.yml's staleness test is the
         # earlier guard; this is the last one before the wheel is cut.

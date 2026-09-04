@@ -317,15 +317,36 @@ def test_a_species_class_with_no_fitted_artifact_refuses_rather_than_substitutin
         R.aggregate("mhc2", "human")
 
 
+#: Every array in an artifact that is indexed by term. A consumer zips these against `features`,
+#: so one of them being short is not a smaller table -- it is the wrong term's number, and then an
+#: `IndexError`.
+PER_TERM_ARRAYS = ("coef", "mu", "sigma", "sd", "boot_sd", "z", "p", "ci95", "sign_stability")
+
+
 def test_every_registered_artifact_declares_the_features_it_carries_coefficients_for():
+    """Every per-term array is exactly as long as `features`, on every shipped artifact.
+
+    **This is not a tidiness check; a ragged artifact shipped.** Mouse model version 2 constrains
+    the corpus block to one scalar, and the expansion back to three channels was applied to
+    `coef`/`mu`/`sigma`/`sd` and not to `boot_sd`/`z`/`p`/`ci95`/`sign_stability` -- so those five
+    were seven long against nine names. `mhcmatch rank --coefficients --species mouse` printed the
+    corpus *axis*'s p-value under `C_corpus_thymus` and then raised `IndexError` on
+    `C_corpus_self`. Checking `coef` alone, which is what this test used to do, could not see it.
+    """
     from mhcmatch import rank as R
 
     for (cls, species, mode) in R.AGGREGATE_ARTIFACTS:
         a = R.aggregate(cls, species, mode)
         n = len(a["features"])
-        assert len(a["coef"]) == n and len(a["mu"]) == n and len(a["sigma"]) == n, \
-            (cls, species, mode)
+        for k in PER_TERM_ARRAYS:
+            assert len(a[k]) == n, f"{cls}.{species}.{mode}: {k} is {len(a[k])} against {n} terms"
+        assert all(len(c) == 2 and c[0] <= c[1] for c in a["ci95"]), \
+            f"{cls}.{species}.{mode}: a ci95 pair is not an ordered (lo, hi)"
         assert tuple(a["features"]) == R.aggregate_features(cls, species, mode)
+        # every block name in `blocks` is a term the artifact actually carries, and vice versa --
+        # `rank --coefficients` joins on this and would print an empty block cell otherwise
+        blocked = [t for _b, ts in a["blocks"] for t in ts]
+        assert blocked == list(a["features"]), (cls, species, mode, blocked)
 
 
 def test_every_shipped_model_names_itself_and_the_release_that_accepted_it():
@@ -364,3 +385,57 @@ def test_a_mode_with_no_shipped_artifact_refuses_by_name():
         R.aggregate("mhc1", "human", "pathogen")
     with pytest.raises(ValueError, match="not one of"):
         R.aggregate("mhc1", "human", "tumour")
+
+
+def test_score_features_computes_every_fitted_column_and_scores_nothing():
+    """The bootstrap a refit needs: the design matrix without an artifact to score it with.
+
+    Until 1.10.0 only scoring could ask for the columns -- `_finish` drives every one off
+    `a["features"]` -- so a `(cls, species)` with no fitted artifact could not be *measured*, which
+    is exactly what fitting one requires. `score="features"` supplies `FEATURES_ONLY` in the
+    artifact's place: every fitted column on the row, `score` NaN, and no model name claimed.
+    """
+    import math
+
+    from mhcmatch import rank as R
+
+    rows = [R.Ranked(peptide=p, allele="H-2-Kb", presentation=2.3, binder=2.1, occupancy=0.77,
+                     d_occupancy=0.12, wt_absent=0.0, expression=3.0, gene="Trp53")
+            for p in ("SIINFEKL", "SIYRYYGL", "KAVYNFATC")]
+    for r in rows:
+        r.components.update({c: 1e-3 for c in R.CHANNEL_COLUMNS})
+
+    done = R._finish(list(rows), None, score="features", expr_floor=0.7174,
+                     cls="mhc1", species="mouse")
+
+    assert len(done) == len(rows)
+    for r in done:
+        assert math.isnan(r.score), "a features run must score nothing at all"
+        assert r.components["model"] == "", "no artifact was used, so none may be named"
+        for name in R.FEATURES_ONLY["features"]:
+            v = r.components.get(name)
+            assert v is not None and v == v, f"{name} is missing on a features run"
+
+    # and it is the same set of columns the CLI emits under --score aggregate
+    assert set(R.FEATURES_ONLY["features"]) <= set(R.columns(score="features"))
+    assert R.columns(score="features") == R.columns(score="aggregate")
+
+
+def test_every_shipped_artifact_agrees_on_the_corpus_geometry_the_defaults_assume():
+    """`mimicry.corpus_geometry()` and `luksza.shape()` read `aggregate()` **bare** when no
+    artifact is passed, so they answer with the human class-I one whatever species is running.
+
+    That is safe only while all three shipped fits were built on the same face, k and kernel --
+    which they were, deliberately, so the mouse coefficients compare to the human ones term by
+    term. It stops being safe the moment a refit moves one, and the failure would be silent: a
+    mouse `C_corpus_*` column built under one geometry and interpreted under another is a
+    different feature, not a smaller effect. Fail here rather than there.
+    """
+    from mhcmatch import rank as R
+
+    geo = {}
+    for (cls, species, mode) in R.AGGREGATE_ARTIFACTS:
+        a = R.aggregate(cls, species, mode)
+        geo[f"{cls}.{species}.{mode}"] = (a["corpus_k"], a["corpus_mask"], a["corpus_kernel"],
+                                          tuple(sorted(a["corpus_shapes"].items())))
+    assert len(set(geo.values())) == 1, geo

@@ -101,6 +101,35 @@ parameters where there were nine — taken on the author's rule that a straightf
 reference-grouped, BIC 1078.3 → **1066.9**; class II 0.4598 → **0.4901** reference-grouped, BIC
 571.5 → **562.7**.
 
+### What the release audit found, and it was not in the fit
+
+Four defects, all in the *packaging* of a model rather than in a model, and all of a shape a
+passing test suite cannot see. Recorded because the shape recurs, not because the fixes are
+interesting.
+
+- **An artifact can be internally ragged and still score correctly.** The v2 mouse fits carried
+  nine feature names against **seven** entries in `boot_sd`, `z`, `p`, `ci95` and
+  `sign_stability` — the corpus-axis expansion was applied to five arrays and not the other five.
+  Scoring reads `coef` and never noticed; anything that zips a *name* to a *statistic* read the
+  axis's p-value under `C_corpus_thymus` and raised `IndexError` on `C_corpus_self`. The guard
+  that would have caught it checked `coef` alone, which is the whole lesson: **check every array
+  the artifact indexes by term, not the one the scorer happens to use.** Both artifacts are
+  regenerated; `(coef, mu, sigma)` and therefore both pinned digests are **unchanged**, so this
+  was metadata and the fit reproduced exactly.
+- **A registry makes a lookup possible and does not make callers use it.** `rank --coefficients`
+  and `--holdout` still read `aggregate()` bare, so they printed the human class-I model for any
+  `--cls`/`--species` — and the `model_id` line added in the same release made that authoritative-
+  looking. **Whenever a global becomes a lookup, grep for the old zero-argument call**; there were
+  three more, in `luksza` and `mimicry`, and those are safe only because all three artifacts share
+  a corpus geometry, which is now a test rather than a coincidence.
+- **A guard that iterates one registry covers one registry.**
+  `test_vendored_models_load_and_are_current` iterated the human pickles only, so the five mouse
+  ones shipped with no currency guard at all — the exact hole that shipped three stale models in
+  0.26.0, reopened by adding a second registry beside the one the test names.
+- **Sphinx `-W` sees a docstring the day a symbol enters `__all__`, not the day it is written.**
+  `FEATURES_ONLY` had carried malformed RST since 1.10.0 and the docs built green, because
+  `automodule` honours `__all__`. Exporting it failed the build.
+
 ### Open loops
 
 - **The corpus scalar does not resolve, in either class**, and that is a sample-size statement:
@@ -111,7 +140,8 @@ reference-grouped, BIC 1078.3 → **1066.9**; class II 0.4598 → **0.4901** ref
   The 68 xenoantigen rows stay in the fit by the author's decision, so the fix is **their human
   orthologue's expression**, which `toil_matrix.npz` already has, rather than their removal. The 76
   remaining holes are genes the 26,737-gene mouse matrix does not carry.
-- **1.11.0 is not released.** That is a sign-off, not a measurement.
+- **1.11.0 is released.** Full suite 790 passed / 16 skipped, `build --check` 0 stale of 38,
+  `sphinx-build -W` clean, and both mouse fits reproduced byte-for-byte before the tag.
 
 ---
 
@@ -162,7 +192,8 @@ down — plus a **within-reference** read-out gives **0.6206** (peptide-grouped)
 **0.6963**, the human artifact's own held-out per-screen median. `binder` **+0.6224** (*z* +3.12,
 sign stability 1.00), same sign as the human **+0.7569**.
 
-`rank.AGGREGATE_ARTIFACTS` is keyed `(cls, species)` and `_AGG` is a per-key dict, so
+`rank.AGGREGATE_ARTIFACTS` is keyed `(cls, species)` — three-part since the mode split above — and
+`_AGG` is a per-key dict, so
 `("mhc1","human")` keeps the legacy bare filename and no external reference moves. A
 `(cls, species)` pair with no fitted artifact **refuses rather than substituting** the human one —
 which is the whole failure this dict exists to prevent, and is tested.

@@ -241,21 +241,44 @@ def _load_vendored_meta(name):
 def test_vendored_models_load_and_are_current():
     # Every shipped model loads (monkeypatched panel hash), scores finitely, AND is not stale for this
     # version -- the last assert fails a release that bumps __version__ without regenerating the models.
+    #
+    # BOTH registries, since 1.10.0 shipped five mouse pickles. Iterating only `_VENDORED_MODELS`
+    # left the mouse half with no currency guard at all -- which is the exact hole that shipped
+    # three stale `AnchorModel`s in 0.26.0, and the reason this test exists.
     from mhcmatch import __version__, diffusion as D
-    for (cls, _fp, _bg), name in D._VENDORED_MODELS.items():
-        meta, _ = _load_vendored_meta(name)
-        assert meta["version"] == __version__, \
-            f"vendored {name} is stale for this version; rerun: mhcmatch build anchor"
-        orig = D.panel_sha
-        D.panel_sha = lambda store, c: meta["panel_sha"]    # pretend the live panel matches
-        try:
-            m = D.load_vendored_anchor_model(object(), cls, meta["params"])
-        finally:
-            D.panel_sha = orig
-        assert m is not None, name
-        pep, al = ("PGCCSGAPALGLTQV", "DRB1_1101") if cls == "mhc2" else ("NLVPMVATV", "HLA-A*02:01")
-        s = m.score(pep, al)
-        assert s == s and s != float("-inf"), name          # a finite score
+
+    class _Store:                       # `load_vendored_anchor_model` reads only this attribute
+        def __init__(self, species):
+            self.species = species
+
+    # The two registries share every KEY and no filename -- that is what makes species a lookup
+    # rather than a branch -- so they are iterated apart, and the store stub carries the species
+    # that selects one. A merged dict would silently keep five of the ten pickles.
+    seen = set()
+    for species in ("human", "mouse"):
+        reg = D.vendored_models(species)
+        assert set(reg) == set(D._VENDORED_MODELS), f"{species} registry is not the human shape"
+        for (cls, _fp, _bg), name in reg.items():
+            assert name not in seen, f"{name} is registered under two species"
+            seen.add(name)
+            meta, _ = _load_vendored_meta(name)
+            assert meta["version"] == __version__, \
+                f"vendored {name} is stale for this version; rerun: mhcmatch build anchor"
+            orig = D.panel_sha
+            D.panel_sha = lambda store, c: meta["panel_sha"]    # pretend the live panel matches
+            try:
+                m = D.load_vendored_anchor_model(_Store(species), cls, meta["params"])
+            finally:
+                D.panel_sha = orig
+            assert m is not None, name
+            if species == "mouse":
+                pep, al = ("PGCCSGAPALGLTQV", "H-2-IAb") if cls == "mhc2" else ("SIINFEKL", "H-2-Kb")
+            else:
+                pep, al = ("PGCCSGAPALGLTQV", "DRB1_1101") if cls == "mhc2" \
+                    else ("NLVPMVATV", "HLA-A*02:01")
+            sc = m.score(pep, al)
+            assert sc == sc and sc != float("-inf"), (species, name)   # a finite score
+    assert len(seen) == 10, seen
 
 
 def test_vendored_guard_rejects_mismatch():

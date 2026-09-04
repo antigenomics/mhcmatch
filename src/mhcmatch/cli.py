@@ -766,37 +766,76 @@ def _aggregate_channels(cls: str, no_self: bool, species: str = "human"):
 
 
 def _rank_model(a):
-    """Print the shipped aggregate itself instead of scoring anything.
+    """Print a shipped aggregate itself instead of scoring anything.
 
-    Both tables are read out of ``data/aggregate_mhc1.json`` -- the artifact the benchmark fitted
-    and the library ships. Nothing is refitted here, so a figure built on this output and a run of
-    ``rank`` are the same model by construction rather than by a comparison someone has to make."""
+    Both tables are read out of the artifact the benchmark fitted and the library ships. Nothing is
+    refitted here, so a figure built on this output and a run of ``rank`` are the same model by
+    construction rather than by a comparison someone has to make.
+
+    **Which artifact is ``--cls`` / ``--species``, and it was not until 1.11.0.** This read
+    ``aggregate()`` bare, so ``rank --coefficients --cls mhc2 --species mouse`` printed
+    ``mhc1.human.neoantigen`` and said nothing -- and the ``model_id`` line added in the same
+    release made the wrong answer look authoritative. A pair with no fitted artifact refuses here
+    exactly as it does on the scoring path."""
     from . import rank as R
-    m = R.aggregate()
+    cls, species = getattr(a, "cls", "mhc1"), getattr(a, "species", "human")
+    try:
+        m = R.aggregate(cls, species)
+    except (ValueError, FileNotFoundError) as e:
+        raise SystemExit(str(e))
     f = m["fit"]
     say(f"{m['model']} v{m['version']}, fitted by {m['generator']}")
     # The model's own identity, which is what a manuscript cites. It is deliberately not the
     # library version: the paper pins a fit, and the library keeps moving under it.
     say(f"model_id {m.get('model_id', '?')}, release {m.get('release', '?')} "
         f"(the package version this fit was accepted in, not the one running)")
-    say(f"{f['rows']:,} rows / {f['positives']:,} positives over {len(f['screens'])} screens; "
-        f"BIC {f['bic']:.1f}, ridge tau {f['tau']}")
+    n_scr = len(f["screens"])
+    say(f"{f['rows']:,} rows / {f['positives']:,} positives over {n_scr} "
+        f"screen{'' if n_scr == 1 else 's'}; BIC {f['bic']:.1f}, ridge tau {f['tau']}")
     say(f"intervals from {f['n_boot']} resamples of {f['bootstrap_unit']}; holdout {f['holdout']}")
-    say("no global intercept: every screen was given its own, unpenalised")
-    out = _Out(a, "term" if not getattr(a, "holdout", False) else "screen")
-    if getattr(a, "holdout", False):
-        out.header("screen", "n", "pos", "neg", "auroc", "decided")
-        for r in m["loo"]:
-            out.row(r["level"], r["n"], r["pos"], r["neg"], f"{r['auroc']:.4f}",
-                    "yes" if r["decided"] else "no")
-        for k in ("cv_peptide", "cv_twin"):
+    # WHAT the intercept is per is what the fit recorded, not a constant: the human fit gives one
+    # to each of seven screens, the mouse fits give one to each of 61 publications inside a single
+    # screen. Printing "every screen" for the mouse artifact named the wrong grouping for a design
+    # whose entire held-out read-out is within-reference.
+    unit = "screen" if f.get("per_screen_intercept") else f["bootstrap_unit"].replace(" cluster", "")
+    say(f"no global intercept: every {unit} was given its own, unpenalised")
+    # The `--out` row label follows the table actually written: `term` for the coefficient dump,
+    # and for the holdout dump whichever unit was held out -- screens for the human fit, references
+    # for the mouse ones.
+    holdout = bool(getattr(a, "holdout", False))
+    out = _Out(a, ("screen" if "loo" in m else "reference") if holdout else "term")
+    if holdout:
+        # Two holdout designs, because two corpora. The human fit spans seven screens and holds one
+        # out at a time (`loo`); the mouse fits have ONE screen and 61 publications inside it, so
+        # their held-out table is per *reference*, carried inside the grouped CVs. Print whichever
+        # the artifact records rather than assuming the human shape -- `m["loo"]` was a KeyError on
+        # a mouse artifact.
+        cvs = [k for k in ("cv_peptide", "cv_twin", "cv_reference") if k in m]
+        loo = m.get("loo")
+        per = (loo or (m[cvs[-1]].get("per_reference") if cvs else None)) or []
+        out.header("screen" if loo else "reference", "n", "pos", "neg", "auroc", "decided")
+        for r in per:
+            neg = r["neg"] if "neg" in r else r["n"] - r["pos"]
+            out.row(r.get("level", r.get("ref", "")), r["n"], r["pos"], neg,
+                    f"{r['auroc']:.4f}", "yes" if r.get("decided", True) else "no")
+        for k in cvs:
             c = m[k]
-            out.row(k, "", "", "", f"{c['median_decided']:.4f}", f"{c['folds']}-fold, "
-                    f"{c['groups']:,} groups, {c['n_decided']} decided, "
-                    f"pooled {c['pooled_auroc']:.4f}")
-        v = m["verdict"]
-        say(f"verdict: {v['improvements']} improvement(s), {v['ties']} tie(s), "
-            f"{v['regressions']} regression(s)")
+            # `median_decided` on the human artifact, `within_ref_auroc` on the mouse ones: both are
+            # the AUROC read out *within* a holdout unit, which is the only figure comparable across
+            # the two designs. The pooled column beside it is base-rate confounded and labelled so.
+            auroc = c.get("median_decided", c.get("within_ref_auroc"))
+            n_dec = c.get("n_decided", c.get("n_refs_decided"))
+            pooled = c.get("pooled_auroc", c.get("auroc"))
+            out.row(k, "", "", "", f"{auroc:.4f}", f"{c['folds']}-fold, "
+                    f"{c['groups']:,} groups, {n_dec} decided, "
+                    f"pooled {pooled:.4f}")
+        v = m.get("verdict")
+        if v:
+            say(f"verdict: {v['improvements']} improvement(s), {v['ties']} tie(s), "
+                f"{v['regressions']} regression(s)")
+        else:
+            say("this artifact records no ship verdict: its bar is a like-for-like arm against the "
+                "previous model version, not a per-screen sweep over one corpus")
     else:
         block = {t: b for b, ts in m["blocks"] for t in ts}
         out.header("block", "term", "coef", "sd", "boot_sd", "z", "p",
@@ -3087,8 +3126,9 @@ def main(argv=None):
                                                        "(with --tumor)")
     xp.add_argument("--tissue", help="normal tissue, gene-keyed: a GTEx tissue for human, one of "
                                      "the 35 FANTOM5 tissues for mouse")
-    xp.add_argument("--tumor", help="TCGA cancer_type (peptide-keyed, tumour); SKCM = melanoma. "
-                                    "Human only -- there is no mouse tumour reference")
+    xp.add_argument("--tumor", help="tumour context. Human: a TCGA cancer_type, peptide-keyed "
+                                    "(SKCM = melanoma). Mouse: one of the six GSE245293 syngeneic "
+                                    "models, gene-keyed -- --list-contexts names them")
     xp.add_argument("--species", default="human", choices=("human", "mouse"),
                     help="which normal-tissue reference to read (default human/GTEx)")
     xp.add_argument("--safety", action="store_true",

@@ -243,6 +243,54 @@ def test_rank_holdout_dumps_every_screen_and_both_cross_validations(capsys):
         ["yes" if r["decided"] else "no" for r in m["loo"]]
 
 
+@pytest.mark.parametrize("cls, species, model_id", [
+    ("mhc1", "human", "mhc1.human.neoantigen"),
+    ("mhc1", "mouse", "mhc1.mouse.neoantigen"),
+    ("mhc2", "mouse", "mhc2.mouse.neoantigen"),
+])
+def test_rank_coefficients_dumps_the_artifact_the_flags_asked_for(cls, species, model_id, capsys):
+    """`--cls` / `--species` select which model is printed, and until 1.11.0 they did not.
+
+    `_rank_model` read `aggregate()` bare, so `rank --coefficients --cls mhc2 --species mouse`
+    printed the human class-I fit and said nothing -- and the `model_id` line added in the same
+    release made the wrong answer look authoritative. A dump that names the wrong model is worse
+    than no dump: the whole point of these four outputs is that a manuscript figure and a run of
+    `rank` cannot disagree.
+    """
+    from mhcmatch import rank as R
+
+    cli.main(["rank", "--coefficients", "--cls", cls, "--species", species])
+    cap = capsys.readouterr()
+    assert f"model_id {model_id}" in cap.err, cap.err
+    m = R.aggregate(cls, species)
+    rows = [r.split("\t") for r in cap.out.strip().split("\n")]
+    assert [r[1] for r in rows[1:]] == list(m["features"]), "term order must be the artifact's"
+    assert [float(r[2]) for r in rows[1:]] == [round(c, 4) for c in m["coef"]]
+
+
+def test_rank_holdout_prints_the_holdout_design_the_artifact_actually_records(capsys):
+    """The human fit holds out one of seven screens; the mouse fits have one screen and hold out
+    references inside it. `m["loo"]` was a KeyError on a mouse artifact, and `cv_twin` does not
+    exist there either -- so the table is whichever design the artifact carries, not the human one.
+    """
+    cli.main(["rank", "--holdout", "--cls", "mhc1", "--species", "mouse"])
+    cap = capsys.readouterr()
+    rows = [r.split("\t") for r in cap.out.strip().split("\n")]
+    assert rows[0] == ["reference", "n", "pos", "neg", "auroc", "decided"]
+    assert [r[0] for r in rows[-2:]] == ["cv_peptide", "cv_reference"]
+    for r in rows[1:-2]:
+        assert int(r[1]) == int(r[2]) + int(r[3]), f"n != pos + neg on {r[0]}"
+    # per REFERENCE, not per screen: the mouse fit records `per_screen_intercept` False and the
+    # header must not claim otherwise
+    assert "every reference_id was given its own" in cap.err, cap.err
+
+
+def test_asking_for_a_model_that_was_never_fitted_is_an_error_not_a_traceback():
+    """No human class-II aggregate exists. `--coefficients --cls mhc2` must refuse in one line."""
+    with pytest.raises(SystemExit, match="no fitted artifact"):
+        cli.main(["rank", "--coefficients", "--cls", "mhc2"])
+
+
 def test_rank_without_a_mode_and_without_a_dump_flag_is_an_error():
     """`mode` and `input` went optional so --coefficients could stand alone; ordinary use must
     still refuse to run on nothing rather than scoring an empty list."""
