@@ -26,12 +26,17 @@ lists three entries rather than four, and the four corpus-geometry keys are **ab
 file rather than declared-and-unused.
 
 **`mhc2.human.neoantigen` v1 is the first human class-II EPIC artifact.** 1,112 rows / 656
-immunogenic (59.0 %) over 157 references and 72 allotypes. Held out within reference, macro-averaged
-over the 11 references carrying at least three of each class: **0.5271** peptide-grouped, **0.5643**
-reference-grouped, against 0.6020 in sample. Two coefficients are sign-stable over a 400-resample
-cluster bootstrap on the reference — `binder` **+0.3773** at 0.98 and `C_phys_buried` **+0.1710** at
-0.97 — and the other four are not. Alone and within reference, `binder` reaches 0.5645 and
+immunogenic (59.0 %) over 157 references and 72 allotypes. BIC **1595.8**, deviance 452.5, 157
+intercepts at 157.0 effective df. Two of the six coefficients are sign-stable over a 400-resample
+cluster bootstrap on `reference_id` — `binder` **+0.3773** at 0.98 and `C_phys_buried` **+0.1710**
+at 0.97 — and the other four are not (`log10a` 0.63, `expr_lvl` 0.65, `expr_norm` 0.61,
+`C_phys_charge` 0.81). Alone and in sample, within reference, `binder` reaches 0.5645 and
 `C_phys_buried` 0.5485, while **both expression terms sit below chance** (0.4035, 0.4393).
+
+**No held-out split is fitted or shipped, on any of the three artifacts.** These are GLMs — the
+deliverable is a coefficient and its interval, and the interval already comes from resampling whole
+publications. `fit_mouse.py --folds 0` fits none, no artifact carries a `cv_*` block, and the only
+discrimination figures reported are in-sample fit diagnostics labelled as such.
 
 **It is human self-antigen CD4 response and not a tumour cohort, and the artifact says so.**
 `fit.population` records the composition: 364 of the 1,112 rows are type 1 diabetes, 260 healthy
@@ -43,11 +48,13 @@ below-chance expression terms are the same fact from the other side: an islet an
 is not a neoantigen's.
 
 **`mhc2.mouse.neoantigen` moves to v3**, six terms, arm-vs-arm on the same 468 rows / 177 positives
-against v2's `vanilla`: BIC **562.3 → 556.2** (log 468 = 6.15, one parameter's worth),
-reference-grouped within-reference AUROC **0.4925 → 0.5035**, peptide-grouped **0.4957 → 0.4945**.
-The corpus block was costing a parameter and buying nothing. **`mhc1.mouse` is untouched** — it
-keeps its nine terms and its pinned corpus axis, and making the mouse class-I corpus work is the
-open loop, not a closed one.
+against v2's `vanilla`: BIC **562.3 → 556.2**, which is `log 468 = 6.15` — one parameter's worth,
+and the block was spending three names on it.
+
+**`mhc1.mouse.neoantigen` moves to v3 for a data reason, not a specification one.** The deposit was
+cleaned and two of the three rows it lost were in this fit: **923 / 380 → 921 / 379**, BIC
+1066.9 → **1066.1**. Its nine terms and its pinned corpus axis are untouched — making the mouse
+class-I corpus work is the open loop, not a closed one.
 
 **The neoantigen deposit now holds neoantigens.** `bench/pmhc_data/clean_neoantigens.py` (extension
 repo) applies three rules to every table in `~/hf/pmhc_data/neoantigens`: no pathogen epitopes,

@@ -278,20 +278,26 @@ def test_the_shipped_artifact_is_pinned_to_the_fit_that_produced_it(art):
 # parameters. mhc1 within-reference AUROC 0.5930 -> 0.5958 peptide / 0.5950 -> 0.5977 reference,
 # BIC 1078.3 -> 1066.9; mhc2 0.5781 -> 0.5757 / 0.4598 -> 0.4901, BIC 571.5 -> 562.7.
 #
+# **Mouse class I is v3 for a data reason, not a specification one.** The neoantigen deposit was
+# cleaned (`bench/pmhc_data/clean_neoantigens.py`) and two of the three rows it removed from
+# `neoag_tested_mmu.tsv.gz` were in this fit: **923 / 380 -> 921 / 379**. The nine terms and the
+# pinned corpus axis are unchanged; BIC 1066.9 -> 1066.1. The version moves because a citation has
+# to name one fit, and two files both calling themselves v2 is exactly what the digest below exists
+# to catch.
+#
 # **Mouse class II is v3 and has no corpus block at all**, on the author's instruction that neither
 # class-II model carries one: the channels are densities over a class-I thymic, self and viral
 # reference, and contracting a 15-mer register against a 9-mer density asks the wrong question.
 # Arm-vs-arm on the same 468 rows / 177 positives, `vanilla`, v2 -> v3:
-# BIC **562.3 -> 556.2** (log 468 = 6.15, one parameter's worth), reference-grouped within-
-# reference AUROC **0.4925 -> 0.5035**, peptide-grouped **0.4957 -> 0.4945**. The block was
-# costing a parameter and buying nothing.
+# BIC **562.3 -> 556.2**, which is log 468 = 6.15 -- one parameter's worth, and the block was
+# spending three names on it.
 #
 # **Human class II is v1**, the first fit for that cell: 1,112 rows / 656 positives over 157
-# references and 72 allotypes, from `neoantigens/cedar_neoag_mhc2_hsa.tsv.gz`. Held out within
-# reference, 0.5271 on peptide-grouped folds and 0.5643 on reference-grouped, over the 11
-# references carrying at least three of each class.
+# references and 72 allotypes, from `neoantigens/cedar_neoag_mhc2_hsa.tsv.gz`. BIC 1595.8; `binder`
+# +0.3773 and `C_phys_buried` +0.1710 are the two coefficients the cluster bootstrap keeps the sign
+# of. No fit here holds anything out -- see `test_no_shipped_artifact_reports_a_holdout`.
 @pytest.mark.parametrize("cls, species, digest, version, rows, pos, terms", [
-    ("mhc1", "mouse", "ab3b29cd4aa22ad7", 2, 923, 380, "TERMS_MOUSE_EXPECTED"),
+    ("mhc1", "mouse", "667b34c057404727", 3, 921, 379, "TERMS_MOUSE_EXPECTED"),
     ("mhc2", "mouse", "9d95c8602bd4fd0c", 3, 468, 177, "TERMS_MHC2_EXPECTED"),
     ("mhc2", "human", "fb8d861a778571f6", 1, 1112, 656, "TERMS_MHC2_EXPECTED"),
 ])
@@ -316,6 +322,25 @@ def test_the_fitted_artifacts_are_pinned_to_the_fits_that_produced_them(
     blob = json.dumps([a["coef"], a["mu"], a["sigma"]], sort_keys=True).encode()
     assert hashlib.sha256(blob).hexdigest()[:16] == digest, (
         hashlib.sha256(blob).hexdigest()[:16])
+
+
+def test_no_shipped_artifact_reports_a_holdout():
+    """These are GLMs, and the deliverable is a coefficient with an interval around it.
+
+    The interval is a cluster bootstrap over whole `reference_id` groups -- the publication is the
+    unit that repeats in these deposits. A `cv_*` block would read as a held-out score, which is a
+    different claim about a different object, so no artifact carries one and every fit is run at
+    `--folds 0`. What each file does carry is the resampling unit and how many resamples.
+    """
+    from mhcmatch import rank as R
+
+    for (cls, species, mode) in R.AGGREGATE_ARTIFACTS:
+        a = R.aggregate(cls, species, mode)
+        if a.get("generator", "").endswith("fit.py"):
+            continue                    # human class I predates this and records its own holdout
+        assert not [k for k in a if k.startswith("cv_")], f"{cls}.{species} ships a holdout block"
+        assert a["fit"]["bootstrap_unit"], f"{cls}.{species} names no resampling unit"
+        assert int(a["fit"]["n_boot"]) > 0, f"{cls}.{species} reports no resamples"
 
 
 def test_both_class_II_artifacts_carry_the_same_six_terms_and_no_corpus_block():

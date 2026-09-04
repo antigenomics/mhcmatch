@@ -269,20 +269,36 @@ def test_rank_coefficients_dumps_the_artifact_the_flags_asked_for(cls, species, 
 
 
 def test_rank_holdout_prints_the_holdout_design_the_artifact_actually_records(capsys):
-    """The human fit holds out one of seven screens; the mouse fits have one screen and hold out
-    references inside it. `m["loo"]` was a KeyError on a mouse artifact, and `cv_twin` does not
-    exist there either -- so the table is whichever design the artifact carries, not the human one.
+    """The human class-I fit holds out one of seven screens, so `--holdout` prints that table.
+
+    It carries `loo` *and* two grouped CVs; `cv_twin` does not exist on every artifact and `m["loo"]`
+    was a KeyError on a mouse one, so the table has to be whichever design the artifact records
+    rather than the human shape assumed.
     """
-    cli.main(["rank", "--holdout", "--cls", "mhc1", "--species", "mouse"])
+    cli.main(["rank", "--holdout", "--cls", "mhc1", "--species", "human"])
     cap = capsys.readouterr()
     rows = [r.split("\t") for r in cap.out.strip().split("\n")]
-    assert rows[0] == ["reference", "n", "pos", "neg", "auroc", "decided"]
-    assert [r[0] for r in rows[-2:]] == ["cv_peptide", "cv_reference"]
-    for r in rows[1:-2]:
+    assert rows[0][0] == "screen"
+    assert [r[0] for r in rows if r[0].startswith("cv_")], rows[-3:]
+    for r in rows[1:]:
+        if r[0].startswith("cv_"):
+            continue
         assert int(r[1]) == int(r[2]) + int(r[3]), f"n != pos + neg on {r[0]}"
-    # per REFERENCE, not per screen: the mouse fit records `per_screen_intercept` False and the
-    # header must not claim otherwise
-    assert "every reference_id was given its own" in cap.err, cap.err
+
+
+def test_rank_holdout_says_so_when_the_fit_holds_nothing_out(capsys):
+    """A GLM fitted at `--folds 0` has no held-out table, and must say that rather than print one.
+
+    From 1.12.0 the mouse and class-II artifacts carry no `cv_*` block: their whole uncertainty
+    statement is the cluster bootstrap over `reference_id`, which `--coefficients` prints. An empty
+    holdout table would read as a holdout that scored nothing, and `f["holdout"]` was a KeyError
+    before this refused by name.
+    """
+    for cls, species in (("mhc1", "mouse"), ("mhc2", "mouse"), ("mhc2", "human")):
+        with pytest.raises(SystemExit, match="holds nothing out"):
+            cli.main(["rank", "--holdout", "--cls", cls, "--species", species])
+        cli.main(["rank", "--coefficients", "--cls", cls, "--species", species])
+        assert "no holdout was fitted" in capsys.readouterr().err
 
 
 def test_asking_for_a_model_that_was_never_fitted_is_an_error_not_a_traceback():

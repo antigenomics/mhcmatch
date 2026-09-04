@@ -792,7 +792,13 @@ def _rank_model(a):
     n_scr = len(f["screens"])
     say(f"{f['rows']:,} rows / {f['positives']:,} positives over {n_scr} "
         f"screen{'' if n_scr == 1 else 's'}; BIC {f['bic']:.1f}, ridge tau {f['tau']}")
-    say(f"intervals from {f['n_boot']} resamples of {f['bootstrap_unit']}; holdout {f['holdout']}")
+    # **A fit may hold nothing out, and then there is no holdout to name.** From 1.12.0 the mouse
+    # and class-II fits are run at `--folds 0`: they are GLMs whose deliverable is a coefficient and
+    # its cluster-bootstrap interval, so no `holdout` key and no `cv_*` block is written. Printing
+    # "holdout None" would be worse than saying it, and `f["holdout"]` was a KeyError.
+    say(f"intervals from {f['n_boot']} resamples of {f['bootstrap_unit']}; "
+        + (f"holdout {f['holdout']}" if f.get("holdout")
+           else "no holdout was fitted -- the interval is the whole uncertainty statement"))
     # WHAT the intercept is per is what the fit recorded, not a constant: the human fit gives one
     # to each of seven screens, the mouse fits give one to each of 61 publications inside a single
     # screen. Printing "every screen" for the mouse artifact named the wrong grouping for a design
@@ -812,6 +818,12 @@ def _rank_model(a):
         # a mouse artifact.
         cvs = [k for k in ("cv_peptide", "cv_twin", "cv_reference") if k in m]
         loo = m.get("loo")
+        if not cvs and not loo:
+            raise SystemExit(
+                f"rank --holdout: {m.get('model_id', '?')} holds nothing out. It is a GLM fitted "
+                f"on one corpus, and its uncertainty is {f['n_boot']} resamples of "
+                f"{f['bootstrap_unit']}, which `--coefficients` prints. There is no held-out table "
+                "to show, and printing an empty one would read as a holdout that scored nothing.")
         per = (loo or (m[cvs[-1]].get("per_reference") if cvs else None)) or []
         out.header("screen" if loo else "reference", "n", "pos", "neg", "auroc", "decided")
         for r in per:

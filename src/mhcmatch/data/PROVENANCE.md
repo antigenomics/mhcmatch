@@ -482,8 +482,8 @@ not rewritten; the artifact carries its own dissent.
 
 **Derived, not experimental**, and the same object as the human artifact in every structural
 respect: nine standardised slopes under the same nine feature names in the same order, ridge
-`tau = 0.25`, its own `mu`/`sigma`, a *model* version that is an integer (**`2`**) and a `release`
-that is dotted (`1.11.0` -- the package version the fit was **accepted** in, which is what a
+`tau = 0.25`, its own `mu`/`sigma`, a *model* version that is an integer (**`3`**) and a `release`
+that is dotted (`1.12.0` -- the package version the fit was **accepted** in, which is what a
 manuscript cites). `rank.aggregate(cls, species, mode)` resolves it through
 `rank.AGGREGATE_ARTIFACTS`, keyed `(cls, species, mode)`. All four `(cls, species)` cells are
 fitted from 1.12.0; `pathogen` remains a registered mode with no shipped artifact rather than a
@@ -505,16 +505,19 @@ both species with no branch. Every per-term array (`coef`, `sd`, `boot_sd`, `z`,
 added after the first v2 copy shipped five of them at seven and made
 `rank --coefficients --species mouse` raise `IndexError` on the eighth row.
 
-    # in ~/vcs/projects/2026-mhcmatch-benchmark:
-    MHCMATCH_MODEL_RELEASE=1.11.0 python bench/epic/fit_mouse.py --cls mhc1 --model-version 2
+    # in ~/vcs/projects/2026-mhcmatch-benchmark-ext:
+    MHCMATCH_MODEL_RELEASE=1.12.0 python bench/pmhc_data/clean_neoantigens.py
+    MHCMATCH_MODEL_RELEASE=1.12.0 python bench/epic/fit_mouse.py --cls mhc1 --model-version 3
     # `--corpus-axis human` is the default and is what version 2 means; `--corpus-axis free`
     # reproduces version 1's three independent corpus coefficients.
     # then, deliberately:
     cp bench/epic/aggregate_mhc1_mouse.json ~/vcs/code/mhcmatch/src/mhcmatch/data/
 
 **Corpus.** `~/hf/pmhc_data/neoantigens/neoag_tested_mmu.tsv.gz`, the IEDB mouse neoantigen
-deposit, at class I's own peptide lengths and keyed on `mhc_a_pred`: **923 rows, 380 immunogenic,
-61 references, 6 H-2 allotypes.** No row is dropped for a missing term: seven of the nine are
+deposit, at class I's own peptide lengths and keyed on `mhc_a_pred`: **921 rows, 379 immunogenic,
+61 references, 6 H-2 allotypes.** (**923 / 380 through version 2**: the deposit was cleaned of
+pathogen and unattributable rows for 1.12.0 and two of them were in this fit. Nine terms and the
+pinned corpus axis are unchanged; the version moves because a citation has to name one fit.) No row is dropped for a missing term: seven of the nine are
 populated on every row and the two expression terms are imputed to the population median, which is
 the convention `rank.aggregate_score` documents.
 
@@ -530,12 +533,15 @@ slopes. This deposit is one screen and 61 publications whose positive rate runs 
 reference is where that variation lives. Against a single pooled intercept every one of the nine
 coefficients came out at or below zero and the held-out figure sat at 0.4633.
 
-**The reported metric is AUROC within a reference**, macro-averaged over the references carrying at
-least three of each class, because a pooled figure over this deposit is mostly a base-rate
-difference between laboratories. Held out on whole peptides **0.6206**, on whole references
-**0.6061**. Read against 0.4856 -- what the human fit gives on mouse rows
-(`bench/results/epic_mouse_holdout.md`) -- and 0.6963, the human model's own held-out per-screen
-median.
+**No held-out split is fitted or shipped, on any of the three artifacts.** These are GLMs: the
+deliverable is a coefficient and the interval around it, and the interval is a **cluster bootstrap
+over `reference_id`** -- the publication is the unit that repeats in these deposits, so that is
+what is resampled. No artifact carries a `cv_*` block, and `bench/epic/fit_mouse.py --folds 0`
+(the setting all three shipped fits were run at) fits none. Where a discrimination figure does
+appear it is **in-sample AUROC within a reference**, macro-averaged over the references carrying
+at least three of each class, and it is a fit diagnostic rather than a claim: a pooled figure over
+this deposit compares a paper reporting 144 positives of 201 against one reporting 1 of 191, so it
+would be mostly a base-rate difference between laboratories.
 
 **One thing to know before quoting a coefficient.**
 
@@ -603,22 +609,21 @@ pancreas, MS to cortex, pemphigus to skin). **686 of 1,112 rows (61.7 %) over 30
 rest take the pooled human floor and `expr_norm` falls back to the gene's pan-tissue median. RA,
 lupus and Vogt-Koyanagi-Harada are deliberately unmapped: GTEx samples no synovium and no uvea.
 
-**Held out, human class II**, within reference, macro-averaged over the 11 references carrying at
-least three of each class: **0.5271** on peptide-grouped folds and **0.5643** on reference-grouped,
-against in-sample 0.6020. Alone, within reference: `binder` **0.5645**, `C_phys_buried` **0.5485**,
-`log10a` **0.5386** -- and both expression terms below chance (`expr_lvl` 0.4035, `expr_norm`
-0.4393), which is what an autoimmune deposit should look like: an islet antigen's abundance is not
-a neoantigen's. Dropping the presentation block costs 0.5271 → **0.5033**. Two coefficients are
-sign-stable across the cluster bootstrap -- `binder` +0.3773 at 0.98 and `C_phys_buried` +0.1710 at
-0.97 -- and the other four are not; the fit is shipped as the first artifact for this cell, and its
-own cross-validation is the whole reference point.
+**What the human class-II fit says.** BIC **1595.8** on 1,112 rows, deviance 452.5, 157 intercepts
+at 157.0 effective df. Two of the six coefficients are sign-stable across the 400-resample cluster
+bootstrap on `reference_id` -- `binder` **+0.3773** at 0.98 and `C_phys_buried` **+0.1710** at 0.97
+-- and the other four are not, `log10a` at 0.63, `expr_lvl` 0.65, `expr_norm` 0.61,
+`C_phys_charge` 0.81. Alone and in sample, within reference: `binder` **0.5645**, `C_phys_buried`
+**0.5485**, `log10a` **0.5386**, and **both expression terms below chance** (`expr_lvl` 0.4035,
+`expr_norm` 0.4393) -- which is what an autoimmune-dominated deposit should look like, since an
+islet antigen's abundance is not a neoantigen's. In sample within reference the joint fit reaches
+0.6020.
 
 **Corpus, mouse.** Unchanged from version 2 -- `neoag_tested_mmu.tsv.gz` unioned with CEDAR's
 mouse-derived H-2 assays, **468 rows, 177 immunogenic, 30 references, 7 allotypes**. Only the
-corpus block moved. Arm-vs-arm on that same population, `vanilla`, v2 → v3: BIC **562.3 → 556.2**
-(log 468 = 6.15, one parameter's worth), reference-grouped within-reference AUROC **0.4925 →
-0.5035**, peptide-grouped **0.4957 → 0.4945**. The block was costing a parameter and buying
-nothing. `bench/results/epic_mouse_fit_mhc2_axis-none.md`.
+corpus block moved. Arm-vs-arm on that same population, `vanilla`, v2 → v3: BIC **562.3 → 556.2**,
+which is `log 468 = 6.15` -- one parameter's worth, and the block was spending three names on it.
+`bench/results/epic_mouse_fit_mhc2_axis-none.md`.
 
 
 ## `anchor_model_*_mouse_*.pkl.gz` — the mouse AnchorModel pickles

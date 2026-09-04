@@ -18,11 +18,11 @@ three entries, and the four corpus-geometry keys are absent rather than declared
 
 - **`aggregate_mhc2_human.json`** -- the first human class-II EPIC artifact, model version `1`.
   **1,112 rows / 656 immunogenic (59.0 %) over 157 references and 72 allotypes**, from the new
-  `neoantigens/cedar_neoag_mhc2_hsa.tsv.gz` deposit. Held out within reference, macro-averaged over
-  the 11 references carrying at least three of each class: **0.5271** peptide-grouped, **0.5643**
-  reference-grouped, against 0.6020 in sample. Two coefficients are sign-stable across a 400-resample
-  cluster bootstrap -- `binder` **+0.3773** at 0.98 and `C_phys_buried` **+0.1710** at 0.97 -- and
-  the other four are not.
+  `neoantigens/cedar_neoag_mhc2_hsa.tsv.gz` deposit. BIC **1595.8**, deviance 452.5, 157 intercepts
+  at 157.0 effective df. Two of the six coefficients are sign-stable across a 400-resample cluster
+  bootstrap on `reference_id` -- `binder` **+0.3773** at 0.98 and `C_phys_buried` **+0.1710** at
+  0.97 -- and the other four are not (`log10a` 0.63, `expr_lvl` 0.65, `expr_norm` 0.61,
+  `C_phys_charge` 0.81).
 
   **It is human self-antigen CD4 response and not a tumour cohort**, which the artifact says in
   `fit.population` rather than leaving to a reader: 364 of the 1,112 rows are type 1 diabetes, 260
@@ -40,10 +40,21 @@ three entries, and the four corpus-geometry keys are absent rather than declared
 ### Changed
 
 - **`aggregate_mhc2_mouse.json` to model version 3** -- six terms, no corpus block. Arm-vs-arm on
-  the same 468 rows / 177 positives, `vanilla`, v2 → v3: BIC **562.3 → 556.2** (log 468 = 6.15, one
-  parameter's worth), reference-grouped within-reference AUROC **0.4925 → 0.5035**, peptide-grouped
-  **0.4957 → 0.4945**. The block was costing a parameter and buying nothing. Nothing else about the
-  fit moved.
+  the same 468 rows / 177 positives, `vanilla`, v2 → v3: BIC **562.3 → 556.2**, which is
+  `log 468 = 6.15` -- one parameter's worth, and the block was spending three names on it. Nothing
+  else about the fit moved.
+
+- **`aggregate_mhc1_mouse.json` to model version 3** -- a *data* change, not a specification one.
+  The neoantigen deposit was cleaned and two of the three rows it lost were in this fit: **923 / 380
+  → 921 / 379**, BIC 1066.9 → **1066.1**, nine terms and the pinned corpus axis untouched. The
+  version moves because a citation has to name one fit and two files both calling themselves v2 is
+  what the pinned digest exists to catch.
+
+- **No shipped artifact carries a cross-validation block, and none of the three fits one.** These
+  are GLMs: the deliverable is a coefficient and the interval around it, and the interval is a
+  cluster bootstrap over `reference_id` -- the publication is the unit that repeats in these
+  deposits. `bench/epic/fit_mouse.py --folds 0` fits no folds at all and is what all three shipped
+  fits were run at; the human class-II script defaults to it.
 
 - **A corpus-less artifact no longer declares a corpus geometry.** `corpus_k`, `corpus_mask`,
   `corpus_kernel` and `corpus_shapes` ship only when a `C_corpus_*` channel does; the artifact
