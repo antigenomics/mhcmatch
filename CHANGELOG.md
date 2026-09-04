@@ -55,6 +55,32 @@ human expression block is built on was not actually available.
   different questions.
 - `predict.SCORER_EPOCH` 5 -> 6: the expression heads return different numbers.
 
+### Fixed
+
+- **The expression resolution chain ended at `nan` instead of at the gene's pan-tissue median.**
+  `rank._expression_for` returned `nan` the moment a row named neither a tissue nor a tumour --
+  *before* it looked at the gene it had been handed. `gene_level` documents `pan` as "always
+  defined, so a resolution chain has a last step that cannot fail", and nothing on the predict path
+  could reach it. The chain is now tumour rung, tissue rung, **pan-tissue median**; `nan` is reached
+  only when the row names no gene or the gene is absent from the reference.
+
+  Measured on the mouse neoantigen deposit, where the deposits themselves supply a TPM for 34.6 % of
+  class-I and 14.6 % of class-II rows: **485 of 968 class-I rows and 289 of 522 class-II rows named
+  a gene the matrix resolves and were imputed anyway.** Missingness therefore tracked *which
+  publication deposited an abundance* -- 42 of 65 class-I references deposit none at all -- rather
+  than anything about the gene, which is the one thing a missing-indicator must not do.
+
+  The defect is not new to the mouse work: **1.9.0 and every earlier version carry it**, for both
+  species. It cannot move a published human number, because the human EPIC frame builds `expr_lvl`
+  and `expr_norm` in the benchmark harness (`bench/epic/expr_terms.py`, which reads `EX._matrix()`
+  and computes the same pan-tissue median itself) and never calls this function; the only human
+  harness that does call `rank pairs` passes `peptide, allele, sample, label` and no gene column,
+  so `nan` was and remains correct there. It does change the shipped **predict** path for a caller
+  who supplies a gene without a tissue: that row now carries a real measurement.
+
+- **`predict.SCORER_EPOCH` 6 -> 7**, because the above changes what `expr_lvl` returns and a feature
+  frame built under epoch 6 would otherwise be accepted under epoch 7.
+
 ### Measured, and stated rather than left to be found
 
 - **The floors are one scale now**: tumour 0.709 (B16F10) to 0.895 (EMT6), tissue 0.578 (skin) to

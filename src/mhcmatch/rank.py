@@ -966,6 +966,11 @@ def _expression_for(gene: str, observed, tissue: str | None, tumor: str | None,
     A missing expression value never drops a candidate -- the reference median stands in and the
     flag travels with it, so a caller can carry a missing-indicator instead of losing the row.
 
+    **The chain ends at the gene's pan-tissue median, not at `nan`.** Tumour rung, tissue rung,
+    pan-tissue median; `nan` is reached only when the row names no gene or the gene is absent from
+    the reference. `was_imputed` stays `True` for every rung below the deposited value, so the
+    flag still means "not this candidate's own measurement" and nothing downstream changes meaning.
+
     **The tumour rung is keyed by peptide in human and by gene in mouse.** TCGA has per-peptide
     rows, so it can answer whether this exact neoantigen was seen expressed; the mouse syngeneic
     deposit has no peptide rows anywhere and answers the gene-level question instead. Same rung,
@@ -980,8 +985,6 @@ def _expression_for(gene: str, observed, tissue: str | None, tumor: str | None,
                 + ". A negative abundance is not a measurement, and silently reading it as zero "
                   "would hide whatever produced it. Fix it in the input.")
         return math.log1p(x), False
-    if tissue is None and tumor is None:
-        return float("nan"), True
     try:
         from . import expression as EX
     except ImportError:                                  # pragma: no cover
@@ -1008,6 +1011,16 @@ def _expression_for(gene: str, observed, tissue: str | None, tumor: str | None,
             rec = EX.lookup(gene, tissue=tissue, species=species)
             if rec:
                 return math.log1p(rec["median_tpm"]), True
+        # Last rung: the gene's pan-tissue median, which `gene_level` documents as always defined
+        # for a gene in the reference. Without it the chain returned `nan` for every row that named
+        # a gene but no context -- 485 of 968 mouse class-I rows and 289 of 522 class-II, all of
+        # them with a symbol the matrix resolves. That is not a missing measurement, it is one this
+        # function declined to read, and it made `expr_missing` a proxy for *which publication
+        # deposited a TPM* rather than for anything about the gene.
+        if gene:
+            d = EX.gene_level(gene, species=species)
+            if d.get("found") and d.get("pan") is not None:
+                return math.log1p(max(0.0, float(d["pan"]))), True
     except (FileNotFoundError, OSError):
         pass
     return float("nan"), True

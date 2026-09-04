@@ -564,7 +564,11 @@ def tile(seq: str, lengths) -> list:
 #: the benchmark's feature frame keys its freshness guard on it, and that frame carries mouse rows
 #: whose `expression` column does change. A frame built under epoch 4 accepted under epoch 5 would
 #: fit mouse coefficients on a human-imputed column.
-SCORER_EPOCH = 6
+#:
+#: 6 -> 7: `rank._expression_for` now ends its chain at the gene's pan-tissue median instead of
+#: `nan`, so `expr_lvl` moves on every row that names a gene and no tissue -- 485 of 968 mouse
+#: class-I rows and 289 of 522 class-II. A frame built under epoch 6 carries the imputed column.
+SCORER_EPOCH = 7
 
 
 def _fingerprint(store, cls, background, footprint, head):

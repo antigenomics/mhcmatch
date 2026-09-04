@@ -404,3 +404,29 @@ def test_the_matrix_carries_models_the_tsv_deposit_never_had():
     # `tumor_types` still reports the TSV deposit's six -- the same split human has, where
     # `tumor_types()` is 19 TCGA codes and the matrix carries 33
     assert len(EX.tumor_types(species="mouse")) == 6
+
+
+@pytest.mark.hfdata
+@pytest.mark.parametrize("species,known", [("human", "TP53"), ("mouse", "Trp53")])
+def test_the_resolution_chain_ends_at_the_pan_tissue_median_not_at_nan(species, known):
+    """A row that names a gene and no context resolves; only a nameless or unknown gene is `nan`.
+
+    The chain used to return `nan` the moment neither a tissue nor a tumour was given, so
+    `expr_lvl` was missing on every such row *even though the gene was in hand and the matrix
+    resolves it* -- 485 of 968 mouse class-I neoantigen rows and 289 of 522 class-II. That made the
+    missing-indicator a proxy for which publication deposited a TPM rather than for anything about
+    the gene, which is the one thing an imputation flag must not be.
+    """
+    from mhcmatch.rank import _expression_for as F
+
+    v, imputed = F(known, None, None, None, species=species)
+    assert v == v and v > 0.0, f"{known} should resolve to its pan-tissue median, got {v}"
+    assert imputed is True, "a pan-tissue median is not this candidate's own measurement"
+
+    for absent in ("", "NOT_A_REAL_GENE_SYMBOL"):
+        v, imputed = F(absent, None, None, None, species=species)
+        assert v != v and imputed is True, f"{absent!r} must stay nan, got {v}"
+
+    # A deposited abundance still wins outright, and is the only case that is not imputed.
+    v, imputed = F(known, 12.5, None, None, species=species)
+    assert imputed is False and abs(v - math.log1p(12.5)) < 1e-12
