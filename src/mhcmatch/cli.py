@@ -736,12 +736,12 @@ def _aggregate_channels(cls: str, no_self: bool, species: str = "human"):
     scan.
 
     ``species`` keys every corpus channel, not only ``self``, but it does **not** decide the
-    reference on its own: :func:`mhcmatch.mimicry.reference_species` does, per component. A mouse
-    run reads mouse ``self`` and mouse ``viral`` and the **human** ``thymus`` table, because the
-    mouse thymic deposit is one haplotype -- every annotated class-I peptide in it is ``H-2Db`` or
-    ``H-2Kb`` -- so its k-mer table encodes that groove rather than what a thymus presents. The full
-    per-component measurement, including the matched-mass control that rules out thinness as the
-    explanation, is in :func:`mhcmatch.mimicry.reference_species`.
+    reference on its own: :func:`mhcmatch.mimicry.reference_species` does, per component. From
+    1.13.0 a mouse class-I run reads the **human** table for all three components -- ``thymus``,
+    ``self`` and ``viral`` alike -- so it is scored against the identical tables
+    ``aggregate_mhc1.json`` scores against. The full per-component measurement, including the
+    matched-mass control that rules out thinness as the explanation, is in
+    :func:`mhcmatch.mimicry.reference_species`.
 
     One :func:`mhcmatch.mimicry.corpus_spectrum` call per distinct reference species, so a human
     run makes exactly the one call it always made and is bit-identical to it.
