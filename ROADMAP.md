@@ -15,30 +15,51 @@ the build plan. Phase sections marked _(TBD)_ await detail.
 > tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
 > below resolve there, not here.
 
-## Where this stands, 2026-09-04 (latest) — 1.13.0, a mouse run reads the human thymic corpus
+## Where this stands, 2026-09-04 (latest) — 1.13.0, the mouse class-I model is nine terms on the human corpus
+
+**The four shipped scorers.** `aggregate_mhc1.json` v11 (human class I, 9 terms, human corpus);
+`aggregate_mhc1_mouse.json` **v5** (mouse class I, **9 terms, human corpus**);
+`aggregate_mhc2_human.json` v1 and `aggregate_mhc2_mouse.json` v3 (class II, **6 terms, no corpus
+block**, both species). The mouse class-I model now matches the human one term for term.
 
 **A pooled reference deposit is only about its context if it is not one groove**, and the mouse
-thymic deposit is one groove. Of its 6,661 class-I peptides, every one of the 2,663 carrying an
-allele annotation is `H-2Db` (1,574) or `H-2Kb` (1,089) — no other haplotype appears — so its
-k-mer table encodes that groove's motif rather than what a thymus presents, and it is collinear
-with `binder`, which already scores the groove. It was being applied to a fit spanning six H-2
-allotypes. From 1.13.0 `mimicry.reference_species` routes the channels per component: a mouse run
-reads mouse `self`, mouse `viral` and the **human** `thymus` table. `aggregate_mhc1_mouse.json`
-moves to model version **4** on the same 921 rows / 379 immunogenic.
+deposits are too small and too groove-skewed to be references. The thymic one is one groove: of its
+6,661 class-I peptides, every one of the 2,663 carrying an allele annotation is `H-2Db` (1,574) or
+`H-2Kb` (1,089) — no other haplotype appears — so its k-mer table encodes that groove's motif
+rather than what a thymus presents, and it is collinear with `binder`. The viral one samples **9**
+allotypes against human's **129**. `self` is the one component whose two tables agree, at
+**r = 0.9990** across 113 M mouse against 122 M human proteome windows. From 1.13.0
+`mimicry.reference_species` routes all three mouse class-I components to the **human** tables — the
+identical `mhc1|{thymus,self,viral}|human|3` tables the human artifact scores against.
+
+**Nothing is trained on human data.** A corpus channel is a k-mer density lookup; the table is the
+only thing that is human. All nine coefficients are fitted on **mouse** neoantigens (921 rows / 379
+immunogenic / 61 references / 6 H-2 allotypes) and presentation, expression and physicochemistry
+read mouse sources.
 
 **It is not thinness.** The mouse thymic table stands on 25,264 reference windows against human's
 140,482, which is the obvious explanation and the wrong one: thinning the human deposit at the
 peptide level to the mouse window count, 40 draws, still reproduces the full human column at
 **r = 0.8933** (0.8728–0.9109) and still disagrees with the mouse table at **0.2903**
-(0.2467–0.3310). What differs is which grooves each deposit sampled.
+(0.2467–0.3310). What differs is which grooves each deposit sampled — so depositing more mouse
+thymic peptides from the same two allotypes would not close it.
 
-**The regression ships stated.** At the pinned axis v4 is 0.4 BIC worse (1066.1 → 1066.5) and its
-corpus scalar is less sign-stable (−0.1183 at 0.89 → −0.0725 at 0.74) — but log(921) = 6.83 is one
-parameter's worth and the five table-source arms span 0.7 BIC in total, so that comparison cannot
-separate them. The case is the channel's definition, and where the channel gets its own coefficient
-(`--corpus-axis free`, a diagnostic) it is unambiguous: `C_corpus_thymus` −0.0056 at sign stability
-0.53 → **+0.2990 at 0.96**, agreeing in sign with the human artifact's +0.1733, free-axis BIC
-1077.5 → **1075.0**, best of five arms.
+**v4 → v5, same 921 rows.** Nine free parameters where v2–v4 spent seven (the corpus block was one
+scalar pinned to the human artifact's corpus direction). Deviance **602.494 → 599.531**, in-sample
+AUROC **0.6135 → 0.6335**, BIC 1066.6 → 1077.3. **BIC prefers the smaller model and that is stated
+rather than buried**: three extra parameters cost `3 × log(921) = 20.5`, so v5 trails there while
+fitting the same rows better. It ships on the decision that the mouse class-I model carries the
+same nine terms the human one does, each with its own interval.
+
+**What the human tables buy is sign coherence.** `C_corpus_thymus` **+0.2919 at sign stability
+0.94**, agreeing with the human artifact's +0.1733 (p = 0.026 on 339,599 rows); the mouse tables
+give **−0.0056 at 0.53** on the same rows and terms. The human tables lead on every arm measured —
+deviance, in-sample AUROC (0.6335 vs 0.6062), held-out within-reference AUROC (0.5775 vs 0.5715)
+and all three marginal channel AUROCs. This population resolves `binder` (+0.5347, p = 0.0016) and
+reports wide intervals on the rest: 8 of its 61 references carry ≥3 of each class, which is why the
+case for the human tables rests on the deposit composition and on the human artifact's own corpus
+block, where 527 clusters resolve all three channels (p = 7.9×10⁻⁵ / 0.026 / 0.049).
+`bench/results/epic_mouse_corpus_human_vs_mouse_mhc1.md`.
 
 **Expression does not transfer and must not be made to.** Human and mouse organs and tumours are
 different tissues, so a human expression level is not a stand-in for a mouse one at any sample

@@ -35,8 +35,11 @@ ever have caught this because every value was individually correct.
 built from it measures the groove.** The mouse thymic deposit is 6,661 class-I peptides of which
 every one of the 2,663 carrying an allele is `H-2Db` or `H-2Kb`, so `C_corpus_thymus` was the H-2b
 motif -- collinear with `binder`, which already scores the groove -- applied to a fit spanning six
-H-2 allotypes. From 1.13.0 `mimicry.reference_species` routes per component and a mouse run reads
-the **human** thymic table. **The obvious explanation was thinness and it was wrong**: the mouse
+H-2 allotypes -- and the viral deposit samples 9 allotypes against human's 129. From 1.13.0
+`mimicry.reference_species` routes **all three** mouse class-I components to the human tables, so a
+mouse query is matched against the identical tables `aggregate_mhc1.json` scores against; the
+coefficients are still fitted on mouse, because a corpus channel is a k-mer lookup and only the
+table is human. **The obvious explanation was thinness and it was wrong**: the mouse
 table has 25,264 windows against human's 140,482, but thinning the human deposit at the peptide
 level to that count still reproduces the full human column at r = 0.8933 and still disagrees with
 the mouse table at 0.2903. Measure the matched-mass arm before attributing a disagreement to

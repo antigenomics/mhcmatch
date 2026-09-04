@@ -832,19 +832,24 @@ def test_a_v4_shaped_artifact_scores_through_the_library_unchanged():
         R._AGG = saved
 
 
-def test_a_mouse_query_reads_the_human_thymic_table_and_its_own_self_and_viral():
-    """The per-component reference policy, asserted where a caller can see it.
+def test_a_mouse_class_i_query_reads_the_human_corpus_tables_throughout():
+    """The reference policy, asserted where a caller can see it.
 
     `reference_species` is a lookup, so this is worth a test only because it decides what a scored
-    column MEANS. The mouse thymic deposit is one haplotype -- every annotated class-I peptide in it
-    is `H-2Db` or `H-2Kb` -- so its k-mer table is that groove's motif rather than a measure of what
-    a thymus presents, and a channel that measures the groove is collinear with `binder`.
+    column MEANS. All three mouse class-I corpus channels are matched against the **human** tables,
+    because the mouse reference deposits are too small and too groove-skewed to be a reference: the
+    thymic one is 6,661 peptides of which every annotated class-I entry is `H-2Db` or `H-2Kb`, so
+    its k-mer table is that groove's motif rather than a measure of what a thymus presents, and a
+    channel that measures the groove is collinear with `binder`.
+
+    Nothing is *trained* on human data by this -- a corpus channel is a k-mer density lookup, and
+    every coefficient in the mouse artifact is fitted on mouse neoantigens.
     """
     from mhcmatch import mimicry
 
     assert {c: mimicry.reference_species("mouse", c)
-            for c in ("thymus", "self", "viral")} == {"thymus": "human", "self": "mouse",
-                                                      "viral": "mouse"}
+            for c in ("thymus", "self", "viral")} == {"thymus": "human", "self": "human",
+                                                      "viral": "human"}
     assert all(mimicry.reference_species("human", c) == "human"
                for c in ("thymus", "self", "viral"))
     # An unregistered species falls through to itself rather than to a human default: substituting
@@ -852,12 +857,13 @@ def test_a_mouse_query_reads_the_human_thymic_table_and_its_own_self_and_viral()
     assert mimicry.reference_species("rat", "thymus") == "rat"
 
 
-def test_the_scoring_channels_route_per_component_not_per_run():
-    """What the policy is for: the value in `C_corpus_thymus` for a mouse peptide.
+def test_a_mouse_run_scores_against_the_same_tables_the_human_artifact_does():
+    """What the policy is for: the value in `C_corpus_*` for a mouse peptide.
 
     Goes through `cli._aggregate_channels`, which is what `rank` calls, rather than through
-    `corpus_spectrum` directly -- the point is that ONE `species` argument produces THREE
-    differently-sourced columns, and that a human run still makes a single call and is unchanged.
+    `corpus_spectrum` directly -- the claim is that a `species="mouse"` run reads the identical
+    `mhc1|<comp>|human|k` tables a `species="human"` run reads, and that this is distinguishable
+    from having read the mouse ones.
     """
     import numpy as np
 
@@ -865,6 +871,7 @@ def test_the_scoring_channels_route_per_component_not_per_run():
 
     peps = ["SIINFEKL", "ASNENMETM", "SSPPMFRV"]
     got = cli._aggregate_channels("mhc1", no_self=False, species="mouse")(peps)
+    same = cli._aggregate_channels("mhc1", no_self=False, species="human")(peps)
     g = mimicry.corpus_geometry()
 
     def table(species, comp):
@@ -872,9 +879,10 @@ def test_the_scoring_channels_route_per_component_not_per_run():
                                        self_species=species, mask=g["mask"], kernel=g["kernel"])
         return np.array([r[comp] for r in mimicry.corpus_R(peps, spec, cls="mhc1")])
 
-    for comp, want in (("thymus", "human"), ("self", "mouse"), ("viral", "mouse")):
+    for comp in ("thymus", "self", "viral"):
         v = np.asarray(got[f"C_corpus_{comp}"], dtype=float)
-        assert np.allclose(v, table(want, comp), rtol=1e-12), comp
-        other = "mouse" if want == "human" else "human"
-        assert not np.allclose(v, table(other, comp), rtol=1e-3), (
+        assert np.allclose(v, table("human", comp), rtol=1e-12), comp
+        # a mouse run and a human run now read the same corpus tables, bit for bit
+        assert np.allclose(v, np.asarray(same[f"C_corpus_{comp}"], dtype=float), rtol=1e-12), comp
+        assert not np.allclose(v, table("mouse", comp), rtol=1e-3), (
             f"{comp} is indistinguishable between the two tables; the routing asserts nothing")
