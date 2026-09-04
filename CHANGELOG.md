@@ -78,6 +78,33 @@ human expression block is built on was not actually available.
   **0.262** on pathogen-derived ones (class II: 0.528 against 0.375).
 
 
+### Changed --- both mouse scorers refit, and the simpler model is why
+
+- **`aggregate_mhc1_mouse.json` and `aggregate_mhc2_mouse.json` are model version 2**, release
+  1.11.0. The corpus block is no longer three free coefficients: it is **one scalar on the human
+  artifact's own corpus direction**, so the mouse fit spends **seven** free parameters where it
+  spent nine. The file still lists all nine features and the library scores it with no branch --
+  a projection with one free scalar *is* three coefficients constrained to be proportional.
+
+  Chosen for being simpler, on the author's rule that a straightforward model is worth 0.61 against
+  0.60. It also wins on the numbers, which was not the argument: class I within-reference AUROC
+  **0.5930 -> 0.5958** peptide-grouped and **0.5950 -> 0.5977** reference-grouped with BIC
+  **1078.3 -> 1066.9**; class II **0.5781 -> 0.5757** and **0.4598 -> 0.4901** with BIC
+  **571.5 -> 562.7**. Same 923 / 380 and 469 / 177 rows either side.
+
+  The fitted scalar is the cross-species question and the two classes answer it differently:
+  class I **-0.1191** (*p* 0.312, sign stability 0.89) runs *against* human's direction, class II
+  **+0.0522** (*p* 0.845, stability 0.81) runs *with* it and carries human's three signs at about a
+  tenth the magnitude. **Neither interval excludes zero** -- 923 and 469 rows cannot resolve the
+  corpus block even at one degree of freedom. `bench/results/mouse_corpus_resolution.md`.
+
+  Digests in `tests/test_aggregate_terms.py` moved with the copy: `7658dc52466a27bf ->
+  ab3b29cd4aa22ad7` and `2982b50ab8b7dd85 -> f3f6b38f388a1e5e`.
+
+- **The human artifact is untouched.** `mhc1.human.neoantigen` stays v11, release 1.6.1, and
+  max |new - old| on `coef`, `mu` and `sigma` against `master` is **0.0**.
+
+
 ### Fixed
 
 - **The expression resolution chain ended at `nan` instead of at the gene's pan-tissue median.**

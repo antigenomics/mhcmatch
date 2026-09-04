@@ -272,9 +272,14 @@ def test_the_shipped_artifact_is_pinned_to_the_fit_that_produced_it(art):
 
 # --- the mouse artifacts -------------------------------------------------------------------
 
+# v1 was 7658dc52466a27bf (mhc1) and 2982b50ab8b7dd85 (mhc2) -- three free corpus coefficients,
+# nine fitted terms. v2 constrains the corpus block to human v11's direction and fits one scalar
+# for it, so the file still lists nine features and the last three are proportional: SEVEN free
+# parameters. mhc1 within-reference AUROC 0.5930 -> 0.5958 peptide / 0.5950 -> 0.5977 reference,
+# BIC 1078.3 -> 1066.9; mhc2 0.5781 -> 0.5757 / 0.4598 -> 0.4901, BIC 571.5 -> 562.7.
 @pytest.mark.parametrize("cls, species, digest, version, rows, pos", [
-    ("mhc1", "mouse", "7658dc52466a27bf", 1, 923, 380),
-    ("mhc2", "mouse", "2982b50ab8b7dd85", 1, 469, 177),
+    ("mhc1", "mouse", "ab3b29cd4aa22ad7", 2, 923, 380),
+    ("mhc2", "mouse", "f3f6b38f388a1e5e", 2, 469, 177),
 ])
 def test_the_mouse_artifacts_are_pinned_to_the_fits_that_produced_them(
         cls, species, digest, version, rows, pos):
