@@ -2,15 +2,11 @@
 
 ## [1.11.0] --- UNRELEASED --- the E of EPIC for mouse
 
-> **Blocked on one decision, and it is the author's.** Wiring the harmonised matrix into
-> `context_floor` / `gene_level` changes what `expr_lvl` and `expr_norm` return for mouse, so the
-> two mouse artifacts have to be refitted with it. Refitted, **class II gains and class I loses**:
-> `vanilla` within-reference AUROC on peptides goes 0.5620 -> **0.5817** for class II and 0.6206 ->
-> **0.6093** for class I, with every class-I arm down and every class-II arm up.
-> `bench/results/epic_mouse_harmonized_expression.md` has both tables and the three ways it could
-> go. **The 1.10.0 artifacts are unchanged in this checkout and nothing is refitted**; until that
-> decision is made this version is not releasable, because a library whose expression heads moved
-> and whose artifacts did not is exactly the failure `SCORER_EPOCH` exists to catch.
+> **The artifact decision that blocked this version was taken on 2026-09-04** and both mouse
+> scorers are refitted with the harmonised matrix and the corrected expression chain; see
+> *Changed* below. What is still open is the release itself, which is a sign-off, not a
+> measurement: `mhcmatch build --check` reports 0 stale of 38 against 1.11.0, the full suite is
+> green, and the human artifact is byte-identical to `master` on `coef`, `mu` and `sigma`.
 
 
 **`expr_lvl` and `expr_norm` are on one scale for mouse, for the first time.** 1.10.0 gave mouse a

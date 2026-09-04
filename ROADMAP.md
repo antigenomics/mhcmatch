@@ -73,6 +73,46 @@ it.
 the mouse seam. Both human halves went through one Toil RSEM recompute and it worked — which also
 makes it the negative control this diagnostic passes.
 
+### What landed on top of it, same day
+
+**The expression chain ended at `nan` instead of at the gene, in 1.9.0 and every version before
+it.** `rank._expression_for` bailed the moment a row named neither a tissue nor a tumour — *before*
+looking at the gene it had been handed — so `gene_level`'s `pan` rung, documented as the step that
+"cannot fail", was unreachable from the predict path. **485 of 968 mouse class-I rows and 289 of 522
+class-II named a gene the matrix resolves and were imputed anyway**, which made the missing-value
+indicator a proxy for *which publication deposited a TPM*. It cannot move a published human number:
+the human EPIC frame computes the same pan-tissue median itself in the benchmark repo and never
+calls this function. `SCORER_EPOCH` 6 → 7.
+
+**Two modes, and they are never pooled.** `AGGREGATE_ARTIFACTS` is keyed `(cls, species, mode)`.
+A tumour neoantigen and a pathogen epitope are different mechanisms, so they are two models;
+`pathogen` is registered with no shipped artifact and refuses by name. Pooling them was measured
+first: class-I held-out within-reference AUROC **0.5930 → 0.5241**, worse on 1,703 rows than on 923.
+
+**A model names itself, so the manuscript can pin a fit.** Every artifact carries `model_id`,
+`cls`, `species`, `mode`, an int `version` and `release` — the dotted package version the fit was
+*accepted* in, not the one running. `mhc1.human.neoantigen v11 (release 1.6.1)` is a citation;
+`mhcmatch 1.11.0` is not. `rank.models()` lists them.
+
+**Both mouse scorers are model version 2, and the reason is simplicity.** The corpus block is one
+scalar on the human artifact's corpus direction rather than three free coefficients — **seven** free
+parameters where there were nine — taken on the author's rule that a straightforward model is worth
+0.61 against 0.60. Class I 0.5930 → **0.5958** peptide-grouped and 0.5950 → **0.5977**
+reference-grouped, BIC 1078.3 → **1066.9**; class II 0.4598 → **0.4901** reference-grouped, BIC
+571.5 → **562.7**.
+
+### Open loops
+
+- **The corpus scalar does not resolve, in either class**, and that is a sample-size statement:
+  class I −0.1191 (*p* 0.312) runs against human's direction, class II +0.0522 (*p* 0.845) runs with
+  it, and neither interval excludes zero. Routes 1 and 3 out of it are closed with mechanisms in
+  `bench/results/mouse_corpus_resolution.md`.
+- **Class-II missingness still carries information** — `indicator` beats `vanilla` 0.6163 to 0.5781.
+  The 68 xenoantigen rows stay in the fit by the author's decision, so the fix is **their human
+  orthologue's expression**, which `toil_matrix.npz` already has, rather than their removal. The 76
+  remaining holes are genes the 26,737-gene mouse matrix does not carry.
+- **1.11.0 is not released.** That is a sign-off, not a measurement.
+
 ---
 
 ## Where this stands, 2026-09-04 — 1.10.0, and mouse is a species rather than a spelling
