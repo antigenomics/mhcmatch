@@ -287,19 +287,105 @@ of the reference deposit and the key. Nothing partially built is ever visible an
 ever mutated. There is deliberately **no disk cache**: the artifact is 64 KB and the largest build
 is under a minute, so a cache directory would only add a staleness mode.
 
-Species
--------
+.. _corpus-species:
 
-``self_species`` picks the proteome, so **mouse self for mouse**:
+Species --- and why a mouse run reads the human thymic table
+-------------------------------------------------------------
+
+``self_species`` picks which species' reference table a channel is contracted against, and all six
+class-I tables ship --- ``thymus``, ``self`` and ``viral`` for each of human and mouse:
 
 .. code-block:: python
 
-   mimicry.corpus_spectrum(cls="mhc1", self_species="mouse")
+   mimicry.corpus_spectrum(cls="mhc1", self_species="mouse")     # explicit: mouse everywhere
 
-The ``thymus`` and ``viral`` deposits are human-only, so a mouse run scores those two against the
-human ones. That is a stated limitation, not a silent substitution, and the fix is now cheap: a
-mouse thymic deposit is one more ``bincount`` and a 64 KB table, where under the old design it was
-a second multi-gigabyte index.
+That call does exactly what it says. What the **scorer** does is not the same thing, and from
+1.13.0 it is decided per component by :func:`mhcmatch.mimicry.reference_species`:
+
+.. code-block:: python
+
+   from mhcmatch import mimicry
+
+   {c: mimicry.reference_species("mouse", c) for c in ("thymus", "self", "viral")}
+   # {'thymus': 'human', 'self': 'mouse', 'viral': 'mouse'}
+
+**A mouse query's** ``thymus`` **channel is scored against the human thymic table.** A human query
+is unaffected --- ``reference_species("human", c)`` is ``"human"`` for all three, and the scoring
+path is bit-identical to what it was.
+
+Why: the reference deposit must not be one groove
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The corpus channel asks *how much does this candidate look like peptides the immune system has
+already seen in context X*. It answers that by pooling a deposit into a k-mer table, and a pooled
+table is only about context X if the pool is not dominated by one MHC allotype --- otherwise it is
+that allotype's binding motif wearing the channel's name, and it is collinear with ``binder``,
+which already scores the groove.
+
+The mouse thymic deposit is one haplotype. Of its 6,661 class-I peptides, **every one of the 2,663
+that carries an allele annotation is** ``H-2Db`` **(1,574) or** ``H-2Kb`` **(1,089)** --- no other
+haplotype appears at all --- and that column was being applied to a fit spanning six H-2 allotypes.
+The human thymic deposit (HLA Ligand Atlas thymus, 25,891 class-I peptides pooled over donors) has
+no single groove to encode.
+
+The three components sit at three points on that axis, and the transfer follows it. ``r`` is the
+Pearson correlation between the same peptide's density under the two species' tables, over the
+921-row mouse class-I fit population:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 12 30 10 48
+
+   * - component
+     - distinct class-I allotypes
+     - ``r``
+     - shipped choice
+   * - ``self``
+     - none --- an unpresented proteome window has no groove
+     - 0.9990
+     - **mouse.** It is the host proteome by definition, and at *r* = 0.9990 the choice costs
+       nothing either way
+   * - ``viral``
+     - 9 mouse (``H-2Kb`` 50.2 %) against 129 human
+     - 0.8382
+     - **mouse.** Substituting human *loses*: free-axis BIC 1077.5 → 1079.5
+   * - ``thymus``
+     - 2 mouse against a pooled human donor panel
+     - 0.3245
+     - **human.** The mouse coefficient is a coin flip (−0.0056, sign stability 0.53 over 400
+       reference-cluster resamples); the human one is not (+0.2990 at 0.96) and agrees in sign
+       with the human artifact's +0.1733. Best free-axis BIC of five arms, 1075.0
+
+It is not a sample-size effect
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The mouse thymic table stands on 25,264 reference windows against human's 140,482, so thinness is
+the obvious explanation --- and it is the wrong one. Thinning the human deposit *at the peptide
+level* to the mouse table's window count, 40 draws, still reproduces the full human column at
+**r = 0.8933** (range 0.8728--0.9109) and still disagrees with the mouse table at **0.2903**
+(0.2467--0.3310). A human table cut to mouse's size does not become the mouse table. What differs
+is which grooves each deposit sampled, and no number of extra mouse thymus peptides from the same
+H-2\ :sup:`b` studies would close it.
+
+This is the same failure ``background="ligand"`` had, and the same one that took the corpus block
+out of the mouse class-II model: a pooled statistic over a pool dominated by one allotype measures
+that allotype. Mouse class II is the extreme case --- its thymic deposit is 1,490 peptides, **all**
+``I-Ab`` --- and there the block was dropped rather than substituted, because no class-II arm made
+it pay.
+
+.. warning::
+
+   **This does not extend to expression, and must not.** Human and mouse organs and tumours are
+   different tissues, so a human expression level is not a stand-in for a mouse one at any sample
+   size; :mod:`mhcmatch.expression` stays species-keyed throughout, reading FANTOM5 mouse and
+   GSE245293 rather than GTEx and the human tumour half. Mapping a gene to its mouse orthologue is
+   a different operation --- it fixes gene *identity* and still reads a mouse transcriptome.
+
+   The corpus channels transfer because a k-mer table over a TCR face is a shared geometry ---
+   ``self`` proves it at *r* = 0.9990 across 122 M against 113 M proteome windows. A tissue is not.
+
+The measurement is ``bench/epic/corpus_transfer.py`` in the benchmark repo, recorded in
+``bench/results/epic_mouse_corpus_transfer_mhc1.md``.
 
 All three channels, and why all three are scored
 -------------------------------------------------

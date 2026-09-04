@@ -297,7 +297,7 @@ def test_the_shipped_artifact_is_pinned_to_the_fit_that_produced_it(art):
 # +0.3773 and `C_phys_buried` +0.1710 are the two coefficients the cluster bootstrap keeps the sign
 # of. No fit here holds anything out -- see `test_no_shipped_artifact_reports_a_holdout`.
 @pytest.mark.parametrize("cls, species, digest, version, rows, pos, terms", [
-    ("mhc1", "mouse", "667b34c057404727", 3, 921, 379, "TERMS_MOUSE_EXPECTED"),
+    ("mhc1", "mouse", "aadf752eb7cdcd25", 4, 921, 379, "TERMS_MOUSE_EXPECTED"),
     ("mhc2", "mouse", "9d95c8602bd4fd0c", 3, 468, 177, "TERMS_MHC2_EXPECTED"),
     ("mhc2", "human", "fb8d861a778571f6", 1, 1112, 656, "TERMS_MHC2_EXPECTED"),
 ])

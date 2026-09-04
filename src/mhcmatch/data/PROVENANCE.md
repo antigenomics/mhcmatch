@@ -482,8 +482,8 @@ not rewritten; the artifact carries its own dissent.
 
 **Derived, not experimental**, and the same object as the human artifact in every structural
 respect: nine standardised slopes under the same nine feature names in the same order, ridge
-`tau = 0.25`, its own `mu`/`sigma`, a *model* version that is an integer (**`3`**) and a `release`
-that is dotted (`1.12.0` -- the package version the fit was **accepted** in, which is what a
+`tau = 0.25`, its own `mu`/`sigma`, a *model* version that is an integer (**`4`**) and a `release`
+that is dotted (`1.13.0` -- the package version the fit was **accepted** in, which is what a
 manuscript cites). `rank.aggregate(cls, species, mode)` resolves it through
 `rank.AGGREGATE_ARTIFACTS`, keyed `(cls, species, mode)`. All four `(cls, species)` cells are
 fitted from 1.12.0; `pathogen` remains a registered mode with no shipped artifact rather than a
@@ -506,8 +506,8 @@ added after the first v2 copy shipped five of them at seven and made
 `rank --coefficients --species mouse` raise `IndexError` on the eighth row.
 
     # in ~/vcs/projects/2026-mhcmatch-benchmark-ext:
-    MHCMATCH_MODEL_RELEASE=1.12.0 python bench/pmhc_data/clean_neoantigens.py
-    MHCMATCH_MODEL_RELEASE=1.12.0 python bench/epic/fit_mouse.py --cls mhc1 --model-version 3
+    MHCMATCH_MODEL_RELEASE=1.13.0 python bench/pmhc_data/clean_neoantigens.py
+    MHCMATCH_MODEL_RELEASE=1.13.0 python bench/epic/fit_mouse.py --cls mhc1 --model-version 4 --folds 0
     # `--corpus-axis human` is the default and is what version 2 means; `--corpus-axis free`
     # reproduces version 1's three independent corpus coefficients.
     # then, deliberately:
@@ -517,15 +517,59 @@ added after the first v2 copy shipped five of them at seven and made
 deposit, at class I's own peptide lengths and keyed on `mhc_a_pred`: **921 rows, 379 immunogenic,
 61 references, 6 H-2 allotypes.** (**923 / 380 through version 2**: the deposit was cleaned of
 pathogen and unattributable rows for 1.12.0 and two of them were in this fit. Nine terms and the
-pinned corpus axis are unchanged; the version moves because a citation has to name one fit.) No row is dropped for a missing term: seven of the nine are
+pinned corpus axis are unchanged; the version moves because a citation has to name one fit.
+**Version 4 fits the same 921 rows as version 3** and moves for a definition change instead --
+`C_corpus_thymus` now reads the human thymic table; see below.) No row is dropped for a missing term: seven of the nine are
 populated on every row and the two expression terms are imputed to the population median, which is
 the convention `rank.aggregate_score` documents.
 
-Every column is computed by `mhcmatch rank pairs --species mouse --score features`, so the panel,
-the three corpus channels and both expression terms are the library's own **mouse** references
-throughout. That flag is load-bearing rather than cosmetic: the human panel holds no `H-2-Kb`
-ligands, so the groove is borrowed from its human kernel neighbours and SIINFEKL -- the canonical
-H-2-Kb binder -- scores `binder` **-1.148** against **+1.523** under `--species mouse`.
+Every column is computed by `mhcmatch rank pairs --species mouse --score features`. That flag is
+load-bearing rather than cosmetic: the human panel holds no `H-2-Kb` ligands, so the groove is
+borrowed from its human kernel neighbours and SIINFEKL -- the canonical H-2-Kb binder -- scores
+`binder` **-1.148** against **+1.523** under `--species mouse`. Both expression terms are the
+library's **mouse** references throughout (FANTOM5 mouse and GSE245293), and they must be: human
+and mouse organs and tumours are different tissues, so a human expression level is not a stand-in
+for a mouse one at any sample size.
+
+**The three corpus channels are not all mouse, from version 4.** `mimicry.reference_species`
+routes them per component: `self` and `viral` read the mouse tables, `thymus` reads the **human**
+one. The mouse thymic deposit is one haplotype -- of its 6,661 class-I peptides, every one of the
+2,663 carrying an allele annotation is `H-2Db` (1,574) or `H-2Kb` (1,089) -- so its k-mer table is
+that groove's motif rather than a measure of what a thymus presents, and it was being applied to a
+fit spanning six H-2 allotypes. It is **not** a sample-size effect: thinning the human thymic
+deposit at the peptide level to the mouse table's 25,264 windows, 40 draws, still reproduces the
+full human column at r = 0.8933 (0.8728-0.9109) and still disagrees with the mouse table at 0.2903
+(0.2467-0.3310). `viral` stays mouse because substituting human *loses* (free-axis BIC 1077.5 ->
+1079.5) and `self` stays mouse because it is the host proteome by definition and the two tables
+agree at r = 0.9990 anyway. `bench/epic/corpus_transfer.py`, recorded in
+`bench/results/epic_mouse_corpus_transfer_mhc1.md`.
+
+**Version 3 -> 4, arm vs arm, same 921 rows / 379 immunogenic / 61 references.** The only column
+that moved is `C_corpus_thymus` (its `mu` 0.0002388 -> 0.000215; `self` and `viral` `mu` are
+unchanged, which is the check that only one table was re-sourced).
+
+| term | v3, mouse thymic table | v4, human thymic table |
+|---|--:|--:|
+| `binder` | +0.5549 | +0.5316 |
+| `log10a` | +0.0481 | +0.0611 |
+| `expr_lvl` | +0.2174 | +0.2170 |
+| `expr_norm` | -0.2934 | -0.2931 |
+| `C_phys_buried` | +0.1141 | +0.1243 |
+| `C_phys_charge` | +0.1179 | +0.1076 |
+| `C_corpus_thymus` | -0.0385 | -0.0236 |
+| `C_corpus_self` | +0.1017 | +0.0624 |
+| `C_corpus_viral` | -0.0465 | -0.0285 |
+| BIC | 1066.1 | 1066.5 |
+
+**The regression is stated rather than buried: at the shipped pinned axis v4 is 0.4 BIC worse and
+its one corpus scalar is less sign-stable** (-0.1183 at 0.89 -> -0.0725 at 0.74). It ships anyway,
+and not on that number: log(921) = 6.83 is one parameter's worth, the five table-source arms span
+0.7 BIC in total, and the case is the channel's *definition* -- a thymic-similarity term must not
+be one groove's motif. Where the channel is given its own coefficient (`--corpus-axis free`, the
+diagnostic rather than the shipped model) the substitution is unambiguous: `C_corpus_thymus` goes
+from a coin flip (-0.0056, sign stability 0.53 over 400 reference-cluster resamples) to +0.2990 at
+0.96, agreeing in sign with the human artifact's +0.1733, and free-axis BIC 1077.5 -> 1075.0 is
+the best of the five arms.
 
 **One unpenalised intercept per reference, and the fit is not interpretable without it.** The human
 artifact gives each *screen* an intercept so prevalence and candidate generation stay out of the

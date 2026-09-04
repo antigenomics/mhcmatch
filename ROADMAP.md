@@ -15,7 +15,39 @@ the build plan. Phase sections marked _(TBD)_ await detail.
 > tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
 > below resolve there, not here.
 
-## Where this stands, 2026-09-04 (latest) — 1.12.0, all four cells fitted, class II without a corpus
+## Where this stands, 2026-09-04 (latest) — 1.13.0, a mouse run reads the human thymic corpus
+
+**A pooled reference deposit is only about its context if it is not one groove**, and the mouse
+thymic deposit is one groove. Of its 6,661 class-I peptides, every one of the 2,663 carrying an
+allele annotation is `H-2Db` (1,574) or `H-2Kb` (1,089) — no other haplotype appears — so its
+k-mer table encodes that groove's motif rather than what a thymus presents, and it is collinear
+with `binder`, which already scores the groove. It was being applied to a fit spanning six H-2
+allotypes. From 1.13.0 `mimicry.reference_species` routes the channels per component: a mouse run
+reads mouse `self`, mouse `viral` and the **human** `thymus` table. `aggregate_mhc1_mouse.json`
+moves to model version **4** on the same 921 rows / 379 immunogenic.
+
+**It is not thinness.** The mouse thymic table stands on 25,264 reference windows against human's
+140,482, which is the obvious explanation and the wrong one: thinning the human deposit at the
+peptide level to the mouse window count, 40 draws, still reproduces the full human column at
+**r = 0.8933** (0.8728–0.9109) and still disagrees with the mouse table at **0.2903**
+(0.2467–0.3310). What differs is which grooves each deposit sampled.
+
+**The regression ships stated.** At the pinned axis v4 is 0.4 BIC worse (1066.1 → 1066.5) and its
+corpus scalar is less sign-stable (−0.1183 at 0.89 → −0.0725 at 0.74) — but log(921) = 6.83 is one
+parameter's worth and the five table-source arms span 0.7 BIC in total, so that comparison cannot
+separate them. The case is the channel's definition, and where the channel gets its own coefficient
+(`--corpus-axis free`, a diagnostic) it is unambiguous: `C_corpus_thymus` −0.0056 at sign stability
+0.53 → **+0.2990 at 0.96**, agreeing in sign with the human artifact's +0.1733, free-axis BIC
+1077.5 → **1075.0**, best of five arms.
+
+**Expression does not transfer and must not be made to.** Human and mouse organs and tumours are
+different tissues, so a human expression level is not a stand-in for a mouse one at any sample
+size; `expression.py` stays species-keyed. An orthologue map fixes gene *identity* and still reads
+a mouse transcriptome. The corpus channels transfer because a k-mer table over a TCR face is a
+shared geometry — `self` proves it at **r = 0.9990** across 122 M against 113 M proteome windows.
+A tissue is not. `bench/results/epic_mouse_corpus_transfer_mhc1.md`.
+
+## 1.12.0 — all four cells fitted, class II without a corpus
 
 **Class II carries six terms in both species, and the missing block is a statement about the
 reference rather than about the coefficient.** A `C_corpus_*` channel is a Łuksza density over a

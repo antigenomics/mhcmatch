@@ -76,6 +76,7 @@ __all__ = ["COMPONENTS", "CHANNELS", "params", "MimicryScore", "masks", "feature
            "corpus_R", "corpus_counts", "contract", "corpus_spectrum", "face_kmers",
            "SHAPES", "CORPUS_K", "LOCUS_W", "locus_weights", "corpus_shapes", "score",
            "probability", "annotate", "NEOAG_COLUMNS", "load_references", "safety",
+           "CORPUS_REFERENCE", "reference_species",
            ]
 
 AA = "ACDEFGHIKLMNPQRSTVWY"
@@ -572,6 +573,73 @@ _VENDORED: dict | None = None
 #: Filename of the vendored count tables under ``mhcmatch.data``; built by
 #: ``mhcmatch build corpus``.
 VENDORED_COUNTS = "corpus_tables.npz"
+
+#: ``(query species, component) -> reference species``, for the components where the two differ.
+#: Read by :func:`reference_species`, which is the only thing that should consult it, and applied by
+#: ``cli._aggregate_channels`` when it builds the scoring channels.
+#:
+#: **One entry: a mouse ``thymus`` query is scored against the HUMAN thymic table.** The mouse
+#: thymic deposit is one haplotype. Of its 6,661 class-I peptides, every one of the 2,663 that
+#: carries an allele annotation is ``H-2Db`` (1,574) or ``H-2Kb`` (1,089) -- no other haplotype
+#: appears at all -- so its k-mer table is the H-2b groove's motif rather than a measure of what
+#: the thymus presents. That column is then applied to a fit spanning six H-2 allotypes, and it is
+#: collinear with ``binder``, which already scores the groove. The human thymic deposit (HLA Ligand
+#: Atlas thymus, 25,891 class-I peptides pooled over donors) has no single groove to encode.
+#:
+#: The other two components keep their own species and the reason is per-component, not a blanket
+#: policy -- see :func:`reference_species`.
+CORPUS_REFERENCE: dict = {("mouse", "thymus"): "human"}
+
+
+def reference_species(species: str, comp: str) -> str:
+    """Which species' reference table a ``species`` query of component ``comp`` is scored against.
+
+    Usually ``species`` itself. The exceptions live in :data:`CORPUS_REFERENCE`, and there is
+    currently one: **mouse** ``thymus`` reads the **human** table.
+
+    **The corpus channel transfers between species to the extent that its reference deposit is not
+    one groove's motif**, and the three components sit at three points on that axis. Measured on the
+    921-row mouse class-I fit population (`bench/epic/corpus_transfer.py` in the benchmark repo),
+    ``r`` being the Pearson correlation between the same peptide's density under the two species'
+    tables:
+
+    ==========  ==========================  =======  ==========================================
+    component   distinct class-I allotypes  ``r``    decision
+    ==========  ==========================  =======  ==========================================
+    ``self``    none -- an unpresented       0.9990  keep **mouse**: it is the host proteome by
+                proteome window has no               definition, and at r = 0.9990 the choice
+                groove                               costs nothing either way
+    ``viral``   9 mouse (H-2Kb 50.2 %)       0.8382  keep **mouse**: substituting human *loses*,
+                against 129 human                    BIC 1077.5 -> 1079.5 on the free axis
+    ``thymus``  2 mouse against a pooled     0.3245  take **human**: the mouse coefficient is a
+                human donor panel                    coin flip (-0.0056, sign stability 0.53 over
+                                                     400 reference-cluster resamples) and the
+                                                     human one is not (+0.2990 at 0.96), agreeing
+                                                     in sign with the human artifact's +0.1733.
+                                                     Best free-axis BIC of five arms, 1075.0
+    ==========  ==========================  =======  ==========================================
+
+    **It is not a sample-size effect, and that was measured rather than assumed.** The mouse thymic
+    table stands on 25,264 reference windows against human's 140,482, so thinness is the obvious
+    explanation and it is the wrong one: thinning the human deposit at the peptide level to the
+    mouse table's window count, 40 draws, still reproduces the full human column at **r = 0.8933**
+    (range 0.8728-0.9109) and still disagrees with the mouse table at **0.2903** (0.2467-0.3310).
+    A human table cut to mouse's size does not become the mouse table. What differs is *which*
+    grooves each deposit sampled.
+
+    This is the same failure `background="ligand"` had and the same one that took the corpus block
+    out of the mouse class-II model: a pooled statistic over a pool dominated by one allotype
+    measures that allotype. Mouse class II is the extreme case -- its thymic deposit is 1,490
+    peptides, **all** ``I-Ab`` -- and there the block was dropped rather than substituted, because
+    there is no class-II arm in which it paid.
+
+    **Expression is NOT covered by this and must not be.** Human and mouse organs and tumours are
+    different tissues, so a human expression level is not a stand-in for a mouse one at any sample
+    size; :mod:`mhcmatch.expression` stays species-keyed throughout. Mapping a gene to its mouse
+    orthologue is a different operation -- it fixes gene *identity* and still reads a mouse
+    transcriptome.
+    """
+    return CORPUS_REFERENCE.get((species, comp), species)
 
 
 def _vendored_counts(cls: str, comp: str, k: int, self_species: str, mask: str = "slice"):

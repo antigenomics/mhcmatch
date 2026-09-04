@@ -513,6 +513,14 @@ prevent. `mode` is `neoantigen` on every artifact so far; `pathogen` is a regist
 no fit, because a tumour neoantigen and a pathogen epitope are two mechanisms rather than two
 values of one covariate.
 
+**A mouse run does not read mouse corpus references throughout, from 1.13.0.**
+`mimicry.reference_species(species, component)` decides per component: mouse `self`, mouse `viral`,
+and the **human** `thymus` table. The mouse thymic deposit is one haplotype — every one of the
+2,663 annotated class-I peptides in it is `H-2Db` or `H-2Kb` — so its k-mer table is that groove's
+motif rather than a measure of what a thymus presents. Human paths are unchanged.
+**Expression is not covered by this and must not be**: human and mouse organs and tumours are
+different tissues, so `expression.py` stays species-keyed at every rung. See `docs/corpus.rst`.
+
 **The two class-II fits carry six terms and no corpus block.** A `C_corpus_*` channel is a density
 over a reference set of peptides — thymic, self, viral — and all three deposited sets are class I;
 contracting a 15-mer class-II register against a 9-mer density asks the wrong question rather than

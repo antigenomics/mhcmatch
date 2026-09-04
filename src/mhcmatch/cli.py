@@ -735,12 +735,16 @@ def _aggregate_channels(cls: str, no_self: bool, species: str = "human"):
     which report *which* reference peptide was nearest and do need the index, and for the safety
     scan.
 
-    ``species`` keys every corpus channel, not only ``self``: all six ``thymus``/``self``/``viral``
-    tables ship for each of mouse and human, so a mouse run is scored against mouse references
-    throughout. The mouse thymic and viral tables are *thinner* than their human counterparts --
-    25,264 and 40,244 reference windows against 140,482 and 136,618 for class I -- which is a
-    precision statement about a mouse score, not a substitution. This used to read "the thymus and
-    viral deposits are human-only", which stopped being true when those tables shipped.
+    ``species`` keys every corpus channel, not only ``self``, but it does **not** decide the
+    reference on its own: :func:`mhcmatch.mimicry.reference_species` does, per component. A mouse
+    run reads mouse ``self`` and mouse ``viral`` and the **human** ``thymus`` table, because the
+    mouse thymic deposit is one haplotype -- every annotated class-I peptide in it is ``H-2Db`` or
+    ``H-2Kb`` -- so its k-mer table encodes that groove rather than what a thymus presents. The full
+    per-component measurement, including the matched-mass control that rules out thinness as the
+    explanation, is in :func:`mhcmatch.mimicry.reference_species`.
+
+    One :func:`mhcmatch.mimicry.corpus_spectrum` call per distinct reference species, so a human
+    run makes exactly the one call it always made and is bit-identical to it.
 
     The ``C_phys`` pair is deliberately absent: :func:`mhcmatch.rank._finish` computes both, because
     they are matrix products against published residue vectors and need no deposit at all.
@@ -754,9 +758,12 @@ def _aggregate_channels(cls: str, no_self: bool, species: str = "human"):
         # definition: a `kappa` fitted against a graded kernel scored under the Hamming one is a
         # different feature, not a smaller effect.
         g = MM.corpus_geometry()
-        spec = MM.corpus_spectrum(cls=cls, components=("thymus", "self", "viral"),
-                                  k=g["k"], self_species=species, mask=g["mask"],
-                                  kernel=g["kernel"])
+        comps = ("thymus", "self", "viral")
+        spec = {}
+        for sp in sorted({MM.reference_species(species, c) for c in comps}):
+            part = tuple(c for c in comps if MM.reference_species(species, c) == sp)
+            spec.update(MM.corpus_spectrum(cls=cls, components=part, k=g["k"], self_species=sp,
+                                           mask=g["mask"], kernel=g["kernel"]))
         rows = MM.corpus_R(list(peptides), spec, cls=cls)
         return {f"C_corpus_{c}": [r.get(c, float("nan")) for r in rows]
                 for c in ("thymus", "self", "viral")

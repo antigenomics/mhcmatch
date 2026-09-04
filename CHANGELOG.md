@@ -1,5 +1,71 @@
 # Changelog
 
+## [1.13.0] --- 2026-09-04 --- a mouse run reads the human thymic corpus
+
+> **The mouse class-I scorer moves to model version 4**, and the only thing that changed is which
+> species' reference table one corpus channel is contracted against. `mhcmatch build --check`
+> reports 0 stale of 39 against 1.13.0, the bump-only rebuild moved no score (`** MOVED **` count
+> 0 over 12 rebuilt artifacts), and **every human path is bit-identical**.
+
+**A pooled reference deposit is only about its context if it is not one groove.** The corpus
+channel asks how much a candidate looks like peptides seen in context X, and answers by pooling a
+deposit into a k-mer table. The mouse thymic deposit is one haplotype: of its 6,661 class-I
+peptides, **every one of the 2,663 carrying an allele annotation is `H-2Db` (1,574) or `H-2Kb`
+(1,089)** -- no other haplotype appears -- so its table encodes that groove's motif rather than
+what a thymus presents, and it is collinear with `binder`, which already scores the groove. That
+column was being applied to a fit spanning six H-2 allotypes.
+
+**It is not thinness, and that was measured rather than assumed.** The mouse thymic table stands on
+25,264 reference windows against human's 140,482, so sample size is the obvious explanation and it
+is the wrong one: thinning the human deposit at the peptide level to the mouse window count, 40
+draws, still reproduces the full human column at **r = 0.8933** (0.8728--0.9109) and still
+disagrees with the mouse table at **0.2903** (0.2467--0.3310). A human table cut to mouse's size
+does not become the mouse table.
+
+**This does not extend to expression and must not.** Human and mouse organs and tumours are
+different tissues, so a human expression level is not a stand-in for a mouse one at any sample
+size; `mhcmatch.expression` stays species-keyed throughout. Mapping a gene to its mouse orthologue
+is a different operation -- it fixes gene *identity* and still reads a mouse transcriptome. The
+corpus channels transfer because a k-mer table over a TCR face is a shared geometry, which `self`
+proves at **r = 0.9990** across 122 M human against 113 M mouse proteome windows. A tissue is not.
+
+### Added
+
+- **`mimicry.reference_species(species, comp)`** and **`mimicry.CORPUS_REFERENCE`** -- which
+  species' reference table a query of a given species is scored against, per component. One entry:
+  `("mouse", "thymus") -> "human"`. An unregistered species falls through to itself rather than to
+  a human default, because substituting silently is the failure this exists to make explicit.
+
+### Changed
+
+- **`aggregate_mhc1_mouse.json` -- model version 3 -> 4**, same **921 rows / 379 immunogenic /
+  61 references / 6 H-2 allotypes**. The only column that moved is `C_corpus_thymus` (`mu`
+  0.0002388 -> 0.000215; `self` and `viral` `mu` unchanged, which is the check that one table and
+  only one was re-sourced). `binder` +0.5549 -> +0.5316, `log10a` +0.0481 -> +0.0611,
+  `C_phys_buried` +0.1141 -> +0.1243, `C_phys_charge` +0.1179 -> +0.1076; `expr_lvl` and
+  `expr_norm` move in the fourth decimal.
+
+  **The regression is stated, not buried: at the shipped pinned axis v4 is 0.4 BIC worse** (1066.1
+  -> 1066.5) **and its one corpus scalar is less sign-stable** (-0.1183 at 0.89 -> -0.0725 at
+  0.74). It ships anyway and not on that number -- log(921) = 6.83 is one parameter's worth and the
+  five table-source arms span 0.7 BIC in total, so the pinned-axis comparison cannot separate them.
+  The case is the channel's definition. Where the channel is given its own coefficient
+  (`--corpus-axis free`, a diagnostic and not the shipped model) the substitution is unambiguous:
+  `C_corpus_thymus` goes from a coin flip (**-0.0056**, sign stability **0.53** over 400
+  reference-cluster resamples) to **+0.2990** at **0.96**, agreeing in sign with the human
+  artifact's +0.1733, and free-axis BIC **1077.5 -> 1075.0** is the best of the five arms.
+
+- **`cli._aggregate_channels` builds one spectrum per distinct reference species** instead of one
+  per run. A human run therefore makes exactly the one call it always made and is bit-identical;
+  a mouse run makes two.
+
+- **`predict.SCORER_EPOCH` 7 -> 8.** A mouse `C_corpus_thymus` is a different number under 1.13.0,
+  so a calibration background cached under 1.12.0 must not be served for it. The benchmark repo's
+  feature frame keys its freshness guard on the same int, so it needs a `--restamp`.
+
+- **`docs/corpus.rst` "Species"** rewritten. It said the thymus and viral deposits were human-only,
+  which stopped being true when the mouse tables shipped in 1.10.0.
+
 ## [1.12.0] --- 2026-09-04 --- class II, both species, and no corpus block
 
 > **All four `(cls, species)` cells are fitted.** `mhc2.human.neoantigen` is new; `mhc2.mouse`
