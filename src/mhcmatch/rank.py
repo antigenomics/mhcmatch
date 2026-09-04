@@ -961,10 +961,15 @@ def _recognition_map(peptides, species: str = "human", cls: str = "mhc1") -> dic
 
 def _expression_for(gene: str, observed, tissue: str | None, tumor: str | None,
                     peptide: str = "", species: str = "human") -> tuple[float, bool]:
-    """``(log1p(TPM), was_imputed)``. Peptide-keyed TCGA first when a tumour type is given.
+    """``(log1p(TPM), was_imputed)``. The tumour rung first when a tumour type is given.
 
     A missing expression value never drops a candidate -- the reference median stands in and the
-    flag travels with it, so a caller can carry a missing-indicator instead of losing the row."""
+    flag travels with it, so a caller can carry a missing-indicator instead of losing the row.
+
+    **The tumour rung is keyed by peptide in human and by gene in mouse.** TCGA has per-peptide
+    rows, so it can answer whether this exact neoantigen was seen expressed; the mouse syngeneic
+    deposit has no peptide rows anywhere and answers the gene-level question instead. Same rung,
+    different key -- so the key is chosen by species rather than by a second branch here."""
     if observed is not None and observed == observed:
         x = float(observed)
         if x < 0:
@@ -982,8 +987,9 @@ def _expression_for(gene: str, observed, tissue: str | None, tumor: str | None,
     except ImportError:                                  # pragma: no cover
         return float("nan"), True
     try:
-        if tumor and peptide:
-            rec = EX.lookup(peptide, tumor=tumor, species=species)
+        tkey = gene if species != "human" else peptide
+        if tumor and tkey:
+            rec = EX.lookup(tkey, tumor=tumor, species=species)
             if rec:
                 return math.log1p(rec["median_tpm"]), True
         if tissue and gene:

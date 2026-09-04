@@ -30,11 +30,14 @@ every other reference here.
 whether it was observed or imputed, so a caller can carry a missing-indicator column instead of
 discarding the candidate -- which is the standing rule for every partially-covered covariate here.
 
-**``species="mouse"`` reads a different deposit, and it answers one of the two questions rather
-than both.** The mouse reference is FANTOM5 (:data:`REFERENCE_FILE_MOUSE`) and is gene x normal
-tissue only, so the safety read and the ``expr_norm`` term work exactly as they do for human and
-``tumor=`` **raises** -- there is no mouse TCGA and no mouse tumour-type transcriptome to take a
-floor from. Every signature here defaults to ``"human"``, so a human call is unchanged.
+**``species="mouse"`` reads two deposits where human reads one, and answers the same two
+questions.** Normal tissue is FANTOM5 (:data:`REFERENCE_FILE_MOUSE`), gene x 35 adult tissues; the
+tumour side is :data:`TUMOR_FILE_MOUSE`, gene x 6 syngeneic models. The one structural difference
+that survives is the **key**: a human ``tumor=`` lookup is peptide-keyed (TCGA has per-peptide
+rows) and a mouse one is gene-keyed (no mouse deposit has peptide rows at all). The one thing
+still genuinely absent is the tumour-to-matched-normal map :data:`TUMOR_TISSUE`, which is keyed by
+TCGA study code -- so :func:`tissue_floor` still refuses a mouse ``tumor=`` and says to name the
+tissue instead. Every signature here defaults to ``"human"``, so a human call is unchanged.
 """
 from __future__ import annotations
 
@@ -44,7 +47,8 @@ import logging
 import gzip
 import os
 
-__all__ = ["REFERENCE_FILE", "REFERENCE_FILE_MOUSE", "REFERENCE_TOIL_FILE", "MATRIX_FILE",
+__all__ = ["REFERENCE_FILE", "REFERENCE_FILE_MOUSE", "TUMOR_FILE_MOUSE",
+           "REFERENCE_TOIL_FILE", "MATRIX_FILE",
            "FLOORS_FILE", "SPECIES", "reference_file",
            "SYNONYMS_FILE", "COLUMNS", "TUMOR_TISSUE", "TUMOR_TISSUE_APPROXIMATE",
            "C_MIN", "C_MAX", "MIN_SHARED", "MIN_COVERAGE", "GAMMA_MIN", "GAMMA_MAX",
@@ -72,6 +76,28 @@ REFERENCE_FILE = "expression/reference_expression.tsv.gz"
 #: * **CAGE tag density reported as TPM is not RNA-seq TPM.** It behaves like expression and ranks
 #:   like it; it is not numerically interchangeable with the human table across a join.
 REFERENCE_FILE_MOUSE = "expression/reference_expression_mmu.tsv.gz"
+
+#: **The mouse tumour read.** The human deposit carries both halves in one file -- gene x tissue
+#: under ``key_type="gene"`` and peptide x TCGA study under ``key_type="peptide"``. Mouse has no
+#: TCGA and no peptide-keyed tumour measurement at all, so its tumour half is a separate deposit
+#: and is **gene x syngeneic model**: 149,640 rows, 24,940 gene symbols x 6 models (B16F10, CT26,
+#: E0771, LLC, MC38, Panc02), three biological replicates each, ``source =
+#: "gse245293_syngeneic"``, from NCBI GEO ``GSE245293``. :data:`COLUMNS` column for column, which
+#: is why :func:`load` can fold it into the same table.
+#:
+#: Two properties to know before reading a number off it:
+#:
+#: * **The units are computed.** The deposit is normalised counts with a ``Length`` column;
+#:   length-normalising per sample and rescaling to a million gives a TPM-like quantity comparable
+#:   *within* this table and interchangeable with neither FANTOM5 CAGE nor GTEx RSEM TPM. A floor
+#:   for these contexts must therefore be a quantile of this same column, which is what
+#:   :func:`context_floor` takes.
+#: * **``n`` is 3 on every row**, three animals -- so unlike :data:`REFERENCE_FILE_MOUSE`, whose
+#:   ``q25``/``q75`` span a gene's transcripts, these quantiles span replicates.
+#:
+#: It covers six models, not every model a mouse experiment names: ``P815`` and the
+#: ``T3``/``CMS5``/``Meth A`` fibrosarcomas are absent and take the pooled floor.
+TUMOR_FILE_MOUSE = "expression/tumor_expression_mmu.tsv.gz"
 
 #: The species this module holds a normal-tissue reference for.
 SPECIES = ("human", "mouse")
@@ -158,9 +184,31 @@ def load(path: str | None = None, species: str = "human") -> dict:
 
     Read with the stdlib rather than a dataframe library: the package's runtime dependencies are
     numpy and huggingface_hub, and a dict keyed by the join tuple is what every caller here wants
-    anyway. ``species`` selects the deposit; the parsing is identical because the schema is."""
+    anyway. ``species`` selects the deposit; the parsing is identical because the schema is.
+
+    **Mouse reads two files into this one table.** Its tumour half is a separate deposit
+    (:data:`TUMOR_FILE_MOUSE`) and is gene-keyed rather than peptide-keyed, so it is folded in
+    under ``key_type="tumor"``. Stamping the rows is what keeps every ``kt == "gene"`` filter in
+    this module -- :func:`tissues`, :func:`_by_gene`, :func:`_tissue_quantile`, and through them
+    :func:`safety_profile` -- excluding a tumour model *by construction* rather than by a rule each
+    would have to repeat and one of them would eventually miss. An explicit ``path`` reads exactly
+    that file and nothing beside it."""
     out: dict = {}
-    with gzip.open(fetch_reference(path, species=species), "rt") as fh:
+    _read_table(fetch_reference(path, species=species), out)
+    if path is None and species == "mouse":
+        try:
+            _read_table(fetch_reference(file=TUMOR_FILE_MOUSE), out, "tumor")
+        except (FileNotFoundError, OSError):
+            # An offline `$MHCMATCH_EXPRESSION` directory may hold the normal half and not this
+            # one. That is a table with no tumour rung, not a broken table: `tumor=` then raises
+            # naming the models it does have, which is zero of them.
+            pass
+    return out
+
+
+def _read_table(resolved: str, out: dict, key_type: str | None = None) -> None:
+    """Parse one deposit into ``out``; ``key_type`` overrides the file's own column."""
+    with gzip.open(resolved, "rt") as fh:
         head = fh.readline().rstrip("\n").split("\t")
         ix = {c: head.index(c) for c in COLUMNS}
         for line in fh:
@@ -173,8 +221,7 @@ def load(path: str | None = None, species: str = "human") -> dict:
             except ValueError:
                 continue
             rec["source"] = f[ix["source"]]
-            out[(f[ix["key_type"]], f[ix["key"]], f[ix["context"]])] = rec
-    return out
+            out[(key_type or f[ix["key_type"]], f[ix["key"]], f[ix["context"]])] = rec
 
 
 def lookup(key: str, tissue: str | None = None, tumor: str | None = None,
@@ -185,14 +232,19 @@ def lookup(key: str, tissue: str | None = None, tumor: str | None = None,
     units from different studies, and silently falling back from one to the other is how a tumour
     abundance ends up reported as a normal-tissue TPM.
 
-    ``species="mouse"`` has the gene x tissue half only; ``tumor=`` raises there."""
+    **``key`` is a peptide for a human ``tumor=`` and a gene for a mouse one**, because the two
+    tumour deposits are keyed differently: TCGA is peptide x study code, and the mouse syngeneic
+    models are gene x model with no peptide rows anywhere. Same rung, different key.
+    An unrecognised mouse model raises rather than returning ``None``, so "not in this deposit"
+    cannot be read as "not expressed in this tumour"."""
     if (tissue is None) == (tumor is None):
-        raise ValueError("pass exactly one of tissue= (GTEx, gene-keyed) or tumor= (TCGA, "
-                         "peptide-keyed)")
-    _no_tumor(tumor, species)
+        raise ValueError("pass exactly one of tissue= (gene-keyed, normal tissue) or tumor= "
+                         "(human: TCGA, peptide-keyed; mouse: syngeneic model, gene-keyed)")
     tbl = load(path, species)
     if tissue is not None:
         return tbl.get(("gene", key, tissue))
+    if species != "human":
+        return tbl.get(("tumor", key, _tumor_context(tumor, path, species)))
     return tbl.get(("peptide", key, tumor))
 
 
@@ -211,17 +263,45 @@ def impute(key: str, observed: float | None = None, tissue: str | None = None,
 
 
 def _no_tumor(tumor, species: str) -> None:
-    """``tumor=`` is a human-only key, and asking for it in mouse is an error rather than a miss.
+    """``tumor=`` has no *matched normal* outside human, which is a narrower gap than it was.
 
-    The mouse deposit carries no ``key_type="peptide"`` rows and no tumour contexts at all, so the
-    lookup would simply return ``None`` and the caller would read that as "this candidate is not
-    expressed in this tumour". It is not: the question was never askable."""
+    :data:`TUMOR_FILE_MOUSE` gave mouse a tumour rung, so a level and a floor both resolve for a
+    syngeneic model. What still does not is :data:`TUMOR_TISSUE`, the tumour-to-matched-normal map
+    -- it is keyed by TCGA study code and there is no mouse equivalent. :func:`tissue_floor` is
+    the one function whose whole question is that map, so it is the one that still refuses: name
+    the tissue directly with ``tissue=``, which is the fact the map would have supplied."""
     if tumor is not None and species != "human":
         raise ValueError(
-            f"expression: tumor={tumor!r} is a TCGA study code and there is no {species} "
-            "equivalent -- the mouse reference is gene x normal tissue (FANTOM5) with no tumour "
-            "half. Pass tissue= instead; `mhcmatch expression --list-contexts --species mouse` "
-            "prints the 35 that resolve.")
+            f"expression: tissue_floor(tumor={tumor!r}) needs the tumour-to-matched-normal map, "
+            f"which is keyed by TCGA study code and has no {species} equivalent. Pass tissue= "
+            f"with the model's tissue of origin instead. For the model's *own* transcriptome use "
+            f"context_floor(tumor={tumor!r}, species={species!r}), which reads the "
+            f"{species} tumour deposit directly.")
+
+
+@functools.lru_cache(maxsize=8)
+def _tumor_contexts(path: str | None = None, species: str = "mouse") -> dict:
+    """``{normalised model name: the deposit's own spelling}``."""
+    return {_norm_ctx(c): c for c in tumor_types(path, species)}
+
+
+def _tumor_context(tumor: str, path: str | None, species: str) -> str:
+    """The tumour deposit's own spelling of ``tumor``, or raise naming every one that resolves.
+
+    Folded through :func:`_norm_ctx`, the same normalisation the tissue names take: case and
+    underscores, **not** hyphens -- so ``b16f10`` resolves and ``B16-F10`` does not. None of the six
+    deposited names carries either character, and the raise prints all six, so the failure is a
+    line of output rather than a debugging session. A miss raises for the reason
+    :func:`resolve_context` does: a model that quietly became the pooled reference would return a
+    plausible number computed from the wrong distribution, and nothing downstream could tell."""
+    known = _tumor_contexts(path, species)
+    hit = known.get(_norm_ctx(str(tumor)))
+    if hit is None:
+        have = ", ".join(sorted(known.values())) or "none -- the tumour deposit is not present"
+        raise ValueError(
+            f"expression: tumor={tumor!r} is not a {species} tumour model in the reference "
+            f"({have}). There is no {species} TCGA, so a study code does not resolve here.")
+    return hit
 
 
 def tissues(path: str | None = None, species: str = "human") -> list[str]:
@@ -230,10 +310,13 @@ def tissues(path: str | None = None, species: str = "human") -> list[str]:
 
 
 def tumor_types(path: str | None = None, species: str = "human") -> list[str]:
-    """Every TCGA ``cancer_type`` in the reference table (``SKCM`` is melanoma).
+    """Every tumour context in ``species``' reference table.
 
-    Empty for mouse, which has no peptide-keyed half -- see :data:`REFERENCE_FILE_MOUSE`."""
-    return sorted({c for (kt, _, c) in load(path, species) if kt == "peptide"})
+    Human: the 33 TCGA study codes of the peptide-keyed half (``SKCM`` is melanoma). Mouse: the six
+    syngeneic models of :data:`TUMOR_FILE_MOUSE`, which are gene-keyed -- a different key type
+    answering the same question, which is why both are read out here rather than only the one the
+    human file happens to use."""
+    return sorted({c for (kt, _, c) in load(path, species) if kt in ("peptide", "tumor")})
 
 
 #: **Which normal tissue is a tumour type's matched normal**, so the safety read can be asked without
@@ -316,15 +399,19 @@ _LOG = logging.getLogger(__name__)
 
 @functools.lru_cache(maxsize=32)
 def _tissue_quantile(path: str | None, tissues: tuple, q: float,
-                     species: str = "human") -> tuple:
-    """``(q-th percentile of non-zero gene medians in ``tissues``, n genes)``; ``nan`` if too few.
+                     species: str = "human", kind: str = "gene") -> tuple:
+    """``(q-th percentile of non-zero medians in ``tissues``, n genes)``; ``nan`` if too few.
 
     Nearest-rank on the sorted values, so the result is exactly one observed abundance and two
     runs cannot disagree in the last bit. ``load`` is itself cached on ``path``, so this walks the
-    table once per distinct ``(path, tissues, q)`` and is a dict lookup after that."""
+    table once per distinct ``(path, tissues, q, kind)`` and is a dict lookup after that.
+
+    ``kind`` is the ``key_type`` to quantile over -- ``"gene"`` for normal tissue, ``"tumor"`` for
+    a syngeneic model. Both are gene-keyed and in different units, so pooling them would be a
+    category error; keeping it a parameter is what stops one call reaching the other's rows."""
     vals = []
     for (kt, _key, ctx), row in load(path, species).items():
-        if kt == "gene" and (not tissues or ctx in tissues):
+        if kt == kind and (not tissues or ctx in tissues):
             v = row.get("median_tpm")
             if v is not None and v > 0:
                 vals.append(v)
@@ -714,19 +801,21 @@ def context_floor(tumor: str | None = None, tissue: str | None = None, q: float 
 
     With ``detail=True`` returns ``{"floor", "contexts", "n_genes", "pooled", "clamped"}``.
 
-    **``species="mouse"`` takes the same quantile of the same quantity off the FANTOM5 table**, and
-    the only structural difference is that there is no tumour rung: ``tumor=`` raises, ``tissue=``
-    is one of the 35 adult tissues, and neither pools over all of them. ``contexts`` comes back as
-    bare tissue names rather than the human table's ``source|context`` keys, because one source is
-    all there is.
+    **``species="mouse"`` walks the same three rungs off its own two deposits**: ``tumor=`` is one
+    of the six syngeneic models of :data:`TUMOR_FILE_MOUSE`, ``tissue=`` one of FANTOM5's 35 adult
+    tissues, and neither pools over the normal reference. ``contexts`` comes back as bare context
+    names rather than the human table's ``source|context`` keys, because each rung has one source.
+
+    The mouse floors are an order of magnitude above the human ones -- 0.60 TPM (aorta) to 2.00
+    (pancreas, stomach, testis) against 0.10--0.40 -- because CAGE tag density concentrates on
+    fewer genes than RSEM TPM does. **Compare floors within a species, never across one.**
     """
     if not 0.0 < q < 1.0:
         raise ValueError(f"context_floor: q must be in (0, 1), got {q!r}")
     if prefilter is not None and float(prefilter) < 0:
         raise ValueError(f"context_floor: prefilter must be >= 0 TPM, got {prefilter!r}")
-    _no_tumor(tumor, species)
     if species != "human":
-        return _context_floor_species(tissue, q, path, clamp, prefilter, detail, species)
+        return _context_floor_species(tumor, tissue, q, path, clamp, prefilter, detail, species)
     keys: tuple = ()
     if tumor:
         codes, tis = resolve_context(tumor, path)
@@ -751,17 +840,27 @@ def context_floor(tumor: str | None = None, tissue: str | None = None, q: float 
     return {"floor": v, "contexts": keys, "n_genes": n, "pooled": pooled, "clamped": v != raw}
 
 
-def _context_floor_species(tissue, q, path, clamp, prefilter, detail, species):
-    """:func:`context_floor` off the gene x tissue deposit, for a species with no dense matrix.
+def _context_floor_species(tumor, tissue, q, path, clamp, prefilter, detail, species):
+    """:func:`context_floor` off the two gene-keyed deposits, for a species with no dense matrix.
 
     The human path reads :data:`MATRIX_FILE` because 58,581 x 86 float32 is 100x faster to quantile
     than the dictionary it was built from. The mouse table is 659,050 rows -- a twentieth of the
-    human one -- and :func:`_tissue_quantile` is already cached per ``(path, tissues, q, species)``,
-    so a second deposit would buy nothing but a second thing to keep in step."""
+    human one -- and :func:`_tissue_quantile` is already cached per
+    ``(path, tissues, q, species, kind)``, so a second deposit would buy nothing but a second thing
+    to keep in step.
+
+    Rung order matches the human path, tumour first: a model's own transcriptome, then the tissue,
+    then the normal reference pooled. **The last rung is deliberately the normal one even when the
+    tumour rung was asked for and missed** -- a floor taken from a different model is a number from
+    the wrong distribution, while the pooled normal is the same fallback a candidate with no
+    context at all already gets."""
     ts: tuple = ()
-    if tissue:
+    kind = "gene"
+    if tumor:
+        ts, kind = (_tumor_context(tumor, path, species),), "tumor"
+    elif tissue:
         _, ts = resolve_context(tissue, path, species=species)
-    v, n = _tissue_quantile(path, ts, q, species)
+    v, n = _tissue_quantile(path, ts, q, species, kind)
     pooled = not ts or v != v
     if v != v:
         v, n = _tissue_quantile(path, (), q, species)
@@ -793,15 +892,17 @@ def gene_level(gene: str, tumor: str | None = None, tissue: str | None = None,
     ``found`` is whether the gene is in the reference at all. A gene that is not is not a gene with
     a level of zero, and the two must not be collapsed -- one is silence and the other is ignorance.
 
-    For ``species="mouse"`` ``tumor`` is always ``None`` (and passing one raises), so the chain is
-    ``normal`` then ``pan`` -- which is the chain :func:`mhcmatch.rank.expr_norm_level` actually
-    walks, the tumour rung being the one only ``expr_lvl`` uses.
+    For ``species="mouse"`` all three resolve, off the two deposits rather than one table:
+    ``tumor`` from :data:`TUMOR_FILE_MOUSE`, ``normal`` and ``pan`` from FANTOM5. **They are not
+    in the same unit** -- one is length-normalised RNA-seq and the other is CAGE tag density -- so
+    a mouse ``tumor``/``normal`` difference is not the like-for-like contrast the human
+    single-pipeline table gives. Read them as two terms on their own floors, which is how
+    :func:`mhcmatch.rank.expr_level` and :func:`mhcmatch.rank.expr_norm_level` use them.
     """
     import numpy as np
 
-    _no_tumor(tumor, species)
     if species != "human":
-        return _gene_level_species(gene, tissue, path, species)
+        return _gene_level_species(gene, tumor, tissue, path, species)
     gi, ci, V, _ = _matrix(path)
     i = gi.get(str(gene).strip())
     if i is None:
@@ -834,14 +935,23 @@ def gene_level(gene: str, tumor: str | None = None, tissue: str | None = None,
     return out
 
 
-def _gene_level_species(gene: str, tissue, path, species: str) -> dict:
-    """:func:`gene_level` off the gene x tissue deposit. ``tumor`` is structurally absent."""
+def _gene_level_species(gene: str, tumor, tissue, path, species: str) -> dict:
+    """:func:`gene_level` off the two gene-keyed deposits.
+
+    ``found`` stays a fact about the **normal** reference. A gene present only in the tumour
+    deposit is not a gene whose normal level is zero, and :func:`mhcmatch.rank.expr_norm_level`
+    reads ``found`` to tell silence from ignorance -- so the tumour rung must not vote on it."""
     import numpy as np
 
+    g = str(gene).strip()
+    tum = None
+    if tumor:
+        rec = load(path, species).get(("tumor", g, _tumor_context(tumor, path, species)))
+        tum = float(rec["median_tpm"]) if rec else None
     idx = _by_gene(_resolve(path, os.environ.get("MHCMATCH_EXPRESSION"), species), species)
-    row = idx.get(str(gene).strip())
+    row = idx.get(g)
     if row is None:
-        return {"tumor": None, "normal": None, "pan": None, "found": False}
+        return {"tumor": tum, "normal": None, "pan": None, "found": False}
     by_ctx = dict(row)
     normal = None
     if tissue:
@@ -849,7 +959,7 @@ def _gene_level_species(gene: str, tissue, path, species: str) -> dict:
         vals = [by_ctx[t] for t in ts if t in by_ctx]
         normal = float(np.median(vals)) if vals else None
     nz = [v for _c, v in row if v > 0]
-    return {"tumor": None, "normal": normal,
+    return {"tumor": tum, "normal": normal,
             "pan": float(np.median(nz)) if nz else 0.0, "found": True}
 
 

@@ -1274,16 +1274,20 @@ def cmd_genes(a):
 def cmd_expression(a):
     """Reference expression for a gene in a normal tissue, or a peptide in a tumour type.
 
-    ``--species mouse`` reads the FANTOM5 deposit instead: 35 adult tissues, gene-keyed, no tumour
-    half. Until 1.10.0 this command declared ``--species`` and ignored it, so a mouse gene was
-    looked up in GTEx and came back empty."""
+    ``--species mouse`` reads the mouse deposits instead: 35 FANTOM5 adult tissues for ``--tissue``
+    and 6 syngeneic models for ``--tumor``, both gene-keyed. Until 1.10.0 this command declared
+    ``--species`` and ignored it, so a mouse gene was looked up in GTEx and came back empty."""
     from . import expression as EX
     sp = getattr(a, "species", "human")
     if a.list_contexts and sp != "human":
         ts = EX.tissues(species=sp)
+        tm = EX.tumor_types(species=sp)
         print(f"# {len(ts)} {sp} normal tissues, from {EX.reference_file(sp)}.")
-        print("# There is no tumour half: --tumor raises for this species rather than resolving.")
         for t in ts:
+            print(f"  {t}")
+        print(f"# {len(tm)} {sp} tumour models, from {EX.TUMOR_FILE_MOUSE} -- gene-keyed, not")
+        print("# peptide-keyed as the human TCGA half is, and in a different unit from the above.")
+        for t in tm:
             print(f"  {t}")
         return
     if a.list_contexts:
@@ -1348,6 +1352,7 @@ REFERENCE_FILES = (
     "ligandome/viral_foreign_iedb.tsv.gz",        # foreign reference for mimicry
     "expression/reference_expression.tsv.gz",     # GTEx tissue + TCGA tumour medians (~105 MB)
     "expression/reference_expression_mmu.tsv.gz",  # FANTOM5 mouse, 18,830 genes x 35 tissues (3 MB)
+    "expression/tumor_expression_mmu.tsv.gz",     # GSE245293, 24,940 genes x 6 syngeneic models (2 MB)
     "thymus/thymus_immunopeptidome_mmu.tsv.gz",   # the mouse tolerance reference
     # The single-pipeline GTEx/TCGA reference, as the three files scoring actually reads -- 6.6 MB
     # between them. The table they are derived from is 38.6 MB and is deliberately NOT staged here:

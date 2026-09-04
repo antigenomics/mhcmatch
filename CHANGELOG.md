@@ -14,9 +14,38 @@ aggregate, and a reason for the vendored anchor models to be reachable.
   until now. `fetch_reference`, `load`, `lookup`, `impute`, `tissues`, `tumor_types`,
   `gene_level`, `context_floor`, `tissue_floor`, `safety_profile` and `resolve_context` all take
   it; **every one defaults to `"human"`, so no human call moves.**
-  `tumor=` **raises** for mouse rather than resolving: there is no mouse TCGA, and returning
-  `None` would read as "not expressed in this tumour" when the question was never askable.
-  `mhcmatch expression --species mouse --list-contexts` prints the 35.
+  `mhcmatch expression --species mouse --list-contexts` prints them.
+- **A mouse tumour rung, so `expr_lvl` and `expr_norm` stop being one column.**
+  `expression/tumor_expression_mmu.tsv.gz` (NCBI GEO **GSE245293**, 24,940 gene symbols x 6
+  syngeneic models x 3 biological replicates: B16F10, CT26, E0771, LLC, MC38, Panc02) is deposited
+  to `isalgo/pmhc_data` and staged by `mhcmatch bootstrap`. Before it, a mouse candidate with no
+  deposited abundance fell back to its gene's normal-tissue median -- which is what `expr_norm`
+  already is, making the two fitted terms **identical on 100 %** of those rows.
+  `expression.TUMOR_FILE_MOUSE` names it; `context_floor(tumor=…)`, `gene_level(tumor=…)` and
+  `lookup(…, tumor=…)` all resolve for mouse now.
+
+  **The key differs by species and that is deliberate.** Human's tumour half is peptide-keyed
+  (TCGA has per-peptide rows, so it answers whether *this neoantigen* was seen expressed); mouse
+  has no peptide rows in any deposit and is gene-keyed by model. `rank._expression_for` picks the
+  key from the species rather than growing a branch. An unrecognised model **raises** and names all
+  six, because `None` would read as "not expressed in this tumour".
+
+  `load(species="mouse")` folds the two deposits into one table under `key_type="gene"` and
+  `key_type="tumor"`, so `tissues`, `_by_gene`, `_tissue_quantile` and `safety_profile` exclude a
+  tumour model by construction. They are in **different units** -- length-normalised RNA-seq
+  against CAGE tag density -- so each term divides by its own context's floor. Mouse floors run
+  **0.60 TPM (aorta) to 2.00 (pancreas, stomach, testis)** against human's 0.10--0.40; compare
+  floors within a species, never across one.
+
+  `tissue_floor(tumor=…, species="mouse")` still raises, and now says why: it needs
+  `TUMOR_TISSUE`, the tumour-to-matched-normal map, which is keyed by TCGA study code. It names
+  `context_floor` as what to call instead.
+
+  **Measured, and it does not currently change what ships.** Coverage of the fit population goes
+  34 % -> 36 % (class I) and **13 % -> 58 % (class II)**. The `tumor` fit arm reaches
+  within-reference AUROC **0.6192** (class I) and **0.5594** (class II) against `vanilla`'s
+  **0.6206** and **0.5620** -- a wash, so both artifacts ship on `vanilla` unchanged, BIC 1076.9
+  and 571.4 identical to the pre-deposit fit.
 - **`aggregate_mhc1_mouse.json` and `aggregate_mhc2_mouse.json`**, both model version 1, both the
   human specification's nine terms in its order so the coefficients compare term by term.
   `rank.aggregate(cls, species)` resolves them through `rank.AGGREGATE_ARTIFACTS`; there is

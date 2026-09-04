@@ -31,6 +31,18 @@ lesson is worth more than the fix: **before trusting any pooled statistic, check
 is** -- `Counter(store._panel[cls].alleles).most_common(3)` is the whole check, and no test would
 ever have caught this because every value was individually correct.
 
+**Two deposits in one table are told apart by a key, not by a convention.** `expression.load()`
+folds the mouse tumour deposit (`tumor_expression_mmu.tsv.gz`, GEO GSE245293) into the same dict as
+the FANTOM5 normal reference, under `key_type="tumor"` -- so every `kt == "gene"` filter in the
+module excludes a tumour model *by construction*. The alternative, keying on the `source` column at
+each call site, is four places that must each remember, and `safety_profile` is the one that would
+have forgotten: it would have reported `B16F10` as a tissue the gene is expressed in. They are in
+**different units** -- length-normalised RNA-seq against CAGE tag density -- so `expr_lvl` and
+`expr_norm` each divide by the floor of the context they read, and neither is a denominator for the
+other. Mouse floors run 0.60-2.00 TPM against human's 0.10-0.40; **compare floors within a species,
+never across one.** The general form: when one container holds two things that must never be summed,
+make the separation a key the type system carries, not a rule the reader carries.
+
 **A cache key of pure data cannot see a code change.** `predict.SCORER_EPOCH` is a hand-moved int in
 the calibration-cache fingerprint, because 1.3.0 changed two scoring heads inside one released
 version and the on-disk backgrounds cached before the change kept being served after it — which

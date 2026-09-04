@@ -15,6 +15,79 @@ the build plan. Phase sections marked _(TBD)_ await detail.
 > tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
 > below resolve there, not here.
 
+## Where this stands, 2026-09-04 — 1.10.0, and mouse is a species rather than a spelling
+
+**`--species mouse` reached the three places it had never reached.** It already routed the H-2
+panel and the three corpus channels; it did not route expression, the fitted scorer, or the
+vendored anchor pickles. All three now do.
+
+**`expression.py` had zero occurrences of `species`.** The FANTOM5 mouse deposit
+(`reference_expression_mmu.tsv.gz`, E-MTAB-3579, 18,830 genes × 35 adult tissues) had been staged
+since 2026-08-21 and was read by nothing, so `expr_lvl` and `expr_norm` — two of the nine fitted
+terms — imputed to the training mean on every mouse row. Species is a **file selection**, not a
+second code path: the mouse deposits are `COLUMNS` column for column, so one loader serves both and
+every signature defaults to `"human"`.
+
+**A second mouse deposit landed the same day and is keyed differently from its human counterpart.**
+`tumor_expression_mmu.tsv.gz` (GEO GSE245293, 24,940 genes × 6 syngeneic models × 3 replicates) is
+the mouse tumour rung. Human's tumour half is **peptide**-keyed (TCGA has per-peptide rows, so it
+can say whether this exact neoantigen was seen expressed); mouse has no peptide rows anywhere and
+is **gene**-keyed by model. `rank._expression_for` picks the key by species rather than growing a
+branch. Before it, `expr_lvl` and `expr_norm` were **identical on 100 %** of the mouse rows with no
+deposited abundance — two fitted terms on one column.
+
+**The two mouse deposits share one table and are told apart by `key_type`.** `load(species="mouse")`
+folds the tumour file in under `key_type="tumor"`, so every `kt == "gene"` filter in the module —
+`tissues`, `_by_gene`, `_tissue_quantile`, and through them `safety_profile` — excludes a tumour
+model *by construction* rather than by a rule each would have to repeat. They are in different
+units (length-normalised RNA-seq against CAGE tag density), so that separation is load-bearing, not
+tidiness: a model reaching the tissue vocabulary would put a number from the wrong distribution
+where nothing downstream could see it. `test_a_tumour_model_is_not_a_tissue_anywhere_it_could_be_
+mistaken_for_one` is the guard.
+
+**The one thing still genuinely absent is `TUMOR_TISSUE`**, the tumour-to-matched-normal map. It is
+keyed by TCGA study code with no mouse equivalent, so `tissue_floor(tumor=…, species="mouse")` still
+raises — and names `context_floor` as what to call instead. Mouse floors run **0.60 TPM (aorta) to
+2.00 (pancreas, stomach, testis)** against human's 0.10–0.40, because CAGE concentrates on fewer
+genes than RSEM TPM does. **Compare floors within a species, never across one.**
+
+**Two fitted artifacts, and the fix that made them fit at all.** `aggregate_mhc1_mouse.json` and
+`aggregate_mhc2_mouse.json` are fitted on the IEDB mouse neoantigen deposit — class I 923 rows /
+380 immunogenic / 61 references / 6 allotypes, class II 469 / 177 / 30 / 7. Against a single pooled
+intercept every coefficient came out at or below zero and the held-out figure was **0.4633**: the
+61 publications have base rates from 0 % to 90 %, and the slopes were paying for them. **One
+unpenalised intercept per reference** — the shipped model's own per-screen design applied one level
+down — plus a **within-reference** read-out gives **0.6206** (peptide-grouped) and **0.6061**
+(reference-grouped). Read those against **0.4856**, what the human fit gives on mouse rows, and
+**0.6963**, the human artifact's own held-out per-screen median. `binder` **+0.6224** (*z* +3.12,
+sign stability 1.00), same sign as the human **+0.7569**.
+
+`rank.AGGREGATE_ARTIFACTS` is keyed `(cls, species)` and `_AGG` is a per-key dict, so
+`("mhc1","human")` keeps the legacy bare filename and no external reference moves. A
+`(cls, species)` pair with no fitted artifact **refuses rather than substituting** the human one —
+which is the whole failure this dict exists to prevent, and is tested.
+
+**`--score features` exists because a fit needs its own columns before its artifact exists.**
+`rank.FEATURES_ONLY` is an artifact-shaped stand-in that computes every column and scores nothing.
+`expr_floor` / `expr_prefilter` became public on `rank_pairs`/`rank_fasta`/`rank_table` at the same
+time: `aggregate_score`'s error message had been telling callers to pass a floor through an entry
+point that did not accept one.
+
+**Five mouse anchor pickles ship**, 0.66 MB and 12 s to build against the human set's 5.3 MB and
+304 s. `_VENDORED_MODELS` is keyed by species; without them every mouse call refit the model from
+cold, including the slow class-II register+EM path the pickles exist to avoid. `mhc2 core/proteome`
+is in the set even though nothing on the predict path currently asks for it — reason about which
+configs are reachable, ship all of them.
+
+**Open, and both are the author's call, not the run's:** the mouse `tumor` fit arm is a wash
+(within-reference AUROC 0.6192 class I / 0.5594 class II against `vanilla`'s 0.6206 / 0.5620), so
+`vanilla` ships unchanged and the rung is there for runs that want it; and
+`bench/mouse_neoag/kesmir_mouse.py` had been scoring on the **human** panel with no `--species`,
+now fixed but **not re-run**, because that arm is where the manuscript's burial replication
+(+0.3210, *z* +5.28) comes from. `MOUSE_ROADMAP.md` §7–§8 in the benchmark repo carries both.
+
+---
+
 ## Where this stands, 2026-09-02 — the library can be somebody else's last stage
 
 **`mhcmatch alleles`, and the failure it exists to make loud.** `resolve_allele('A*01:01:01G',
@@ -1544,8 +1617,25 @@ NetMHCpan/MixMHCpred head-to-head benchmark, and the future predictors (Phase 2)
 
   Two mouse tables were measuring the defect. `mouse_kesmir.md` out-of-fold AUROC 0.6151 -> 0.6453
   with `binder`/`occupancy` going 0 -> 1,593 of 1,593 rows; the larger half of that was a *harness*
-  bug (`canon()` handed `H2KB` to the scorer, for which `rank.species_of` returns `None`, so the
-  corpus channels read the **human** tables against H-2 ligands). `epic_mouse_holdout.md` 0.4851 ->
+  bug (`canon()` handed `H2KB` to the scorer, so the panel lookup missed).
+
+  **Correction, 2026-09-04 — the parenthesis that used to stand here named the wrong mechanism, and
+  that is why the defect it described is still open.** It read *"for which `rank.species_of`
+  returns `None`, so the corpus channels read the human tables against H-2 ligands"*. The symptom
+  is real and was still real today; the cause is not. `cli._aggregate_channels` takes its species
+  from **`a.species`, the `--species` flag** (`cli.py:859,870,881`), and `rank.species_of` is used
+  by nothing in `src/` at all -- it is an exported helper for a *caller* to split a table by genus
+  before choosing the flag. So fixing `canon()` repaired the panel key and left the channels on the
+  human tables, because `kesmir_mouse.py` never passed `--species mouse`. That flag was added
+  2026-09-04; the arm is **not re-run**, because it is where the manuscript's burial replication
+  (+0.3210, *z* +5.28) comes from. `MOUSE_ROADMAP.md` §8, benchmark repo.
+
+  The lesson is the one the pooled-null entry in `CLAUDE.md` already makes: **a fix aimed at a
+  mis-stated mechanism can pass every check and leave the defect in place.** Both halves here were
+  true statements -- `canon()` was broken, and the channels were on human tables -- and joining
+  them with "so" is what made one fix look like two.
+
+  `epic_mouse_holdout.md` 0.4851 ->
   0.4803 -- the mouse features moved a lot (`pres` on 99.3% of rows, median 0.799 relative) and the
   transfer did **not** improve, which is consistent with `mouse_transfer.md` locating that failure
   in the negative class.

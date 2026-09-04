@@ -303,3 +303,69 @@ def test_passing_a_tumour_type_moves_the_floor_off_the_pooled_value():
     """Both terms divide by one floor, and `--tumor` is what sets it."""
     pooled = EX.context_floor()
     assert EX.context_floor(tumor="SKCM") < pooled < EX.context_floor(tumor="LUAD")
+
+
+# --------------------------------------------------------------------------- the mouse deposits
+
+@pytest.mark.hfdata
+def test_the_mouse_tumour_rung_reads_the_syngeneic_deposit_and_not_the_tissue_one():
+    """`expr_lvl` and `expr_norm` stop being one column, which is why this file was added.
+
+    Before 1.10.0 a mouse row with no deposited abundance took the gene's normal-tissue median for
+    both terms -- measured identical on 100% of the 923 class-I rows of the neoantigen deposit.
+    """
+    models = EX.tumor_types(species="mouse")
+    assert models == ["B16F10", "CT26", "E0771", "LLC", "MC38", "Panc02"]
+
+    # three independent melanocytic markers, three orders of magnitude apart from every other model
+    for gene, b16 in (("Tyr", 398.878), ("Dct", 4611.8), ("Pmel", 4636.7)):
+        assert EX.lookup(gene, tumor="B16F10", species="mouse")["median_tpm"] == pytest.approx(
+            b16, rel=1e-3)
+        assert max(EX.lookup(gene, tumor=m, species="mouse")["median_tpm"]
+                   for m in models if m != "B16F10") < 5.0
+
+    # n is animals here (3 replicates), not transcripts as in the FANTOM5 file
+    assert EX.lookup("Tyr", tumor="B16F10", species="mouse")["n"] == 3
+    assert EX.lookup("Tyr", tumor="b16f10", species="mouse") is not None      # case folds
+
+
+@pytest.mark.hfdata
+def test_a_tumour_model_is_not_a_tissue_anywhere_it_could_be_mistaken_for_one():
+    """The two mouse deposits share a table, a key type apart -- so this is the invariant.
+
+    They are in different units (length-normalised RNA-seq against CAGE tag density), so a model
+    that reached `tissues()`, `safety_profile()` or the floor's quantile would put a number from
+    the wrong distribution somewhere nothing downstream could see it.
+    """
+    models = set(EX.tumor_types(species="mouse"))
+    assert models
+    assert not models & set(EX.tissues(species="mouse"))
+    assert len(EX.tissues(species="mouse")) == 35
+    assert not models & {c for c, _ in EX.safety_profile("Trp53", species="mouse")}
+
+    # and the floors are taken from disjoint row sets, so they are free to differ
+    assert EX.context_floor(tumor="B16F10", species="mouse") != EX.context_floor(
+        tissue="skin", species="mouse")
+
+
+@pytest.mark.hfdata
+def test_an_unknown_mouse_model_raises_instead_of_reading_as_not_expressed():
+    """`None` from a lookup means "this gene is not in this tumour", so a bad key must not make one."""
+    for bad in ("SKCM", "Renca", "B16-F10"):
+        with pytest.raises(ValueError, match="not a mouse tumour model"):
+            EX.lookup("Trp53", tumor=bad, species="mouse")
+
+    # tissue_floor is the one function whose whole question is the matched-normal map, and that map
+    # is TCGA-keyed with no mouse equivalent -- so it still refuses, and says what to pass instead
+    with pytest.raises(ValueError, match="matched-normal map"):
+        EX.tissue_floor(tumor="B16F10", species="mouse")
+
+
+@pytest.mark.hfdata
+def test_the_human_tumour_half_is_still_peptide_keyed_and_unmoved():
+    """The mouse deposit is folded into `load` under its own key type; human must not notice."""
+    assert EX.lookup("AAAAAFTAF", tumor="SKCM")["median_tpm"] == pytest.approx(840.557, rel=1e-5)
+    assert EX.lookup("PMEL", tumor="SKCM") is None                # a gene is not a TCGA key
+    assert "B16F10" not in EX.tumor_types()
+    assert len(EX.tumor_types()) == 19
+    assert EX.context_floor(tumor="SKCM") == pytest.approx(0.16, abs=5e-3)
