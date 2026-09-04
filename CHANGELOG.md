@@ -1,5 +1,77 @@
 # Changelog
 
+## [1.10.0] --- 2026-09-04 --- mouse support
+
+**`species="mouse"` now scores with a mouse model, not a human one.** Every mouse ingredient
+already shipped except the scorer; what was missing was the expression reference, a fitted
+aggregate, and a reason for the vendored anchor models to be reachable.
+
+### Added
+
+- **`mhcmatch.expression` is keyed by species.** `species="mouse"` reads
+  `expression/reference_expression_mmu.tsv.gz` -- FANTOM5 mouse CAGE (EBI E-MTAB-3579), 18,830
+  gene symbols x **35 adult tissues including thymus**, deposited 2026-08-21 and read by nothing
+  until now. `fetch_reference`, `load`, `lookup`, `impute`, `tissues`, `tumor_types`,
+  `gene_level`, `context_floor`, `tissue_floor`, `safety_profile` and `resolve_context` all take
+  it; **every one defaults to `"human"`, so no human call moves.**
+  `tumor=` **raises** for mouse rather than resolving: there is no mouse TCGA, and returning
+  `None` would read as "not expressed in this tumour" when the question was never askable.
+  `mhcmatch expression --species mouse --list-contexts` prints the 35.
+- **`aggregate_mhc1_mouse.json` and `aggregate_mhc2_mouse.json`**, both model version 1, both the
+  human specification's nine terms in its order so the coefficients compare term by term.
+  `rank.aggregate(cls, species)` resolves them through `rank.AGGREGATE_ARTIFACTS`; there is
+  deliberately no `("mhc2", "human")` entry, so asking for a human class-II aggregate raises
+  instead of quietly returning the class-I one. Fitted on the IEDB mouse neoantigen deposit --
+  class I **923 rows / 380 immunogenic / 61 references / 6 H-2 allotypes**, class II **469 / 177 /
+  30 / 7** -- with one unpenalised intercept per reference and no row dropped.
+- **Five mouse `AnchorModel` pickles**, the human registry mirrored entry for entry
+  (`diffusion.vendored_models(species)`), 0.66 MB in the wheel against the human set's 5.3 MB.
+  `Store.species` is set by `from_pmhc` and is how the loader knows which registry to try.
+- **`rank --score features`** computes every fitted column and scores nothing. A refit needs the
+  design matrix before its artifact exists, and until now only a scorer could ask for one -- so a
+  species or class with no artifact could not be *measured*, which is what fitting one requires.
+- **`rank --expr-floor` / `--expr-prefilter`.** `_finish` has taken `expr_floor` for a long time
+  and `aggregate_score`'s own error message told callers to pass it; no public entry point
+  accepted it.
+
+### Fixed
+
+- **`rank` scored its `physchem` column off the human complementarity table on a mouse run.**
+  `_finish` called `_recognition(..., cls=cls)` at three sites with `species` left at its default,
+  although `complement_mhc1_mouse.json` has shipped since 1.0. `rank_pairs` / `rank_fasta` /
+  `rank_table` / `_finish` all take `species` now and forward it.
+- **`mhcmatch expression` declared `--species` and ignored it**, so a mouse gene was looked up in
+  GTEx and came back empty.
+- **A mouse panel missed every vendored anchor model and refit at runtime**, including the
+  class-II register+EM the pickles exist to avoid. `panel_sha` already made this *correct*; it was
+  never fast. Measured: the class-II fit chain printed "fitting the MHC-II presentation model
+  (core/proteome)" once per call.
+
+### Changed
+
+- `predict.SCORER_EPOCH` **4 -> 5**. No human number moves, and it is bumped anyway because this
+  int is load-bearing in two repos: the benchmark's feature frame keys its freshness guard on it,
+  and that frame carries mouse rows whose `expression` column does change.
+- `mhcmatch build --check` covers **38** artifact files. `mhcmatch build` builds both species'
+  anchor models; the mouse set costs 12 s against the human set's 304 s.
+
+### Known, and stated rather than worked around
+
+- **There is no mouse tumour transcriptome, so the two expression terms are not the contrast they
+  are in human.** A tumour abundance exists for 34 % of the class-I rows (GEO GSE281579); for the
+  rest `_expression_for` falls back to the gene's FANTOM5 tissue median, which is what `expr_norm`
+  already is -- on those rows the two columns are **identical**. `expr_norm` fits **-0.2314**
+  (z -2.78) in mouse against **+0.2155** in human. The sign was checked against that confound and
+  survives it: refitting with `expr_norm` as the gene's *pan-tissue* median, which by construction
+  never equals `expr_lvl`, gives **-0.2432 at z -3.31** -- larger and more significant -- and the
+  availability indicator itself is null (+0.3136, z +0.75).
+- **Class II is thin.** 469 rows over 7 references that decide, and its reference-grouped held-out
+  figure does not clear chance. It is the first class-II EPIC artifact for either species, so its
+  own cross-validation is the whole reference point.
+- **The mouse abundance floor is a normal-tissue floor** and runs 0.60-2.00 TPM against the human
+  0.10-0.40, both because there is no tumour transcriptome to take it from and because CAGE tag
+  density is not RNA-seq TPM. Five of the 35 contexts sit exactly on `C_MAX`.
+
 ## [1.9.0] — 2026-09-03 — two whitelists, because they make two different claims
 
 **A gene whitelist and an epitope whitelist are not one whitelist.** 1.8.0's `--keep` matched a

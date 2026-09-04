@@ -478,6 +478,77 @@ also blocks the currently-shipped v9 by the same bar. Against them stand NCI +0.
 discordant pairs, TESLA +0.0320 and Gfeller_GBM +0.0285. The bar is not relaxed and the verdict is
 not rewritten; the artifact carries its own dissent.
 
+## `aggregate_mhc1_mouse.json` / `aggregate_mhc2_mouse.json` — the mouse scorers
+
+**Derived, not experimental**, and the same object as the human artifact in every structural
+respect: nine standardised slopes, the same nine feature names in the same order, ridge
+`tau = 0.25`, its own `mu`/`sigma`, a *model* version that is an integer (`1`). `rank.aggregate()`
+resolves them through `rank.AGGREGATE_ARTIFACTS`, keyed `(cls, species)`; there is deliberately no
+`("mhc2", "human")` entry, so asking for a human class-II aggregate raises instead of returning the
+class-I one.
+
+    # in ~/vcs/projects/2026-mhcmatch-benchmark:
+    python bench/epic/fit_mouse.py --cls mhc1
+    python bench/epic/fit_mouse.py --cls mhc2
+    # then, deliberately:
+    cp bench/epic/aggregate_mhc{1,2}_mouse.json ~/vcs/code/mhcmatch/src/mhcmatch/data/
+
+**Corpus.** `~/hf/pmhc_data/neoantigens/neoag_tested_mmu.tsv.gz`, the IEDB mouse neoantigen
+deposit, at the class's own peptide lengths and keyed on `mhc_a_pred`. Class I: **923 rows, 380
+immunogenic, 61 references, 6 H-2 allotypes.** Class II: **469 rows, 177 immunogenic, 30
+references, 7 allotypes.** No row is dropped for a missing term: seven of the nine are populated on
+every row and the two expression terms are imputed to the population median, which is the
+convention `rank.aggregate_score` documents.
+
+Every column is computed by `mhcmatch rank pairs --species mouse --score features`, so the panel,
+the three corpus channels and both expression terms are the library's own **mouse** references
+throughout. That flag is load-bearing rather than cosmetic: the human panel holds no `H-2-Kb`
+ligands, so the groove is borrowed from its human kernel neighbours and SIINFEKL -- the canonical
+H-2-Kb binder -- scores `binder` **-1.148** against **+1.523** under `--species mouse`.
+
+**One unpenalised intercept per reference, and the fit is not interpretable without it.** The human
+artifact gives each *screen* an intercept so prevalence and candidate generation stay out of the
+slopes. This deposit is one screen and 61 publications whose positive rate runs 0 % to 90 %, so the
+reference is where that variation lives. Against a single pooled intercept every one of the nine
+coefficients came out at or below zero and the held-out figure sat at 0.4633.
+
+**The reported metric is AUROC within a reference**, macro-averaged over the references carrying at
+least three of each class, because a pooled figure over this deposit is mostly a base-rate
+difference between laboratories. Held out on whole peptides: class I **0.6206**, class II
+**0.5620**; held out on whole references: **0.6061** and **0.4564**. Read against 0.4856 -- what
+the human fit gives on mouse rows (`bench/results/epic_mouse_holdout.md`) -- and 0.6963, the human
+model's own held-out per-screen median.
+
+**Two things to know before quoting a coefficient.**
+
+*Class II is thin and is shipped on the author's word.* 469 rows over 7 references that decide, and
+its reference-grouped figure (0.4564) does not clear chance. It is the first class-II EPIC artifact
+in the project for either species, so there is no human counterpart to compare it against and its
+own cross-validation is the whole reference point.
+
+*`expr_norm` is negative in mouse (-0.2314, z -2.78) where it is positive in human (+0.2155), and
+the two are not measuring the same thing.* There is no mouse tumour transcriptome: a tumour
+abundance exists for 34 % of rows (GEO GSE281579) and for the rest `rank._expression_for` falls
+back to the gene's FANTOM5 tissue median, which is what `expr_norm` already is -- so on those rows
+the two columns are identical. The sign was checked against that and survives it: under the `pan`
+arm, where `expr_norm` is the gene's pan-tissue median and by construction never equals `expr_lvl`,
+the coefficient is **-0.2432 at z -3.31**, larger and more significant. The indicator itself
+(`expr_observed`, +0.3136, z +0.75) is null, so which publication deposited an abundance is not
+carrying it either. `bench/results/epic_mouse_fit_mhc{1,2}.md` has all four arms.
+
+## `anchor_model_*_mouse_*.pkl.gz` — the mouse AnchorModel pickles
+
+**Derived.** Five files, the mouse counterpart of the human registry entry for entry, built by
+`mhcmatch build anchor` from `Store.from_pmhc(species="mouse")` and loaded read-only under the same
+version / `panel_sha` / params guard. 0.66 MB between them against the human set's 5.3 MB, and 12 s
+to build against 304 s, because the mouse panel is a twentieth of the human one.
+
+They are a performance artifact and nothing else. `panel_sha` already made a mouse run *correct* --
+a mouse panel misses every human entry and falls through to a fit -- so what these change is that
+it no longer refits on every call, including the class-II register+EM the pickles exist to avoid.
+`diffusion.vendored_models(species)` selects the registry; `Store.species`, set by `from_pmhc`, is
+how the loader knows which to try.
+
 ## `known_neoantigens.idx` / `known_neoantigens.json` — the validated-epitope whitelist index
 
 **What it is.** A `seqtree.Index` over every peptide `mhcmatch.known.load()` collects into its

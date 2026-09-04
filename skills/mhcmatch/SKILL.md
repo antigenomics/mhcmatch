@@ -106,7 +106,7 @@ aliases the parser still answers to and this table omits — `vector` for `casse
 | recognition | `complement` · `mimics` · `mimicry` · `neoag` |
 | integration | `rank` · `explain` · `expression` · `source` · `genes` |
 | cassette | `cassette select` · `cassette score` · `cassette build` · `cassette order` · `cassette linkers` · `cassette deslip` |
-| setup | `alleles` · `bootstrap` · `build` (`build --check` = are any of the 31 shipped artifact files stale?) |
+| setup | `alleles` · `bootstrap` · `build` (`build --check` = are any of the 38 shipped artifact files stale?) |
 
 `mhcmatch binder <peptide> --alleles ... --cls mhc1` ranks alleles by the generalized binder score.
 `mhcmatch cassette select --candidates pool.tsv -k 20 [--tol 3]` chooses the units; give it the

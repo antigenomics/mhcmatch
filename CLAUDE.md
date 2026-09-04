@@ -333,7 +333,7 @@ mhcmatch build corpus -v    # one target, with per-step wall clock
   reports every head stale at every release, which is why `.json` was once blanket-exempted — and
   the exemption cost the check *all* of them. `mimicry_fit.py` wrote `"0.12.0"` as a model version,
   the one file that made the shapes ambiguous; it now writes `1`, and the rule holds by construction.
-- **`--check` covers all 31 shipped artifact files, not 11.** Until 2026-08-23 the `TARGETS` table listed
+- **`--check` covers all 38 shipped artifact files, not 11.** Until 2026-08-23 the `TARGETS` table listed
   only the anchors, the corpus tables and the recognition heads, so sixteen files — including
   `aggregate_mhc1.json` (EPIC itself) and `affinity_potts_mhc{1,2}.npz` (the source of `occupancy`)
   — could go missing or ship half-copied and nothing would say so. Entries whose generator lives in

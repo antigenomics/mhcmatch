@@ -1537,6 +1537,35 @@ _VENDORED_MODELS = {
     ("mhc2", "anchor", "ligand"): "anchor_model_mhc2_ligand_anchor.pkl.gz",
 }
 
+#: The same registry for a **mouse** panel, and it exists for the same reason the human one does.
+#:
+#: `panel_sha` already made a mouse run *correct* -- a mouse panel misses every human entry above
+#: and falls through to a fit. What it could not do is make it fast: `--species mouse` therefore
+#: refit on every call, including the class-II register+EM the pickles exist to avoid. The mouse
+#: panel is a twentieth of the human one, so these are small; the pair is ~0.5 MB in the wheel.
+#:
+#: It mirrors the human registry entry for entry. An earlier version vendored only the four configs
+#: a mouse run was *reasoned* to reach and left `("mhc2", "core", "proteome")` out; the first
+#: `rank pairs --cls mhc2 --species mouse` run printed "fitting the MHC-II presentation model
+#: (core/proteome)" once per call and settled it. Reason about which configs are reachable, ship
+#: all of them.
+_VENDORED_MODELS_MOUSE = {
+    ("mhc1", "adaptive", "proteome"): "anchor_model_mhc1_mouse_proteome_adaptive.pkl.gz",
+    ("mhc2", "adaptive", "proteome"): "anchor_model_mhc2_mouse_proteome_adaptive.pkl.gz",
+    ("mhc2", "core", "proteome"): "anchor_model_mhc2_mouse_proteome_core.pkl.gz",
+    ("mhc1", "anchor", "ligand"): "anchor_model_mhc1_mouse_ligand_anchor.pkl.gz",
+    ("mhc2", "anchor", "ligand"): "anchor_model_mhc2_mouse_ligand_anchor.pkl.gz",
+}
+
+
+def vendored_models(species: str | None = "human") -> dict:
+    """The vendored-model registry for ``species``. A store with no species declared reads human.
+
+    ``None`` is a *mixed* panel -- ``Store.from_pmhc(species=None)`` loads both -- and no vendored
+    model can match one, so which registry it reads changes nothing except that the human names are
+    the ones tried and missed."""
+    return _VENDORED_MODELS_MOUSE if species == "mouse" else _VENDORED_MODELS
+
 
 def panel_sha(store, cls) -> str:
     """Content hash of the ``cls`` panel rows (epitope + allele, stored/build order). Cached on the
@@ -1615,8 +1644,14 @@ class RoutedAnchorModel:
 
 def load_vendored_anchor_model(store, cls, params):
     """The pre-fit :class:`AnchorModel` for ``(cls, footprint, background)`` when one is shipped and
-    the mhcmatch version, panel hash and full ``params`` all match; else ``None`` (caller builds)."""
-    name = _VENDORED_MODELS.get((cls, params.get("footprint"), params.get("background")))
+    the mhcmatch version, panel hash and full ``params`` all match; else ``None`` (caller builds).
+
+    Which file is *tried* comes from ``store.species``; whether it is *used* still comes from
+    ``panel_sha``. Keeping those two separate is what makes a wrong species a cache miss rather
+    than a wrong answer -- and it is why the guard was already correct before mouse models existed,
+    just slow."""
+    reg = vendored_models(getattr(store, "species", "human"))
+    name = reg.get((cls, params.get("footprint"), params.get("background")))
     if name is None:
         return None
     try:

@@ -72,20 +72,27 @@ def anchor_models(say=print) -> list:
     The load guard keys on ``mhcmatch.__version__``, so a bump without a rebuild ships models the
     library refuses to load. That is a *provenance* guard, not a correctness one: ``panel_sha`` and
     ``params`` are unchanged by a bump and the refit is deterministic.
+
+    **One panel per species, and the species is the loop, not a flag.** Until 1.10.0 this built
+    only from ``species="human"``, so a mouse panel missed the ``panel_sha`` guard on every entry
+    and refit at runtime -- correct, and slow in exactly the place the pickles exist to avoid.
     """
     import mhcmatch
-    from .diffusion import _VENDORED_MODELS, save_vendored_anchor_model
+    from .diffusion import vendored_models, save_vendored_anchor_model
 
-    classes = tuple(dict.fromkeys(cls for cls, _, _ in _VENDORED_MODELS))
-    store = mhcmatch.Store.from_pmhc(tier="full", species="human", classes=classes)
     written = []
-    for (cls, footprint, background), name in _VENDORED_MODELS.items():
-        path = os.path.join(DATA, name)
-        t0 = time.time()
-        save_vendored_anchor_model(store, cls, path, footprint=footprint, background=background)
-        written.append(path)
-        say(f"  {name}  {os.path.getsize(path) / 1e6:.2f} MB  "
-            f"[{cls} {footprint}/{background}]  {time.time() - t0:.1f} s")
+    for species in ("human", "mouse"):
+        reg = vendored_models(species)
+        classes = tuple(dict.fromkeys(cls for cls, _, _ in reg))
+        store = mhcmatch.Store.from_pmhc(tier="full", species=species, classes=classes)
+        for (cls, footprint, background), name in reg.items():
+            path = os.path.join(DATA, name)
+            t0 = time.time()
+            save_vendored_anchor_model(store, cls, path, footprint=footprint,
+                                       background=background)
+            written.append(path)
+            say(f"  {name}  {os.path.getsize(path) / 1e6:.2f} MB  "
+                f"[{species} {cls} {footprint}/{background}]  {time.time() - t0:.1f} s")
     return written
 
 
@@ -208,7 +215,12 @@ TARGETS = {
                 "anchor_model_mhc2_proteome_adaptive.pkl.gz",
                 "anchor_model_mhc2_proteome_core.pkl.gz",
                 "anchor_model_mhc1_ligand_anchor.pkl.gz",
-                "anchor_model_mhc2_ligand_anchor.pkl.gz"]),
+                "anchor_model_mhc2_ligand_anchor.pkl.gz",
+                "anchor_model_mhc1_mouse_proteome_adaptive.pkl.gz",
+                "anchor_model_mhc2_mouse_proteome_adaptive.pkl.gz",
+                "anchor_model_mhc2_mouse_proteome_core.pkl.gz",
+                "anchor_model_mhc1_mouse_ligand_anchor.pkl.gz",
+                "anchor_model_mhc2_mouse_ligand_anchor.pkl.gz"]),
     "corpus": ("corpus k-mer count tables", corpus_tables, ["corpus_tables.npz"]),
     "known": ("1-mismatch index of validated immunogenic neoantigens", known_epitopes,
               ["known_neoantigens.idx", "known_neoantigens.json"]),
@@ -227,7 +239,9 @@ TARGETS = {
     # copy and nothing would say so. They are listed here with `None` builders so `--check`
     # validates presence and `build` prints the command that regenerates them. Every command in
     # EXTERNAL below is one the artifact or PROVENANCE.md records -- none is reconstructed.
-    "aggregate": ("the EPIC neoantigen scorer", None, ["aggregate_mhc1.json"]),
+    "aggregate": ("the EPIC neoantigen scorer", None,
+                  ["aggregate_mhc1.json", "aggregate_mhc1_mouse.json",
+                   "aggregate_mhc2_mouse.json"]),
     "affinity": ("affinity head coefficients", None, ["affinity_mhc1.json"]),
     "potts": ("Potts affinity weights (the source of `occupancy`)", None,
               ["affinity_potts_mhc1.npz", "affinity_potts_mhc2.npz"]),
@@ -252,7 +266,12 @@ EXTERNAL = {
     # `aggregate_mhc1.json`'s own `generator` field. The fit writes a *candidate* to
     # `bench/epic/aggregate_mhc1.json`; copying it here is manual, so diff the two after any
     # run of `bench/run_epic.sh`, which is the chain that leads to it.
-    "aggregate": "python bench/epic/fit.py --physchem rose_af5 --presentation binder --density log10a   # benchmark repo",
+    "aggregate": ("python bench/epic/fit.py --physchem rose_af5 --presentation binder --density log10a"
+                  "   # human class I; benchmark repo\n"
+                  "    python bench/epic/fit_mouse.py --cls mhc1"
+                  "                                     # mouse class I\n"
+                  "    python bench/epic/fit_mouse.py --cls mhc2"
+                  "                                     # mouse class II"),
     "affinity": "python bench/affinity/train.py --cls mhc1 --species human   # benchmark repo",
     "potts": "python bench/affinity/fit_potts.py --cls mhc1    # and --cls mhc2; benchmark repo",
         "complement1": "python bench/neoag/complement.py --fit chowell_rebuilt --tables all   # benchmark repo",

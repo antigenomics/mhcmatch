@@ -557,8 +557,14 @@ def tile(seq: str, lengths) -> list:
 #: 1 = pre-1.3.0 heads. 2 = length-aware Potts + extrapolated %rank tail. 3 = canonical allele keys
 #: (`H-2Kb` / `H2-Kb` / `H-2-Kb` collapsed to one molecule, so a cached background is no longer
 #: keyed on which spelling the caller typed). 4 = the `background="ligand"` null leaves the queried
-#: allele out.
-SCORER_EPOCH = 4
+#: allele out. 5 = the expression reference is keyed by species, so `expr_lvl` and `expr_norm` on a
+#: mouse row read FANTOM5 instead of missing GTEx and imputing to the training mean.
+#:
+#: **5 moves no human number and is bumped anyway**, because this int is load-bearing in two repos:
+#: the benchmark's feature frame keys its freshness guard on it, and that frame carries mouse rows
+#: whose `expression` column does change. A frame built under epoch 4 accepted under epoch 5 would
+#: fit mouse coefficients on a human-imputed column.
+SCORER_EPOCH = 5
 
 
 def _fingerprint(store, cls, background, footprint, head):

@@ -336,6 +336,14 @@ class _Panel:
 class Store:
     """Searchable reference panel of presented peptides, partitioned by MHC class."""
 
+    #: **Which species' panel this store holds**, or ``None`` for a mixed/unfiltered one.
+    #:
+    #: Set by :meth:`from_pmhc` from its own ``species=`` argument and read by
+    #: :func:`mhcmatch.diffusion.load_vendored_anchor_model`, which otherwise cannot tell a mouse
+    #: panel from a human one and so cannot pick the right pre-fit model. ``panel_sha`` still
+    #: decides whether a vendored model is *valid*; this decides which one is worth opening.
+    species: str | None = None
+
     def __init__(self):
         self._panel = {"mhc1": _Panel("mhc1"), "mhc2": _Panel("mhc2")}
         self._am = {}  # cls -> AnchorModel (lazy, for diffuse=True)
@@ -437,7 +445,9 @@ class Store:
                 yield {k: f[j] for k, j in ix.items() if j < len(f)}
 
         with op(path, "rt") as fh:
-            return cls.from_records(stream(fh), impute_alpha)
+            store = cls.from_records(stream(fh), impute_alpha)
+        store.species = species
+        return store
 
     def __len__(self):
         return sum(len(p.epitopes) for p in self._panel.values())

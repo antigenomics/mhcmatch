@@ -818,9 +818,12 @@ def test_a_v4_shaped_artifact_scores_through_the_library_unchanged():
     for r in rows:
         r.components.update({c: 1e-3 for c in R.CHANNEL_COLUMNS})
 
+    # `_AGG` is a cache keyed on `(cls, species)` since 1.10.0, so the injection point is a slot
+    # rather than the whole global. What the test asserts is unchanged: one library, two artifact
+    # generations, no branch.
     saved = R._AGG
     try:
-        R._AGG = v4
+        R._AGG = {("mhc1", "human"): v4}
         done = R._finish(rows, None, score="aggregate")
         assert all(np.isfinite(r.score) for r in done)
         assert all(r.imputed == "" for r in done), "a v4 term fell back to its training mean"

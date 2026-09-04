@@ -268,3 +268,55 @@ def test_the_shipped_artifact_is_pinned_to_the_fit_that_produced_it(art):
     # v10 was 92e0b4e707e67f7f (coef binder +0.4623, log10a +0.4005; BIC 4328.3, LOO mean 0.6998)
     assert hashlib.sha256(blob).hexdigest()[:16] == "ec4bb310d10c688c", (
         hashlib.sha256(blob).hexdigest()[:16])
+
+
+# --- the mouse artifacts -------------------------------------------------------------------
+
+@pytest.mark.parametrize("cls, species, digest, version, rows, pos", [
+    ("mhc1", "mouse", "7658dc52466a27bf", 1, 923, 380),
+    ("mhc2", "mouse", "2982b50ab8b7dd85", 1, 469, 177),
+])
+def test_the_mouse_artifacts_are_pinned_to_the_fits_that_produced_them(
+        cls, species, digest, version, rows, pos):
+    """The same guard as the human artifact, for the same reason: the copy is a `cp`.
+
+    `build --check` presence-checks a model version (an int) and can see nothing else, so a
+    hand-copied older fit stamped with the current version reads as current. Failing this means the
+    mouse scorer changed -- a deliberate act -- so update the digest in the commit that copies the
+    artifact, and put the old numbers in the message.
+    """
+    import hashlib
+    import json
+
+    from mhcmatch import rank as R
+
+    a = R.aggregate(cls, species)
+    assert a["version"] == version, a["version"]
+    assert a["features"] == list(R.TERMS_MOUSE_EXPECTED), a["features"]
+    assert a["fit"]["rows"] == rows and a["fit"]["positives"] == pos, a["fit"]
+    blob = json.dumps([a["coef"], a["mu"], a["sigma"]], sort_keys=True).encode()
+    assert hashlib.sha256(blob).hexdigest()[:16] == digest, (
+        hashlib.sha256(blob).hexdigest()[:16])
+
+
+def test_a_species_class_with_no_fitted_artifact_refuses_rather_than_substituting():
+    """There is no human class-II aggregate, and asking for one must not return the class-I fit.
+
+    The registry is a lookup precisely so this is a `ValueError` at the point of asking rather than
+    a plausible number computed from the wrong coefficients.
+    """
+    from mhcmatch import rank as R
+
+    assert ("mhc2", "human") not in R.AGGREGATE_ARTIFACTS
+    with pytest.raises(ValueError, match="no fitted artifact"):
+        R.aggregate("mhc2", "human")
+
+
+def test_every_registered_artifact_declares_the_features_it_carries_coefficients_for():
+    from mhcmatch import rank as R
+
+    for (cls, species) in R.AGGREGATE_ARTIFACTS:
+        a = R.aggregate(cls, species)
+        n = len(a["features"])
+        assert len(a["coef"]) == n and len(a["mu"]) == n and len(a["sigma"]) == n, (cls, species)
+        assert tuple(a["features"]) == R.aggregate_features(cls, species)

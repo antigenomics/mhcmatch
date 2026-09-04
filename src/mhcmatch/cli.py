@@ -854,8 +854,10 @@ def cmd_rank(a):
         rows = R.rank_pairs(store, recs, cls=a.cls,
                             tissue=a.tissue, tumor=a.tumor, refs=refs, score=a.score,
                             prevalence=a.prevalence,
+                            species=a.species, expr_floor=a.expr_floor,
+                            expr_prefilter=a.expr_prefilter,
                             channels=_aggregate_channels(a.cls, a.no_self, a.species)
-                            if a.score == "aggregate" else None)
+                            if a.score in ("aggregate", "features") else None)
     elif a.mode == "fasta":
         store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
         rows = R.rank_fasta(store, a.input, _read_alleles(a.alleles), cls=a.cls,
@@ -863,8 +865,10 @@ def cmd_rank(a):
                             rank_threshold=a.rank_threshold, keep=_keep(a),
                             score=a.score,
                             prevalence=a.prevalence,
+                            species=a.species, expr_floor=a.expr_floor,
+                            expr_prefilter=a.expr_prefilter,
                             channels=_aggregate_channels(a.cls, a.no_self, a.species)
-                            if a.score == "aggregate" else None)
+                            if a.score in ("aggregate", "features") else None)
     else:
         store = None
         if a.recompute_presentation:
@@ -872,8 +876,10 @@ def cmd_rank(a):
         rows = R.rank_table(a.input, tissue=a.tissue, tumor=a.tumor, refs=refs,
                             store=store, cls=a.cls, score=a.score,
                             prevalence=a.prevalence,
+                            species=a.species, expr_floor=a.expr_floor,
+                            expr_prefilter=a.expr_prefilter,
                             channels=_aggregate_channels(a.cls, a.no_self, a.species)
-                            if a.score == "aggregate" else None)
+                            if a.score in ("aggregate", "features") else None)
     # `rank` floats an exact known-epitope match to the top of its *listing* -- a display choice,
     # documented on `Ranked.rank`, which the `rank` column does not follow. Under --passthrough the
     # file IS the caller's table re-ordered by our score, so the listing order and the rank have to
@@ -883,11 +889,15 @@ def cmd_rank(a):
         rows = sorted(rows, key=lambda r: r.rank)
     rows = rows[:a.top] if a.top else rows
     cols = list(R.BASE_COLUMNS)
-    if a.score == "aggregate":
+    if a.score in ("aggregate", "features"):
         cols += list(R.EXPR_COLUMNS) + list(R.AGGREGATE_COLUMNS)
-        model = rows[0].components.get("model", "") if rows else ""
-        print(f"# scored with {model or 'aggregate'}: "
-              f"{', '.join(R.AGGREGATE_FEATURES)}", file=sys.stderr)
+        if a.score == "features":
+            print("# --score features: every fitted column computed, nothing scored. "
+                  f"{', '.join(R.FEATURES_ONLY['features'])}", file=sys.stderr)
+        else:
+            model = rows[0].components.get("model", "") if rows else ""
+            print(f"# scored with {model or 'aggregate'}: "
+                  f"{', '.join(R.aggregate_features(a.cls, a.species))}", file=sys.stderr)
     # The mimicry columns are appended, never folded into `score`. Whether mimicry belongs inside
     # the gate is a benchmark question that is not settled, and quietly moving the ranking on an
     # unvalidated term is the failure mode worth avoiding -- so the ordering is identical with and
@@ -940,7 +950,7 @@ def cmd_rank(a):
                      str(r.n_alleles_presenting), r.alleles_presenting,
                      r.imputed, r.wt_peptide,
                      r.known_epitope, r.variant_type, str(r.keep), r.keep_reason]
-            if a.score == "aggregate":
+            if a.score in ("aggregate", "features"):
                 # `.get`: an artifact that does not declare an expression term never sets it, and
                 # an absent term is an empty cell rather than a KeyError or a fabricated 0.
                 cells += ["" if r.components.get(c) is None else f"{r.components[c]:.6g}"
@@ -1262,8 +1272,20 @@ def cmd_genes(a):
 
 
 def cmd_expression(a):
-    """Reference expression for a gene in a normal tissue, or a peptide in a tumour type."""
+    """Reference expression for a gene in a normal tissue, or a peptide in a tumour type.
+
+    ``--species mouse`` reads the FANTOM5 deposit instead: 35 adult tissues, gene-keyed, no tumour
+    half. Until 1.10.0 this command declared ``--species`` and ignored it, so a mouse gene was
+    looked up in GTEx and came back empty."""
     from . import expression as EX
+    sp = getattr(a, "species", "human")
+    if a.list_contexts and sp != "human":
+        ts = EX.tissues(species=sp)
+        print(f"# {len(ts)} {sp} normal tissues, from {EX.reference_file(sp)}.")
+        print("# There is no tumour half: --tumor raises for this species rather than resolving.")
+        for t in ts:
+            print(f"  {t}")
+        return
     if a.list_contexts:
         print("# TCGA tumour type -> its matched normal GTEx tissue(s), best match first.")
         print("# Keys are TCGA study abbreviations (NCI GDC); values are GTEx SMTSD names.")
@@ -1286,18 +1308,21 @@ def cmd_expression(a):
         # is not a table anything can parse.
         out = _Out(a, "row")
         out.header("key", "context", "source", "median_tpm", "q25_tpm", "q75_tpm", "n")
-        rec = EX.lookup(a.key, tissue=a.tissue, tumor=a.tumor) if (a.tissue or a.tumor) else None
+        rec = EX.lookup(a.key, tissue=a.tissue, tumor=a.tumor,
+                        species=sp) if (a.tissue or a.tumor) else None
         if rec:
             out.row(a.key, a.tumor or a.tissue or "", rec["source"], f"{rec['median_tpm']:.6g}",
                     f"{rec['q25_tpm']:.6g}", f"{rec['q75_tpm']:.6g}", rec["n"])
         elif a.tissue or a.tumor:
             say(f"no reference row for {a.key!r} in {a.tumor or a.tissue!r}")
         if a.safety:
-            for t, v in EX.safety_profile(a.key, top=a.top or 10):
-                out.row(a.key, t, "GTEx", f"{v:.6g}", "", "", "")
+            for t, v in EX.safety_profile(a.key, top=a.top or 10, species=sp):
+                out.row(a.key, t, "GTEx" if sp == "human" else "fantom5_mouse",
+                        f"{v:.6g}", "", "", "")
         out.close()
         return
-    rec = EX.lookup(a.key, tissue=a.tissue, tumor=a.tumor) if (a.tissue or a.tumor) else None
+    rec = EX.lookup(a.key, tissue=a.tissue, tumor=a.tumor,
+                    species=sp) if (a.tissue or a.tumor) else None
     if not rec:
         if a.tissue or a.tumor:
             print(f"# no reference row for {a.key!r} in "
@@ -1308,7 +1333,7 @@ def cmd_expression(a):
               f"\tn={rec['n']}")
     if a.safety:
         print(f"# {a.key} across normal tissues (highest first):")
-        for t, v in EX.safety_profile(a.key, top=a.top or 10):
+        for t, v in EX.safety_profile(a.key, top=a.top or 10, species=sp):
             print(f"  {v:10.4g}  {t}")
 
 
@@ -1322,6 +1347,8 @@ REFERENCE_FILES = (
     "thymus/thymus_immunopeptidome.tsv.gz",       # tolerance reference for mimicry
     "ligandome/viral_foreign_iedb.tsv.gz",        # foreign reference for mimicry
     "expression/reference_expression.tsv.gz",     # GTEx tissue + TCGA tumour medians (~105 MB)
+    "expression/reference_expression_mmu.tsv.gz",  # FANTOM5 mouse, 18,830 genes x 35 tissues (3 MB)
+    "thymus/thymus_immunopeptidome_mmu.tsv.gz",   # the mouse tolerance reference
     # The single-pipeline GTEx/TCGA reference, as the three files scoring actually reads -- 6.6 MB
     # between them. The table they are derived from is 38.6 MB and is deliberately NOT staged here:
     # nothing on a scoring path parses it, and on a slow link it is minutes of download for numbers
@@ -2673,11 +2700,21 @@ def main(argv=None):
     rk.add_argument("--recompute-presentation", action="store_true",
                     help="mode=table: rescore presentation with mhcmatch instead of trusting the "
                          "table's own columns")
-    rk.add_argument("--score", choices=("aggregate", "gate"), default="aggregate",
-                    help="`aggregate` (default) scores with the fitted model in "
-                         "data/aggregate_mhc1.json -- the one the benchmark fitted. `gate` is the "
-                         "two-term noisy-AND that was the default before 0.19.0, kept so a run can "
-                         "be compared against the old ordering")
+    rk.add_argument("--expr-floor", type=float, metavar="TPM",
+                    help="the abundance floor `c` both expression terms divide by. Overrides the "
+                         "one --tissue/--tumor resolves, and is the only way to score rows whose "
+                         "origin resolves to no context at all -- pass "
+                         "`mhcmatch.expression.context_floor(species=...)` for the pooled value")
+    rk.add_argument("--expr-prefilter", type=float, default=0.0, metavar="TPM",
+                    help="an expression cut the candidates already passed; raises the floor to "
+                         "meet it, because a filter removes the range the term resolves")
+    rk.add_argument("--score", choices=("aggregate", "gate", "features"), default="aggregate",
+                    help="`aggregate` (default) scores with the fitted model for this "
+                         "--cls/--species. `gate` is the two-term noisy-AND that was the default "
+                         "before 0.19.0, kept so a run can be compared against the old ordering. "
+                         "`features` computes and emits every fitted column and scores nothing -- "
+                         "what a refit needs before its artifact exists; it needs a real floor, so "
+                         "pass --tissue or --tumor")
     rk.add_argument("--extended", action="store_true",
                     help="append the mimicry aggregate: signed viral / self / thymus contributions "
                          "per anchor and TCR-facing channel, their sum, and the autoimmunity "
@@ -3027,13 +3064,17 @@ def main(argv=None):
     xp = sub.add_parser("expression", help="reference expression by normal tissue or tumour type")
     xp.add_argument("key", nargs="?", default="", help="gene symbol (with --tissue) or peptide "
                                                        "(with --tumor)")
-    xp.add_argument("--tissue", help="GTEx tissue (gene-keyed, normal)")
-    xp.add_argument("--tumor", help="TCGA cancer_type (peptide-keyed, tumour); SKCM = melanoma")
+    xp.add_argument("--tissue", help="normal tissue, gene-keyed: a GTEx tissue for human, one of "
+                                     "the 35 FANTOM5 tissues for mouse")
+    xp.add_argument("--tumor", help="TCGA cancer_type (peptide-keyed, tumour); SKCM = melanoma. "
+                                    "Human only -- there is no mouse tumour reference")
+    xp.add_argument("--species", default="human", choices=("human", "mouse"),
+                    help="which normal-tissue reference to read (default human/GTEx)")
     xp.add_argument("--safety", action="store_true",
                     help="also print the gene across normal tissues, highest first")
     xp.add_argument("--top", type=int, help="rows for --safety (default 10)")
     xp.add_argument("--list-contexts", action="store_true",
-                    help="list every GTEx tissue and TCGA tumour type available")
+                    help="list every tissue and tumour type available for --species")
     xp.add_argument("--out", help="write TSV here instead of the aligned text")
     xp.add_argument("--tsv", action="store_true",
                     help="emit TSV to stdout rather than the aligned text")

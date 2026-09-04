@@ -1,0 +1,350 @@
+{
+ "model": "EPIC",
+ "version": 1,
+ "generator": "bench/epic/fit_mouse.py",
+ "species": "mouse",
+ "cls": "mhc2",
+ "features": [
+  "binder",
+  "log10a",
+  "expr_lvl",
+  "expr_norm",
+  "C_phys_buried",
+  "C_phys_charge",
+  "C_corpus_thymus",
+  "C_corpus_self",
+  "C_corpus_viral"
+ ],
+ "expression_arm": "vanilla",
+ "coef": [
+  0.29855871278564755,
+  -0.054624418867562176,
+  0.03269833006619765,
+  -0.3170197473891884,
+  0.032299743859999216,
+  -0.08517831725106427,
+  -0.2177831851060836,
+  -0.13742169887384506,
+  -0.021893261423830166
+ ],
+ "sd": [
+  0.2760893875992335,
+  0.2702750056744005,
+  0.23677932330609616,
+  0.21784277389413187,
+  0.16332430984334134,
+  0.1674654691789187,
+  0.18185657786486098,
+  0.21889419793412176,
+  0.22793414718358757
+ ],
+ "boot_sd": [
+  0.6662939191562649,
+  0.7273141879192799,
+  0.304160439576378,
+  0.31830501574501735,
+  0.5446248520252124,
+  0.2721179836651488,
+  0.29823107846122665,
+  0.29477271052491155,
+  0.2313329391409293
+ ],
+ "z": [
+  0.448088605046427,
+  -0.07510429436806834,
+  0.107503560001881,
+  -0.9959621485925358,
+  0.05930640832839549,
+  -0.31301980157209797,
+  -0.7302497990141488,
+  -0.4661954582876199,
+  -0.09463961987053071
+ ],
+ "p": [
+  0.65408925146154,
+  0.94013173106584,
+  0.9143895012186188,
+  0.3192685366630452,
+  0.9527080569933796,
+  0.7542656181025926,
+  0.4652375076729305,
+  0.6410755999647917,
+  0.9246010789478958
+ ],
+ "ci95": [
+  [
+   -1.643136487296115,
+   0.7987100884871434
+  ],
+  [
+   -0.6615340222401268,
+   2.1026067469985734
+  ],
+  [
+   -0.3782293573489908,
+   0.7592922565162693
+  ],
+  [
+   -1.1828387203455712,
+   0.024382241491806882
+  ],
+  [
+   -1.3751667692383813,
+   0.43646270662435194
+  ],
+  [
+   -0.6952620749055002,
+   0.4622892870221077
+  ],
+  [
+   -0.525765735786512,
+   0.5438617987472538
+  ],
+  [
+   -0.9272520397449993,
+   -0.005401523057515148
+  ],
+  [
+   -0.39385754804852596,
+   0.5572052579647504
+  ]
+ ],
+ "sign_stability": [
+  0.7275,
+  0.5625,
+  0.5625,
+  0.96,
+  0.5075,
+  0.61,
+  0.725,
+  0.9825,
+  0.535
+ ],
+ "mu": [
+  -1.5726656503198297,
+  -2.4427537158397548,
+  1.6282336886993607,
+  1.652384117270789,
+  0.7328349509594883,
+  -0.13543645309168442,
+  0.0002732738776119403,
+  0.0007688000127931769,
+  0.0002592647857142857
+ ],
+ "sigma": [
+  0.4469350136862092,
+  0.6843897746752873,
+  1.751219755830177,
+  1.7918662880186842,
+  0.032043255633379106,
+  0.4666626017587809,
+  0.00014532583222203938,
+  0.0002733185314253762,
+  0.00010304668077420115
+ ],
+ "intercept": null,
+ "peptide_nm": 10.0,
+ "corpus_mask": "slice",
+ "corpus_k": 3,
+ "corpus_kernel": "blosum62_normalised",
+ "corpus_shapes": {
+  "thymus": 1.65,
+  "self": 0.65,
+  "viral": 1.35
+ },
+ "phys_scale": "Rose",
+ "phys_scale_charge": "ATCHLEY:AF5",
+ "phys_per_residue": true,
+ "expression": {
+  "terms": [
+   "expr_lvl",
+   "expr_norm"
+  ],
+  "formula": "log2(1 + x / c); x is this candidate's TPM for expr_lvl and the same gene's median in the model's tissue of origin for expr_norm",
+  "floor_quantile": 0.25,
+  "floor_source": "q of non-zero gene medians over the FANTOM5 mouse tissue the syngeneic model arose in (EBI E-MTAB-3579, 18,830 genes x 35 adult tissues). **A normal-tissue floor, not a tumour's**: there is no mouse TCGA, so the human convention of taking the floor from the tumour's own transcriptome -- roughly half its matched normal -- has no counterpart here, and these floors run high by that much. They also run high in absolute terms because CAGE tag density is not RNA-seq TPM: 0.60-2.00 against the human 0.10-0.40.",
+  "norm_source": "the gene's median in that tissue, falling back to its own pan-tissue median where the model maps to no FANTOM5 context -- never to missing",
+  "floor_pooled": 0.9,
+  "floor_per_tissue": {
+   "(pooled)": 136,
+   "colon": 15,
+   "lung": 13,
+   "ovary": 1,
+   "pancreas": 237,
+   "skin": 36,
+   "urinary bladder": 31
+  },
+  "prefilter_tpm": 0.0,
+  "reference": "expression/reference_expression_mmu.tsv.gz"
+ },
+ "blocks": [
+  [
+   "presentation",
+   [
+    "binder",
+    "log10a"
+   ]
+  ],
+  [
+   "expression",
+   [
+    "expr_lvl",
+    "expr_norm"
+   ]
+  ],
+  [
+   "physchem",
+   [
+    "C_phys_buried",
+    "C_phys_charge"
+   ]
+  ],
+  [
+   "corpus",
+   [
+    "C_corpus_thymus",
+    "C_corpus_self",
+    "C_corpus_viral"
+   ]
+  ]
+ ],
+ "fit": {
+  "rows": 469,
+  "positives": 177,
+  "screens": [
+   "IEDB_neoag"
+  ],
+  "per_screen_intercept": false,
+  "references": 30,
+  "alleles": 7,
+  "bic": 571.3508341883089,
+  "deviance": 331.47732621890395,
+  "n_boot": 400,
+  "bootstrap_unit": "reference_id cluster",
+  "clusters": 30,
+  "holdout": "grouped CV on peptide and on reference; no leave-one-screen-out (one screen)",
+  "tau": 0.25,
+  "seed": 20260904,
+  "in_sample_auroc": 0.6112197790377704
+ },
+ "cv_peptide": {
+  "folds": 5,
+  "groups": 430,
+  "auroc": 0.4909449732992802,
+  "auprc": 0.375282870844818,
+  "within_ref_auroc": 0.5619518406092923,
+  "within_ref_auprc": 0.5447720204298367,
+  "n_refs_decided": 7,
+  "per_reference": [
+   {
+    "ref": "30333318",
+    "n": 226,
+    "pos": 25,
+    "auroc": 0.5590049751243781,
+    "auprc": 0.12673014705157076
+   },
+   {
+    "ref": "30601871",
+    "n": 46,
+    "pos": 7,
+    "auroc": 0.47619047619047616,
+    "auprc": 0.15897655504889704
+   },
+   {
+    "ref": "31515258",
+    "n": 68,
+    "pos": 58,
+    "auroc": 0.6206896551724138,
+    "auprc": 0.8902111617554437
+   },
+   {
+    "ref": "32115148",
+    "n": 14,
+    "pos": 6,
+    "auroc": 0.5416666666666666,
+    "auprc": 0.46957671957671954
+   },
+   {
+    "ref": "37179276",
+    "n": 9,
+    "pos": 6,
+    "auroc": 0.6111111111111112,
+    "auprc": 0.8412698412698414
+   },
+   {
+    "ref": "39694701",
+    "n": 14,
+    "pos": 6,
+    "auroc": 0.4583333333333333,
+    "auprc": 0.5938644688644689
+   },
+   {
+    "ref": "39887656",
+    "n": 15,
+    "pos": 9,
+    "auroc": 0.6666666666666666,
+    "auprc": 0.7327752494419161
+   }
+  ]
+ },
+ "cv_reference": {
+  "folds": 5,
+  "groups": 30,
+  "auroc": 0.3978407244021361,
+  "auprc": 0.31045151977098545,
+  "within_ref_auroc": 0.4563822752444912,
+  "within_ref_auprc": 0.5056356940594886,
+  "n_refs_decided": 7,
+  "per_reference": [
+   {
+    "ref": "30333318",
+    "n": 226,
+    "pos": 25,
+    "auroc": 0.4007960199004975,
+    "auprc": 0.10675211502525384
+   },
+   {
+    "ref": "30601871",
+    "n": 46,
+    "pos": 7,
+    "auroc": 0.2490842490842491,
+    "auprc": 0.11163496765000523
+   },
+   {
+    "ref": "31515258",
+    "n": 68,
+    "pos": 58,
+    "auroc": 0.38275862068965516,
+    "auprc": 0.844910995422714
+   },
+   {
+    "ref": "32115148",
+    "n": 14,
+    "pos": 6,
+    "auroc": 0.4166666666666667,
+    "auprc": 0.40390720390720397
+   },
+   {
+    "ref": "37179276",
+    "n": 9,
+    "pos": 6,
+    "auroc": 0.7222222222222222,
+    "auprc": 0.8968253968253969
+   },
+   {
+    "ref": "39694701",
+    "n": 14,
+    "pos": 6,
+    "auroc": 0.375,
+    "auprc": 0.5086371961371962
+   },
+   {
+    "ref": "39887656",
+    "n": 15,
+    "pos": 9,
+    "auroc": 0.6481481481481481,
+    "auprc": 0.6667819834486501
+   }
+  ]
+ }
+}
