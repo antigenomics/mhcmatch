@@ -285,6 +285,16 @@ def test_the_shipped_artifact_is_pinned_to_the_fit_that_produced_it(art):
 # to name one fit, and two files both calling themselves v2 is exactly what the digest below exists
 # to catch.
 #
+# **v4 re-sourced one corpus table; v5 re-sourced the other two and freed all three coefficients.**
+# Both fit the same 921 rows. v4 read the human thymic table and kept the pinned axis (seven free
+# parameters); v5 routes all three components to human (`mimicry.reference_species`) and fits each
+# its own coefficient, so mouse class I is **NINE free parameters**, matching the human artifact
+# term for term. Deviance 602.494 -> 599.531, in-sample AUROC 0.6135 -> 0.6335, BIC 1066.6 ->
+# 1077.3 -- three parameters cost 3 * log(921) = 20.5 BIC, so BIC prefers the smaller model and v5
+# ships on the author's call that both class-I models carry the same nine terms. What the human
+# tables buy is sign coherence: `C_corpus_thymus` +0.2919 at sign stability 0.94 against -0.0056 at
+# 0.53 under the mouse tables, on the same rows and the same terms.
+#
 # **Mouse class II is v3 and has no corpus block at all**, on the author's instruction that neither
 # class-II model carries one: the channels are densities over a class-I thymic, self and viral
 # reference, and contracting a 15-mer register against a 9-mer density asks the wrong question.
@@ -297,7 +307,7 @@ def test_the_shipped_artifact_is_pinned_to_the_fit_that_produced_it(art):
 # +0.3773 and `C_phys_buried` +0.1710 are the two coefficients the cluster bootstrap keeps the sign
 # of. No fit here holds anything out -- see `test_no_shipped_artifact_reports_a_holdout`.
 @pytest.mark.parametrize("cls, species, digest, version, rows, pos, terms", [
-    ("mhc1", "mouse", "aadf752eb7cdcd25", 4, 921, 379, "TERMS_MOUSE_EXPECTED"),
+    ("mhc1", "mouse", "b06aa4802f942481", 5, 921, 379, "TERMS_MOUSE_EXPECTED"),
     ("mhc2", "mouse", "9d95c8602bd4fd0c", 3, 468, 177, "TERMS_MHC2_EXPECTED"),
     ("mhc2", "human", "fb8d861a778571f6", 1, 1112, 656, "TERMS_MHC2_EXPECTED"),
 ])

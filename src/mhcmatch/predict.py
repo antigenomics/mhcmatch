@@ -572,7 +572,7 @@ def tile(seq: str, lengths) -> list:
 #: 6 -> 7: `rank._expression_for` now ends its chain at the gene's pan-tissue median instead of
 #: `nan`, so `expr_lvl` moves on every row that names a gene and no tissue -- 485 of 968 mouse
 #: class-I rows and 289 of 522 class-II. A frame built under epoch 6 carries the imputed column.
-SCORER_EPOCH = 8
+SCORER_EPOCH = 9
 
 
 def _fingerprint(store, cls, background, footprint, head):
