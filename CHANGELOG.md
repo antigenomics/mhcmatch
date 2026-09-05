@@ -109,6 +109,20 @@ test re-derived the rule in its own body instead of exercising the call site, th
 substring check over source text, and the model-doc test would have passed with the whole
 coefficient column shifted one row against the feature names. That last one is mutation-checked.
 
+### `mimics.length_range` --- the class-I length cut is named, and the extended range refuses
+
+`_LEN` stopped at 11 with no record that this was a choice. `CANONICAL_LEN` is what ships and what
+every fitted number rests on (mhc1 8--11, mhc2 11--25); `EXTENDED_LEN` is mhc1 12--14 and
+`length_range(cls, extended=True)` **raises `NotImplementedError`** rather than returning it --- a
+length range no downstream path was fitted for is worse than an error, because the corpus tables,
+the anchor models and the aggregate artifacts would every one of them score it silently and
+wrongly. `_LEN` stays as an alias.
+
+What the cut leaves out, measured: filtered to `mhc_class = MHCI`, `viral_foreign_iedb.tsv.gz`
+holds 157 peptides of length 12--13 (0.3 % of 55,084) and `thymus_immunopeptidome.tsv.gz` 195
+(0.8 % of 25,891); the human neoantigen deposit holds 84,622 rows carrying 276 immunogenic peptides
+outside 8--11, and mouse holds 1. Real ligands, excluded on purpose.
+
 ### CI
 
 `docs.yml` had been failing since the generated model tables landed: `docs/conf.py` imports the
