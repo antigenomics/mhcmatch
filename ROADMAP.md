@@ -43,6 +43,12 @@ from `mhc1.human.neoantigen`; and `_mimicry_scores` took no species at all, so
 `BASE_COLUMNS` in order, so the first mode to drop a column moved the header and not the values —
 a `variant_type` under `C_corpus_thymus`, no error. Same shape as the `--passthrough` schema bug.
 
+**`params.mhcmatch_rank_epitope` reaches Nextflow**, on both arms, and drops `mhcmatch_tumor` in
+pathogen mode by itself — `rank` refuses that flag there with a non-zero exit, so a caller who set a
+TCGA study code once globally would otherwise stop every task in the arm. Both stubs pass
+`cls`/`species`/`mode` to `rank.columns` now, because the header is a property of the artifact and
+not of the flags: 34 columns for class-I neoantigen, 22 for pathogen, 31 for class II.
+
 **`--cls both`** scores each class on its own model and emits one table with a `cls` column. Not one
 model over two classes: nine terms against six, and no corpus block in class II. Rows route by the
 alleles they name.

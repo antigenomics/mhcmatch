@@ -109,6 +109,18 @@ test re-derived the rule in its own body instead of exercising the call site, th
 substring check over source text, and the model-doc test would have passed with the whole
 coefficient column shifted one row against the feature names. That last one is mutation-checked.
 
+### Nextflow: `params.mhcmatch_rank_epitope`
+
+Reaches both arms --- the de novo `MHCMATCH_RANK` and the rerank `MHCMATCH_RERANK`. Not
+`mhcmatch_rank_mode`, which is the input *shape*. **`mhcmatch_tumor` is dropped by the process** in
+pathogen mode rather than left to the caller: `rank` refuses it there with a non-zero exit, so a
+caller who set a TCGA study code once and switched the arm would otherwise stop every task in it.
+
+Both **stubs** now pass `cls`, `species` and `mode` to `rank.columns`, because the header is a
+property of the artifact being scored and not of the flags alone --- 34 columns for class-I
+neoantigen, 22 for pathogen, 31 for class II. Without them a `-stub-run` writes the class-I
+neoantigen header for every arm, which is the 18-against-57 drift `rank.columns` exists to prevent.
+
 ### `mimics.length_range` --- the class-I length cut is named, and the extended range refuses
 
 `_LEN` stopped at 11 with no record that this was a choice. `CANONICAL_LEN` is what ships and what
