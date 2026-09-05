@@ -26,9 +26,9 @@ jobs:
       - name: Install (pulls seqtree from PyPI; pure-Python package, no build)
         run: pip install -e ".[test]"
       - name: No shipped artifact is stale for this version
-        # Builds nothing, exits 1 if any of the 38 files under src/mhcmatch/data is stamped behind
+        # Builds nothing, exits 1 if any of the 40 files under src/mhcmatch/data is stamped behind
         # __version__. Kept as a separate step even though `test_no_shipped_artifact_is_stale` now
-        # calls `_build.check()` over the same 38: this one fails BEFORE the suite, so a stale
+        # calls `_build.check()` over the same 40: this one fails BEFORE the suite, so a stale
         # artifact is named in one line instead of found inside a 700-test run. The two older
         # pytest guards cover the anchor models and the corpus tables only, and both carry
         # @pytest.mark.hfdata, so conftest skips them in CI. publish.yml runs this again after a

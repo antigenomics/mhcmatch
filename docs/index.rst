@@ -24,7 +24,7 @@ The mathematical and statistical theory lives in the technical appendix,
      </a>
      <a class="proj-card" href="cli.html">
        <h3>Command line</h3>
-       <p>Twenty-one commands grouped by what you are trying to do, how to stage reference data,
+       <p>Twenty-two commands grouped by what you are trying to do, how to stage reference data,
        and the env vars a cluster needs.</p>
      </a>
      <a class="proj-card" href="neoantigen.html">
@@ -34,7 +34,7 @@ The mathematical and statistical theory lives in the technical appendix,
      </a>
      <a class="proj-card" href="models.html">
        <h3>The shipped models</h3>
-       <p>All four fitted artifacts: coefficients, what each was fitted on, how well it scores,
+       <p>All five fitted artifacts: coefficients, what each was fitted on, how well it scores,
        and what it cannot be asked.</p>
      </a>
      <a class="proj-card" href="pipeline.html">

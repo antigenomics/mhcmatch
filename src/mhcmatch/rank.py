@@ -140,16 +140,38 @@ CORE_COLUMNS: tuple = ("core", "core_offset", "core_source")
 
 
 def columns(extended: bool = False, annotate: bool = False, score: str = "aggregate",
-            core: bool = False) -> list:
+            core: bool = False, cls: str = "mhc1", species: str = "human",
+            mode: str = "neoantigen") -> list:
     """The exact `mhcmatch rank` header for a given flag combination.
 
     ``score`` matters: the fitted aggregate emits its own four recognition channels, because a row
     should carry the features that produced it and nothing else. ``score="gate"`` does not use them
     and does not emit them.
+
+    **``(cls, species, mode)`` matter too, and this is the one implementation.** From 1.14.0 a run
+    emits the columns it COMPUTED and no others, which is a property of the artifact being scored
+    rather than of the flags: ``mode="pathogen"`` drops the wild-type columns and the whole
+    expression block, and any fit whose ``features`` list names no ``C_corpus_thymus`` -- which is
+    both class-II artifacts -- drops the corpus channels rather than emitting three NaN columns
+    under an unchanged header. ``cli._rank_columns`` calls this rather than restating it: two
+    implementations of one header is how the nextflow module stub reached 18 columns against 57,
+    which is the failure this function was written to prevent.
     """
     out = list(BASE_COLUMNS)
+    if mode == "pathogen":
+        # Constant, not missing -- see `WT_COLUMNS`. A column that is always NaN, always 1.0 or
+        # always a copy of its neighbour is worse than absent: it reads as a measurement. The three
+        # gate-side expression readouts go for the same reason the fitted ones do below --
+        # `_expression_for` returns NaN on its first line here.
+        drop = set(WT_COLUMNS) | {"expression", "expr_pct", "expr_imputed"}
+        out = [x for x in out if x not in drop]
     if score in ("aggregate", "features"):
         out += list(EXPR_COLUMNS) + list(AGGREGATE_COLUMNS)
+        keep = set(stand_in(mode)["features"]) if score == "features" \
+            else set(aggregate_features(cls, species, mode))
+        out = [x for x in out if not (x.startswith("C_corpus_") and x not in keep)]
+        if mode == "pathogen":
+            out = [x for x in out if x not in EXPR_COLUMNS]
     if extended:
         out += list(EXTENDED_COLUMNS)
     if annotate:
@@ -167,10 +189,10 @@ def columns(extended: bool = False, annotate: bool = False, score: str = "aggreg
 #: the digest ``tests/test_aggregate_terms.py`` pins; renaming it to ``_human`` for symmetry would
 #: move all of that and buy nothing.
 #:
-#: **A missing key is a refusal, not a fallback.** All four ``(cls, species)`` cells are fitted
-#: from 1.12.0, but an unregistered species or the ``pathogen`` mode still raises rather than being
-#: served a neighbour's coefficients -- scoring class-II candidates with class-I ones is the
-#: mistake the lookup exists to make impossible.
+#: **A missing key is a refusal, not a fallback.** All four ``(cls, species)`` neoantigen cells are
+#: fitted from 1.12.0 and ``mhc1.human.pathogen`` from 1.14.0 -- five of eight. An unregistered cell
+#: raises rather than being served a neighbour's coefficients; scoring class-II candidates with
+#: class-I ones is the mistake the lookup exists to make impossible.
 #:
 #: The term set the mouse **class-I** artifact declares. It is :data:`AGGREGATE_FEATURES` -- that
 #: fit was run on the human specification deliberately, so the two are comparable coefficient by
@@ -238,9 +260,10 @@ TERMS_MHC2_EXPECTED: tuple = ("binder", "log10a", "expr_lvl", "expr_norm",
 #: satisfies it, including the 12.3 % that also carry a positive T-cell assay. What decides it is
 #: what the channel would be fitted *against*. This fit's non-self negatives come from
 #: ``ligandome/viral_foreign_iedb.tsv.gz`` and the ``viral`` k-mer table is **counted from that
-#: same file**: **37,129 of its 37,328 negatives (99.5 %)** are exact members of the table, against
-#: **8,142 of 22,613 positives (36.0 %)**. At a 2.8x differential the channel is reading class
-#: membership, not similarity, and the coefficient would transfer to nothing.
+#: same file**: on the fitted foreign arm, **35,472 of 35,472 negatives and 2,634 of 2,634
+#: positives -- 100 % of both classes** -- are exact members of the table. A channel every row on
+#: both sides belongs to is reading class membership, not similarity, and its coefficient would
+#: transfer to nothing.
 #:
 #: A ``pathogen`` fit on a deposit that does *not* overlap the table keeps the channel and carries
 #: seven terms. That is why nothing in this module selects channels by mode: the admissible set is

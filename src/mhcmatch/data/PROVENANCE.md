@@ -485,10 +485,11 @@ respect: nine standardised slopes under the same nine feature names in the same 
 `tau = 0.25`, its own `mu`/`sigma`, a *model* version that is an integer (**`5`**) and a `release`
 that is dotted (`1.13.0` -- the package version the fit was **accepted** in, which is what a
 manuscript cites). `rank.aggregate(cls, species, mode)` resolves it through
-`rank.AGGREGATE_ARTIFACTS`, keyed `(cls, species, mode)`. All four `(cls, species)` cells are
-fitted from 1.12.0; `pathogen` remains a registered mode with no shipped artifact rather than a
-silent alias for `neoantigen`, and an unregistered species raises instead of being served a
-neighbour's coefficients.
+`rank.AGGREGATE_ARTIFACTS`, keyed `(cls, species, mode)`. All four `(cls, species)` **neoantigen**
+cells are fitted from 1.12.0, and `mhc1.human.pathogen` joins them from 1.14.0 — five of the eight
+cells. `pathogen` is a key rather than a silent alias for `neoantigen`, and an unregistered cell
+raises instead of being served a neighbour's coefficients. `mhcmatch models --all` prints all
+eight.
 
 The class-II half of this section moved to **`aggregate_mhc2_human.json` /
 `aggregate_mhc2_mouse.json`** below: from 1.12.0 the two class-II fits are one specification with
@@ -534,8 +535,10 @@ library's **mouse** references throughout (FANTOM5 mouse and GSE245293), and the
 and mouse organs and tumours are different tissues, so a human expression level is not a stand-in
 for a mouse one at any sample size.
 
-**The three corpus channels are all human, from version 5.** `mimicry.reference_species` routes
-every mouse class-I component to the human table, so a mouse query is matched against the identical
+**The three corpus channels are all human, from version 5.** `mimicry.reference_species` is keyed
+`(species, component)` with **no class key**, so it routes every mouse component to the human table
+in both classes — this section is the class-I one, and the rule is not class-scoped. A mouse query
+is therefore matched against the identical
 `mhc1|{thymus,self,viral}|human|3` tables that `aggregate_mhc1.json` scores against. **Nothing is
 trained on human data by this**: a corpus channel is a k-mer density lookup, the table is the only
 thing that is human, and all nine coefficients below are fitted on mouse neoantigens by GLM.
@@ -696,7 +699,7 @@ which is `log 468 = 6.15` -- one parameter's worth, and the block was spending t
 
 **Derived.** **Five** standardised slopes — `binder`, `C_phys_buried`, `C_phys_charge`,
 `C_corpus_thymus`, `C_corpus_self` — ridge `tau = 0.25`, one **global** unpenalised intercept, and
-`intercept: null` in the shipped file. Model version **`1`**, release `1.13.0`.
+`intercept: null` in the shipped file. Model version **`1`**, release `1.14.0`.
 `rank.TERMS_PATHOGEN_EXPECTED` names the five.
 
 **This is the only non-`neoantigen` artifact.** A tumour neoantigen and a pathogen epitope are
@@ -705,7 +708,7 @@ covariate, and `rank.AGGREGATE_ARTIFACTS` is keyed `(cls, species, mode)` for ex
 The other three pathogen cells refuse by name.
 
     # in ~/vcs/projects/2026-mhcmatch-benchmark:
-    MHCMATCH_MODEL_RELEASE=1.13.0 python bench/pathogen/fit_pathogen.py --arm foreign --both
+    MHCMATCH_MODEL_RELEASE=1.14.0 python bench/pathogen/fit_pathogen.py --arm foreign --both
     # then, deliberately:
     cp bench/pathogen/aggregate_mhc1_pathogen.json ~/vcs/code/mhcmatch/src/mhcmatch/data/
 
@@ -727,7 +730,7 @@ PR-AUC is its 4.0× higher prevalence, not a better model.
 | absent | reason |
 |---|---|
 | `expr_lvl`, `expr_norm` | **undefined**, not missing — a pathogen epitope comes from an organism the host does not transcribe, so there is no source-gene abundance and no matched normal. `rank._expression_for` returns NaN with `imputed=False`, and `rank` **refuses** `--tissue`/`--tumor`/`--expr-floor` in this mode rather than discarding them |
-| `C_corpus_viral` | its k-mer table is counted from the same deposit these rows come from: **35,511 of 35,511 negatives and 2,634 of 2,634 positives (100 % of both)** are exact members, so the channel measures membership. This is a property of the DEPOSIT, not the mode — CEDAR's mouse non-self rows overlap it at 0 of 672, so a pathogen fit there keeps the channel |
+| `C_corpus_viral` | its k-mer table is counted from the same deposit these rows come from: **35,472 of 35,472 negatives and 2,634 of 2,634 positives (100 % of both)** are exact members, so the channel measures membership. This is a property of the DEPOSIT, not the mode — CEDAR's mouse non-self rows overlap it at 0 of 672, so a pathogen fit there keeps the channel |
 | `log10a` | **well-defined and collinear.** It is `log10([P]/Kd)` of the candidate itself and needs no wild type at all; it does not earn its parameter at **corr(log10a, binder) = +0.8123** on the fitted design. Dropping it cost 0.0006 AUROC and raised PPV@100 from 0.1000 to **0.1300** |
 
 **Disjointness is enforced, not assumed.** `drop_corpus_members` refuses any peptide that is an
@@ -736,8 +739,8 @@ exact member of a corpus this fit's own channels read, resolving the reference p
 (39 rows) on the foreign arm.
 
 **What the fit says.** ROC-AUC **0.5926**, PR-AUC **0.0905** against prevalence 0.0691, PPV
-**0.1063** at k = 2,634 (1.54× lift) and **0.1300** in the top 100. Row-resampled 5-fold: 0.5915 ±
-0.0105. Four of five terms sign-stable at **1.000** over 400 row bootstraps —
+**0.1063** at k = 2,634 (1.54× lift) and **0.1300** in the top 100. Row-resampled 5-fold:
+0.5917 ± 0.0084. Four of five terms sign-stable at **1.000** over 400 row bootstraps —
 `C_corpus_self` **−0.3030** (p = 1.5×10⁻¹⁸), `C_corpus_thymus` **+0.3003** (p = 3.3×10⁻²²),
 `C_phys_buried` **+0.1920** (p = 1.2×10⁻¹⁹), `binder` **+0.1454** (p = 1.1×10⁻¹³).
 `C_phys_charge` (p = 0.994, stability 0.487) does not resolve.

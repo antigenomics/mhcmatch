@@ -59,17 +59,24 @@ def test_neoantigen_mode_still_reads_the_observed_value():
     assert imputed is False
 
 
-@pytest.mark.parametrize("mode", ["neoantigen", "pathogen"])
-def test_the_channel_set_is_read_off_the_features_list_not_off_the_mode(mode):
-    # `cli._aggregate_channels` derives which corpus tables to build from a `features` list, so a
-    # `pathogen` artifact that DOES declare `C_corpus_viral` gets it built. The derivation is one
-    # expression; this pins its contract rather than its call site.
-    feats = R.stand_in(mode)["features"]
-    comps = tuple(c for c in ("thymus", "self", "viral") if f"C_corpus_{c}" in feats)
-    assert comps == (("thymus", "self", "viral") if mode == "neoantigen" else ("thymus", "self"))
-    assert tuple(c for c in ("thymus", "self", "viral")
-                 if f"C_corpus_{c}" in ["C_corpus_viral"]) == ("viral",), (
-        "the derivation must follow the list it is given, in every case")
+@pytest.mark.parametrize("mode,want", [("neoantigen", {"thymus", "self", "viral"}),
+                                       ("pathogen", {"thymus", "self"})])
+def test_the_channel_set_is_read_off_the_features_list_not_off_the_mode(mode, want, monkeypatch):
+    """The tables `cli._aggregate_channels` actually asks for, not a re-derivation of the rule.
+
+    This test used to recompute the comprehension in its own body and assert a tautology over a
+    literal, so reverting the call site to the pre-1.14.0 hardcoded `("thymus","self","viral")` --
+    the exact regression its name describes -- left it green.
+    """
+    from mhcmatch import cli as C
+    from mhcmatch import mimicry as MM
+
+    asked = set()
+    monkeypatch.setattr(MM, "corpus_spectrum",
+                        lambda **kw: (asked.update(kw["components"]), {})[1])
+    monkeypatch.setattr(MM, "corpus_R", lambda peps, spec, cls="mhc1": [{} for _ in peps])
+    C._aggregate_channels("mhc1", "human", mode=mode, score="aggregate")(["SIINFEKL"])
+    assert asked == want
 
 
 def test_every_registered_mode_has_a_stand_in():
@@ -84,7 +91,13 @@ def test_an_unfitted_cell_refuses_by_name_rather_than_serving_a_neighbour(cls, s
     # model is the one outcome that looks like success.
     with pytest.raises(ValueError) as e:
         R.aggregate(cls, species, "pathogen")
-    assert "pathogen" in str(e.value)
+    # NOT a bare `"pathogen" in str(e.value)`: the refusal ends by printing the registry, which
+    # now literally contains that word on EVERY failure, so the bare check can no longer tell "the
+    # message names the cell you asked for" from "the message printed the registry". Assert against
+    # the part before the dump.
+    asked = str(e.value).split("This library ships")[0]
+    for spelling in (f"cls={cls!r}", f"species={species!r}", "mode='pathogen'"):
+        assert spelling in asked, f"the refusal does not name {spelling}: {asked}"
 
 
 def test_the_shipped_pathogen_fit_carries_the_terms_the_library_expects():
@@ -154,7 +167,8 @@ def test_aggregate_score_and_aggregate_terms_resolve_the_SAME_artifact(monkeypat
 def test_the_corpus_geometry_comes_from_the_artifact_being_scored(monkeypatch):
     """`_aggregate_channels` read `corpus_geometry()` bare, i.e. mhc1.human.neoantigen, always.
 
-    The four shipped fits agree on `(k, mask, kernel)`, which is exactly why nobody noticed. An
+    Every shipped fit that carries geometry agrees on `(k, mask, kernel)`, which is why nobody
+    noticed; the two class-II artifacts carry none at all and `corpus_geometry` refuses them. An
     artifact fitted under a different face or substitution kernel would have had its columns built
     under someone else's definition -- a different feature, not a smaller effect.
     """
@@ -179,11 +193,157 @@ def test_mimicry_references_follow_the_species_flag():
     is the mimics/annotate layer -- which reference peptide was nearest -- NOT the corpus scoring
     path, where `mimicry.reference_species` routes mouse to human deliberately.
     """
+    from mhcmatch import cli as C
+    from mhcmatch import mimicry as MM
+
+    seen = []
+    MP = pytest.MonkeyPatch()
+    try:
+        MP.setattr(MM, "load_references", lambda **kw: (seen.append(kw.get("self_species")), {})[1])
+        MP.setattr(MM, "score", lambda *a, **k: [])
+        C._mimicry_scores(["SIINFEKL"], "mhc1", no_self=True, species="mouse")
+    finally:
+        MP.undo()
+    assert seen == ["mouse"], (
+        "the flag must reach load_references; asserting on the source text of the call did not "
+        "catch deleting the argument")
+
+
+# ---------------------------------------------------------------------------------------------
+# The 1.14.0 release audit. Seven defects, all reproduced before they were fixed; each of these
+# fails on the code as shipped in the merge commit and passes after it. The two things they have
+# in common are worth more than any one of them: every defect was a value resolved from the
+# DEFAULT artifact instead of the one being scored, or a rule written for one mode and left
+# un-generalised -- and none of them errored.
+
+
+def test_the_corpus_decay_comes_from_the_artifact_being_scored(monkeypatch):
+    """`kappa` is the fourth half of the corpus definition and was still resolved bare.
+
+    The release fixed `corpus_geometry` and left `corpus_spectrum(shapes=...)` unpassed, so the
+    decay fell through to `corpus_shapes()` -> `rank.aggregate()` -> `mhc1.human.neoantigen`. A
+    table contracted at one decay and multiplied by a coefficient fitted at another is a different
+    feature, not a smaller effect -- the identical argument the geometry fix rests on.
+    """
+    from mhcmatch import cli as C
+    from mhcmatch import mimicry as MM
+
+    seen = []
+    real = MM.corpus_spectrum
+    monkeypatch.setattr(MM, "corpus_spectrum",
+                        lambda **kw: (seen.append(kw.get("shapes")), {})[1])
+    monkeypatch.setattr(MM, "corpus_R", lambda peps, spec, cls="mhc1": [{} for _ in peps])
+    C._aggregate_channels("mhc1", "human", mode="pathogen", score="aggregate")(["SIINFEKL"])
+    assert seen and seen[0] is not None, "shapes must be passed, not left to the bare fallback"
+    assert seen[0] == MM.corpus_shapes(R.aggregate("mhc1", "human", "pathogen"))
+    assert real is not MM.corpus_spectrum  # the monkeypatch really was in force
+
+
+@pytest.mark.parametrize("cls,species,mode,want", [
+    ("mhc1", "human", "neoantigen", True),
+    ("mhc1", "human", "pathogen", False),
+    ("mhc2", "human", "neoantigen", False),
+    ("mhc2", "mouse", "neoantigen", False),
+])
+def test_a_corpus_column_is_emitted_only_when_it_was_computed(cls, species, mode, want):
+    """A header naming a column nobody built writes NaN into it, which reads as a failed measurement.
+
+    `_aggregate_channels` builds exactly the tables the fitted `features` list names, and the
+    header filter was written for `mode == "pathogen"` only. Both class-II artifacts declare no
+    corpus block, so `rank --cls mhc2 --score aggregate` turned three columns that carried measured
+    densities in 1.13.0 into NaN -- silently, with the header unchanged.
+    """
+    cols = R.columns(score="aggregate", cls=cls, species=species, mode=mode)
+    assert ("C_corpus_viral" in cols) is want
+    for c in cols:
+        if c.startswith("C_corpus_"):
+            assert c in R.aggregate_features(cls, species, mode), (
+                f"{c} is in the header of {cls}.{species}.{mode} and not in its features")
+
+
+def test_the_cli_header_has_exactly_one_implementation():
+    """`cli._rank_columns` restated the rule instead of calling `rank.columns`.
+
+    Two implementations of one header is how the nextflow module stub reached 18 columns against
+    57, which is the failure `columns()`'s own docstring records.
+    """
+    from mhcmatch import cli as C
+
+    class A:
+        extended = annotate = core = False
+        score, species, epitope = "aggregate", "human", "pathogen"
+    assert C._rank_columns(A(), "mhc1") == R.columns(
+        score="aggregate", cls="mhc1", species="human", mode="pathogen")
+
+
+def test_a_row_belongs_to_the_class_its_allele_belongs_to():
+    """`--cls both` filtered on `allele_scored` alone, which `rank_table` sets unconditionally.
+
+    True for `pairs`/`fasta`, where `split_alleles(cell, cls)` drops a name the class's
+    pseudosequence table does not know; false for `table`, so `rank table x.csv --cls both` emitted
+    EVERY row twice -- once under the nine-term class-I fit and once under the class-II one, for
+    the same class-I allele. Under `--passthrough` that is the caller's own table, duplicated.
+    """
+    assert R.split_alleles("HLA-A*02:01", "mhc1") == ["HLA-A*02:01"]
+    assert R.split_alleles("HLA-A*02:01", "mhc2") == [], (
+        "a class-I allele must not resolve under the class-II tables")
+    assert R.split_alleles("HLA-DRB1*01:01", "mhc1") == []
+
+
+def test_top_is_applied_to_the_table_that_is_emitted():
+    """`--top N` lived in the per-class pass, so `--cls both --top 100` promised 100 and wrote 200.
+
+    Worse than the count: it truncated before the cross-class filter had decided which class owns a
+    row, so a class-I row scored under the class-II model could evict a class-II row and then be
+    dropped itself, and the run reported neither.
+    """
     import inspect
 
     from mhcmatch import cli as C
+    assert "a.top" not in inspect.getsource(C._rank_rows), (
+        "--top must not be applied once per class")
+    assert "a.top" in inspect.getsource(C._rank_emit)
 
-    sig = inspect.signature(C._mimicry_scores)
-    assert "species" in sig.parameters
-    src = inspect.getsource(C._mimicry_scores)
-    assert "self_species=species" in src, "the parameter must reach load_references"
+
+def test_explain_refuses_the_expression_flags_in_pathogen_mode():
+    """One subcommand refused them and its neighbour answered them.
+
+    `explain --epitope pathogen --gene TP53 --tissue Liver` printed a measured GTEx line and then
+    named a five-term model that declares no expression term.
+    """
+    from mhcmatch import cli as C
+
+    class A:
+        epitope, gene, tissue, tumor = "pathogen", "TP53", "Liver", None
+        expr_floor = expr_prefilter = None
+    with pytest.raises(SystemExit) as e:
+        C._refuse_undefined_in_pathogen_mode(A(), "explain")
+    assert "--gene" in str(e.value) and "--tissue" in str(e.value)
+    assert "explain --epitope pathogen" in str(e.value)
+
+    class B(A):
+        epitope = "neoantigen"
+    C._refuse_undefined_in_pathogen_mode(B(), "explain")  # must not raise
+
+
+def test_models_tells_a_broken_install_from_an_unfitted_cell(monkeypatch, capsys):
+    """`models()` skips a cell whose file will not open, so `--all` printed both as `--`.
+
+    Under a footer that says, in words, that `--` is not a broken install -- while `rank --epitope
+    pathogen` raised a FileNotFoundError whose text says the opposite. The registry is the
+    authority on what SHOULD be installed.
+    """
+    from mhcmatch import cli as C
+
+    kept = [r for r in R.models() if r["model_id"] != "mhc1.human.pathogen"]
+    assert len(kept) == len(R.models()) - 1, "the cell this test removes must have been there"
+    monkeypatch.setattr(R, "models", lambda: kept)
+
+    class A:
+        all = True
+    C.cmd_models(A())
+    out = capsys.readouterr()
+    assert "NOT INSTALLED" in out.out, "a registered file that will not open is a third state"
+    assert "broken install" in out.err
+    # The three cells that were never fitted keep reading `--`, so the two are told apart.
+    assert "mhc1.mouse.pathogen\tmhc1\tmouse\tpathogen\t--" in out.out

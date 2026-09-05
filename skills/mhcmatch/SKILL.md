@@ -95,9 +95,9 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 
 ## CLI
 
-**Twenty-one** commands, one of them (`cassette`) with six sub-verbs, plus two DEPRECATED
+**Twenty-two** commands, one of them (`cassette`) with six sub-verbs, plus two DEPRECATED
 aliases the parser still answers to and this table omits — `vector` for `cassette build` and
-`deslip` for `cassette deslip`. `mhcmatch --help` therefore lists 23. Full reference:
+`deslip` for `cassette deslip`. `mhcmatch --help` therefore lists 24. Full reference:
 [docs/cli.rst](../../docs/cli.rst).
 
 | axis | commands |
@@ -212,11 +212,14 @@ contract and the SLURM templates: [docs/pipeline.rst](../../docs/pipeline.rst) a
 
 ## The shipped scorer
 
-`EPIC` — nine terms in four **hierarchical blocks**, entered in pipeline order so a recognition
-coefficient is what it is worth *after* presentation and expression. Ridge `tau = 0.25`, an
-unpenalised intercept per holdout unit, and no global one.
+`EPIC` — for `mhc1.human.neoantigen`, nine terms in four **hierarchical blocks**, entered in
+pipeline order so a recognition coefficient is what it is worth *after* presentation and
+expression. Ridge `tau = 0.25`, an unpenalised intercept per holdout unit, and no global one. The
+other four fits are the same machinery on a different term set: **six** for both class-II cells (no
+corpus block) and **five** for `mhc1.human.pathogen` (no expression block, no `viral` channel, no
+`log10a`). Read a term count off the artifact, never off the word EPIC.
 
-**Four artifacts, one per `(cls, species, mode)`, and a missing key refuses.**
+**Five artifacts, one per `(cls, species, mode)`, and a missing key refuses.**
 `rank.aggregate(cls, species, mode)` resolves them through `rank.AGGREGATE_ARTIFACTS`;
 `rank.models()` lists them. A combination that was never fitted **raises** rather than scoring with
 another fit's coefficients — which is the whole reason this is a lookup and not a default.
@@ -230,6 +233,7 @@ adds the cells that ship **no** artifact, marked `--`.
 | `mhc1.mouse.neoantigen` | `aggregate_mhc1_mouse.json` | **5** | 1.13.0 | 921 | 379 | 9 |
 | `mhc2.human.neoantigen` | `aggregate_mhc2_human.json` | 1 | 1.12.0 | 1,112 | 656 | 6 |
 | `mhc2.mouse.neoantigen` | `aggregate_mhc2_mouse.json` | **3** | 1.12.0 | 468 | 177 | 6 |
+| `mhc1.human.pathogen` | `aggregate_mhc1_pathogen.json` | 1 | 1.14.0 | 38,106 | **2,634** | 5 |
 
 - **`release` is not `__version__`.** It is the package version the fit was *accepted* in, stored
   rather than derived, so a manuscript can pin `mhc1.human.neoantigen v11 (release 1.6.1)` while
@@ -250,14 +254,21 @@ one it answered.
 
 - `pathogen` is for a peptide the host does not encode. It **drops the expression block** —
   undefined, not missing, with no host transcript — so `--tissue` / `--tumor` / `--expr-floor` are
-  **refused**, not ignored. It also drops the wild-type columns (`agretopicity`, `d_occupancy`,
-  `wt_absent`), which are degenerate rather than absent for a peptide with no germline counterpart.
+  **refused**, not ignored, on both `rank` and `explain`. It also drops the four `rank.WT_COLUMNS`
+  (`agretopicity`, `d_occupancy`, `wt_absent`, `wt_peptide`) and the three gate-side expression
+  readouts, all degenerate rather than absent for a peptide with no germline counterpart.
 - **Which corpus channels a `pathogen` fit carries is the ARTIFACT's answer, not the mode's** —
   read off its own `features` list. It depends on the deposit: on the human Kesmir corpus 100 % of
   both classes are exact members of the file the `viral` table is counted from, so that channel is
   dropped; on CEDAR's mouse non-self rows 0 % are, so it is kept.
-- **No `pathogen` artifact ships yet.** `--score features` computes every column the mode admits;
-  `--score aggregate` refuses by name rather than serving the neoantigen coefficients.
+- **One `pathogen` artifact ships: `mhc1.human.pathogen`, five terms, from 1.14.0.** The other
+  three pathogen cells refuse by name rather than serving the neoantigen coefficients, and
+  `--score features` still computes every column the mode admits for them. `mhcmatch models --all`
+  prints all eight cells; a registered file that is missing from the install prints
+  `NOT INSTALLED` rather than the `--` of a cell nobody fitted.
+- **A run emits the columns it COMPUTED, in every mode.** A `C_corpus_*` name the fitted `features`
+  list does not carry is not in the header — so `rank --cls mhc2 --score aggregate` has no corpus
+  columns at all rather than three NaN ones.
 
 **Do not copy the coefficients into this file.** They moved three times in two months and every
 transcription of them went stale; the artifact is the record and the CLI prints it:

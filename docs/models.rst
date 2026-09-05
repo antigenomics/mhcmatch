@@ -24,20 +24,24 @@ Three identifiers, and only one of them moves with the library
   derived. A manuscript pins a fit while the library keeps moving underneath it, so
   ``mhc1.human.neoantigen v11 (release 1.6.1)`` is a citation and ``mhcmatch 1.13.0`` is not.
 
-``mode`` is ``neoantigen`` on all four. ``pathogen`` is a registered spelling with no fit, because
-a tumour neoantigen and a pathogen epitope are two mechanisms rather than two values of one
-covariate.
+``mode`` is ``neoantigen`` on four of the five and ``pathogen`` on ``mhc1.human.pathogen``. It is a
+key rather than a covariate because a tumour neoantigen and a pathogen epitope are two mechanisms,
+not two values of one variable; the three ``pathogen`` cells that ship nothing refuse by name.
+``mhcmatch models --all`` prints all eight cells and marks an unfitted one ``--``.
 
 At a glance
 -----------
 
 .. include:: _generated/models_summary.rst
 
-**The AUROC column is two different protocols and must not be read down.** The human class-I fit
-spans seven independent screens, so it can hold one out whole and be scored on it; that is the
-``0.7102``. The other three are single-deposit fits with no second screen to hold out, so what they
-record is an **in-sample within-reference** figure. Averaging the column, or ranking the four fits
-by it, compares a held-out number against an apparent one.
+**The AUROC column is three different protocols and must not be read down.** The human class-I
+neoantigen fit spans seven independent screens, so it can hold one out whole and be scored on it;
+that is the ``0.7102``. The three single-deposit neoantigen fits have no second screen to hold out,
+so what they record is an **in-sample within-reference** figure. ``mhc1.human.pathogen`` is a
+whole-corpus GLM with one global intercept and no grouping unit at all --- neither a screen to hold
+out nor a per-reference intercept to exclude --- so it reports **in-sample, pooled off the logit**,
+against its own prevalence of 0.0691. Averaging the column, or ranking the five fits by it, compares
+three different questions.
 
 What "in-sample, within reference" means
 ----------------------------------------
@@ -251,8 +255,8 @@ What it delivers
 
 - In-sample within-reference AUROC **0.5741**, AUPRC 0.5917, over the 7 of 30 references carrying
   at least three of each class.
-- It completes the lookup: all four ``(cls, species)`` cells are fitted from 1.12.0, so a mouse
-  class-II run scores against a mouse class-II fit instead of refusing.
+- It completes the lookup: all four ``(cls, species)`` **neoantigen** cells are fitted from 1.12.0,
+  so a mouse class-II run scores against a mouse class-II fit instead of refusing.
 
 Caveats
 ~~~~~~~
@@ -390,8 +394,9 @@ fits can legitimately differ:
      - rows that are exact members of the ``viral`` reference
      - consequence
    * - Kesmir/Chowell human, foreign stratum
-     - 35,511 of 35,511 negatives and 2,634 of 2,634 positives (100 % of both)
-     - the channel measures membership, carries no class information, and is dropped --- six terms
+     - 35,472 of 35,472 negatives and 2,634 of 2,634 positives (100 % of both)
+     - the channel measures membership, carries no class information, and is dropped --- five terms
+       once ``log10a`` goes with it, six with ``log10a`` kept
    * - CEDAR mouse non-self, class I
      - 0 of 672 (that builder strips exact corpus members)
      - the channel measures similarity and is kept --- seven terms
@@ -417,7 +422,7 @@ Ranking of pathogen-derived epitopes among presented ligands. On its own fit pop
 foreign-antigen stratum of the Kesmir/Chowell corpus, both classes drawn from one antigen source
 --- it reaches **PPV 0.1063** at the operating point where you act on as many candidates as there
 are positives, against a base rate of **0.0691**: a 1.54x lift, and **0.1300** in the top 100.
-Row-resampled 5-fold reproduces it at 0.5915 +/- 0.0105 ROC-AUC, so the fit is stable to which
+Row-resampled 5-fold reproduces it at 0.5917 +/- 0.0084 ROC-AUC, so the fit is stable to which
 rows it saw.
 
 The two host corpus channels are the interesting half and they carry the largest coefficients:
@@ -443,6 +448,18 @@ is positives-only --- 27,497 peptides, none recorded as tested-negative. So the 
 
 **``C_phys_charge`` does not earn its parameter** (p = 0.994, sign stability 0.487). It is kept for
 symmetry with the neoantigen physchem block, not because it resolves.
+
+**``log10a`` is absent because it duplicates ``binder``, not because a pathogen has no wild type.**
+It is ``log10([P]/Kd)`` of the candidate itself (:func:`mhcmatch.rank._logit10`) and needs no
+germline counterpart at all --- the wild-type-dependent quantities are ``agretopicity``,
+``d_occupancy`` and ``wt_absent``, and those are *degenerate* in this mode rather than absent. It
+was dropped at Pearson **r = +0.8123** with ``binder`` on the fitted design, coefficient -0.0519 at
+p = 0.137; dropping it cost 0.0006 AUROC and raised PPV in the top 100 from 0.1000 to **0.1300**.
+The duplication is not specific to this fit: on the two class-II neoantigen populations the same
+pair correlates at **+0.7006** (``mhc2.human``, 1,081 of 1,112 rows carrying both columns finite)
+and **+0.7505** (``mhc2.mouse``, 468 of 468), and neither class-II ``log10a`` coefficient resolves
+in its own fit --- -0.1193 at p = 0.773 and -0.0456 at p = 0.950. Those two artifacts still carry
+the term; whether they should is a refit decision, not a reading of these numbers.
 
 .. note::
 

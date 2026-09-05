@@ -39,7 +39,9 @@ The model
 The blocks are entered in pipeline order, each on top of the last, so a recognition coefficient is
 what that term is worth **after** presentation and expression rather than in competition with them.
 
-This page is about the **terms** --- what each one is and what it is computed from. For the four
+This page is about the **terms** --- what each one is and what it is computed from, for the
+nine-term ``mhc1.human.neoantigen`` fit. The other four artifacts are the same machinery on a
+different term set: six for both class-II cells and five for ``mhc1.human.pathogen``. For the five
 fitted artifacts themselves --- their coefficients with bootstrap intervals, what each was fitted
 on, how well each scores and what each cannot be asked --- see :doc:`models`.
 
@@ -131,7 +133,7 @@ resamples — because rows from one patient share tumour, HLA and run.
 
 **The values are not typed into these docs.** Six pages used to carry their own copy of this table
 and all six went stale together the first time the model was refitted, because nothing read them.
-:doc:`models` prints all four fits in full --- *generated from the artifacts on every build*, which
+:doc:`models` prints all five fits in full --- *generated from the artifacts on every build*, which
 is the only form of that table that has ever stayed correct. The vendored artifact is the record,
 and the command line prints it too:
 

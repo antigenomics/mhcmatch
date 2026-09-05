@@ -3,8 +3,11 @@ import datetime
 import os
 import sys
 
-# Import the package from src/ without installing it (seqtree is mocked below).
-sys.path.insert(0, os.path.abspath("../src"))
+# Import the package from src/ without installing it (the heavy deps are mocked below).
+# **From THIS FILE, never from the cwd** -- `abspath("../src")` resolved next to wherever sphinx
+# happened to be invoked, so on CI it pointed at a directory that does not exist and the package
+# was simply not importable. Same class as the `_modeldoc.write` root below.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
 project = "mhcmatch"
 author = "ISALGO laboratory"
@@ -39,7 +42,7 @@ extensions = [
 
 # Heavy / native dependencies mocked at doc-build time (seqtree ships a C++ core; the rest are
 # optional). Docs build with only sphinx + the theme installed.
-autodoc_mock_imports = ["seqtree", "numpy", "logomaker", "matplotlib", "pandas"]
+autodoc_mock_imports = ["seqtree", "numpy", "logomaker", "matplotlib", "pandas", "scipy", "polars"]
 autosummary_generate = False
 autodoc_member_order = "bysource"
 # Render __init__ docstrings alongside the class docstring: AnchorModel documents all 19 parameters in
@@ -78,11 +81,21 @@ html_theme_options = {
 # includes what this writes, and `docs/_generated/` is gitignored so there is no committed copy to
 # drift. The README's summary block is the one committed copy, pinned by `tests/test_modeldoc.py`.
 def setup(app):
-    from mhcmatch import _modeldoc
+    # **`autodoc_mock_imports` does not cover this import.** Sphinx applies that list inside
+    # autodoc's own import machinery, and `conf.py` runs before any of it -- so importing the
+    # package here needs numpy for real, which `docs/requirements.txt` deliberately does not
+    # install. Applying the same list by hand is what keeps "sphinx + the theme" true;
+    # `_modeldoc` reads the artifacts as JSON and does no array arithmetic, so a mocked numpy is
+    # never called. The build was green until the generated model tables landed and broke on the
+    # first CI run after them, for exactly this reason.
+    from sphinx.ext.autodoc.mock import mock
 
-    # The repo root from THIS FILE, never from the cwd. `abspath("..")` was correct only when
-    # sphinx happened to be invoked from the repo root, and silently wrote `docs/_generated/`
-    # somewhere else otherwise -- which does not fail the build, it makes every `.. include::`
-    # in `models.rst` fail instead, with an error that names the include and not the cause.
-    _modeldoc.write(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    with mock(autodoc_mock_imports):
+        from mhcmatch import _modeldoc
+
+        # The repo root from THIS FILE, never from the cwd. `abspath("..")` was correct only when
+        # sphinx happened to be invoked from the repo root, and silently wrote `docs/_generated/`
+        # somewhere else otherwise -- which does not fail the build, it makes every `.. include::`
+        # in `models.rst` fail instead, with an error that names the include and not the cause.
+        _modeldoc.write(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     return {"parallel_read_safe": True}

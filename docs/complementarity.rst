@@ -227,8 +227,10 @@ Each answers something the block above it cannot express.
       the binding core: an 18-mer and a 13-mer sharing a core present the same residues to the TCR.
       Binning on total length would split a table on a variable carrying no register information.
       The class-II analogue is a **register**-relative split around
-      :func:`mhcmatch.store.anchor_indices`, a different construction that is not fitted here; this
-      module stays class-I only.
+      :func:`mhcmatch.store.anchor_indices`, a different construction that is not fitted here --- so
+      the ``length_roles`` channel specifically is class-I only. The module is not:
+      ``complement.score(..., cls="mhc2")`` reads the shipped ``complement_mhc2_{human,mouse}.json``
+      heads, which are fitted separately.
 
 ``kmer``
    The same construction over adjacent TCR-facing residue pairs — a preference for a specific

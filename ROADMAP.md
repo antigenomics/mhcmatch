@@ -26,13 +26,14 @@ the ligand-span method, and one name over three meanings could not report which 
 degenerate rather than absent. **Which corpus channels a fit carries is read off its own `features`
 list, never off the mode** — it is a property of the deposit.
 
-**Four artifacts still ship, all `neoantigen`.** `mhcmatch models` prints them; `--all` adds the
-four cells that ship nothing, so the binary can answer "what do I have" now that a second mode is
-registered. `--score aggregate --epitope pathogen` refuses by name.
+**Five artifacts ship: four `neoantigen` and `mhc1.human.pathogen`.** `mhcmatch models` prints
+them; `--all` adds the three cells that ship nothing, so the binary can answer "what do I have" now
+that a second mode is registered, and marks an unfitted cell `--` rather than leaving it looking
+like a broken install. The three pathogen cells that do not ship refuse by name.
 
 **Three silent substitutions on the scoring path, found by auditing the new mode.** All three
 resolved the *default* artifact rather than the one being scored, and all three were invisible
-because the four shipped fits agree:
+because the shipped fits agree:
 `aggregate_score` validated `(cls, species, mode)` and then called `aggregate_terms` **without
 `mode`**; `_aggregate_channels` read `corpus_geometry()` bare, so `k`/`mask`/`kernel` always came
 from `mhc1.human.neoantigen`; and `_mimicry_scores` took no species at all, so
@@ -45,6 +46,21 @@ a `variant_type` under `C_corpus_thymus`, no error. Same shape as the `--passthr
 **`--cls both`** scores each class on its own model and emits one table with a `cls` column. Not one
 model over two classes: nine terms against six, and no corpus block in class II. Rows route by the
 alleles they name.
+
+**The release audit found seven more of the same two shapes, and none of them errored.** A value
+resolved from the *default* artifact instead of the one being scored: `corpus_spectrum` was still
+taking its `kappa` from `corpus_shapes()` bare, one call site over from the geometry fix above. A
+rule written for one mode and left un-generalised: the "emit the columns you computed" header
+filter was gated on `epitope == "pathogen"`, so `rank --cls mhc2 --score aggregate` wrote **NaN
+into three columns that carried measured densities in 1.13.0** — correctly not built, wrongly still
+named. `--cls both` shipped two bugs of its own: it routed rows by `allele_scored`, which
+`rank_table` sets unconditionally, so **`rank table --cls both` emitted every row twice** with a
+class-I allele scored under the class-II model; and `--top N` was applied once per class, promising
+N and writing up to 2N, cutting each pass before the cross-class filter had run. `explain` answered
+the three expression flags `rank` refuses. `mhcmatch models --all` printed a **broken install** as
+an unfitted cell. And `rank --help` still said no pathogen artifact ships. All seven are fixed with
+a regression test each; `cli._rank_columns` now calls `rank.columns` rather than restating it, so
+the header has one implementation.
 
 **What "mouse" means is now stated in one place** — [`docs/models.rst`](docs/models.rst), one row
 per component. Presentation and expression are mouse; physicochemistry is species-free; **the whole
@@ -61,6 +77,15 @@ thymus-corpus members. The root cause is that the builder and the library disagr
 `self` *is*: the builder maps it to `ligandome/tissue_self_mmu.tsv.gz`, the library to the mouse
 **proteome**. Reported, not silently refitted.
 
+**The extension checkout is retired and nothing was lost.**
+`~/vcs/projects/2026-mhcmatch-benchmark-ext` was a working tree seeded from the benchmark repo at
+`ext-integration` with its history deliberately dropped, and it then carried **nine commits with no
+remote anywhere** — including the mouse class-I corpus audit that is the evidence base for the model
+1.13.0 ships. Its seed tree was byte-identical to `ext-integration` except its own `CLAUDE.md` and
+`README.md`, so the nine replayed as cherry-picks onto their real parent with their original
+messages, dates and authorship, on `ext-salvage`, merged to that repo's `master`. Nothing was
+reconstructed and nothing summarised. **Four repos, four roles** (`CLAUDE.md`) holds again.
+
 ### Open loops
 
 - **The 43-peptide leak in `aggregate_mhc1_mouse.json`.** Whether it is refit is the author's call;
@@ -74,6 +99,13 @@ thymus-corpus members. The root cause is that the builder and the library disagr
   `corpus_iedb_mhc2.parquet` has 629,032 resolvable rows but no source-organism column. A one-column
   re-export from IEDB unblocks it. And a class-II pathogen fit would carry **four terms** — three
   after `log10a` — because class II drops the corpus block: the entire tolerance half is absent.
+  **`log10a` duplicates `binder` on class II too**, measured 2026-09-05 on the population each
+  shipped artifact was fitted on: Pearson **r = +0.7006** on `mhc2.human` (1,081 of 1,112 rows with
+  both columns finite) and **+0.7505** on `mhc2.mouse` (468 of 468), against +0.8123 on the class-I
+  pathogen fit. Neither class-II coefficient resolves in its own fit and both were recorded that way
+  already — human −0.1193 at p = 0.773 and sign stability 0.630, mouse −0.0456 at p = 0.950 and
+  0.552. Whether either shipped class-II model drops the term is a refit decision, not a
+  measurement. `bench/results/mhc2_log10a_collinearity.md`.
 - **The two mouse `*_pathogen.json` candidates in `bench/epic/` are stale and should not ship.**
   They predate the current generator (no `mode`/`model_id`/`release`, hardcoded
   `screens: ["IEDB_neoag"]`) and are fitted on **CEDAR non-self** rows — CEDAR is the *Cancer*

@@ -91,8 +91,9 @@ Integration --- putting it together
 ``rank`` — the three input modes, and the flags that matter
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Three inputs: ``rank fasta`` over mutation-spanning windows, ``rank scored`` over an already-scored
-table, and ``rank pairs`` over a TSV of ``peptide`` / ``wt_peptide`` / ``allele``.
+Three inputs: ``rank fasta`` over mutation-spanning windows, ``rank table`` over an already-scored
+table, and ``rank pairs`` over a TSV of ``peptide`` / ``wt_peptide`` / ``allele``. The positional
+is ``{fasta,table,pairs}``; ``rank scored`` is an argparse error.
 
 **Being the last stage of somebody else's pipeline.** On the ``pairs`` path ``--passthrough`` emits
 **every column of your table**, unchanged and in your order, ahead of this command's own under
@@ -121,8 +122,11 @@ built on them and a run of ``rank`` are the same model by construction. Neither 
 neither needs a *mode* or an *input*.
 
 **The aggregate computes every one of its features before scoring** — a model emits the features it
-used and refuses to run without them. ``EPIC`` scores all three corpus channels
-(``C_corpus_thymus``, ``C_corpus_self``, ``C_corpus_viral``) as a 64 KB *k*-mer table contraction
+used and refuses to run without them, and it emits nothing else: a ``C_corpus_*`` column its fitted
+``features`` list does not name is absent from the header rather than present and NaN, which is why
+``--cls mhc2`` has no corpus columns at all. ``mhc1.human.neoantigen`` scores all three corpus
+channels (``C_corpus_thymus``, ``C_corpus_self``, ``C_corpus_viral``) as a 64 KB *k*-mer table
+contraction
 rather than a neighbour search, so no proteome index is on the ranking path at all and
 ``--no-self`` is allowed with ``--score aggregate``. ``--extended`` and ``--annotate`` do build one,
 because they report what a candidate resembles; that index is cached on disk and can be staged
@@ -346,11 +350,15 @@ convention, outside a strong cut. Override either class alone with ``--map-thres
      - stage reference data ahead of the run that needs it --- ``--tier``, ``--proteome``,
        ``--reference``, ``--index``. Nothing requires it; see :ref:`bootstrap-tiers`
    * - ``--epitope {neoantigen,pathogen}``
-     - which fitted model scores the rows. ``neoantigen`` (default) is the nine-term EPIC fit;
-       ``pathogen`` is for a peptide the host does not encode. Not spelled ``--mode``: this
-       command's *positional* ``mode`` is the input shape. ``pathogen`` drops the expression block
-       (undefined without a host transcript, so ``--tissue`` / ``--tumor`` / ``--expr-floor`` are
-       **refused**) and the wild-type columns, which are degenerate rather than absent
+     - which fitted model scores the rows. ``neoantigen`` (default) is the nine-term EPIC fit under
+       ``--cls mhc1`` and the six-term one under ``--cls mhc2``; ``pathogen`` is for a peptide the
+       host does not encode, and one such artifact ships (``mhc1.human.pathogen``, five terms, from
+       1.14.0) while the other three cells refuse by name. Not spelled ``--mode``: this command's
+       *positional* ``mode`` is the input shape. ``pathogen`` drops the expression block (undefined
+       without a host transcript, so ``--tissue`` / ``--tumor`` / ``--expr-floor`` are **refused**
+       on ``rank`` and on ``explain``) and all four :data:`mhcmatch.rank.WT_COLUMNS`
+       (``agretopicity``, ``d_occupancy``, ``wt_absent``, ``wt_peptide``) plus the three gate-side
+       expression readouts, which are degenerate rather than absent
    * - ``--cls {mhc1,mhc2,both}``
      - ``both`` scores each class on **its own** fitted model and emits one table with a ``cls``
        column. Not one model over two classes: nine terms against six, and no corpus block in
@@ -366,5 +374,5 @@ convention, outside a strong cut. Override either class alone with ``--map-thres
      - rebuild the shipped artifacts in-process. The sub-verb names one family and the choices are
        derived from ``_build.TARGETS``, so every target ``--check`` reports on can also be named
        (``anchor``, ``corpus``, ``known``, ``recognition`` build here; the rest print the external
-       command that regenerates them); ``--check`` builds nothing and exits 1 if any of the 31
+       command that regenerates them); ``--check`` builds nothing and exits 1 if any of the 40
        artifact files is stale against ``__version__`` --- this is what CI runs

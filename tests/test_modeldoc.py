@@ -40,10 +40,20 @@ def test_every_shipped_fit_renders_its_own_coefficients(cls, species, mode):
 
     a = R.aggregate(cls, species, mode)
     rst = MD.model_rst(cls, species, mode)
+    # **On the same LINE, not merely both somewhere in the document.** Two independent membership
+    # tests pass under a whole-column shift: every name still appears and every coefficient still
+    # appears, each one row off. That is precisely the failure "the coefficient printed is the
+    # artifact's own" claims to exclude, so the pairing is what gets asserted.
+    lines = rst.splitlines()
     for i, term in enumerate(a["features"]):
         coef = a["coef"][i] if isinstance(a["coef"], list) else a["coef"][term]
         assert f"``{term}``" in rst
-        assert f"**{coef:+.4f}**" in rst, f"{cls}/{species}/{mode}: {term} not printed as fitted"
+        at = [n for n, ln in enumerate(lines) if ln.strip() == f"- ``{term}``"]
+        assert at, f"{cls}/{species}/{mode}: {term} has no coefficient row"
+        near = "\n".join(lines[at[0]:at[0] + 2])
+        assert f"**{coef:+.4f}**" in near, (
+            f"{cls}/{species}/{mode}: {term}'s row does not carry its own coefficient "
+            f"{coef:+.4f} -- the table is shifted against the features list")
 
 
 def test_every_registered_artifact_has_a_documentation_row():
