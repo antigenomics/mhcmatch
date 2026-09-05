@@ -158,7 +158,11 @@ process MHCMATCH_RANK {
     def prefix = task.ext.prefix ?: "${meta.id}"
     def mode   = params.mhcmatch_rank_mode ?: 'fasta'
     def tier   = params.mhcmatch_tier ?: 'full'
-    def tumor  = params.mhcmatch_tumor ? "--tumor ${params.mhcmatch_tumor}" : ''
+    // The immunological MODE, not the input shape -- `mode` above is the shape. `--tumor` is
+    // dropped in pathogen mode because `rank` refuses it there (undefined without a host
+    // transcript) and would exit non-zero on every task in the arm.
+    def epi    = params.mhcmatch_rank_epitope ?: 'neoantigen'
+    def tumor  = (epi == 'neoantigen' && params.mhcmatch_tumor) ? "--tumor ${params.mhcmatch_tumor}" : ''
     def score  = params.mhcmatch_rank_score ? "--score ${params.mhcmatch_rank_score} " : ''
     // The pool prevalence `p_response` is anchored on. It is a PRIOR about this cohort's candidate
     // list, not a model output, so it is a pipeline parameter rather than a default buried in a
@@ -175,6 +179,7 @@ process MHCMATCH_RANK {
         --cls ${cls} \\
         --tier ${tier} \\
         --rank-threshold ${rank} \\
+        --epitope ${epi} \\
         ${keep}${tumor} ${score}${prev}${extra}${args} \\
         --out ${prefix}.${cls}.mhcmatch.ranked.tsv
 
@@ -190,8 +195,15 @@ process MHCMATCH_RANK {
     def ann    = isOn(params.mhcmatch_rank_annotate) ? 'True' : 'False'
     def sc     = params.mhcmatch_rank_score ?: 'aggregate'
     def cor    = isOn(params.mhcmatch_rank_core) ? 'True' : 'False'
+    // **`cls`, `species` and `mode` reach the stub too, or the stub is a different header.** From
+    // 1.14.0 a run emits the columns it COMPUTED: pathogen mode drops the wild-type and expression
+    // blocks, and a class-II fit declares no corpus channels, so the stub header without these
+    // arguments is the class-I neoantigen one and drifts against every other arm. That drift is
+    // exactly what `rank.columns` exists to prevent -- 18 columns against 57, once.
+    def epi    = params.mhcmatch_rank_epitope ?: 'neoantigen'
+    def sp     = params.genome == 'GRCm39' ? 'mouse' : 'human'
     """
-    python -c "from mhcmatch import rank; print('\\t'.join(rank.columns(extended=${ext}, annotate=${ann}, score='${sc}', core=${cor})))" \\
+    python -c "from mhcmatch import rank; print('\\t'.join(rank.columns(extended=${ext}, annotate=${ann}, score='${sc}', core=${cor}, cls='${cls}', species='${sp}', mode='${epi}')))" \\
         > ${prefix}.${cls}.mhcmatch.ranked.tsv
 
     cat <<-END_VERSIONS > versions.yml
@@ -655,7 +667,8 @@ process MHCMATCH_RERANK {
     def prefix = task.ext.prefix ?: "${meta.id}"
     def tier   = params.mhcmatch_tier ?: 'full'
     def pre    = params.mhcmatch_rerank_prefix ?: 'mm_'
-    def tumor  = params.mhcmatch_tumor ? "--tumor ${params.mhcmatch_tumor}" : ''
+    def epi    = params.mhcmatch_rank_epitope ?: 'neoantigen'
+    def tumor  = (epi == 'neoantigen' && params.mhcmatch_tumor) ? "--tumor ${params.mhcmatch_tumor}" : ''
     def prev   = params.mhcmatch_prevalence ? "--prevalence ${params.mhcmatch_prevalence} " : ''
     def ctx    = context.name != 'NO_FILE' ? "--context ${context}" : ''
     def extra  = (isOn(params.mhcmatch_rank_extended) ? '--extended ' : '') +
@@ -670,6 +683,7 @@ process MHCMATCH_RERANK {
         --cls ${cls} \\
         --tier ${tier} \\
         --passthrough --prefix '${pre}' \\
+        --epitope ${epi} \\
         ${keep}${ctx} ${tumor} ${prev}${extra}${args} \\
         --out ${prefix}.${cls}.epitopes.mhcmatch.tsv
 
@@ -685,12 +699,16 @@ process MHCMATCH_RERANK {
     def ext    = isOn(params.mhcmatch_rank_extended) ? 'True' : 'False'
     def ann    = isOn(params.mhcmatch_rank_annotate) ? 'True' : 'False'
     def cor    = isOn(params.mhcmatch_rank_core) ? 'True' : 'False'
+    def epi    = params.mhcmatch_rank_epitope ?: 'neoantigen'
+    def sp     = params.genome == 'GRCm39' ? 'mouse' : 'human'
     """
     # The caller's columns lead and a stub cannot know them, so it types what the command ADDS --
-    # asked of the library, never copied, so `-stub-run` cannot drift from the real shape.
+    # asked of the library, never copied, so `-stub-run` cannot drift from the real shape. That
+    # requires `cls`/`species`/`mode`: from 1.14.0 the header is a property of the artifact being
+    # scored, not of the flags alone.
     python -c "
 from mhcmatch import rank
-print('\\t'.join('${pre}' + c for c in rank.columns(extended=${ext}, annotate=${ann}, core=${cor})))" \\
+print('\\t'.join('${pre}' + c for c in rank.columns(extended=${ext}, annotate=${ann}, core=${cor}, cls='${cls}', species='${sp}', mode='${epi}')))" \\
         > ${prefix}.${cls}.epitopes.mhcmatch.tsv
 
     cat <<-END_VERSIONS > versions.yml
