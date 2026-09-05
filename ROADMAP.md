@@ -1504,7 +1504,8 @@ frameshift case is exactly the `nonconventional` arm the cassette quota holds a 
 
 ## 5b-6. EPIC is class-I only, and class II cannot inherit it (v0.27.0, LANDED — superseded)
 
-**Closed by 1.12.0.** Four aggregate artifacts ship, two of them class II
+**Closed by 1.12.0** (and five ship from 1.14.0, the fifth being `mhc1.human.pathogen` — see the
+top section). Four aggregate artifacts shipped at the time this closed, two of them class II
 (`aggregate_mhc2_human.json` v1, `aggregate_mhc2_mouse.json` v3), and `rank.aggregate` is a
 `(cls, species, mode)` lookup that refuses an unfitted cell rather than substituting. What survives
 is the *reason* below, and it is still load-bearing: the face-geometry argument is why both
