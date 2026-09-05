@@ -50,7 +50,7 @@ __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
            "aggregate_score", "probability", "POOL_PREVALENCE",
            "AGGREGATE_FEATURES", "AGGREGATE_COLUMNS", "EXPR_COLUMNS",
            "FEATURES_ONLY_PATHOGEN", "stand_in",
-           "AGGREGATE_BLOCKS", "CHANNEL_COLUMNS", "PHYS_COLUMNS", "expr_percentile",
+           "AGGREGATE_BLOCKS", "CHANNEL_COLUMNS", "PHYS_COLUMNS", "WT_COLUMNS", "expr_percentile",
            "expr_norm_level",
            "rank_pairs", "split_alleles", "species_of"]
 
@@ -70,6 +70,20 @@ BASE_COLUMNS: tuple = ("rank", "peptide", "allele", "allele_scored", "gene", "sc
                        "agretopicity", "physchem", "expression", "expr_pct", "expr_imputed",
                        "n_alleles_presenting", "alleles_presenting",
                        "imputed", "wt_peptide", "known_epitope", "variant_type", "keep", "keep_reason")
+#: **The three columns a pathogen epitope cannot have.** Each is a contrast against a germline
+#: counterpart, and a peptide the host does not encode has none -- so in ``pathogen`` mode they are
+#: not merely missing, they are constant: ``agretopicity`` is always NaN, ``wt_absent`` always 1.0,
+#: and ``d_occupancy`` always equals ``occupancy`` exactly, because :func:`d_occupancy` falls back
+#: to the mutant's own occupancy when there is no wild type. Emitting three constants invites a
+#: reader to interpret them; dropping them says what is true. None is fitted in any artifact, so
+#: nothing downstream loses a term.
+#:
+#: ``log10a`` is deliberately NOT here. It is ``log10([P]/Kd)`` of the candidate itself
+#: (:func:`_logit10`) and needs no wild type at all -- it leaves the pathogen fit for collinearity
+#: with ``binder`` (r = +0.812), which is a different reason and belongs in the artifact's
+#: ``features`` list rather than here.
+WT_COLUMNS: tuple = ("d_occupancy", "wt_absent", "agretopicity", "wt_peptide")
+
 #: The aggregate's recognition features, emitted whenever the aggregate is what scored. A model
 #: emits the features it used and refuses to run without them.
 #:
@@ -179,11 +193,12 @@ AGGREGATE_ARTIFACTS: dict = {
     ("mhc1", "mouse", "neoantigen"): "aggregate_mhc1_mouse.json",
     ("mhc2", "mouse", "neoantigen"): "aggregate_mhc2_mouse.json",
     ("mhc2", "human", "neoantigen"): "aggregate_mhc2_human.json",
+    ("mhc1", "human", "pathogen"): "aggregate_mhc1_pathogen.json",
     # **A key here means the file SHIPS**, not that a fit exists. Registering a name whose artifact
     # is not installed turns the honest "this library ships ..." refusal into a FileNotFoundError
     # that reads like a broken install, and it is the wrong answer: nothing is broken, that model
-    # was never fitted into a release. The `mhc1.human.pathogen` candidate lives in the benchmark
-    # repo (`bench/pathogen/`); its line lands here in the same commit that vendors the file.
+    # was never fitted into a release. `test_the_artifact_registry_lists_only_files_that_are_installed`
+    # pins that; the three unfitted cells refuse by name through the `None` branch below.
 }
 
 #: **The class-II artifacts carry six terms, not nine, and that is a specification.** A corpus
@@ -198,8 +213,19 @@ AGGREGATE_ARTIFACTS: dict = {
 TERMS_MHC2_EXPECTED: tuple = ("binder", "log10a", "expr_lvl", "expr_norm",
                               "C_phys_buried", "C_phys_charge")
 
-#: **The pathogen artifacts carry six terms.** Two blocks leave the nine-term neoantigen design,
-#: and each leaves for its own reason -- neither is a weak coefficient.
+#: **The shipped pathogen artifact carries five terms.** Three things leave the nine-term
+#: neoantigen design and each leaves for its own reason -- only one of them is a weak coefficient.
+#:
+#: ``log10a`` is **well-defined here and still dropped, and the two facts are unrelated.** It is
+#: ``log10([P]/Kd)`` of the candidate itself (:func:`_logit10`), so it needs no wild type at all --
+#: :attr:`Ranked.occupancy` is "defined for a frameshift or fusion product that has none". It goes
+#: because it does not earn its parameter: **corr(log10a, binder) = +0.8123** on the 38,106-row
+#: fitted design, at coefficient -0.0519, p = 0.137 and sign stability 0.887. Dropping it cost
+#: 0.0006 AUROC and raised PPV in the top 100 from 0.1000 to **0.1300**.
+#:
+#: The genuinely wild-type-dependent quantities -- ``agretopicity``, ``d_occupancy``,
+#: ``wt_absent`` -- are **degenerate** rather than absent in this mode (always NaN, always
+#: ``occupancy``, always 1.0) and none is fitted anywhere; see :data:`WT_COLUMNS`.
 #:
 #: ``expression`` is **undefined**, not missing. A pathogen epitope comes from an organism the host
 #: does not transcribe, so there is no source-gene abundance to measure and no matched normal to
@@ -229,7 +255,7 @@ TERMS_MHC2_EXPECTED: tuple = ("binder", "log10a", "expr_lvl", "expr_norm",
 #: **The complement of a T-cell flag is not a negative set**, which is why no arm here filters on
 #: one. IEDB's T-cell export is positives-only, so "no positive record" mostly means nobody
 #: measured it.
-TERMS_PATHOGEN_EXPECTED: tuple = ("binder", "log10a", "C_phys_buried", "C_phys_charge",
+TERMS_PATHOGEN_EXPECTED: tuple = ("binder", "C_phys_buried", "C_phys_charge",
                                   "C_corpus_thymus", "C_corpus_self")
 
 #: **The two immunological modes, and why the key carries one.** A tumour neoantigen and a pathogen
@@ -462,6 +488,9 @@ FEATURES_ONLY_PATHOGEN: dict = {
     "model": "", "version": None,
     "features": ["C_phys_buried", "C_phys_charge", "C_corpus_thymus", "C_corpus_self"],
 }
+# `binder` is computed by the scoring path itself and is not a stand-in column, so the stand-in is
+# the four the CALLER would otherwise have to supply -- the same relationship `FEATURES_ONLY` has
+# to the nine-term fit.
 
 
 def stand_in(mode: str = "neoantigen") -> dict:
@@ -729,7 +758,11 @@ def aggregate_score(features, imputed_out: list | None = None, cls: str = "mhc1"
             f"features and {len(missing)} were not supplied: {', '.join(missing)}. "
             "A model scores on the features it declares or not at all; supplying a subset would "
             "score a different model under this one's coefficients.")
-    terms = aggregate_terms(features, imputed_out, cls, species)
+    # `mode` travels with (cls, species) or the guard above validates one artifact while the
+    # arithmetic below uses another -- measured: with a pathogen artifact registered,
+    # `aggregate_score(mode="pathogen")` refused naming EPIC's nine features while
+    # `aggregate_terms(mode="pathogen")` returned the correct six-column matrix.
+    terms = aggregate_terms(features, imputed_out, cls, species, mode)
     out = np.zeros(n, dtype=float)
     for j in range(terms.shape[1]):        # sequential, in feature order, as this always summed
         out += terms[:, j]

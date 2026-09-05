@@ -692,6 +692,61 @@ which is `log 468 = 6.15` -- one parameter's worth, and the block was spending t
 `bench/results/epic_mouse_fit_mhc2_axis-none.md`.
 
 
+## `aggregate_mhc1_pathogen.json` — the pathogen-mode class-I scorer
+
+**Derived.** **Five** standardised slopes — `binder`, `C_phys_buried`, `C_phys_charge`,
+`C_corpus_thymus`, `C_corpus_self` — ridge `tau = 0.25`, one **global** unpenalised intercept, and
+`intercept: null` in the shipped file. Model version **`1`**, release `1.13.0`.
+`rank.TERMS_PATHOGEN_EXPECTED` names the five.
+
+**This is the only non-`neoantigen` artifact.** A tumour neoantigen and a pathogen epitope are
+answered by different mechanisms, so they are two models rather than one model with an extra
+covariate, and `rank.AGGREGATE_ARTIFACTS` is keyed `(cls, species, mode)` for exactly that reason.
+The other three pathogen cells refuse by name.
+
+    # in ~/vcs/projects/2026-mhcmatch-benchmark:
+    MHCMATCH_MODEL_RELEASE=1.13.0 python bench/pathogen/fit_pathogen.py --arm foreign --both
+    # then, deliberately:
+    cp bench/pathogen/aggregate_mhc1_pathogen.json ~/vcs/code/mhcmatch/src/mhcmatch/data/
+
+**Corpus, human.** `immunogenicity/kesmir_rebuilt_hla_matched.tsv.gz`, the **`foreign` stratum**:
+human host, MHC-I, 8–11mers, `source_species == "foreign"`. **38,106 rows / 2,634 immunogenic
+(6.91 %) / 19,464 distinct peptides / 112 allotypes.**
+
+**Why the stratum and not the whole deposit.** Of the 52,993 human class-I rows, 14,706 of the
+17,346 positives (84.8 %) sit in source buckets with **no negatives at all** — `other`
+10,883/10,883 and `human` 3,823/3,823 — while 35,511 of the 35,647 negatives (99.6 %) are
+`foreign`. `source_species` alone separates the classes there, and `C_corpus_self` /
+`C_corpus_thymus` are precisely the features that detect a human-source peptide. The `foreign` arm
+is one antigen source on both sides. The pooled arm is fitted beside it every run (`--both`) and
+recorded in `bench/results/epic_pathogen_fit_mhc1.md`: the sign does **not** invert, and its higher
+PR-AUC is its 4.0× higher prevalence, not a better model.
+
+**Three terms are absent, for three different reasons.**
+
+| absent | reason |
+|---|---|
+| `expr_lvl`, `expr_norm` | **undefined**, not missing — a pathogen epitope comes from an organism the host does not transcribe, so there is no source-gene abundance and no matched normal. `rank._expression_for` returns NaN with `imputed=False`, and `rank` **refuses** `--tissue`/`--tumor`/`--expr-floor` in this mode rather than discarding them |
+| `C_corpus_viral` | its k-mer table is counted from the same deposit these rows come from: **35,511 of 35,511 negatives and 2,634 of 2,634 positives (100 % of both)** are exact members, so the channel measures membership. This is a property of the DEPOSIT, not the mode — CEDAR's mouse non-self rows overlap it at 0 of 672, so a pathogen fit there keeps the channel |
+| `log10a` | **well-defined and collinear.** It is `log10([P]/Kd)` of the candidate itself and needs no wild type at all; it does not earn its parameter at **corr(log10a, binder) = +0.8123** on the fitted design. Dropping it cost 0.0006 AUROC and raised PPV@100 from 0.1000 to **0.1300** |
+
+**Disjointness is enforced, not assumed.** `drop_corpus_members` refuses any peptide that is an
+exact member of a corpus this fit's own channels read, resolving the reference paths through
+`mhcmatch.mimics` rather than restating them. Measured: **0** thymus members, **22** self members
+(39 rows) on the foreign arm.
+
+**What the fit says.** ROC-AUC **0.5926**, PR-AUC **0.0905** against prevalence 0.0691, PPV
+**0.1063** at k = 2,634 (1.54× lift) and **0.1300** in the top 100. Row-resampled 5-fold: 0.5915 ±
+0.0105. Four of five terms sign-stable at **1.000** over 400 row bootstraps —
+`C_corpus_self` **−0.3030** (p = 1.5×10⁻¹⁸), `C_corpus_thymus` **+0.3003** (p = 3.3×10⁻²²),
+`C_phys_buried` **+0.1920** (p = 1.2×10⁻¹⁹), `binder` **+0.1454** (p = 1.1×10⁻¹³).
+`C_phys_charge` (p = 0.994, stability 0.487) does not resolve.
+
+**The two host channels correlate at r = +0.783 and their coefficients sum to −0.0027**, so what is
+fitted is a *difference*, `C_corpus_thymus − C_corpus_self` at weight ≈ 0.30, not two independent
+mechanisms. **And the negative class is "no recorded positive"**, not "measured
+non-immunogenic": IEDB's T-cell export is positives-only. `bench/results/epic_pathogen_fit_mhc1.md`.
+
 ## `anchor_model_*_mouse_*.pkl.gz` — the mouse AnchorModel pickles
 
 **Derived.** Five files, the mouse counterpart of the human registry entry for entry, built by

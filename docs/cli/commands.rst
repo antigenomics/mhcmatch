@@ -70,10 +70,15 @@ Integration --- putting it together
    * - command
      - does
    * - ``rank``
-     - the fitted ``EPIC`` aggregate over neoantigen candidates, from a window FASTA, an
-       already-scored table, or a ``pairs`` TSV. **The command below, in detail**
+     - the fitted ``EPIC`` aggregate over neoantigen **or pathogen-epitope** candidates
+       (``--epitope``), from a window FASTA, an already-scored table, or a ``pairs`` TSV.
+       **The command below, in detail**
+   * - ``models``
+     - which ``(cls, species, mode)`` fitted models this install ships; ``--all`` adds the cells
+       that ship none, marked ``--``
    * - ``explain``
-     - every component of the aggregate for one *(peptide, allele)*
+     - every component of the **gate** for one *(peptide, allele)*, and the ``model_id`` of the
+       fitted aggregate that would score it
    * - ``genes``
      - add a ``gene`` column --- the parent gene each candidate derives from, by near-exact
        proteome search (radius 2, threaded C++), named from its UniProt ``GN=`` field. **Below**
@@ -340,6 +345,23 @@ convention, outside a strong cut. Override either class alone with ``--map-thres
    * - ``bootstrap``
      - stage reference data ahead of the run that needs it --- ``--tier``, ``--proteome``,
        ``--reference``, ``--index``. Nothing requires it; see :ref:`bootstrap-tiers`
+   * - ``--epitope {neoantigen,pathogen}``
+     - which fitted model scores the rows. ``neoantigen`` (default) is the nine-term EPIC fit;
+       ``pathogen`` is for a peptide the host does not encode. Not spelled ``--mode``: this
+       command's *positional* ``mode`` is the input shape. ``pathogen`` drops the expression block
+       (undefined without a host transcript, so ``--tissue`` / ``--tumor`` / ``--expr-floor`` are
+       **refused**) and the wild-type columns, which are degenerate rather than absent
+   * - ``--cls {mhc1,mhc2,both}``
+     - ``both`` scores each class on **its own** fitted model and emits one table with a ``cls``
+       column. Not one model over two classes: nine terms against six, and no corpus block in
+       class II. Rows route by the alleles they name
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 78
+
+   * - command
+     - does
    * - ``build``
      - rebuild the shipped artifacts in-process. The sub-verb names one family and the choices are
        derived from ``_build.TARGETS``, so every target ``--check`` reports on can also be named

@@ -83,7 +83,7 @@ Per-allele anchor log-odds PWM, kernel-shrunk over groove-similar alleles. `am.s
 | `mhcmatch.known` | five built-in reference sets | exact-match lookup. An exact match outranks any model output, so `rank` flags it and never folds it into the score |
 | `mhcmatch.expression` | `lookup`, `safety_profile`, `matched_tissues`, `tumor_types`, `TUMOR_TISSUE`, `context_floor`, `gene_level`, `resolve_context`, `batch_scale` | **Every function takes `species=`, defaulting to `"human"`.** `species="mouse"` reads FANTOM5 (E-MTAB-3579, 18,830 genes x 35 adult tissues incl. thymus) plus a tumour rung — GSE245293's 6 syngeneic models by `lookup`, and 33 through the harmonised `toil_matrix_mmu.npz` (26,737 genes x 68 contexts, one scale) that `context_floor`/`gene_level` read. **Human's tumour half is peptide-keyed, mouse's is gene-keyed**, and `rank._expression_for` picks the key by species. **Compare floors within a species, never across one**: mouse runs 0.60–2.00 TPM against human's 0.10–0.40. `tissue_floor(tumor=…, species="mouse")` still raises — `TUMOR_TISSUE` is TCGA-keyed with no mouse equivalent — and names `context_floor` instead. GTEx `SMTSD` tissues and TCGA study abbreviations — **two vocabularies, never merged, neither clinical**. **Always pass the caller's own tumour type**: since v9 it sets the floor `c` both expression terms divide by, and **a tumour's floor is roughly half its matched normal's** (SKCM 0.1600 against skin 0.3050 TPM), so the pooled fallback is not neutral. `context_floor`/`gene_level` read the single-pipeline reference (UCSC Xena/Toil, one RSEM pipeline over GENCODE v23, TPM for both cohorts) through a 58,581 × 86 matrix rather than the 5 M-row table — 0.05 s and 29 MB against 5.20 s and 3,168 MB. `resolve_context` turns a free-text origin into a study code plus matched normals and **raises** on an unrecognised string; one organ is more than one study more often than not, so the mapping is one-to-many. `batch_scale` rescales a non-TPM column by median-of-ratios and **refuses below half-transcriptome coverage** — a candidate list cannot clear it, because a mutation reaches one only where the gene was seen in RNA |
 | `mhcmatch.mimics` | `neighbours`, `KINDS`, `DEFAULT_REFS` | the raw scan, per category, **never summed** — each category argues something different |
-| `mhcmatch.mimicry` | `score`, `probability`, `annotate`, `safety`, `masks`, `corpus_R`, `features`, `load_references` | the *fitted* form: `viral`/`self`/`thymus` × `anchor`/`tcr` as signed log-odds. `probability` demands a **named** corpus. `annotate` (tested-neoantigen DB) is prior evidence and **never a fitted term**. **`corpus_R` is `C_corpus`** — the **exact** Luksza density over the TCR face, evaluated as a sliding-k-mer table contraction (`corpus_counts` + `contract`), not a search. All three components (`thymus`/`self`/`viral`) ship in EPIC, under a graded BLOSUM62 kernel since v4; `SHAPES` is one `kappa` each (`a0` retired). `self_species=` picks the proteome, so mouse self for mouse. Counts are memoised per `(cls, comp, k, species, pmhc_dir, weights, mask)` and **not** keyed on `kappa`, so a kappa sweep is free; there is **no disk cache** ([docs/corpus.rst](../../docs/corpus.rst)). `load_references` still builds the index `features`/`annotate`/`safety` need, because those report *which* reference was hit |
+| `mhcmatch.mimicry` | `score`, `probability`, `annotate`, `safety`, `masks`, `corpus_R`, `features`, `load_references` | the *fitted* form: `viral`/`self`/`thymus` × `anchor`/`tcr` as signed log-odds. `probability` demands a **named** corpus. `annotate` (tested-neoantigen DB) is prior evidence and **never a fitted term**. **`corpus_R` is `C_corpus`** — the **exact** Luksza density over the TCR face, evaluated as a sliding-k-mer table contraction (`corpus_counts` + `contract`), not a search. All three components (`thymus`/`self`/`viral`) ship in EPIC, under a graded BLOSUM62 kernel since v4; `SHAPES` is one `kappa` each (`a0` retired). `self_species=` is honoured literally, but the SCORER resolves it through `mimicry.reference_species` first, which routes **every** mouse component -- `thymus`, `self` and `viral`, in **both classes** -- to the **human** tables. Mouse coefficients, human tables ([docs/models.rst](../../docs/models.rst) has the per-component table). Counts are memoised per `(cls, comp, k, species, pmhc_dir, weights, mask)` and **not** keyed on `kappa`, so a kappa sweep is free; there is **no disk cache** ([docs/corpus.rst](../../docs/corpus.rst)). `load_references` still builds the index `features`/`annotate`/`safety` need, because those report *which* reference was hit |
 | `mhcmatch.vector` | `screen`, `self_origin_risk`, `select`, `order`, `assemble`, `LINKERS`/`resolve_linker`, `mrna`, `slippery_sites`, `epitope_map`, `write_map` | **cassette assembly**, the step after `rank`: withdraw on safety, then how many units per allotype, in what order, joined by what. `screen` **excludes** by default; a reason carrying `veto=False` (the graded mode of `self_origin_risk`, findings below `veto_tpm`) is recorded into `notes=` without withdrawing and priced into composition through `offtarget_cost`. Scoring is injected (`binder`, `risk`), so the layout logic needs no panel. `epitope_map`/`write_map`  emit the TSV/JSON cassette map — unit, linker and epitope rows with 1-based coordinates, the class-II core, cross-class overlaps and per-unit `self_help`; **one row per (peptide, allele)**, so a heterozygote is duplicated by construction. **Cut-offs follow NetMHCpan and are per class, never shared**: `RANK_STRONG` is `%rank <= 0.5` (class I) / `<= 2.0` (class II), `RANK_WEAK` is `<= 2.0` / `<= 10.0`, and `rank_cutoffs(tier)` returns the pair — `weak` by default, because the map reports and never selects. One number for both classes is the failure it exists to prevent: `2.0` is weak for class I and *strong* for class II, and applying it to both reported 0 class-II epitopes on a construct whose best window sat at `%rank 4.095`. `epitope_map(threshold=, threshold2=)` overrides a class; passing `stats=` returns per class the windows scored, the number kept and the best `%rank` seen, so an empty class is never a bare zero. `LINKERS` is the named preset table (family, intended class, provenance) — `order(linker=)` pins one, no argument sweeps them all, and the table deliberately does **not** rank itself. `mrna` assembles the molecule and returns a nucleotide parts map that tiles it exactly; the whole ORF is back-translated in one pass so the seams are repaired too, and the backbone (UTRs, signal, trafficking domain, tail) is caller-supplied and defaults to nothing |
 | `mhcmatch.cassette` | `select`, `score`, `lam`, `prob_offset`, `group_offsets`, `goal_energy`, `greedy`, `refine`, `overlap`, `pair_stats`, `log_ek`, `energy`, `not_worse`, `diversity`, `build_axes`, `sequence_overlap`, `tcr_face`, `allotype_overlap`, `swap_for_diversity` | **cassette design**. `rule="v1"` picks *k* units maximising `H = sum h - sum J`, the mean-variance objective derived from the design goal. **`rule="v2"` selects on the degeneracy instead**: `p_i` is a probability, so many size-*k* sets are indistinguishable in how many units respond, and v2 returns the most *diverse* set that is still, with probability `>= pi`, no worse than its reference (`not_worse`, exact because shared units cancel — they are the same random variable, so only the symmetric difference carries variance). `pi=1.0` reproduces the reference exactly and `pi` is a **per-donor** guarantee, not a cohort one. v2 only ever trades capture *away* from its reference, so `reference=` is a floor and not a rival. Diversity is over four axes (`build_axes`): allotype, expression, physchem, and BLOSUM-graded TCR-face sequence (`sequence_overlap` — the old exact-3-mer channel was zero on 97.3% of real pairs). `how="minmax"` maximises the worst-covered axis; `"mean"` averages and dilutes. Score a finished cassette with `score`. `lam` is `H` minus the exact log partition function over every size-*k* subset of the donor's own pool — the one axis comparable across donors AND sizes, and it needs no shared calibration. `select` takes the **whole pool**; a shortlist already cut on binding/expression has no range left along the two largest coefficients. Greedy + bounded swap reaches the brute-force optimum on every enumerable pool. `score` deliberately does **not** report `H`: `goal_energy` renormalises to the set it is handed, so an `H` on a cassette alone scores a diversifying rule identically to one that did not |
 | `mhcmatch.portfolio` | `pareto_front`, `linearly_supported`, `chebyshev_score`, `corner`, `survival`, `coverage`, `compose`, `p_at_least`, `n_effective`, `dispersion`, `betabinom_rho` | **cassette composition**, the layer above `vector.select`. Fits nothing: it says what a proposed *set* is worth. `vector.select` now takes `block=` (a callable `Unit -> hashable`, default the allotype) so the budget can saturate against allotype **x** mechanism; `Selection.expected_yield` follows whatever partition the rule used, and `per_block()` reports it. `linearly_supported` is exact (LP), the sampled searches in the benchmark repo are not. SciPy is a **lazy** import — `linearly_supported` and `betabinom_rho` need it, nothing else does |
@@ -106,7 +106,7 @@ aliases the parser still answers to and this table omits — `vector` for `casse
 | recognition | `complement` · `mimics` · `mimicry` · `neoag` |
 | integration | `rank` · `explain` · `expression` · `source` · `genes` |
 | cassette | `cassette select` · `cassette score` · `cassette build` · `cassette order` · `cassette linkers` · `cassette deslip` |
-| setup | `alleles` · `bootstrap` · `build` (`build --check` = are any of the 39 shipped artifact files stale?) |
+| setup | `alleles` · `bootstrap` · `build` (`build --check` = are any of the 40 shipped artifact files stale?) |
 
 `mhcmatch binder <peptide> --alleles ... --cls mhc1` ranks alleles by the generalized binder score.
 `mhcmatch cassette select --candidates pool.tsv -k 20 [--tol 3]` chooses the units; give it the
@@ -216,28 +216,48 @@ contract and the SLURM templates: [docs/pipeline.rst](../../docs/pipeline.rst) a
 coefficient is what it is worth *after* presentation and expression. Ridge `tau = 0.25`, an
 unpenalised intercept per holdout unit, and no global one.
 
-**Three artifacts, one per `(cls, species, mode)`, and a missing key refuses.**
+**Four artifacts, one per `(cls, species, mode)`, and a missing key refuses.**
 `rank.aggregate(cls, species, mode)` resolves them through `rank.AGGREGATE_ARTIFACTS`;
 `rank.models()` lists them. A combination that was never fitted **raises** rather than scoring with
 another fit's coefficients — which is the whole reason this is a lookup and not a default.
 
-| `model_id` | file | model version | release | rows | positives | holdout |
-|---|---|--:|---|--:|--:|---|
-| `mhc1.human.neoantigen` | `aggregate_mhc1.json` | **11** | 1.6.1 | **339,599** | **597** | leave-one-screen-out over 7 |
-| `mhc1.mouse.neoantigen` | `aggregate_mhc1_mouse.json` | 2 | **1.12.0** | 923 | 380 | grouped CV, 61 references |
-| `mhc2.mouse.neoantigen` | `aggregate_mhc2_mouse.json` | 2 | **1.12.0** | 469 | 177 | grouped CV, 30 references |
+Do not transcribe this table by hand -- `mhcmatch models` prints it, and `mhcmatch models --all`
+adds the cells that ship **no** artifact, marked `--`.
+
+| `model_id` | file | model version | release | rows | positives | terms |
+|---|---|--:|---|--:|--:|--:|
+| `mhc1.human.neoantigen` | `aggregate_mhc1.json` | **11** | 1.6.1 | **339,599** | **597** | 9 |
+| `mhc1.mouse.neoantigen` | `aggregate_mhc1_mouse.json` | **5** | 1.13.0 | 921 | 379 | 9 |
+| `mhc2.human.neoantigen` | `aggregate_mhc2_human.json` | 1 | 1.12.0 | 1,112 | 656 | 6 |
+| `mhc2.mouse.neoantigen` | `aggregate_mhc2_mouse.json` | **3** | 1.12.0 | 468 | 177 | 6 |
 
 - **`release` is not `__version__`.** It is the package version the fit was *accepted* in, stored
   rather than derived, so a manuscript can pin `mhc1.human.neoantigen v11 (release 1.6.1)` while
   the library moves. A **model** version is an int; a **release** is dotted.
-- **`mhc2.human` is fitted from 1.12.0** (v1, six terms, no corpus block). **No `pathogen` fit**: it
-  is a registered mode with no artifact, because a tumour neoantigen and a pathogen epitope are two
-  mechanisms and never one model with an extra covariate.
-- **The mouse fits are nine terms and *seven* free parameters.** Their corpus block is one fitted
-  scalar on the human artifact's corpus direction; a projection with one free scalar *is* three
-  proportional coefficients, so the file lists nine and one library scores both with no branch.
-  The scalar resolves in neither class (class I −0.1191, *p* 0.312; class II +0.0522, *p* 0.845) —
-  923 and 469 rows cannot settle the corpus block even at one degree of freedom.
+- **Both class-II fits carry six terms and no corpus block** (`rank.TERMS_MHC2_EXPECTED`).
+  Contracting a 15-mer register against a 9-mer density asks the wrong question rather than
+  answering it weakly, so the block is dropped outright rather than fitted small.
+- **`mhc1.mouse.neoantigen` is nine free terms on the human corpus tables from v5** (1.13.0). The
+  earlier v2 story — nine terms but *seven* free parameters, the corpus block pinned to one scalar
+  on the human direction — is retired; do not quote its coefficients.
+
+### Two immunological modes
+
+`mhcmatch rank --epitope {neoantigen,pathogen}` selects which fitted model scores the rows. It is
+**not** `--mode`: `rank`'s positional `mode` is the input SHAPE (`fasta`/`table`/`pairs`) and
+`span --mode` is the ligand-span method, so a third meaning under that name could not report which
+one it answered.
+
+- `pathogen` is for a peptide the host does not encode. It **drops the expression block** —
+  undefined, not missing, with no host transcript — so `--tissue` / `--tumor` / `--expr-floor` are
+  **refused**, not ignored. It also drops the wild-type columns (`agretopicity`, `d_occupancy`,
+  `wt_absent`), which are degenerate rather than absent for a peptide with no germline counterpart.
+- **Which corpus channels a `pathogen` fit carries is the ARTIFACT's answer, not the mode's** —
+  read off its own `features` list. It depends on the deposit: on the human Kesmir corpus 100 % of
+  both classes are exact members of the file the `viral` table is counted from, so that channel is
+  dropped; on CEDAR's mouse non-self rows 0 % are, so it is kept.
+- **No `pathogen` artifact ships yet.** `--score features` computes every column the mode admits;
+  `--score aggregate` refuses by name rather than serving the neoantigen coefficients.
 
 **Do not copy the coefficients into this file.** They moved three times in two months and every
 transcription of them went stale; the artifact is the record and the CLI prints it:

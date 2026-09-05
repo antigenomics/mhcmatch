@@ -342,7 +342,7 @@ field. Coverage over that corpus goes to **692,349 of 695,811 rows (99.5%)** and
 ```bash
 mhcmatch genes pairs.tsv --species human --out annotated.tsv     # + a `gene` column
 mhcmatch rank pairs mouse.tsv --species mouse --tumor B16F10     # mouse: mouse scorer, mouse
-                                                                 #   expression, mouse corpus
+                                                                 #   expression, HUMAN corpus
 mhcmatch expression Trp53 --species mouse --tissue thymus        # FANTOM5, not GTEx
 mhcmatch rank pairs t.tsv --score features --tissue skin         # every fitted column, no score:
                                                                  #   what a refit needs first
@@ -506,6 +506,7 @@ was never fitted raises rather than scoring it with another fit's coefficients.
 | `mhc1.mouse.neoantigen` | **5** | 1.13.0 | 9 | 921 | 379 | 61 per reference | **0.6335** | in-sample, within reference |
 | `mhc2.human.neoantigen` | **1** | 1.12.0 | 6 | 1,112 | 656 | 157 per reference | **0.6020** | in-sample, within reference |
 | `mhc2.mouse.neoantigen` | **3** | 1.12.0 | 6 | 468 | 177 | 30 per reference | **0.5741** | in-sample, within reference |
+| `mhc1.human.pathogen` | **1** | 1.13.0 | 5 | 38,106 | 2,634 | 1 per corpus, global | **0.5926** | in-sample, pooled off the logit |
 <!-- END shipped-models -->
 
 **The AUROC column is two protocols, not one.** Human class I spans seven independent screens, so
@@ -539,7 +540,7 @@ prevent. `mode` is `neoantigen` on every artifact so far; `pathogen` is a regist
 no fit, because a tumour neoantigen and a pathogen epitope are two mechanisms rather than two
 values of one covariate.
 
-**A mouse class-I run reads the human corpus references, from 1.13.0.**
+**A mouse run reads the human corpus references — all three components, both classes.**
 `mimicry.reference_species(species, component)` routes all three mouse components to human, so a
 mouse query is matched against the identical `mhc1|{thymus,self,viral}|human|3` tables the human
 artifact scores against. The mouse deposits are too small and too groove-skewed to be a reference:
@@ -550,6 +551,13 @@ lookup, and all nine coefficients in `aggregate_mhc1_mouse.json` are fitted on m
 Human paths are unchanged.
 **Expression is not covered by this and must not be**: human and mouse organs and tumours are
 different tissues, so `expression.py` stays species-keyed at every rung. See `docs/corpus.rst`.
+
+**What "mouse" means, component by component.** Only presentation/binding and expression rest on
+mouse-derived models *and* mouse references. Physicochemistry is species-free by construction, the
+whole corpus block reads human tables, and the affinity head is pseudosequence-conditioned rather
+than per-species — the coefficients are fitted on mouse throughout, but most of what they index is
+not. [docs/models.rst](docs/models.rst) carries the table, one row per component, and it is the
+single place that statement lives.
 
 **The two class-II fits carry six terms and no corpus block.** A `C_corpus_*` channel is a density
 over a reference set of peptides — thymic, self, viral — and all three deposited sets are class I;

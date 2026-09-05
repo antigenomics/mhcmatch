@@ -77,14 +77,38 @@ def test_every_registered_mode_has_a_stand_in():
         assert R.stand_in(m)["features"], f"{m} has no stand-in, so `--score features` cannot run"
 
 
-@pytest.mark.parametrize("cls", ["mhc1", "mhc2"])
-def test_an_unfitted_cell_refuses_by_name_rather_than_serving_a_neighbour(cls):
-    # No pathogen artifact ships. The failure must name the mode and not fall back to the
-    # neoantigen coefficients -- silently scoring with the wrong model is the one outcome that
-    # looks like success.
+@pytest.mark.parametrize("cls,species", [("mhc2", "human"), ("mhc1", "mouse"), ("mhc2", "mouse")])
+def test_an_unfitted_cell_refuses_by_name_rather_than_serving_a_neighbour(cls, species):
+    # `mhc1.human.pathogen` ships; the other three pathogen cells do not. The failure must name the
+    # mode and not fall back to the neoantigen coefficients -- silently scoring with the wrong
+    # model is the one outcome that looks like success.
     with pytest.raises(ValueError) as e:
-        R.aggregate(cls, "human", "pathogen")
+        R.aggregate(cls, species, "pathogen")
     assert "pathogen" in str(e.value)
+
+
+def test_the_shipped_pathogen_fit_carries_the_terms_the_library_expects():
+    """`TERMS_PATHOGEN_EXPECTED` is the specification; the artifact is the thing specified."""
+    a = R.aggregate("mhc1", "human", "pathogen")
+    assert tuple(a["features"]) == R.TERMS_PATHOGEN_EXPECTED
+    assert "log10a" not in a["features"], (
+        "log10a is collinear with binder (r = +0.812), not undefined -- it left on that measurement")
+    assert not [c for c in a["features"] if c.startswith("expr")]
+    assert "C_corpus_viral" not in a["features"]
+    assert a["intercept"] is None, "what ships is a ranking; calibration is rank.probability()"
+
+
+def test_the_pathogen_stand_in_matches_what_the_shipped_fit_asks_for():
+    """The `--score features` stand-in and the artifact must not drift apart.
+
+    They answer the same question -- which columns does this mode compute -- from two places, and
+    a caller who builds a frame from the stand-in then scores it with the artifact needs them to
+    agree. `binder` is computed by the scoring path itself, so it is the one legitimate difference.
+    """
+    art = set(R.aggregate("mhc1", "human", "pathogen")["features"])
+    stand = set(R.stand_in("pathogen")["features"])
+    assert stand <= art, f"stand-in asks for columns the fit does not declare: {stand - art}"
+    assert art - stand == {"binder"}
 
 
 def test_the_artifact_registry_lists_only_files_that_are_installed():
@@ -97,3 +121,69 @@ def test_the_artifact_registry_lists_only_files_that_are_installed():
         assert resources.files("mhcmatch.data").joinpath(name).is_file(), (
             f"{key} is registered as {name}, which is not installed. Register it in the commit "
             "that vendors it, not before.")
+
+
+def test_aggregate_score_and_aggregate_terms_resolve_the_SAME_artifact(monkeypatch):
+    """`aggregate_score` validated one artifact and did the arithmetic with another.
+
+    It reads `aggregate(cls, species, mode)` to check the caller supplied every declared feature,
+    then delegated to `aggregate_terms(features, imputed_out, cls, species)` -- dropping `mode`,
+    so the terms came from the neoantigen artifact. Latent only because no pathogen artifact
+    shipped; the day one does, `--epitope pathogen --score aggregate` scores under the wrong
+    coefficients and nothing says so. Registering a fake artifact is the whole test, because the
+    bug is invisible while the registry has one mode in it.
+    """
+    import numpy as np
+
+    terms = ["binder", "C_phys_buried"]
+    fake = {"model": "TEST", "version": 1, "features": terms,
+            "coef": [2.0, -3.0], "mu": [0.0, 0.0], "sigma": [1.0, 1.0]}
+    # Both maps: `aggregate` refuses on the REGISTRY before it consults the cache, so seeding
+    # only the cache reproduces "no fitted artifact" rather than the bug under test.
+    monkeypatch.setitem(R.AGGREGATE_ARTIFACTS, ("mhc1", "human", "pathogen"), "test.json")
+    monkeypatch.setitem(R._AGG, ("mhc1", "human", "pathogen"), fake)
+
+    cols = {f: [1.0, 0.5] for f in R.AGGREGATE_FEATURES}
+    got = R.aggregate_score(cols, cls="mhc1", species="human", mode="pathogen")
+    per_term = R.aggregate_terms(cols, cls="mhc1", species="human", mode="pathogen")
+    assert per_term.shape == (2, 2), "the terms must come from the PATHOGEN artifact's 2 features"
+    assert np.allclose(got, per_term.sum(axis=1))
+    assert np.allclose(got, [2.0 * 1.0 - 3.0 * 1.0, 2.0 * 0.5 - 3.0 * 0.5])
+
+
+def test_the_corpus_geometry_comes_from_the_artifact_being_scored(monkeypatch):
+    """`_aggregate_channels` read `corpus_geometry()` bare, i.e. mhc1.human.neoantigen, always.
+
+    The four shipped fits agree on `(k, mask, kernel)`, which is exactly why nobody noticed. An
+    artifact fitted under a different face or substitution kernel would have had its columns built
+    under someone else's definition -- a different feature, not a smaller effect.
+    """
+    from mhcmatch import cli as C
+    from mhcmatch import mimicry as MM
+
+    seen = []
+    monkeypatch.setattr(MM, "corpus_geometry", lambda art=None: (seen.append(art), MM.CORPUS_MASKS
+                                                                 and {"k": 3, "mask": "slice",
+                                                                      "kernel": None})[1])
+    C._aggregate_channels("mhc1", no_self=False, species="human", mode="neoantigen",
+                          score="aggregate")
+    assert seen and seen[0] is not None, (
+        "the geometry must be resolved from the artifact this run scores, not from the default")
+    assert seen[0]["model_id"] == "mhc1.human.neoantigen"
+
+
+def test_mimicry_references_follow_the_species_flag():
+    """`rank --species mouse --extended` scored mimicry against the HUMAN reference set silently.
+
+    `_mimicry_scores` took no species and `load_references` defaults `self_species="human"`. This
+    is the mimics/annotate layer -- which reference peptide was nearest -- NOT the corpus scoring
+    path, where `mimicry.reference_species` routes mouse to human deliberately.
+    """
+    import inspect
+
+    from mhcmatch import cli as C
+
+    sig = inspect.signature(C._mimicry_scores)
+    assert "species" in sig.parameters
+    src = inspect.getsource(C._mimicry_scores)
+    assert "self_species=species" in src, "the parameter must reach load_references"

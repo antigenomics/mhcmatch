@@ -82,7 +82,7 @@ spending themselves on the base rates.
 **The fit the manuscript pins.** Seven human neoantigen screens, 339,599 rows, 597 immunogenic,
 527 (patient, screen) bootstrap clusters. Nine terms in four blocks.
 
-.. include:: _generated/model_mhc1_human.rst
+.. include:: _generated/model_mhc1_human_neoantigen.rst
 
 What it delivers
 ~~~~~~~~~~~~~~~~
@@ -144,7 +144,7 @@ test that digests ``(coef, mu, sigma)`` instead.
 Nine terms on 921 rows from the IEDB mouse neoantigen deposit, over 61 publications and 6 H-2
 allotypes. One screen, so the publication is where prevalence lives and the intercept goes there.
 
-.. include:: _generated/model_mhc1_mouse.rst
+.. include:: _generated/model_mhc1_mouse_neoantigen.rst
 
 What it delivers
 ~~~~~~~~~~~~~~~~
@@ -200,7 +200,7 @@ of both classes to score.
 
 Six terms on 1,112 rows from CEDAR, over 157 publications and 72 allotypes.
 
-.. include:: _generated/model_mhc2_human.rst
+.. include:: _generated/model_mhc2_human_neoantigen.rst
 
 What it delivers
 ~~~~~~~~~~~~~~~~
@@ -244,7 +244,7 @@ least three of each class.
 Six terms on 468 rows from the IEDB mouse neoantigen deposit, over 30 publications and 7 H-2
 allotypes.
 
-.. include:: _generated/model_mhc2_mouse.rst
+.. include:: _generated/model_mhc2_mouse_neoantigen.rst
 
 What it delivers
 ~~~~~~~~~~~~~~~~
@@ -269,6 +269,95 @@ for mouse class I, at a quarter of the coverage.
 **No corpus block**, for the same reason as human class II: the deposited references are class I.
 
 **No held-out split is fitted**, for the same reason as the other two single-deposit fits.
+
+What "mouse" means, component by component
+------------------------------------------
+
+A mouse fit is not a mouse model end to end, and the difference is worth stating once rather than
+inferring it from six places. **Three questions, never conflated**: is the *coefficient* fitted on
+mouse observations, is the *model or table* it indexes built from mouse data, and is the *reference*
+it reads mouse?
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 16 30 28
+
+   * - component
+     - coefficient
+     - model / table
+     - reference read
+   * - ``binder`` (presentation)
+     - mouse
+     - mouse anchor models (5 shipped ``anchor_model_*_mouse_*``)
+     - mouse panel, H-2 pseudosequences
+   * - ``occupancy`` → ``log10a``
+     - mouse
+     - **species-agnostic** ``affinity_potts_<cls>.npz`` — pseudosequence-conditioned, fitted on
+       IEDB IC50
+     - mouse anchor model as the class-II register oracle
+   * - ``expr_lvl`` / ``expr_norm``
+     - mouse
+     - mouse
+     - **mouse** — FANTOM5 mouse, GEO GSE245293 for tumour
+   * - ``C_phys_buried`` / ``C_phys_charge``
+     - mouse
+     - **species-free by construction** — Rose scale, Atchley AF5
+     - ---
+   * - ``C_corpus_thymus`` / ``_self`` / ``_viral``
+     - mouse
+     - **human**
+     - **human — all three, both classes**
+   * - recognition / complement heads
+     - mouse
+     - mouse (``recognition_*_mouse.json``, ``complement_*_mouse.json``)
+     - --- *(not in the EPIC aggregate)*
+
+So the short answer is: **presentation and expression are mouse; physicochemistry is species-free;
+the corpus block is human.** Every coefficient is fitted on mouse observations either way — what
+crosses the species line is the table being indexed, never the fit.
+
+**The routing has no class key.** :data:`mhcmatch.mimicry.CORPUS_REFERENCE` is keyed
+``(species, component)``, so mouse **class II** is routed to the human tables exactly as class I
+is. It happens not to matter today only because both class-II artifacts carry no corpus term at
+all --- but a class-II fit that grew one would inherit the substitution silently, so the rule is
+stated here rather than scoped to class I.
+
+Why the substitution, per component --- Pearson ``r`` between the same peptide's density under the
+two species' tables, measured on the 921-row mouse class-I fit population:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 16 16 34 34
+
+   * - component
+     - ``r``
+     - what the mouse deposit is
+     - verdict
+   * - ``self``
+     - **0.9990**
+     - 112,565,681 mouse against 121,968,158 human proteome windows
+     - the same table twice over; substitution is free
+   * - ``viral``
+     - 0.8382
+     - **9** mouse allotypes (``H-2Kb`` 50.2 %) against **129** human
+     - a 9-of-129 allotype sample; transfers, with a caveat
+   * - ``thymus``
+     - **0.3245**
+     - **2** mouse allotypes (``H-2Db`` 1,574, ``H-2Kb`` 1,089) against a pooled human panel;
+       25,264 against 140,482 windows
+     - the H-2b motif and nothing else; does not transfer
+
+**It is not a sample-size effect, and that was measured rather than assumed.** Thinning the human
+deposit to the mouse table's window count still reproduces the full human column at ``r = 0.8933``
+and still disagrees with the mouse table at ``0.2903``. A human table cut to mouse's size does not
+become the mouse table --- what differs is *which grooves each deposit sampled*, so depositing more
+mouse thymic peptides from the same two allotypes would not close it.
+
+**Expression is the one rung that must not transfer**, and for the opposite reason: human and mouse
+organs and tumours are different tissues, so a human expression level is not a stand-in for a mouse
+one at any sample size. :mod:`mhcmatch.expression` stays species-keyed at every rung. A corpus
+channel transfers because a k-mer table over a TCR face is shared geometry. A tissue is not.
+
 
 The second mode: ``--epitope pathogen``
 ---------------------------------------
@@ -316,12 +405,51 @@ The two **host** channels always stay, and they are the point of the mode: ``C_c
 is the tolerance term. There is no circularity in them --- the corpus is foreign, the tables are
 human self.
 
+``mhc1.human.pathogen`` --- version 1
+--------------------------------------
+
+.. include:: _generated/model_mhc1_human_pathogen.rst
+
+What it delivers
+~~~~~~~~~~~~~~~~
+
+Ranking of pathogen-derived epitopes among presented ligands. On its own fit population --- the
+foreign-antigen stratum of the Kesmir/Chowell corpus, both classes drawn from one antigen source
+--- it reaches **PPV 0.1063** at the operating point where you act on as many candidates as there
+are positives, against a base rate of **0.0691**: a 1.54x lift, and **0.1300** in the top 100.
+Row-resampled 5-fold reproduces it at 0.5915 +/- 0.0105 ROC-AUC, so the fit is stable to which
+rows it saw.
+
+The two host corpus channels are the interesting half and they carry the largest coefficients:
+``C_corpus_self`` **-0.3030** and ``C_corpus_thymus`` **+0.3003**, both sign-stable at 1.000 over
+400 bootstraps at p < 2e-18. Resembling the host proteome makes a foreign epitope *less* likely to
+have a recorded response, which is the tolerance term, and there is no circularity in it --- the
+corpus is foreign, the tables are human self.
+
+Caveats
+~~~~~~~
+
+**The two host channels correlate at r = +0.783 and their coefficients sum to -0.0027.** The model
+has learned a *difference*, ``C_corpus_thymus - C_corpus_self`` at weight ~0.30, not two
+independent mechanisms. Read either coefficient alone and you are reading the contrast.
+
+**The negative class is "no recorded positive", not "measured non-immunogenic".** Every peptide on
+both sides is an observed MHC ligand; the label is the IEDB T-cell flag, and IEDB's T-cell export
+is positives-only --- 27,497 peptides, none recorded as tested-negative. So the contrast is
+**presented-and-responded against presented-with-no-recorded-response**.
+
+**ROC-AUC 0.5926 is modest**, and the useful readout is the precision one: at this prevalence a
+0.59 AUROC still triples the base rate in the top 100.
+
+**``C_phys_charge`` does not earn its parameter** (p = 0.994, sign stability 0.487). It is kept for
+symmetry with the neoantigen physchem block, not because it resolves.
+
 .. note::
 
-   **No ``pathogen`` artifact ships yet.** ``rank --epitope pathogen --score features`` computes
-   every column the mode admits; ``--score aggregate`` refuses by name until one is installed,
-   rather than silently serving the neoantigen coefficients. The candidate and its report live in
-   the benchmark repo (``bench/pathogen/``).
+   **This is the only non-neoantigen artifact, and the only one fitted with a global intercept.**
+   The intercept is recorded and shipped as ``null`` like every other fit: what ships is a
+   *ranking*, and calibration to a population is :func:`mhcmatch.rank.probability`, which the
+   caller owns because only the caller knows their prevalence.
 
 
 Reading any of this yourself

@@ -1,6 +1,71 @@
 # Changelog
 
-## [Unreleased] --- a second immunological mode, and the four shipped fits are documented
+## [1.14.0] --- a second immunological mode, and what "mouse" means
+
+### `mhc1.human.pathogen` ships --- the fifth artifact, and the first non-neoantigen one
+
+Five terms, **38,106 rows / 2,634 immunogenic (6.91 %) / 19,464 peptides / 112 allotypes** from the
+foreign-antigen stratum of the Kesmir/Chowell corpus. ROC-AUC **0.5926**, PR-AUC **0.0905** against
+prevalence 0.0691, PPV **0.1063** at k = 2,634 (1.54x lift) and **0.1300** in the top 100.
+
+The two host corpus channels carry the largest coefficients and are the point of the mode:
+`C_corpus_self` **-0.3030** and `C_corpus_thymus` **+0.3003**, both sign-stable at 1.000 over 400
+row bootstraps at p < 2e-18. They correlate at **r = +0.783** and sum to **-0.0027**, so what is
+fitted is a *difference* -- read either alone and you are reading the contrast.
+
+**Three terms are absent for three different reasons**, and only one is a weak coefficient:
+expression is **undefined** (no host transcript); `C_corpus_viral` would measure **membership**
+(100 % of both classes are exact members of the deposit its table is counted from); and `log10a`
+is **well-defined and collinear** -- `log10([P]/Kd)` of the candidate itself, needing no wild type
+at all, dropped at **corr(log10a, binder) = +0.8123**. Dropping it cost 0.0006 AUROC and raised
+PPV@100 from 0.1000 to 0.1300.
+
+**The negative class is "no recorded positive", not "measured non-immunogenic"**: IEDB's T-cell
+export is positives-only. Every peptide on both sides is an observed ligand.
+
+### Three silent substitutions on the scoring path
+
+All three resolved the *default* artifact rather than the one being scored, and all three were
+invisible because the shipped fits agree.
+
+- **`aggregate_score` dropped `mode`** when delegating to `aggregate_terms`: it validated one
+  artifact and did the arithmetic with another. Latent only while one mode shipped.
+- **`_aggregate_channels` read `corpus_geometry()` bare**, so `k`/`mask`/`kernel` always came from
+  `mhc1.human.neoantigen`. A kappa fitted against one kernel and scored under another is a
+  different feature, not a smaller effect.
+- **`_mimicry_scores` took no species**, so `rank --species mouse --extended`/`--annotate` reported
+  the nearest **human** reference and said nothing. `a.species` was in scope and not passed.
+
+### The row emitter is keyed by name
+
+It was a positional list that assumed the header was `BASE_COLUMNS` in order. The first mode to
+drop a column moved the header and not the values --- a `variant_type` under `C_corpus_thymus`, no
+error. Same shape as the `--passthrough` schema bug, and the same fix.
+
+### `mhcmatch rank --epitope {neoantigen,pathogen}`
+
+Not spelled `--mode`: this command's *positional* `mode` is the input shape and `span --mode` is
+the ligand-span method. `pathogen` **refuses** `--tissue` / `--tumor` / `--expr-floor` rather than
+discarding them, and does not emit the wild-type columns (`agretopicity`, `d_occupancy`,
+`wt_absent`), which are degenerate rather than absent. Which corpus channels a fit carries is read
+off its own `features` list, never off the mode.
+
+### New: `mhcmatch models`, `--cls both`, `--epitope` on `explain`
+
+`models` prints which `(cls, species, mode)` cells ship; `--all` adds the cells that ship none.
+`--cls both` scores each class on its own model and emits one table with a `cls` column --- not one
+model over two classes. `explain` now names the fitted model that would score the row, and its
+final line is labelled **`GATE`**: it prints the two-term screen, never the fitted aggregate, and
+had said `AGGREGATE` since it was written.
+
+### What "mouse" means, stated once
+
+`docs/models.rst` carries a per-component table. Presentation and expression are mouse;
+physicochemistry is species-free; **the whole corpus block reads human tables, in both classes** ---
+`CORPUS_REFERENCE` is keyed `(species, component)` with no class key. Five documents asserted the
+pre-1.13.0 opposite, `skills/mhcmatch/SKILL.md` most directly.
+
+### Documentation
 
 ### `mhcmatch rank --epitope pathogen`
 
