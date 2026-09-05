@@ -80,5 +80,9 @@ html_theme_options = {
 def setup(app):
     from mhcmatch import _modeldoc
 
-    _modeldoc.write(os.path.abspath(".."))
+    # The repo root from THIS FILE, never from the cwd. `abspath("..")` was correct only when
+    # sphinx happened to be invoked from the repo root, and silently wrote `docs/_generated/`
+    # somewhere else otherwise -- which does not fail the build, it makes every `.. include::`
+    # in `models.rst` fail instead, with an error that names the include and not the cause.
+    _modeldoc.write(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     return {"parallel_read_safe": True}

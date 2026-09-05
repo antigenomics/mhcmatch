@@ -1,6 +1,33 @@
 # Changelog
 
-## [Unreleased] --- the four shipped fits are documented, and the tables are generated
+## [Unreleased] --- a second immunological mode, and the four shipped fits are documented
+
+### `mhcmatch rank --epitope pathogen`
+
+A tumour neoantigen and a pathogen epitope are answered by different mechanisms, so they are two
+models rather than one model with an extra covariate. `--epitope {neoantigen,pathogen}` picks
+which. It is **not** spelled `--mode`: `rank`'s positional `mode` is the input *shape*
+(fasta / table / pairs), and one flag over two questions cannot report which it answered --- the
+mistake `--block-live` and `--keep` each cost this package once already.
+
+**Expression is undefined in pathogen mode, not missing.** A peptide from an organism the host does
+not transcribe has no source-gene abundance and no matched normal, so `rank._expression_for`
+returns NaN with `imputed=False` --- `imputed=True` would claim a substitution rung was walked ---
+and `--tissue` / `--tumor` / `--expr-floor` are not read.
+
+**Which corpus channels a fit carries is read off its `features` list, never off the mode.**
+Whether `C_corpus_viral` is admissible is a property of the *deposit*: on the human Kesmir corpus
+100 % of both classes are exact members of the file that table is counted from, so it carries no
+class information; on CEDAR's mouse non-self class-I rows 0 % are, because that builder strips
+them. Two `pathogen` fits can therefore legitimately differ, and `cli._aggregate_channels` builds
+exactly the tables the run will score. `rank.stand_in(mode)` supplies the column list for
+`--score features`, which has no artifact to read one from --- one answer where the channel builder
+and the banner each used to carry their own.
+
+No `pathogen` artifact ships yet: `--score aggregate --epitope pathogen` refuses by name rather
+than serving the neoantigen coefficients. The candidate and its report are in the benchmark repo.
+
+### Documentation
 
 > **`docs/models.rst` is new**: all four fitted artifacts on one page --- every coefficient with
 > its bootstrap interval, what each model was fitted on, the discrimination figure each one

@@ -270,6 +270,60 @@ for mouse class I, at a quarter of the coverage.
 
 **No held-out split is fitted**, for the same reason as the other two single-deposit fits.
 
+The second mode: ``--epitope pathogen``
+---------------------------------------
+
+Every artifact above is a **neoantigen** fit. A pathogen epitope is answered by a different
+mechanism --- autoimmunity is not inflammation --- so it is a second model rather than the same
+model with an extra covariate, and ``mhcmatch rank --epitope pathogen`` selects it:
+
+.. code-block:: zsh
+
+   mhcmatch rank pairs viral.tsv --epitope pathogen --score features
+
+Two blocks leave the nine-term design, for different reasons.
+
+**Expression is undefined, not missing.** A peptide from an organism the host does not transcribe
+has no source-gene abundance and no matched normal to compare it against. ``expr_lvl`` would be a
+number for a quantity that does not exist, so :func:`mhcmatch.rank._expression_for` returns ``NaN``
+with ``imputed=False`` --- ``imputed=True`` would claim a substitution rung was walked --- and
+``--tissue`` / ``--tumor`` / ``--expr-floor`` are not read.
+
+**Which corpus channels remain is the artifact's answer, not the mode's.** Whether
+``C_corpus_viral`` is admissible depends on the deposit a fit was trained on, and two ``pathogen``
+fits can legitimately differ:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 22 44
+
+   * - fit population
+     - rows that are exact members of the ``viral`` reference
+     - consequence
+   * - Kesmir/Chowell human, foreign stratum
+     - 35,511 of 35,511 negatives and 2,634 of 2,634 positives (100 % of both)
+     - the channel measures membership, carries no class information, and is dropped --- six terms
+   * - CEDAR mouse non-self, class I
+     - 0 of 672 (that builder strips exact corpus members)
+     - the channel measures similarity and is kept --- seven terms
+
+So nothing in the library selects channels by mode. ``rank.stand_in(mode)`` supplies the column
+list for ``--score features``, where there is no artifact to read one from, and everything else
+reads the fitted ``features`` list. Adding or removing a term stays additive.
+
+The two **host** channels always stay, and they are the point of the mode: ``C_corpus_self`` and
+``C_corpus_thymus`` ask whether a foreign epitope resembles the repertoire that will see it, which
+is the tolerance term. There is no circularity in them --- the corpus is foreign, the tables are
+human self.
+
+.. note::
+
+   **No ``pathogen`` artifact ships yet.** ``rank --epitope pathogen --score features`` computes
+   every column the mode admits; ``--score aggregate`` refuses by name until one is installed,
+   rather than silently serving the neoantigen coefficients. The candidate and its report live in
+   the benchmark repo (``bench/pathogen/``).
+
+
 Reading any of this yourself
 ----------------------------
 

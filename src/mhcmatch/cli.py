@@ -722,7 +722,8 @@ def _mimicry_scores(peptides, cls: str, no_self: bool):
     return MM.score(peptides, refs, cls=cls, allow_missing=no_self)
 
 
-def _aggregate_channels(cls: str, no_self: bool, species: str = "human"):
+def _aggregate_channels(cls: str, no_self: bool, species: str = "human",
+                        mode: str = "neoantigen", score: str = "aggregate"):
     """Build the ``channels`` callable ``rank`` needs to score with the fitted aggregate.
 
     Returns ``list[peptide] -> {C_corpus_thymus, C_corpus_self, C_corpus_viral}``.
@@ -737,11 +738,12 @@ def _aggregate_channels(cls: str, no_self: bool, species: str = "human"):
 
     ``species`` keys every corpus channel, not only ``self``, but it does **not** decide the
     reference on its own: :func:`mhcmatch.mimicry.reference_species` does, per component. A mouse
-    run reads mouse ``self`` and mouse ``viral`` and the **human** ``thymus`` table, because the
-    mouse thymic deposit is one haplotype -- every annotated class-I peptide in it is ``H-2Db`` or
-    ``H-2Kb`` -- so its k-mer table encodes that groove rather than what a thymus presents. The full
-    per-component measurement, including the matched-mass control that rules out thinness as the
-    explanation, is in :func:`mhcmatch.mimicry.reference_species`.
+    run reads the **human** table for all three -- ``thymus``, ``self`` and ``viral`` alike --
+    because the mouse deposits are too groove-skewed to be a reference: the thymic one is
+    ``H-2Db``/``H-2Kb`` and nothing else, and the viral one samples 9 allotypes against human's
+    129. Only the *table* crosses the species line; every coefficient is still fitted on mouse. The
+    full per-component measurement, including the matched-mass control that rules out thinness as
+    the explanation, is in :func:`mhcmatch.mimicry.reference_species`.
 
     One :func:`mhcmatch.mimicry.corpus_spectrum` call per distinct reference species, so a human
     run makes exactly the one call it always made and is bit-identical to it.
@@ -752,13 +754,24 @@ def _aggregate_channels(cls: str, no_self: bool, species: str = "human"):
     from . import mimicry as MM
     from . import rank as R
 
+    feats = (R.stand_in(mode)["features"] if score == "features"
+             else R.aggregate_features(cls, species, mode))
+
     def channels(peptides):
         # `k`, the face mask and the substitution kernel all come from the artifact
         # (`MM.corpus_geometry`), exactly as `kappa` already did. They are three halves of one
         # definition: a `kappa` fitted against a graded kernel scored under the Hamming one is a
         # different feature, not a smaller effect.
         g = MM.corpus_geometry()
-        comps = ("thymus", "self", "viral")
+        # **Which channels to build is the ARTIFACT's question, not the mode's.** Whether
+        # `C_corpus_viral` is admissible depends on the deposit a fit was trained on -- on Kesmir
+        # 99.5 % of the negatives are exact members of the very file that table is counted from,
+        # on CEDAR's mouse non-self rows 0 % are, because that builder strips them -- so two
+        # fits of the SAME mode can legitimately differ. Reading the fitted `features` list means
+        # a table this run will not score is never built, and an artifact that does ask for one
+        # always gets it.
+        comps = tuple(c for c in ("thymus", "self", "viral")
+                      if f"C_corpus_{c}" in feats)
         spec = {}
         for sp in sorted({MM.reference_species(species, c) for c in comps}):
             part = tuple(c for c in comps if MM.reference_species(species, c) == sp)
@@ -786,8 +799,9 @@ def _rank_model(a):
     exactly as it does on the scoring path."""
     from . import rank as R
     cls, species = getattr(a, "cls", "mhc1"), getattr(a, "species", "human")
+    mode = getattr(a, "epitope", "neoantigen")
     try:
-        m = R.aggregate(cls, species)
+        m = R.aggregate(cls, species, mode)
     except (ValueError, FileNotFoundError) as e:
         raise SystemExit(str(e))
     f = m["fit"]
@@ -913,34 +927,35 @@ def cmd_rank(a):
             n = R.wt_from_windows(recs, a.context)
             say(f"--context: recovered a wild type for {n:,} of {len(recs):,} row(s) from "
                 f"{a.context}", level=1)
-        rows = R.rank_pairs(store, recs, cls=a.cls,
+        rows = R.rank_pairs(store, recs, cls=a.cls, mode=a.epitope,
                             tissue=a.tissue, tumor=a.tumor, refs=refs, score=a.score,
                             prevalence=a.prevalence,
                             species=a.species, expr_floor=a.expr_floor,
                             expr_prefilter=a.expr_prefilter,
-                            channels=_aggregate_channels(a.cls, a.no_self, a.species)
+                            channels=_aggregate_channels(a.cls, a.no_self, a.species, a.epitope, a.score)
                             if a.score in ("aggregate", "features") else None)
     elif a.mode == "fasta":
         store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
         rows = R.rank_fasta(store, a.input, _read_alleles(a.alleles), cls=a.cls,
+                            mode=a.epitope,
                             tissue=a.tissue, tumor=a.tumor, refs=refs,
                             rank_threshold=a.rank_threshold, keep=_keep(a),
                             score=a.score,
                             prevalence=a.prevalence,
                             species=a.species, expr_floor=a.expr_floor,
                             expr_prefilter=a.expr_prefilter,
-                            channels=_aggregate_channels(a.cls, a.no_self, a.species)
+                            channels=_aggregate_channels(a.cls, a.no_self, a.species, a.epitope, a.score)
                             if a.score in ("aggregate", "features") else None)
     else:
         store = None
         if a.recompute_presentation:
             store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
         rows = R.rank_table(a.input, tissue=a.tissue, tumor=a.tumor, refs=refs,
-                            store=store, cls=a.cls, score=a.score,
+                            store=store, cls=a.cls, mode=a.epitope, score=a.score,
                             prevalence=a.prevalence,
                             species=a.species, expr_floor=a.expr_floor,
                             expr_prefilter=a.expr_prefilter,
-                            channels=_aggregate_channels(a.cls, a.no_self, a.species)
+                            channels=_aggregate_channels(a.cls, a.no_self, a.species, a.epitope, a.score)
                             if a.score in ("aggregate", "features") else None)
     # `rank` floats an exact known-epitope match to the top of its *listing* -- a display choice,
     # documented on `Ranked.rank`, which the `rank` column does not follow. Under --passthrough the
@@ -954,12 +969,17 @@ def cmd_rank(a):
     if a.score in ("aggregate", "features"):
         cols += list(R.EXPR_COLUMNS) + list(R.AGGREGATE_COLUMNS)
         if a.score == "features":
-            print("# --score features: every fitted column computed, nothing scored. "
-                  f"{', '.join(R.FEATURES_ONLY['features'])}", file=sys.stderr)
+            # The stand-in this run actually used, not the neoantigen one -- a `--epitope
+            # pathogen` run computes four of these seven and printing all seven says it computed
+            # columns that are empty in its own output. Same call `_aggregate_channels` made, so
+            # the banner cannot disagree with the tables that were built.
+            print(f"# --score features ({a.epitope}): every fitted column computed, nothing "
+                  f"scored. {', '.join(R.stand_in(a.epitope)['features'])}", file=sys.stderr)
         else:
             model = rows[0].components.get("model", "") if rows else ""
             print(f"# scored with {model or 'aggregate'}: "
-                  f"{', '.join(R.aggregate_features(a.cls, a.species))}", file=sys.stderr)
+                  f"{', '.join(R.aggregate_features(a.cls, a.species, a.epitope))}",
+                  file=sys.stderr)
     # The mimicry columns are appended, never folded into `score`. Whether mimicry belongs inside
     # the gate is a benchmark question that is not settled, and quietly moving the ranking on an
     # unvalidated term is the failure mode worth avoiding -- so the ordering is identical with and
@@ -2740,6 +2760,21 @@ def main(argv=None):
                                       "(required for mode=fasta)")
     rk.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"),
                     help="default %(default)s")
+    # **Not `--mode`, and the collision is why.** This command's POSITIONAL `mode` is the input
+    # SHAPE (fasta / table / pairs); this flag is the immunological mode -- which fitted artifact
+    # scores the rows. Two questions, so two names: a single `--mode` could not report which of
+    # them it had answered, and this package has paid for that mistake twice already
+    # (`--block-live`, `--keep`).
+    rk.add_argument("--epitope", default="neoantigen", choices=("neoantigen", "pathogen"),
+                    help="which fitted model scores the rows -- the artifact's `mode`. "
+                         "`neoantigen` (default) is the nine-term EPIC fit. `pathogen` is for a "
+                         "peptide the host does not encode -- a viral or bacterial epitope -- and "
+                         "drops the expression block: with no host transcript it is undefined "
+                         "rather than missing, so --tissue / --tumor / --expr-floor are not read. "
+                         "Which corpus channels it carries is the ARTIFACT's question, not the "
+                         "mode's, and the two HOST channels are always the tolerance term. NO "
+                         "pathogen artifact ships yet: `--score features` computes every column "
+                         "the mode admits, `--score aggregate` refuses by name")
     rk.add_argument("--tissue", help="GTEx tissue for reference expression, e.g. 'Skin - Sun "
                                      "Exposed (Lower leg)' (the safety read)")
     rk.add_argument("--tumor", help="TCGA cancer_type for tumour expression, e.g. SKCM (melanoma)")
