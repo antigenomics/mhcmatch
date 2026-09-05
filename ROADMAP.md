@@ -74,14 +74,36 @@ corpus block reads human tables, in both classes**, because `CORPUS_REFERENCE` i
 `(species, component)` with no class key. Every doc that scoped that substitution to class I was
 under-stating it, and `skills/mhcmatch/SKILL.md` said the opposite outright.
 
-**Disjointness is a construction in two builders and was a coincidence in two deposits.** The
-human class-I corpus build enforces it (rules 8 and 9 drop 23,911 pathogen-sourced and 11,367
-self-window rows) and CEDAR's mouse builder strips 597 leaking peptides — but the shipped mouse
-class-I fit carries **43 of its 919 peptides (4.68 %)** that are exact mouse-proteome windows, i.e.
-members of the `C_corpus_self` reference it fits, and the human class-II fit carries 22 of 804
-thymus-corpus members. The root cause is that the builder and the library disagree on what mouse
-`self` *is*: the builder maps it to `ligandome/tissue_self_mmu.tsv.gz`, the library to the mouse
-**proteome**. Reported, not silently refitted.
+**Disjointness is a construction where it matters, and the mouse "leak" raised here on 2026-09-05
+does not exist.** The human class-I corpus build enforces it (rules 8 and 9 drop 23,911
+pathogen-sourced and 11,367 self-window rows) and CEDAR's mouse builder strips 597 leaking peptides.
+An audit then reported that the shipped mouse class-I fit carries 43 of its 919 peptides (4.68 %)
+that are exact **mouse**-proteome windows, and called them members of the `C_corpus_self` reference
+it fits. **That was wrong twice over, and the author called both.**
+
+*The reference is not the mouse proteome.* `mimicry.reference_species("mouse", "self")` returns
+`"human"` — from 1.13.0 every mouse class-I corpus component is scored against the human table, and
+`aggregate_mhc1_mouse.json` is stamped release 1.13.0. Being a mouse-proteome window says nothing
+about membership in the reference the channel actually reads, which holds **121,968,158** human
+proteome windows.
+
+*And membership could not bias the channel even if it held.* A corpus channel is a **BLOSUM62-graded
+k-mer density**, not a lookup: `corpus_geometry` gives `k = 3`, `slice` face, kernel family
+`blosum62_normalised`, and the reference contracts to an **8,000-cell** table (20³) whose cells are
+**all** occupied for `self`. A 9-mer contributes 2 face 3-mers, so 43 peptides are **1.8 × 10⁻⁶** of
+that table — one part in 567,294 — and the kernel scores an exact member and a one-substitution
+neighbour almost identically *by construction*, which is the whole point of grading it. Exact
+membership is not a distinguished state here.
+
+**Why `C_corpus_viral` in the pathogen fit was a real problem and this is not.** There, **100 % of
+both classes** — every negative and every positive — were exact members of the deposit the table is
+counted from, so the channel was a class indicator. A rate of 4.68 % on one side, against a table of
+another species, is neither. The general form: *self-inclusion in a k-mer density over 10⁸ windows is
+a different object from self-inclusion in a held-out split*, and only the second one leaks.
+
+The human class-II figure raised alongside it — 22 of 804 thymus-corpus members — is inert for a
+third reason: **no class-II artifact carries any `C_corpus_*` term** (`rank.TERMS_MHC2_EXPECTED`),
+so there is no coefficient for it to reach.
 
 **The extension checkout is retired and nothing was lost.**
 `~/vcs/projects/2026-mhcmatch-benchmark-ext` was a working tree seeded from the benchmark repo at
@@ -94,9 +116,6 @@ reconstructed and nothing summarised. **Four repos, four roles** (`CLAUDE.md`) h
 
 ### Open loops
 
-- **The 43-peptide leak in `aggregate_mhc1_mouse.json`.** Whether it is refit is the author's call;
-  the gate that would have caught it now exists in `bench/pathogen/fit_pathogen.py` and should move
-  into `fit_mouse.deposit()` and `fit_human_mhc2`.
 - **`aggregate_mhc1_mouse.json` reproduces at `source_species="any"`** (921/379/61), not the
   documented `"mouse"` default (904/368/55) — so it was fitted including the 17 human-source
   xenoantigen rows its own generator argues must be dropped. Record the setting or refit.
