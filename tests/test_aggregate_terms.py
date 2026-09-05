@@ -443,15 +443,20 @@ def test_every_shipped_model_names_itself_and_the_release_that_accepted_it():
     assert len({r["model_id"] for r in recs}) == len(recs), "two artifacts share a model_id"
 
 
-def test_a_mode_with_no_shipped_artifact_refuses_by_name():
-    """`pathogen` is a registered spelling with no fit yet, and must not serve the neoantigen one."""
+def test_a_cell_with_no_shipped_artifact_refuses_by_name():
+    """A `(cls, species, mode)` that was never fitted must not serve a neighbour's coefficients.
+
+    `mhc1.human.pathogen` ships from 1.14.0; the other three pathogen cells do not, and they are
+    the ones that must refuse. An unknown mode is a different error again -- a typo, not a gap.
+    """
     import pytest
 
     from mhcmatch import rank as R
 
     assert "pathogen" in R.AGGREGATE_MODES
-    with pytest.raises(ValueError, match="pathogen"):
-        R.aggregate("mhc1", "human", "pathogen")
+    for cls, species in (("mhc2", "human"), ("mhc1", "mouse"), ("mhc2", "mouse")):
+        with pytest.raises(ValueError, match="pathogen"):
+            R.aggregate(cls, species, "pathogen")
     with pytest.raises(ValueError, match="not one of"):
         R.aggregate("mhc1", "human", "tumour")
 
@@ -512,6 +517,15 @@ def test_every_shipped_artifact_agrees_on_the_corpus_geometry_the_defaults_assum
             assert "corpus_shapes" not in a, f"{cls}.{species} declares a geometry it never uses"
             continue
         geo[f"{cls}.{species}.{mode}"] = (a["corpus_k"], a["corpus_mask"], a["corpus_kernel"],
-                                          tuple(sorted(a["corpus_shapes"].items())))
+                                          dict(a["corpus_shapes"]))
     assert geo, "no corpus-carrying artifact resolved at all"
-    assert len(set(geo.values())) == 1, geo
+    # **The face, k and kernel must agree across every corpus-carrying fit**; the SHAPES agree on
+    # the channels two fits share. A fit may legitimately carry fewer channels than another --
+    # `mhc1.human.pathogen` drops `C_corpus_viral`, because 100 % of both its classes are exact
+    # members of the deposit that table is counted from -- so requiring identical kappa DICTS
+    # would forbid that rather than check it. Compare per channel instead.
+    assert len({g[:3] for g in geo.values()}) == 1, {k: v[:3] for k, v in geo.items()}
+    shapes = {k: v[3] for k, v in geo.items()}
+    for comp in {c for d in shapes.values() for c in d}:
+        vals = {mid: d[comp] for mid, d in shapes.items() if comp in d}
+        assert len(set(vals.values())) == 1, f"{comp} kappa disagrees across fits: {vals}"

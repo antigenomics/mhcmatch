@@ -15,7 +15,76 @@ the build plan. Phase sections marked _(TBD)_ await detail.
 > tables referenced throughout, and their provenance notes. Paths like `bench/results/...`
 > below resolve there, not here.
 
-## Where this stands, 2026-09-04 (latest) — 1.13.0, the mouse class-I model is nine terms on the human corpus
+## Where this stands, 2026-09-05 (latest) — two immunological modes, and what "mouse" means
+
+**`mhcmatch rank --epitope {neoantigen,pathogen}`.** A tumour neoantigen and a pathogen epitope are
+answered by different mechanisms, so they are two models rather than one model with an extra
+covariate. Not spelled `--mode`: `rank`'s positional `mode` is the input SHAPE and `span --mode` is
+the ligand-span method, and one name over three meanings could not report which it answered.
+`pathogen` drops the expression block (undefined without a host transcript, so `--tissue` /
+`--tumor` / `--expr-floor` are **refused**, not ignored) and the wild-type columns, which are
+degenerate rather than absent. **Which corpus channels a fit carries is read off its own `features`
+list, never off the mode** — it is a property of the deposit.
+
+**Four artifacts still ship, all `neoantigen`.** `mhcmatch models` prints them; `--all` adds the
+four cells that ship nothing, so the binary can answer "what do I have" now that a second mode is
+registered. `--score aggregate --epitope pathogen` refuses by name.
+
+**Three silent substitutions on the scoring path, found by auditing the new mode.** All three
+resolved the *default* artifact rather than the one being scored, and all three were invisible
+because the four shipped fits agree:
+`aggregate_score` validated `(cls, species, mode)` and then called `aggregate_terms` **without
+`mode`**; `_aggregate_channels` read `corpus_geometry()` bare, so `k`/`mask`/`kernel` always came
+from `mhc1.human.neoantigen`; and `_mimicry_scores` took no species at all, so
+`rank --species mouse --extended` reported the nearest **human** reference and said nothing.
+
+**The row emitter is keyed by name.** It was a positional list that assumed the header was
+`BASE_COLUMNS` in order, so the first mode to drop a column moved the header and not the values —
+a `variant_type` under `C_corpus_thymus`, no error. Same shape as the `--passthrough` schema bug.
+
+**`--cls both`** scores each class on its own model and emits one table with a `cls` column. Not one
+model over two classes: nine terms against six, and no corpus block in class II. Rows route by the
+alleles they name.
+
+**What "mouse" means is now stated in one place** — [`docs/models.rst`](docs/models.rst), one row
+per component. Presentation and expression are mouse; physicochemistry is species-free; **the whole
+corpus block reads human tables, in both classes**, because `CORPUS_REFERENCE` is keyed
+`(species, component)` with no class key. Every doc that scoped that substitution to class I was
+under-stating it, and `skills/mhcmatch/SKILL.md` said the opposite outright.
+
+**Disjointness is a construction in two builders and was a coincidence in two deposits.** The
+human class-I corpus build enforces it (rules 8 and 9 drop 23,911 pathogen-sourced and 11,367
+self-window rows) and CEDAR's mouse builder strips 597 leaking peptides — but the shipped mouse
+class-I fit carries **43 of its 919 peptides (4.68 %)** that are exact mouse-proteome windows, i.e.
+members of the `C_corpus_self` reference it fits, and the human class-II fit carries 22 of 804
+thymus-corpus members. The root cause is that the builder and the library disagree on what mouse
+`self` *is*: the builder maps it to `ligandome/tissue_self_mmu.tsv.gz`, the library to the mouse
+**proteome**. Reported, not silently refitted.
+
+### Open loops
+
+- **The 43-peptide leak in `aggregate_mhc1_mouse.json`.** Whether it is refit is the author's call;
+  the gate that would have caught it now exists in `bench/pathogen/fit_pathogen.py` and should move
+  into `fit_mouse.deposit()` and `fit_human_mhc2`.
+- **`aggregate_mhc1_mouse.json` reproduces at `source_species="any"`** (921/379/61), not the
+  documented `"mouse"` default (904/368/55) — so it was fitted including the 17 human-source
+  xenoantigen rows its own generator argues must be dropped. Record the setting or refit.
+- **Class-II pathogen is not fittable today.** `viral_foreign_iedb`'s human class-II rows carry the
+  **alpha chain only** (`HLA-DRA*01:01` on 79.1 %), and 0 of 15 keys resolve to a groove;
+  `corpus_iedb_mhc2.parquet` has 629,032 resolvable rows but no source-organism column. A one-column
+  re-export from IEDB unblocks it. And a class-II pathogen fit would carry **four terms** — three
+  after `log10a` — because class II drops the corpus block: the entire tolerance half is absent.
+- **The two mouse `*_pathogen.json` candidates in `bench/epic/` are stale and should not ship.**
+  They predate the current generator (no `mode`/`model_id`/`release`, hardcoded
+  `screens: ["IEDB_neoag"]`) and are fitted on **CEDAR non-self** rows — CEDAR is the *Cancer*
+  Epitope Database, and 82.0 % of the class-II ones are human xenoantigen (43.6 %) or oncogenic
+  virus (38.4 %). The class-II candidate's held-out `cv_peptide.within_ref_auroc` is **0.4661**.
+- **`C_phys_charge` does not earn its parameter in the pathogen fit** (p = 0.994, sign stability
+  0.487). Dropping it is a decision, not a measurement.
+
+---
+
+## Where this stands, 2026-09-04 — 1.13.0, the mouse class-I model is nine terms on the human corpus
 
 **The four shipped scorers.** `aggregate_mhc1.json` v11 (human class I, 9 terms, human corpus);
 `aggregate_mhc1_mouse.json` **v5** (mouse class I, **9 terms, human corpus**);
@@ -107,7 +176,9 @@ and the block was spending three names on it.
 **`mhc1.mouse.neoantigen` moves to v3 for a data reason, not a specification one.** The deposit was
 cleaned and two of the three rows it lost were in this fit: **923 / 380 → 921 / 379**, BIC
 1066.9 → **1066.1**. Its nine terms and its pinned corpus axis are untouched — making the mouse
-class-I corpus work is the open loop, not a closed one.
+class-I corpus work is the open loop, not a closed one. *(Answered differently in 1.13.0: the mouse
+corpus was not made to work, it was replaced — all three components route to the human tables. The
+loop's premise, that corpus SIZE is the binding constraint, was refuted by the matched-mass arm.)*
 
 **The neoantigen deposit now holds neoantigens.** `bench/pmhc_data/clean_neoantigens.py` (extension
 repo) applies three rules to every table in `~/hf/pmhc_data/neoantigens`: no pathogen epitopes,
@@ -284,13 +355,20 @@ interesting.
 - **1.11.0 is released.** Full suite 790 passed / 16 skipped, `build --check` 0 stale of 38,
   `sphinx-build -W` clean, and both mouse fits reproduced byte-for-byte before the tag.
 
+*(Superseded. The corpus-scalar loop above describes the **v2** pinned axis, which v5 retired:
+mouse class I is nine free terms with `C_corpus_thymus` **+0.2919 at sign stability 0.94**. The
+gate covers **39** artifacts as of `67cd60f`, not 38. Read this section as the record of 1.11.0,
+not as current state.)*
+
 ---
 
 ## Where this stands, 2026-09-04 — 1.10.0, and mouse is a species rather than a spelling
 
 **`--species mouse` reached the three places it had never reached.** It already routed the H-2
-panel and the three corpus channels; it did not route expression, the fitted scorer, or the
-vendored anchor pickles. All three now do.
+panel and, *at the time*, the three corpus channels; it did not route expression, the fitted
+scorer, or the vendored anchor pickles. All three now do. *(The corpus half was superseded in
+1.13.0: `mimicry.reference_species` sends every mouse component to the human tables, so `--species`
+no longer selects a corpus reference at all.)*
 
 **`expression.py` had zero occurrences of `species`.** The FANTOM5 mouse deposit
 (`reference_expression_mmu.tsv.gz`, E-MTAB-3579, 18,830 genes × 35 adult tissues) had been staged
@@ -1386,7 +1464,15 @@ because they bound what the feature can be worth: NESSIE's own blind spots are *
 frameshift case is exactly the `nonconventional` arm the cassette quota holds a slot for, so a
 `wt_presented` term must not silently penalise it.
 
-## 5b-6. EPIC is class-I only, and class II cannot inherit it (v0.27.0, OPEN)
+## 5b-6. EPIC is class-I only, and class II cannot inherit it (v0.27.0, LANDED — superseded)
+
+**Closed by 1.12.0.** Four aggregate artifacts ship, two of them class II
+(`aggregate_mhc2_human.json` v1, `aggregate_mhc2_mouse.json` v3), and `rank.aggregate` is a
+`(cls, species, mode)` lookup that refuses an unfitted cell rather than substituting. What survives
+is the *reason* below, and it is still load-bearing: the face-geometry argument is why both
+class-II fits carry **six terms and no corpus block** rather than a weakly-fitted one.
+
+The original entry, for the record:
 
 `data/aggregate_mhc1.json` is the **only** aggregate artifact, and `rank.py:404` loads it
 unconditionally. There is no class-II scorer: a class-II query gets presentation and expression

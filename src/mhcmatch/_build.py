@@ -241,7 +241,8 @@ TARGETS = {
     # EXTERNAL below is one the artifact or PROVENANCE.md records -- none is reconstructed.
     "aggregate": ("the EPIC neoantigen scorer", None,
                   ["aggregate_mhc1.json", "aggregate_mhc1_mouse.json",
-                   "aggregate_mhc2_mouse.json", "aggregate_mhc2_human.json"]),
+                   "aggregate_mhc2_mouse.json", "aggregate_mhc2_human.json",
+                   "aggregate_mhc1_pathogen.json"]),
     "affinity": ("affinity head coefficients", None, ["affinity_mhc1.json"]),
     "potts": ("Potts affinity weights (the source of `occupancy`)", None,
               ["affinity_potts_mhc1.npz", "affinity_potts_mhc2.npz"]),
@@ -273,7 +274,9 @@ EXTERNAL = {
                   "    python bench/epic/fit_mouse.py --cls mhc2 --corpus-axis none"
                   "                    # mouse class II\n"
                   "    python bench/mhc2_human/fit_human_mhc2.py"
-                  "                                # human class II"),
+                  "                                # human class II\n"
+                  "    python bench/pathogen/fit_pathogen.py --arm foreign"
+                  "                     # human class I, PATHOGEN mode"),
     "affinity": "python bench/affinity/train.py --cls mhc1 --species human   # benchmark repo",
     "potts": "python bench/affinity/fit_potts.py --cls mhc1    # and --cls mhc2; benchmark repo",
         "complement1": "python bench/neoag/complement.py --fit chowell_rebuilt --tables all   # benchmark repo",

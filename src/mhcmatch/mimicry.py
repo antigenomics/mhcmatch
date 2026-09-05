@@ -937,12 +937,17 @@ def corpus_spectrum(pmhc_dir=None, cls: str = "mhc1", components=None, k: int = 
     not need to be, because the length compensation it stood in for is now done explicitly by
     normalizing per query window (see :func:`corpus_R`).
 
-    **Species.** ``self_species`` keys every component, not just ``self``: ``thymus`` and ``viral``
-    ship a mouse table as well as a human one (see the guard in :func:`corpus_counts`), so a mouse
-    run is scored against mouse references throughout. Those two mouse tables stand on less data --
-    25,264 and 40,244 reference windows against 140,482 and 136,618 for class I -- so a mouse
-    corpus channel is noisier than its human counterpart, which is a different claim from the
-    "human-only deposits" this docstring used to make.
+    **Species.** ``self_species`` keys every component, not just ``self``, and this function
+    honours it **literally** -- pass ``"mouse"`` and you get the mouse tables, which is what makes
+    the substitution measurable. But the SCORER does not call it that way: it resolves each
+    component through :func:`reference_species` first, and that map sends every mouse component to
+    ``"human"``, in **both classes**. So a mouse run is scored against the human tables throughout,
+    not the mouse ones, and this docstring said the opposite until 1.14.0.
+
+    The mouse tables remain reachable and are the arm that measures the difference: they stand on
+    25,264 and 40,244 reference windows against 140,482 and 136,618 for class I. See
+    :func:`reference_species` for the per-component transfer measurements and for why thinness is
+    not the explanation.
     """
     shp = shapes or corpus_shapes()
     out: dict = {}

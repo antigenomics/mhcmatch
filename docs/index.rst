@@ -32,6 +32,11 @@ The mathematical and statistical theory lives in the technical appendix,
        <p>Rank neoantigen candidates: nine fitted terms in four blocks, one page each &mdash;
        expression, presentation, immunogenicity, complementarity.</p>
      </a>
+     <a class="proj-card" href="models.html">
+       <h3>The shipped models</h3>
+       <p>All four fitted artifacts: coefficients, what each was fitted on, how well it scores,
+       and what it cannot be asked.</p>
+     </a>
      <a class="proj-card" href="pipeline.html">
        <h3>Running a cohort</h3>
        <p>Two arms &mdash; re-rank your own table, or call epitopes de novo &mdash; from a directory
@@ -95,6 +100,7 @@ Capabilities
    Getting started <getting-started>
    Command line <cli>
    The EPIC scorer <neoantigen>
+   The shipped models <models>
    Running a cohort <pipeline>
    Amino-acid property basis <property_basis>
    API reference <api>

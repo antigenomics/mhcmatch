@@ -45,10 +45,12 @@ from importlib import resources
 __all__ = ["GATE", "Ranked", "rank_fasta", "rank_table", "gate_probability",
            "BASE_COLUMNS", "MIMICRY_PAIRS", "EXTENDED_COLUMNS", "ANNOTATE_COLUMNS", "columns",
            "aggregate", "aggregate_features", "AGGREGATE_ARTIFACTS", "AGGREGATE_MODES",
-           "TERMS_MOUSE_EXPECTED", "TERMS_MHC2_EXPECTED", "FEATURES_ONLY", "models",
+           "TERMS_MOUSE_EXPECTED", "TERMS_MHC2_EXPECTED", "TERMS_PATHOGEN_EXPECTED",
+           "FEATURES_ONLY", "models",
            "aggregate_score", "probability", "POOL_PREVALENCE",
            "AGGREGATE_FEATURES", "AGGREGATE_COLUMNS", "EXPR_COLUMNS",
-           "AGGREGATE_BLOCKS", "CHANNEL_COLUMNS", "PHYS_COLUMNS", "expr_percentile",
+           "FEATURES_ONLY_PATHOGEN", "stand_in",
+           "AGGREGATE_BLOCKS", "CHANNEL_COLUMNS", "PHYS_COLUMNS", "WT_COLUMNS", "expr_percentile",
            "expr_norm_level",
            "rank_pairs", "split_alleles", "species_of"]
 
@@ -68,6 +70,20 @@ BASE_COLUMNS: tuple = ("rank", "peptide", "allele", "allele_scored", "gene", "sc
                        "agretopicity", "physchem", "expression", "expr_pct", "expr_imputed",
                        "n_alleles_presenting", "alleles_presenting",
                        "imputed", "wt_peptide", "known_epitope", "variant_type", "keep", "keep_reason")
+#: **The three columns a pathogen epitope cannot have.** Each is a contrast against a germline
+#: counterpart, and a peptide the host does not encode has none -- so in ``pathogen`` mode they are
+#: not merely missing, they are constant: ``agretopicity`` is always NaN, ``wt_absent`` always 1.0,
+#: and ``d_occupancy`` always equals ``occupancy`` exactly, because :func:`d_occupancy` falls back
+#: to the mutant's own occupancy when there is no wild type. Emitting three constants invites a
+#: reader to interpret them; dropping them says what is true. None is fitted in any artifact, so
+#: nothing downstream loses a term.
+#:
+#: ``log10a`` is deliberately NOT here. It is ``log10([P]/Kd)`` of the candidate itself
+#: (:func:`_logit10`) and needs no wild type at all -- it leaves the pathogen fit for collinearity
+#: with ``binder`` (r = +0.812), which is a different reason and belongs in the artifact's
+#: ``features`` list rather than here.
+WT_COLUMNS: tuple = ("d_occupancy", "wt_absent", "agretopicity", "wt_peptide")
+
 #: The aggregate's recognition features, emitted whenever the aggregate is what scored. A model
 #: emits the features it used and refuses to run without them.
 #:
@@ -177,6 +193,12 @@ AGGREGATE_ARTIFACTS: dict = {
     ("mhc1", "mouse", "neoantigen"): "aggregate_mhc1_mouse.json",
     ("mhc2", "mouse", "neoantigen"): "aggregate_mhc2_mouse.json",
     ("mhc2", "human", "neoantigen"): "aggregate_mhc2_human.json",
+    ("mhc1", "human", "pathogen"): "aggregate_mhc1_pathogen.json",
+    # **A key here means the file SHIPS**, not that a fit exists. Registering a name whose artifact
+    # is not installed turns the honest "this library ships ..." refusal into a FileNotFoundError
+    # that reads like a broken install, and it is the wrong answer: nothing is broken, that model
+    # was never fitted into a release. `test_the_artifact_registry_lists_only_files_that_are_installed`
+    # pins that; the three unfitted cells refuse by name through the `None` branch below.
 }
 
 #: **The class-II artifacts carry six terms, not nine, and that is a specification.** A corpus
@@ -191,12 +213,62 @@ AGGREGATE_ARTIFACTS: dict = {
 TERMS_MHC2_EXPECTED: tuple = ("binder", "log10a", "expr_lvl", "expr_norm",
                               "C_phys_buried", "C_phys_charge")
 
+#: **The shipped pathogen artifact carries five terms.** Three things leave the nine-term
+#: neoantigen design and each leaves for its own reason -- only one of them is a weak coefficient.
+#:
+#: ``log10a`` is **well-defined here and still dropped, and the two facts are unrelated.** It is
+#: ``log10([P]/Kd)`` of the candidate itself (:func:`_logit10`), so it needs no wild type at all --
+#: :attr:`Ranked.occupancy` is "defined for a frameshift or fusion product that has none". It goes
+#: because it does not earn its parameter: **corr(log10a, binder) = +0.8123** on the 38,106-row
+#: fitted design, at coefficient -0.0519, p = 0.137 and sign stability 0.887. Dropping it cost
+#: 0.0006 AUROC and raised PPV in the top 100 from 0.1000 to **0.1300**.
+#:
+#: The genuinely wild-type-dependent quantities -- ``agretopicity``, ``d_occupancy``,
+#: ``wt_absent`` -- are **degenerate** rather than absent in this mode (always NaN, always
+#: ``occupancy``, always 1.0) and none is fitted anywhere; see :data:`WT_COLUMNS`.
+#:
+#: ``expression`` is **undefined**, not missing. A pathogen epitope comes from an organism the host
+#: does not transcribe, so there is no source-gene abundance to measure and no matched normal to
+#: compare it against; ``expr_lvl`` would be a number for a quantity that does not exist. Nothing
+#: is imputed, because there is nothing to impute *from*.
+#:
+#: ``C_corpus_viral`` is dropped **by this fit's deposit, not by the mode**, and **not** because
+#: the reference is impure. A corpus channel is defined by the *nature* of its compartment --
+#: ``viral`` is "foreign in origin, observed presented on MHC" -- and every peptide in that deposit
+#: satisfies it, including the 12.3 % that also carry a positive T-cell assay. What decides it is
+#: what the channel would be fitted *against*. This fit's non-self negatives come from
+#: ``ligandome/viral_foreign_iedb.tsv.gz`` and the ``viral`` k-mer table is **counted from that
+#: same file**: **37,129 of its 37,328 negatives (99.5 %)** are exact members of the table, against
+#: **8,142 of 22,613 positives (36.0 %)**. At a 2.8x differential the channel is reading class
+#: membership, not similarity, and the coefficient would transfer to nothing.
+#:
+#: A ``pathogen`` fit on a deposit that does *not* overlap the table keeps the channel and carries
+#: seven terms. That is why nothing in this module selects channels by mode: the admissible set is
+#: read off the artifact's own ``features`` list, per :func:`stand_in` and
+#: :func:`aggregate_features`.
+#:
+#: ``C_corpus_thymus`` and ``C_corpus_self`` **stay**, and they are the theoretically interesting
+#: half: they are *host* compartments, so a foreign epitope resembling host self or the thymic
+#: repertoire should be seen by a tolerised repertoire and be less immunogenic. There is no
+#: circularity -- the negatives are foreign, the tables are host.
+#:
+#: **The complement of a T-cell flag is not a negative set**, which is why no arm here filters on
+#: one. IEDB's T-cell export is positives-only, so "no positive record" mostly means nobody
+#: measured it.
+TERMS_PATHOGEN_EXPECTED: tuple = ("binder", "C_phys_buried", "C_phys_charge",
+                                  "C_corpus_thymus", "C_corpus_self")
+
 #: **The two immunological modes, and why the key carries one.** A tumour neoantigen and a pathogen
 #: epitope are answered by different mechanisms -- autoimmunity is not inflammation -- so they are
-#: two models, never one model with an extra covariate. Every artifact shipped to date is
-#: ``neoantigen``, which is what the human artifact was always fitted on; ``pathogen`` is a
-#: registered spelling with no shipped artifact yet, so asking for one refuses by name rather than
-#: silently serving the neoantigen fit.
+#: two models, never one model with an extra covariate. They also do not admit the same *terms*:
+#: ``pathogen`` drops the expression block, which is undefined for a peptide the host does not
+#: transcribe. What it does with the corpus block is **not** a property of the mode but of the
+#: deposit a given fit was trained on -- see :data:`TERMS_PATHOGEN_EXPECTED` -- so two ``pathogen``
+#: artifacts may legitimately carry different corpus channels, and every consumer here reads the
+#: artifact's own ``features`` list rather than a table keyed on the mode.
+#:
+#: Every ``(cls, species)`` cell not listed in :data:`AGGREGATE_ARTIFACTS` refuses by name rather
+#: than silently serving a neighbour's coefficients.
 AGGREGATE_MODES: tuple = ("neoantigen", "pathogen")
 
 #: Cached artifacts, one slot per ``(cls, species, mode)``. A single slot served the wrong fit the
@@ -406,6 +478,34 @@ FEATURES_ONLY: dict = {
                  "C_corpus_thymus", "C_corpus_self", "C_corpus_viral"],
 }
 
+#: The same stand-in for a ``pathogen`` fit: **the columns that mode can be fitted on, and no
+#: others.** Not ``FEATURES_ONLY`` minus a few names as a convenience -- the three it drops are
+#: dropped for the reasons in :data:`TERMS_PATHOGEN_EXPECTED`, and asking for them here is an error
+#: rather than a wider net. So ``mhcmatch rank pairs --epitope pathogen --score features`` computes
+#: exactly what the pathogen fit fits, needs no ``--expr-floor``, and builds the ``thymus`` and
+#: ``self`` corpus tables without touching the ``viral`` one.
+FEATURES_ONLY_PATHOGEN: dict = {
+    "model": "", "version": None,
+    "features": ["C_phys_buried", "C_phys_charge", "C_corpus_thymus", "C_corpus_self"],
+}
+# `binder` is computed by the scoring path itself and is not a stand-in column, so the stand-in is
+# the four the CALLER would otherwise have to supply -- the same relationship `FEATURES_ONLY` has
+# to the nine-term fit.
+
+
+def stand_in(mode: str = "neoantigen") -> dict:
+    """The ``--score features`` pseudo-artifact for ``mode``: what to compute when nothing scores.
+
+    ``--score features`` has no fitted artifact to read a ``features`` list off, so it needs one
+    supplied. This is the single place that answers it, read by both ``cli._aggregate_channels``
+    (which corpus tables to build) and the banner ``rank`` prints (which columns it filled) -- two
+    answers that must agree, and did not when each carried its own list.
+    """
+    if mode not in AGGREGATE_MODES:
+        raise ValueError(f"unknown mode {mode!r}; expected one of {', '.join(AGGREGATE_MODES)}")
+    return FEATURES_ONLY_PATHOGEN if mode == "pathogen" else FEATURES_ONLY
+
+
 
 def aggregate_features(cls: str = "mhc1", species: str = "human",
                        mode: str = "neoantigen") -> tuple:
@@ -609,7 +709,8 @@ def probability(scores, prevalence: float = POOL_PREVALENCE) -> list:
 
 
 def aggregate_score(features, imputed_out: list | None = None, cls: str = "mhc1",
-                   species: str = "human") -> "np.ndarray":
+                   species: str = "human",
+                    mode: str = "neoantigen") -> "np.ndarray":
     """Rank-score candidates with the fitted aggregate. ``features`` is ``{name: sequence}``.
 
     Every column in :data:`AGGREGATE_FEATURES` is standardized with the mu and sigma it was
@@ -648,7 +749,7 @@ def aggregate_score(features, imputed_out: list | None = None, cls: str = "mhc1"
     """
     import numpy as np
 
-    a = aggregate(cls, species)
+    a = aggregate(cls, species, mode)
     n = max((len(v) for v in features.values()), default=0)
     missing = [f for f in a["features"] if f not in features]
     if missing:
@@ -657,7 +758,11 @@ def aggregate_score(features, imputed_out: list | None = None, cls: str = "mhc1"
             f"features and {len(missing)} were not supplied: {', '.join(missing)}. "
             "A model scores on the features it declares or not at all; supplying a subset would "
             "score a different model under this one's coefficients.")
-    terms = aggregate_terms(features, imputed_out, cls, species)
+    # `mode` travels with (cls, species) or the guard above validates one artifact while the
+    # arithmetic below uses another -- measured: with a pathogen artifact registered,
+    # `aggregate_score(mode="pathogen")` refused naming EPIC's nine features while
+    # `aggregate_terms(mode="pathogen")` returned the correct six-column matrix.
+    terms = aggregate_terms(features, imputed_out, cls, species, mode)
     out = np.zeros(n, dtype=float)
     for j in range(terms.shape[1]):        # sequential, in feature order, as this always summed
         out += terms[:, j]
@@ -665,7 +770,8 @@ def aggregate_score(features, imputed_out: list | None = None, cls: str = "mhc1"
 
 
 def aggregate_terms(features, imputed_out: list | None = None, cls: str = "mhc1",
-                   species: str = "human") -> "np.ndarray":
+                   species: str = "human",
+                    mode: str = "neoantigen") -> "np.ndarray":
     """The same score, **not summed**: ``(n, d)`` of ``coef * z``, one column per fitted feature.
 
     Column ``j`` is what feature ``j`` contributed to candidate ``i``'s score, in the units the
@@ -688,7 +794,7 @@ def aggregate_terms(features, imputed_out: list | None = None, cls: str = "mhc1"
     """
     import numpy as np
 
-    a = aggregate(cls, species)
+    a = aggregate(cls, species, mode)
     n = max((len(v) for v in features.values()), default=0)
     missing = [f for f in a["features"] if f not in features]
     if missing:
@@ -1028,7 +1134,8 @@ def _recognition_map(peptides, species: str = "human", cls: str = "mhc1") -> dic
 
 
 def _expression_for(gene: str, observed, tissue: str | None, tumor: str | None,
-                    peptide: str = "", species: str = "human") -> tuple[float, bool]:
+                    peptide: str = "", species: str = "human",
+                    mode: str = "neoantigen") -> tuple[float, bool]:
     """``(log1p(TPM), was_imputed)``. The tumour rung first when a tumour type is given.
 
     A missing expression value never drops a candidate -- the reference median stands in and the
@@ -1043,6 +1150,15 @@ def _expression_for(gene: str, observed, tissue: str | None, tumor: str | None,
     rows, so it can answer whether this exact neoantigen was seen expressed; the mouse syngeneic
     deposit has no peptide rows anywhere and answers the gene-level question instead. Same rung,
     different key -- so the key is chosen by species rather than by a second branch here."""
+    if mode == "pathogen":
+        # **Undefined, not missing, and the difference decides what to return.** A pathogen epitope
+        # comes from an organism the host does not transcribe, so there is no source gene to
+        # measure and no matched normal to compare against. Every rung below is a substitution for
+        # a value that exists and was not supplied; here there is nothing to substitute *for*. So
+        # the column is NaN with `imputed=False` -- imputed would claim a rung was walked -- and
+        # the pathogen artifact declares no expression term, so nothing reads it. Returning early
+        # also keeps a pathogen run from importing and staging the expression references at all.
+        return float("nan"), False
     if observed is not None and observed == observed:
         x = float(observed)
         if x < 0:
@@ -1116,7 +1232,8 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
             prevalence: float = POOL_PREVALENCE,
             expr_floor: float | None = None, expr_prefilter: float = 0.0,
             tumor: str | None = None, tissue: str | None = None, keep=None,
-            cls: str = "mhc1", species: str = "human") -> list:
+            cls: str = "mhc1", species: str = "human",
+            mode: str = "neoantigen") -> list:
     """Score, then order: known epitopes first, then by score descending.
 
     The ``keep`` whitelist (a :class:`mhcmatch.predict.Keep`) is applied **here**, once, rather
@@ -1139,7 +1256,7 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
     Asking for the aggregate and getting the gate is not a degraded answer, it is a different one.
     """
     if score in ("aggregate", "features"):
-        a = FEATURES_ONLY if score == "features" else aggregate(cls, species)
+        a = stand_in(mode) if score == "features" else aggregate(cls, species, mode)
         # `aggregate_score` takes only the names the artifact's `features` list asks for, so this
         # dict is deliberately a superset: it carries every name any shipped generation has asked
         # for, and one library scores them all. `pres` and `binder` are both here because the
@@ -1265,7 +1382,8 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
                 r.components["model"] = ""
         else:
             imputed: list = [[] for _ in rows]
-            vals = aggregate_score(cols, imputed_out=imputed, cls=cls, species=species)
+            vals = aggregate_score(cols, imputed_out=imputed, cls=cls, species=species,
+                                   mode=mode)
             for r, v, imp in zip(rows, vals, imputed):
                 r.score = float(v)
                 r.imputed = ";".join(imp)
@@ -1325,7 +1443,7 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
                top: int | None = None, gate: dict | None = None, score: str = "aggregate",
                channels=None, prevalence: float = POOL_PREVALENCE, keep=None,
                species: str = "human", expr_floor: float | None = None,
-               expr_prefilter: float = 0.0, **kw) -> list[Ranked]:
+               expr_prefilter: float = 0.0, mode: str = "neoantigen", **kw) -> list[Ranked]:
     """Rank every presented k-mer in a mutation-spanning window FASTA.
 
     ``store`` is a :class:`mhcmatch.Store`; ``alleles`` the donor's HLA types in pipeline form.
@@ -1362,7 +1480,7 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
             tpm = float(tpm) if tpm not in (None, "") else None
         except (TypeError, ValueError):
             tpm = None
-        expr, imputed = _expression_for(gene, tpm, tissue, tumor, p.peptide, species)
+        expr, imputed = _expression_for(gene, tpm, tissue, tumor, p.peptide, species, mode)
         # One recoverability test, two consumers. `wt_nm is None` IS the `wt_absent` indicator:
         # a frameshift or fusion has no germline counterpart, so there is nothing to be a ratio
         # against and nothing to subtract an occupancy from.
@@ -1390,7 +1508,7 @@ def rank_fasta(store, fasta_path: str, alleles, cls: str = "mhc1", *, tissue: st
                            core=p.core, core_offset=p.core_offset, core_source=p.core_source))
     _fill_channels(rows, channels)
     return _finish(rows, gate, score, prevalence, tumor=tumor, tissue=tissue,
-                   cls=cls, species=species,
+                   cls=cls, species=species, mode=mode,
                    expr_floor=expr_floor, expr_prefilter=expr_prefilter,
                    keep=P.as_keep(keep))
 
@@ -1404,7 +1522,7 @@ def _presents_better(a: "Ranked", b: "Ranked") -> bool:
 
 
 def _unscored(r: dict, cls: str, tissue, tumor, refs, binding_core, phys: dict,
-              species: str = "human") -> "Ranked":
+              species: str = "human", mode: str = "neoantigen") -> "Ranked":
     """A row whose restriction cell named no allele we know, with everything allele-free still filled.
 
     Expression, chemistry and the corpus channels do not depend on the allele, so they are real here;
@@ -1417,7 +1535,7 @@ def _unscored(r: dict, cls: str, tissue, tumor, refs, binding_core, phys: dict,
         tpm = float(r["tpm"]) if r.get("tpm") not in (None, "") else None
     except (TypeError, ValueError):
         tpm = None
-    expr, imputed = _expression_for(gene, tpm, tissue, tumor, r["peptide"], species)
+    expr, imputed = _expression_for(gene, tpm, tissue, tumor, r["peptide"], species, mode)
     nan = float("nan")
     from . import predict as P
     rk = Ranked(peptide=r["peptide"], allele=r["allele"], allele_scored="", gene=gene,
@@ -1540,7 +1658,8 @@ def rank_pairs(store, rows, cls: str = "mhc1", *, keep=None, tissue: str | None 
                score: str = "aggregate", channels=None,
                prevalence: float = POOL_PREVALENCE, species: str = "human",
                expr_floor: float | None = None,
-               expr_prefilter: float = 0.0) -> list[Ranked]:
+               expr_prefilter: float = 0.0,
+               mode: str = "neoantigen") -> list[Ranked]:
     """Rank ``(peptide, wt_peptide, allele)`` triples -- the shape a benchmark or a variant table has.
 
     :func:`rank_fasta` needs mutation-spanning windows and :func:`rank_table` needs another tool's
@@ -1612,7 +1731,7 @@ def rank_pairs(store, rows, cls: str = "mhc1", *, keep=None, tissue: str | None 
                 tpm = float(r["tpm"]) if r.get("tpm") not in (None, "") else None
             except (TypeError, ValueError):
                 tpm = None
-            expr, imputed = _expression_for(gene, tpm, tissue, tumor, r["peptide"], species)
+            expr, imputed = _expression_for(gene, tpm, tissue, tumor, r["peptide"], species, mode)
             w = wt_nm.get(r["_i"])
             w = float(w) if (w is not None and w == w and w > 0) else None
             dai = float("nan")
@@ -1644,11 +1763,12 @@ def rank_pairs(store, rows, cls: str = "mhc1", *, keep=None, tissue: str | None 
 
     for r in recs:                          # named no allele we know: emit, do not calibrate
         if r["_i"] not in out:
-            out[r["_i"]] = _unscored(r, cls, tissue, tumor, refs, binding_core, phys, species)
+            out[r["_i"]] = _unscored(r, cls, tissue, tumor, refs, binding_core, phys, species,
+                                     mode)
     rows_out = [out[i] for i in sorted(out)]
     _fill_channels(rows_out, channels)
     return _finish(rows_out, gate, score, prevalence, tumor=tumor, tissue=tissue,
-                   cls=cls, species=species,
+                   cls=cls, species=species, mode=mode,
                    expr_floor=expr_floor, expr_prefilter=expr_prefilter,
                    keep=P.as_keep(keep))
 
@@ -1659,7 +1779,8 @@ def rank_table(path: str, *, channels=None, keep=None,
                gate: dict | None = None, score: str = "aggregate",
                prevalence: float = POOL_PREVALENCE, species: str = "human",
                expr_floor: float | None = None,
-               expr_prefilter: float = 0.0) -> list[Ranked]:
+               expr_prefilter: float = 0.0,
+               mode: str = "neoantigen") -> list[Ranked]:
     """Rank a table already scored by another tool, recomputing what this package can compute.
 
     Reads the pipeline ``.scored.csv`` schema (``epitope``, ``best_allele``, ``tpm``, ``gene_name``,
@@ -1685,7 +1806,7 @@ def rank_table(path: str, *, channels=None, keep=None,
                 tpm = float(rec["tpm"]) if rec.get("tpm") else None
             except ValueError:
                 tpm = None
-            expr, imputed = _expression_for(gene, tpm, tissue, tumor, pep, species)
+            expr, imputed = _expression_for(gene, tpm, tissue, tumor, pep, species, mode)
             # The two heads, kept apart. Until 0.27 this path wrote the *binder* rank into both
             # `presentation` and `binder`, because `binder_score` was called for the binder rank
             # and the presentation rank it also returns was thrown away -- so a v4 artifact, whose
@@ -1723,6 +1844,6 @@ def rank_table(path: str, *, channels=None, keep=None,
             rows.append(r)
     _fill_channels(rows, channels)
     return _finish(rows, gate, score, prevalence, tumor=tumor, tissue=tissue,
-                   cls=cls, species=species,
+                   cls=cls, species=species, mode=mode,
                    expr_floor=expr_floor, expr_prefilter=expr_prefilter,
                    keep=P.as_keep(keep))

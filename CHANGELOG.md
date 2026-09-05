@@ -1,5 +1,134 @@
 # Changelog
 
+## [1.14.0] --- a second immunological mode, and what "mouse" means
+
+### `mhc1.human.pathogen` ships --- the fifth artifact, and the first non-neoantigen one
+
+Five terms, **38,106 rows / 2,634 immunogenic (6.91 %) / 19,464 peptides / 112 allotypes** from the
+foreign-antigen stratum of the Kesmir/Chowell corpus. ROC-AUC **0.5926**, PR-AUC **0.0905** against
+prevalence 0.0691, PPV **0.1063** at k = 2,634 (1.54x lift) and **0.1300** in the top 100.
+
+The two host corpus channels carry the largest coefficients and are the point of the mode:
+`C_corpus_self` **-0.3030** and `C_corpus_thymus` **+0.3003**, both sign-stable at 1.000 over 400
+row bootstraps at p < 2e-18. They correlate at **r = +0.783** and sum to **-0.0027**, so what is
+fitted is a *difference* -- read either alone and you are reading the contrast.
+
+**Three terms are absent for three different reasons**, and only one is a weak coefficient:
+expression is **undefined** (no host transcript); `C_corpus_viral` would measure **membership**
+(100 % of both classes are exact members of the deposit its table is counted from); and `log10a`
+is **well-defined and collinear** -- `log10([P]/Kd)` of the candidate itself, needing no wild type
+at all, dropped at **corr(log10a, binder) = +0.8123**. Dropping it cost 0.0006 AUROC and raised
+PPV@100 from 0.1000 to 0.1300.
+
+**The negative class is "no recorded positive", not "measured non-immunogenic"**: IEDB's T-cell
+export is positives-only. Every peptide on both sides is an observed ligand.
+
+### Three silent substitutions on the scoring path
+
+All three resolved the *default* artifact rather than the one being scored, and all three were
+invisible because the shipped fits agree.
+
+- **`aggregate_score` dropped `mode`** when delegating to `aggregate_terms`: it validated one
+  artifact and did the arithmetic with another. Latent only while one mode shipped.
+- **`_aggregate_channels` read `corpus_geometry()` bare**, so `k`/`mask`/`kernel` always came from
+  `mhc1.human.neoantigen`. A kappa fitted against one kernel and scored under another is a
+  different feature, not a smaller effect.
+- **`_mimicry_scores` took no species**, so `rank --species mouse --extended`/`--annotate` reported
+  the nearest **human** reference and said nothing. `a.species` was in scope and not passed.
+
+### The row emitter is keyed by name
+
+It was a positional list that assumed the header was `BASE_COLUMNS` in order. The first mode to
+drop a column moved the header and not the values --- a `variant_type` under `C_corpus_thymus`, no
+error. Same shape as the `--passthrough` schema bug, and the same fix.
+
+### `mhcmatch rank --epitope {neoantigen,pathogen}`
+
+Not spelled `--mode`: this command's *positional* `mode` is the input shape and `span --mode` is
+the ligand-span method. `pathogen` **refuses** `--tissue` / `--tumor` / `--expr-floor` rather than
+discarding them, and does not emit the wild-type columns (`agretopicity`, `d_occupancy`,
+`wt_absent`), which are degenerate rather than absent. Which corpus channels a fit carries is read
+off its own `features` list, never off the mode.
+
+### New: `mhcmatch models`, `--cls both`, `--epitope` on `explain`
+
+`models` prints which `(cls, species, mode)` cells ship; `--all` adds the cells that ship none.
+`--cls both` scores each class on its own model and emits one table with a `cls` column --- not one
+model over two classes. `explain` now names the fitted model that would score the row, and its
+final line is labelled **`GATE`**: it prints the two-term screen, never the fitted aggregate, and
+had said `AGGREGATE` since it was written.
+
+### What "mouse" means, stated once
+
+`docs/models.rst` carries a per-component table. Presentation and expression are mouse;
+physicochemistry is species-free; **the whole corpus block reads human tables, in both classes** ---
+`CORPUS_REFERENCE` is keyed `(species, component)` with no class key. Five documents asserted the
+pre-1.13.0 opposite, `skills/mhcmatch/SKILL.md` most directly.
+
+### Documentation
+
+### `mhcmatch rank --epitope pathogen`
+
+A tumour neoantigen and a pathogen epitope are answered by different mechanisms, so they are two
+models rather than one model with an extra covariate. `--epitope {neoantigen,pathogen}` picks
+which. It is **not** spelled `--mode`: `rank`'s positional `mode` is the input *shape*
+(fasta / table / pairs), and one flag over two questions cannot report which it answered --- the
+mistake `--block-live` and `--keep` each cost this package once already.
+
+**Expression is undefined in pathogen mode, not missing.** A peptide from an organism the host does
+not transcribe has no source-gene abundance and no matched normal, so `rank._expression_for`
+returns NaN with `imputed=False` --- `imputed=True` would claim a substitution rung was walked ---
+and `--tissue` / `--tumor` / `--expr-floor` are not read.
+
+**Which corpus channels a fit carries is read off its `features` list, never off the mode.**
+Whether `C_corpus_viral` is admissible is a property of the *deposit*: on the human Kesmir corpus
+100 % of both classes are exact members of the file that table is counted from, so it carries no
+class information; on CEDAR's mouse non-self class-I rows 0 % are, because that builder strips
+them. Two `pathogen` fits can therefore legitimately differ, and `cli._aggregate_channels` builds
+exactly the tables the run will score. `rank.stand_in(mode)` supplies the column list for
+`--score features`, which has no artifact to read one from --- one answer where the channel builder
+and the banner each used to carry their own.
+
+No `pathogen` artifact ships yet: `--score aggregate --epitope pathogen` refuses by name rather
+than serving the neoantigen coefficients. The candidate and its report are in the benchmark repo.
+
+### Documentation
+
+> **`docs/models.rst` is new**: all four fitted artifacts on one page --- every coefficient with
+> its bootstrap interval, what each model was fitted on, the discrimination figure each one
+> records, and the caveats that come with each. `README.md` carries the four-row summary.
+> **No artifact changed and no fit was re-run.**
+
+**The tables are generated from the artifacts, not typed.** `mhcmatch._modeldoc` renders them and
+`docs/conf.py` rewrites `docs/_generated/` on every Sphinx build, so `docs/_generated/` is
+gitignored and there is no committed copy to drift. The one committed copy --- the summary block in
+`README.md`, between `<!-- BEGIN shipped-models -->` markers --- is pinned by
+`tests/test_modeldoc.py`, and `python -m mhcmatch._modeldoc` refreshes it.
+
+This closes the reason the docs had refused to print a coefficient at all: six pages once carried
+their own transcription of the EPIC table and all six went stale together at the first refit.
+
+**The AUROC column is two protocols and the page says so in every place it appears.** The human
+class-I fit spans seven screens and reports **leave-one-screen-out**, mean 0.7102. The other three
+are single-deposit fits with no second screen to hold out and report an **in-sample
+within-reference** figure --- the slope term alone, per-reference intercepts excluded from the
+score, macro-averaged over references carrying at least three of each class: mouse class I 0.6335
+(921 rows), human class II 0.6020 (1,112), mouse class II 0.5741 (468). A test asserts the two
+protocol labels never collapse into one column.
+
+**Two human class-I screens read near chance because of how they were built, and the page now says
+which reading answers each.** ITSNdb admits a peptide only on validated MHC-I binding, so
+presentation is equalised by construction and AUROC is the wrong statistic there --- the shipped
+nine-term score reaches AUPRC **0.7256** against the set's prevalence of 0.6497 and precision@10
+**1.00**. VACCIMEL selected its 93 candidates on presentation and expression before any assay; read
+on the recognition blocks alone under the same leave-one-screen-out protocol, the same model
+reaches **0.6447**.
+
+**`mhc2.human.neoantigen` is a CD4 response model over human self proteins**, and that is now
+stated wherever it is offered: 143 of its 1,112 rows are a cancer, 260 are healthy donors, and the
+largest single disease is type 1 diabetes at 364 rows. The composition already ships inside the
+artifact as `fit.population`.
+
 ## [1.13.0] --- 2026-09-04 --- the mouse class-I model reads the human corpus, and fits nine terms
 
 > **The mouse class-I scorer moves to model version 5**: nine free GLM coefficients, matching the

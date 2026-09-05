@@ -8,7 +8,7 @@
   what is **open**, what is **withheld** from the published documents, and **where a rival is
   ahead**. It replaced `issues_major.md` / `issues_minor.md` / `caveats.md`, none of which exist.
 
-**The shipped scorer is artifact version 11 in library 1.6.1** — nine fitted terms, `binder` as the
+**The human class-I neoantigen scorer is artifact version 11, accepted in 1.6.1** — nine fitted terms, `binder` as the
 fitted presentation term (recorded in `issues.md`; both taken by the author on 2026-08-25). Its
 own `verdict` block still reads `"ship": false`, which is worth knowing before quoting it: v11 was
 shipped on the author's word on 2026-08-29 *against* that bar, over two thin regressions
@@ -21,6 +21,31 @@ screen-out mean is the number that does: **0.6998 → 0.7102**. Do not replace
 manuscript, and `build --check` cannot see that it changed — but
 `test_the_shipped_artifact_is_pinned_to_the_fit_that_produced_it` now can, by digesting
 `(coef, mu, sigma)`.
+
+**Two immunological modes, and `mode` is not the input shape.** `rank --epitope
+{neoantigen,pathogen}` picks which fitted model scores the rows; `AGGREGATE_ARTIFACTS` is keyed
+`(cls, species, mode)` and five cells ship — four `neoantigen` plus `mhc1.human.pathogen` (v1,
+release 1.13.0, five terms, 38,106 rows / 2,634 positive). The other three pathogen cells refuse by
+name. It is **not** `--mode`: `rank`'s positional `mode` is the input SHAPE (fasta/table/pairs) and
+`span --mode` is the ligand-span method — the `--block-live` / `--keep` mistake, a third time.
+`mhcmatch models --all` prints which cells ship.
+
+**Which corpus channels a fit carries is read off its own `features` list, never off the mode** —
+it is a property of the DEPOSIT. On the human Kesmir corpus 100 % of both classes are exact members
+of the file `C_corpus_viral`'s table is counted from, so that channel goes; on CEDAR's mouse
+non-self rows 0 % are, so it stays. Three lower-level lookups used to resolve the *default*
+artifact instead — `aggregate_score` dropped `mode` when delegating to `aggregate_terms`,
+`_aggregate_channels` read `corpus_geometry()` bare, and `_mimicry_scores` took no species at all,
+so `rank --species mouse --extended` reported the nearest **human** reference silently. All three
+were invisible because the shipped fits agree. **Whenever a global becomes a lookup, grep for the
+bare call.**
+
+**`log10a` is not a wild-type quantity.** It is `log10([P]/Kd)` of the candidate itself
+(`rank._logit10`), defined for a frameshift with no germline counterpart. The WT-dependent columns
+are `agretopicity`, `d_occupancy` and `wt_absent`, and all three are *degenerate* in pathogen mode
+(always NaN, always `occupancy`, always 1.0) rather than absent — `rank.WT_COLUMNS` names them and
+they are not emitted there. `log10a` left the pathogen fit for **collinearity with `binder`
+(r = +0.812)**, which is a different claim and belongs in the artifact's `features` list.
 
 **A pooled null must leave the queried allele out.** `background="ligand"` pooled the residue
 marginal over *every* allele's ligands, the queried one included -- a rounding error on a balanced
@@ -363,7 +388,7 @@ mhcmatch build corpus -v    # one target, with per-step wall clock
   reports every head stale at every release, which is why `.json` was once blanket-exempted — and
   the exemption cost the check *all* of them. `mimicry_fit.py` wrote `"0.12.0"` as a model version,
   the one file that made the shapes ambiguous; it now writes `1`, and the rule holds by construction.
-- **`--check` covers all 39 shipped artifact files, not 11.** Until 2026-08-23 the `TARGETS` table listed
+- **`--check` covers all 40 shipped artifact files, not 11.** Until 2026-08-23 the `TARGETS` table listed
   only the anchors, the corpus tables and the recognition heads, so sixteen files — including
   `aggregate_mhc1.json` (EPIC itself) and `affinity_potts_mhc{1,2}.npz` (the source of `occupancy`)
   — could go missing or ship half-copied and nothing would say so. Entries whose generator lives in

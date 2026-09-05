@@ -39,6 +39,10 @@ The model
 The blocks are entered in pipeline order, each on top of the last, so a recognition coefficient is
 what that term is worth **after** presentation and expression rather than in competition with them.
 
+This page is about the **terms** --- what each one is and what it is computed from. For the four
+fitted artifacts themselves --- their coefficients with bootstrap intervals, what each was fitted
+on, how well each scores and what each cannot be asked --- see :doc:`models`.
+
 .. list-table::
    :header-rows: 1
    :widths: 14 22 64
@@ -125,9 +129,11 @@ the sizes are directly comparable. One unpenalised intercept per screen, ridge :
 ``z``, ``p`` and sign stability come from a cluster bootstrap over **(patient, screen)** — 400
 resamples — because rows from one patient share tumour, HLA and run.
 
-**The values are not written down in these docs.** Six pages used to carry their own copy of this
-table and all six went stale together the first time the model was refitted, because nothing read
-them. The vendored artifact is the record, and the command line prints it:
+**The values are not typed into these docs.** Six pages used to carry their own copy of this table
+and all six went stale together the first time the model was refitted, because nothing read them.
+:doc:`models` prints all four fits in full --- *generated from the artifacts on every build*, which
+is the only form of that table that has ever stayed correct. The vendored artifact is the record,
+and the command line prints it too:
 
 .. code-block:: bash
 

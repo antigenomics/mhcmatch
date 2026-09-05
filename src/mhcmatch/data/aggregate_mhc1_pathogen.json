@@ -1,0 +1,159 @@
+{
+ "model": "EPIC",
+ "version": 1,
+ "generator": "bench/pathogen/fit_pathogen.py",
+ "model_id": "mhc1.human.pathogen",
+ "release": "1.13.0",
+ "species": "human",
+ "cls": "mhc1",
+ "mode": "pathogen",
+ "features": [
+  "binder",
+  "C_phys_buried",
+  "C_phys_charge",
+  "C_corpus_thymus",
+  "C_corpus_self"
+ ],
+ "coef": [
+  0.145380169213491,
+  0.19196777267376613,
+  0.00017023411623648751,
+  0.3002706664379396,
+  -0.3030281298156627
+ ],
+ "sd": [
+  0.019578398543228084,
+  0.02116329792732447,
+  0.022291553211181727,
+  0.030988009388193755,
+  0.034478893584800795
+ ],
+ "boot_sd": [
+  0.021097485366539846,
+  0.019780044183746046,
+  0.021072356022506258,
+  0.02987303443208227,
+  0.03423927206118243
+ ],
+ "z": [
+  7.425539371491451,
+  9.070787234248199,
+  0.00763670950264228,
+  9.68989852418016,
+  -8.788800866546525
+ ],
+ "p": [
+  1.1232125012009862e-13,
+  1.1816017909432737e-19,
+  0.9939068466173353,
+  3.328592195284119e-22,
+  1.5116473480533233e-18
+ ],
+ "ci95": [
+  [
+   0.1021338929099169,
+   0.18711792599196678
+  ],
+  [
+   0.15372450937943474,
+   0.23241433757992686
+  ],
+  [
+   -0.04167729773490963,
+   0.04209286593155494
+  ],
+  [
+   0.24366511927075923,
+   0.36198351920096083
+  ],
+  [
+   -0.3738824337360721,
+   -0.23742989977656734
+  ]
+ ],
+ "sign_stability": [
+  1.0,
+  1.0,
+  0.4875,
+  1.0,
+  1.0
+ ],
+ "mu": [
+  -0.31783792940744243,
+  0.740327188474256,
+  -0.061833574367999786,
+  0.000264264616398116,
+  0.000734228629653073
+ ],
+ "sigma": [
+  0.7883868154242658,
+  0.05350758737061128,
+  0.7682324732184626,
+  0.00020964166132838056,
+  0.0005227248015557993
+ ],
+ "intercept": null,
+ "intercept_fitted": -2.64655607629253,
+ "peptide_nm": 10.0,
+ "corpus_mask": "slice",
+ "corpus_k": 3,
+ "corpus_kernel": "blosum62_normalised",
+ "corpus_shapes": {
+  "thymus": 1.65,
+  "self": 0.65
+ },
+ "phys_scale": "Rose",
+ "phys_scale_charge": "ATCHLEY:AF5",
+ "phys_per_residue": true,
+ "expression": null,
+ "blocks": [
+  [
+   "presentation",
+   [
+    "binder"
+   ]
+  ],
+  [
+   "physchem",
+   [
+    "C_phys_buried",
+    "C_phys_charge"
+   ]
+  ],
+  [
+   "corpus",
+   [
+    "C_corpus_thymus",
+    "C_corpus_self"
+   ]
+  ]
+ ],
+ "fit": {
+  "rows": 38106,
+  "positives": 2634,
+  "peptides": 19464,
+  "alleles": 112,
+  "arm": "foreign",
+  "deposit": "immunogenicity/kesmir_rebuilt_hla_matched.tsv.gz",
+  "per_group_intercept": false,
+  "intercepts": 1,
+  "tau": 0.25,
+  "seed": 17,
+  "iters": 7,
+  "n_boot": 400,
+  "n_boot_converged": 400,
+  "bootstrap_unit": "row",
+  "cv_folds": 5,
+  "cv_unit": "row",
+  "holdout": null,
+  "imputed": {},
+  "auroc": 0.5926226818102267,
+  "auprc": 0.09054772169314639,
+  "prevalence": 0.06912297276019524,
+  "ppv_at_prevalence": 0.10630220197418375,
+  "cv_auroc_mean": 0.5916849189725735,
+  "cv_auroc_sd": 0.008410309999851236,
+  "cv_auprc_mean": 0.0911918044283315,
+  "cv_auprc_sd": 0.0016959517043203555
+ }
+}

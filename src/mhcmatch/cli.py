@@ -701,11 +701,19 @@ def _load_refs(spec):
 from .rank import MIMICRY_PAIRS as _MIM_PAIRS      # noqa: E402  (the emitted-column order)
 
 
-def _mimicry_scores(peptides, cls: str, no_self: bool):
+def _mimicry_scores(peptides, cls: str, no_self: bool, species: str = "human"):
     """Score a candidate list on the mimicry aggregate, warning about what it is about to cost.
 
     Shared by ``rank --extended/--annotate`` and ``mimicry``: the reference index is built once for
     the whole list, which is the only way this is affordable at all.
+
+    **``species`` reaches the references, and until 1.14.0 it did not.** This helper took no species
+    and :func:`mhcmatch.mimicry.load_references` defaults ``self_species="human"``, so
+    ``rank --species mouse --extended`` reported the nearest *human* reference peptide for a mouse
+    candidate and said nothing. ``a.species`` was in scope at both call sites and simply was not
+    passed. Note this is the **mimics/annotate** layer, which reports *which* reference was hit --
+    not the corpus scoring path, where :func:`mhcmatch.mimicry.reference_species` deliberately
+    routes every mouse component to the human tables.
 
     **Only the lengths this list actually has.** The index is per-length and so is the cost -- one
     proteome pass is ~11 s, plus ~1.0 min per class-II length to resolve a register for each of
@@ -718,11 +726,12 @@ def _mimicry_scores(peptides, cls: str, no_self: bool):
               f"{','.join(str(L) for L in lens)}: minutes and ~7 GB, paid once for the whole list. "
               "--no-self skips it at the cost of the largest coefficients",
               file=sys.stderr, flush=True)
-    refs = MM.load_references(cls=cls, with_self=not no_self, lengths=lens)
+    refs = MM.load_references(cls=cls, with_self=not no_self, self_species=species, lengths=lens)
     return MM.score(peptides, refs, cls=cls, allow_missing=no_self)
 
 
-def _aggregate_channels(cls: str, no_self: bool, species: str = "human"):
+def _aggregate_channels(cls: str, no_self: bool, species: str = "human",
+                        mode: str = "neoantigen", score: str = "aggregate"):
     """Build the ``channels`` callable ``rank`` needs to score with the fitted aggregate.
 
     Returns ``list[peptide] -> {C_corpus_thymus, C_corpus_self, C_corpus_viral}``.
@@ -737,11 +746,12 @@ def _aggregate_channels(cls: str, no_self: bool, species: str = "human"):
 
     ``species`` keys every corpus channel, not only ``self``, but it does **not** decide the
     reference on its own: :func:`mhcmatch.mimicry.reference_species` does, per component. A mouse
-    run reads mouse ``self`` and mouse ``viral`` and the **human** ``thymus`` table, because the
-    mouse thymic deposit is one haplotype -- every annotated class-I peptide in it is ``H-2Db`` or
-    ``H-2Kb`` -- so its k-mer table encodes that groove rather than what a thymus presents. The full
-    per-component measurement, including the matched-mass control that rules out thinness as the
-    explanation, is in :func:`mhcmatch.mimicry.reference_species`.
+    run reads the **human** table for all three -- ``thymus``, ``self`` and ``viral`` alike --
+    because the mouse deposits are too groove-skewed to be a reference: the thymic one is
+    ``H-2Db``/``H-2Kb`` and nothing else, and the viral one samples 9 allotypes against human's
+    129. Only the *table* crosses the species line; every coefficient is still fitted on mouse. The
+    full per-component measurement, including the matched-mass control that rules out thinness as
+    the explanation, is in :func:`mhcmatch.mimicry.reference_species`.
 
     One :func:`mhcmatch.mimicry.corpus_spectrum` call per distinct reference species, so a human
     run makes exactly the one call it always made and is bit-identical to it.
@@ -752,13 +762,30 @@ def _aggregate_channels(cls: str, no_self: bool, species: str = "human"):
     from . import mimicry as MM
     from . import rank as R
 
+    # **The artifact THIS run scores against, resolved once.** `--score features` has none, and
+    # takes the mode's stand-in column list instead.
+    art = None if score == "features" else R.aggregate(cls, species, mode)
+    feats = R.stand_in(mode)["features"] if art is None else list(art["features"])
+    # **Which channels to build is the ARTIFACT's question, not the mode's.** Whether
+    # `C_corpus_viral` is admissible depends on the deposit a fit was trained on -- on the Kesmir
+    # corpus 100 % of BOTH classes are exact members of the very file that table is counted from,
+    # on CEDAR's mouse non-self rows 0 % are, because that builder strips them -- so two fits of
+    # the SAME mode can legitimately differ. Reading the fitted `features` list means a table this
+    # run will not score is never built, and an artifact that does ask for one always gets it.
+    comps = tuple(c for c in ("thymus", "self", "viral") if f"C_corpus_{c}" in feats)
+    # `k`, the face mask and the substitution kernel are three halves of ONE definition, and they
+    # belong to the artifact being scored -- not to `mhc1.human.neoantigen`, which is what a bare
+    # `corpus_geometry()` resolves to. A kappa fitted against a graded kernel and scored under the
+    # Hamming one is a different feature, not a smaller effect, so reading the geometry off a
+    # neighbour's artifact scores a column nobody fitted. The four shipped fits happen to agree on
+    # `(k, mask, kernel)` today, which is exactly why this went unnoticed.
+    #
+    # Resolved only when a channel is actually built: both class-II artifacts declare no corpus
+    # feature AND no geometry (`corpus_mask` is absent), and `corpus_geometry` refuses an artifact
+    # that names none rather than inventing one -- correctly. There is nothing to resolve here.
+    g = MM.corpus_geometry(art) if comps else None
+
     def channels(peptides):
-        # `k`, the face mask and the substitution kernel all come from the artifact
-        # (`MM.corpus_geometry`), exactly as `kappa` already did. They are three halves of one
-        # definition: a `kappa` fitted against a graded kernel scored under the Hamming one is a
-        # different feature, not a smaller effect.
-        g = MM.corpus_geometry()
-        comps = ("thymus", "self", "viral")
         spec = {}
         for sp in sorted({MM.reference_species(species, c) for c in comps}):
             part = tuple(c for c in comps if MM.reference_species(species, c) == sp)
@@ -770,6 +797,42 @@ def _aggregate_channels(cls: str, no_self: bool, species: str = "human"):
                 if f"C_corpus_{c}" in R.CHANNEL_COLUMNS}
 
     return channels
+
+
+def cmd_models(a):
+    """Which (cls, species, mode) cells actually ship, as a table.
+
+    **The binary could not answer this.** :func:`mhcmatch.rank.models` has always existed and was
+    reachable only from Python, which was survivable while every artifact was a ``neoantigen`` fit
+    and the answer was "all four". With a second immunological mode registered, "what do I have"
+    became a real question with a non-obvious answer, and a user holding a wheel had no way to ask
+    it.
+
+    Unregistered cells are printed too, marked ``--``, because the interesting fact is usually the
+    *absence*: a ``pathogen`` cell with no artifact is why ``rank --epitope pathogen --score
+    aggregate`` refuses, and a table that silently omitted the row would leave that unexplained.
+    """
+    from . import rank as R
+    have = {r["model_id"]: r for r in R.models()}
+    cols = ("model_id", "cls", "species", "mode", "file", "version", "release", "rows",
+            "positives", "n_features")
+    print("\t".join(cols))
+    for cls in ("mhc1", "mhc2"):
+        for species in ("human", "mouse"):
+            for mode in R.AGGREGATE_MODES:
+                mid = f"{cls}.{species}.{mode}"
+                r = have.get(mid)
+                if r is None:
+                    if not a.all:
+                        continue
+                    print("\t".join([mid, cls, species, mode] + ["--"] * 6))
+                    continue
+                print("\t".join(str(v) for v in (
+                    mid, cls, species, mode, r["file"], r["version"], r["release"],
+                    r["rows"], r["positives"], len(r["features"]))))
+    if a.all:
+        say(f"{len(have)} of {2 * 2 * len(R.AGGREGATE_MODES)} cells ship an artifact; "
+            "`--` is a cell that was never fitted, not a broken install", level=1)
 
 
 def _rank_model(a):
@@ -786,8 +849,9 @@ def _rank_model(a):
     exactly as it does on the scoring path."""
     from . import rank as R
     cls, species = getattr(a, "cls", "mhc1"), getattr(a, "species", "human")
+    mode = getattr(a, "epitope", "neoantigen")
     try:
-        m = R.aggregate(cls, species)
+        m = R.aggregate(cls, species, mode)
     except (ValueError, FileNotFoundError) as e:
         raise SystemExit(str(e))
     f = m["fit"]
@@ -869,6 +933,26 @@ def _rank_model(a):
     out.close()
 
 
+def _refuse_undefined_in_pathogen_mode(a):
+    """`--epitope pathogen` accepted the four expression flags and silently discarded them.
+
+    `rank._expression_for` returns NaN on its FIRST line in pathogen mode, so `--tissue skin` was
+    parsed, passed down and thrown away -- and the run exited 0 looking like it had honoured it.
+    The help text has said "not read" since the flag landed; a refusal is what makes that true.
+    """
+    if getattr(a, "epitope", "neoantigen") != "pathogen":
+        return
+    bad = [f for f, v in (("--tissue", a.tissue), ("--tumor", a.tumor),
+                          ("--expr-floor", a.expr_floor), ("--expr-prefilter", a.expr_prefilter))
+           if v not in (None, 0.0)]
+    if bad:
+        raise SystemExit(
+            f"rank --epitope pathogen: {', '.join(bad)} is not defined for a pathogen epitope. "
+            "The host does not transcribe it, so there is no source-gene abundance and no matched "
+            "normal -- the expression block is undefined rather than missing, and the pathogen "
+            "artifact declares no expression term. Drop the flag, or use --epitope neoantigen.")
+
+
 def cmd_rank(a):
     """Rank neoantigen candidates from a window FASTA or an already-scored table.
 
@@ -885,12 +969,23 @@ def cmd_rank(a):
         return
     if not a.mode or not a.input:
         raise SystemExit("rank needs a mode and an input, or --coefficients / --holdout")
+    _refuse_undefined_in_pathogen_mode(a)
+    if a.cls == "both":
+        return _rank_both(a)
+    rows, carry = _rank_rows(a, a.cls)
+    return _rank_emit(a, [(a.cls, rows)], carry)
+
+
+def _rank_rows(a, cls: str):
+    """Produce the ranked rows for ONE class. Split out of `cmd_rank` so `--cls both` can call it
+    twice; `cmd_rank` itself is now the emitter."""
+    from . import rank as R
     # None -> mhcmatch.known's built-in sets; --no-known-refs -> {} -> lookup off
     refs = _load_refs(getattr(a, "refs", None)) if getattr(a, "refs", None) else \
         ({} if getattr(a, "no_known_refs", False) else None)
     carry = []            # the caller's own columns, in the caller's own order
     if a.mode == "pairs":
-        store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
+        store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(cls,))
         recs = _read_table(a.input)
         # The caller's OWN columns, read off the header rather than off a row: `_read_table` adds a
         # `peptide` key when the header spelled it `epitope`, and --passthrough emits the caller's
@@ -913,34 +1008,35 @@ def cmd_rank(a):
             n = R.wt_from_windows(recs, a.context)
             say(f"--context: recovered a wild type for {n:,} of {len(recs):,} row(s) from "
                 f"{a.context}", level=1)
-        rows = R.rank_pairs(store, recs, cls=a.cls,
+        rows = R.rank_pairs(store, recs, cls=cls, mode=a.epitope,
                             tissue=a.tissue, tumor=a.tumor, refs=refs, score=a.score,
                             prevalence=a.prevalence,
                             species=a.species, expr_floor=a.expr_floor,
                             expr_prefilter=a.expr_prefilter,
-                            channels=_aggregate_channels(a.cls, a.no_self, a.species)
+                            channels=_aggregate_channels(cls, a.no_self, a.species, a.epitope, a.score)
                             if a.score in ("aggregate", "features") else None)
     elif a.mode == "fasta":
-        store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
-        rows = R.rank_fasta(store, a.input, _read_alleles(a.alleles), cls=a.cls,
+        store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(cls,))
+        rows = R.rank_fasta(store, a.input, _read_alleles(a.alleles), cls=cls,
+                            mode=a.epitope,
                             tissue=a.tissue, tumor=a.tumor, refs=refs,
                             rank_threshold=a.rank_threshold, keep=_keep(a),
                             score=a.score,
                             prevalence=a.prevalence,
                             species=a.species, expr_floor=a.expr_floor,
                             expr_prefilter=a.expr_prefilter,
-                            channels=_aggregate_channels(a.cls, a.no_self, a.species)
+                            channels=_aggregate_channels(cls, a.no_self, a.species, a.epitope, a.score)
                             if a.score in ("aggregate", "features") else None)
     else:
         store = None
         if a.recompute_presentation:
-            store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
+            store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(cls,))
         rows = R.rank_table(a.input, tissue=a.tissue, tumor=a.tumor, refs=refs,
-                            store=store, cls=a.cls, score=a.score,
+                            store=store, cls=cls, mode=a.epitope, score=a.score,
                             prevalence=a.prevalence,
                             species=a.species, expr_floor=a.expr_floor,
                             expr_prefilter=a.expr_prefilter,
-                            channels=_aggregate_channels(a.cls, a.no_self, a.species)
+                            channels=_aggregate_channels(cls, a.no_self, a.species, a.epitope, a.score)
                             if a.score in ("aggregate", "features") else None)
     # `rank` floats an exact known-epitope match to the top of its *listing* -- a display choice,
     # documented on `Ranked.rank`, which the `rank` column does not follow. Under --passthrough the
@@ -950,31 +1046,174 @@ def cmd_rank(a):
     if getattr(a, "passthrough", False):
         rows = sorted(rows, key=lambda r: r.rank)
     rows = rows[:a.top] if a.top else rows
+    return rows, carry
+
+
+def _rank_both(a):
+    """`--cls both`: score each class on its own artifact, then emit ONE table with a `cls` column.
+
+    **Not one model over two classes.** `mhc1` and `mhc2` are different fits with different term
+    counts -- nine against six -- different faces and, for class II, no corpus block at all. There
+    is no per-row artifact lookup here and there must not be: each class is scored end to end by
+    its own model, and the results are concatenated. The `cls` column is what tells them apart,
+    and it is a column rather than a convention because a table that mixes two models and does not
+    say so is the failure this package keeps paying for.
+
+    Rows that name an allele of the other class simply do not resolve there, so a mixed input is
+    routed by its own alleles rather than by anything this function decides.
+    """
+    both, carry = {}, []
+    for cls in ("mhc1", "mhc2"):
+        both[cls], carry = _rank_rows(a, cls)
+    # **A row belongs to the class whose groove actually took it.** Scoring a 9-mer under the
+    # class-II model does not fail -- it returns a row with no `allele_scored` and a score built
+    # from imputed means, which is a real state (`_unscored`) and the correct answer to "this
+    # candidate named no allele we know" in a SINGLE-class run. Emitted here it is noise, and
+    # worse than noise: two rows per peptide, one of them scored by a model that never saw its
+    # allele. So each class keeps the rows it resolved.
+    resolved = {cls: {id(r) for r in rs if r.allele_scored} for cls, rs in both.items()}
+    # A peptide that resolves in NEITHER class must still appear exactly once, or `--cls both`
+    # would silently drop the candidates a single-class run reports as unscored.
+    keyed = {cls: {(r.peptide, r.allele) for r in rs if r.allele_scored} for cls, rs in both.items()}
+    orphan = lambda r: (r.peptide, r.allele) not in keyed["mhc1"] | keyed["mhc2"]
+    parts = []
+    for cls in ("mhc1", "mhc2"):
+        rs = [r for r in both[cls]
+              if id(r) in resolved[cls] or (cls == "mhc1" and orphan(r))]
+        n_orphan = sum(1 for r in rs if not r.allele_scored)
+        say(f"--cls both: {cls} resolved {len(rs) - n_orphan:,} row(s)"
+            + (f", plus {n_orphan:,} that resolved in neither class" if n_orphan else ""), level=1)
+        parts.append((cls, rs))
+    return _rank_emit(a, parts, carry)
+
+
+def _rank_columns(a, cls: str):
+    """The header this run emits for ONE class, after the mode has removed what it cannot compute."""
+    from . import rank as R
     cols = list(R.BASE_COLUMNS)
+    if a.epitope == "pathogen":
+        # Constant, not missing -- see `rank.WT_COLUMNS`. A column that is always NaN, always 1.0
+        # or always a copy of its neighbour is worse than absent: it reads as a measurement. The
+        # three gate-side expression readouts go for the same reason the fitted ones do below:
+        # `_expression_for` returns NaN on its first line here, so `expression` is always NaN,
+        # `expr_pct` always the 0.5 placeholder and `expr_imputed` always 0.
+        drop = set(R.WT_COLUMNS) | {"expression", "expr_pct", "expr_imputed"}
+        cols = [x for x in cols if x not in drop]
     if a.score in ("aggregate", "features"):
         cols += list(R.EXPR_COLUMNS) + list(R.AGGREGATE_COLUMNS)
-        if a.score == "features":
-            print("# --score features: every fitted column computed, nothing scored. "
-                  f"{', '.join(R.FEATURES_ONLY['features'])}", file=sys.stderr)
-        else:
-            model = rows[0].components.get("model", "") if rows else ""
-            print(f"# scored with {model or 'aggregate'}: "
-                  f"{', '.join(R.aggregate_features(a.cls, a.species))}", file=sys.stderr)
-    # The mimicry columns are appended, never folded into `score`. Whether mimicry belongs inside
-    # the gate is a benchmark question that is not settled, and quietly moving the ranking on an
-    # unvalidated term is the failure mode worth avoiding -- so the ordering is identical with and
-    # without these flags.
-    mim, ann = [], []
-    if a.extended or a.annotate:
-        mim = _mimicry_scores([r.peptide for r in rows], a.cls, a.no_self)
+        if a.epitope == "pathogen":
+            # The same rule one layer out: emit the columns this run computed and no others. The
+            # expression block is undefined here, not empty-because-unsupplied, and a `C_corpus_*`
+            # channel the fitted `features` list does not name was never built.
+            keep = set(R.stand_in("pathogen")["features"]) if a.score == "features" \
+                else set(R.aggregate_features(cls, a.species, "pathogen"))
+            cols = [x for x in cols
+                    if x not in R.EXPR_COLUMNS
+                    and not (x.startswith("C_corpus_") and x not in keep)]
     if a.extended:
         cols += list(R.EXTENDED_COLUMNS)
     if a.annotate:
-        from . import mimicry as MM
-        ann = MM.annotate([r.peptide for r in rows], cls=a.cls)
         cols += list(R.ANNOTATE_COLUMNS)
     if a.core:
         cols += list(R.CORE_COLUMNS)
+    return cols
+
+
+def _rank_cells(a, cls, rows, mim, ann):
+    """One name-keyed dict per row.
+
+    **Keyed by name, then projected onto the header.** This was a positional list until 1.14.0,
+    which silently assumed the header was `BASE_COLUMNS` in order -- so the moment a mode dropped
+    a column (the WT triple in `--epitope pathogen`) the header moved and the values did not, and
+    every field past the first drop was off by one. It did not error; it produced a `variant_type`
+    under `C_corpus_thymus`. Same shape as the `--passthrough` schema bug this module's docstring
+    records, and the same fix: resolve by name.
+    """
+    from . import rank as R
+    out = []
+    for i, r in enumerate(rows, 1):
+        cell = {"cls": cls,
+                "rank": str(r.rank), "peptide": r.peptide,
+                "allele": _allele(a, r.allele),
+                "allele_scored": _allele(a, r.allele_scored) if r.allele_scored else "",
+                "gene": r.gene, "score": f"{r.score:.6g}",
+                "p_response": f"{r.p_response:.4g}",
+                "presentation": f"{r.presentation:.4g}", "binder": f"{r.binder:.4g}",
+                "occupancy": f"{r.occupancy:.4g}",
+                "d_occupancy": f"{r.d_occupancy:.4g}",
+                "wt_absent": "1" if r.wt_absent else "0",
+                "agretopicity": f"{r.agretopicity:.4g}",
+                "physchem": f"{r.physchem:.4g}", "expression": f"{r.expression:.4g}",
+                "expr_pct": f"{r.expr_pct:.4g}",
+                "expr_imputed": "1" if r.expression_imputed else "0",
+                "n_alleles_presenting": str(r.n_alleles_presenting),
+                "alleles_presenting": r.alleles_presenting,
+                "imputed": r.imputed, "wt_peptide": r.wt_peptide,
+                "known_epitope": r.known_epitope, "variant_type": r.variant_type,
+                "keep": str(r.keep), "keep_reason": r.keep_reason}
+        if a.score in ("aggregate", "features"):
+            # `.get`: an artifact that does not declare a term never sets it, and an absent term is
+            # an empty cell rather than a KeyError or a fabricated 0.
+            for k in list(R.EXPR_COLUMNS) + list(R.AGGREGATE_COLUMNS):
+                v = r.components.get(k)
+                cell[k] = "" if v is None else f"{v:.6g}"
+        if a.extended:
+            sc = mim[i - 1]
+            cell[R.EXTENDED_COLUMNS[0]] = f"{sc.logodds:.6g}"     # mimicry_logodds
+            cell[R.EXTENDED_COLUMNS[1]] = f"{sc.autoimmune:.6g}"  # autoimmune
+            for k, (cp, ch) in zip(R.EXTENDED_COLUMNS[2:], _MIM_PAIRS):
+                cell[k] = f"{sc.components[cp][ch]:.6g}"
+        if a.annotate:
+            near = mim[i - 1].nearest
+            vals = []
+            for cp, ch in _MIM_PAIRS:
+                n = (near.get(cp) or {}).get(ch)
+                vals += [n["peptide"], n["source"], str(n["subs"])] if n else ["", "", ""]
+            g = ann[i - 1]
+            vals += [str(g["neoag_distance"]), g["neoag_nearest"] or "",
+                     str(g["neoag_n_within"])]
+            cell.update(zip(R.ANNOTATE_COLUMNS, vals))
+        if a.core:
+            cell.update(zip(R.CORE_COLUMNS, [r.core, str(r.core_offset), r.core_source]))
+        out.append(cell)
+    return out
+
+
+def _rank_emit(a, parts, carry):
+    """Write the table. `parts` is `[(cls, rows), ...]` -- one entry, or two under `--cls both`."""
+    from . import mimicry as MM
+    from . import rank as R
+
+    # The mimicry columns are appended, never folded into `score`. Whether mimicry belongs inside
+    # the gate is a benchmark question that is not settled, and quietly moving the ranking on an
+    # unvalidated term is the failure mode worth avoiding -- so the ordering is identical with and
+    # without these flags. Scored per class, because the reference set is per class.
+    cells, cols = [], []
+    for cls, rws in parts:
+        mim, ann = [], []
+        if a.extended or a.annotate:
+            mim = _mimicry_scores([r.peptide for r in rws], cls, a.no_self, a.species)
+        if a.annotate:
+            ann = MM.annotate([r.peptide for r in rws], cls=cls)
+        for col in _rank_columns(a, cls):
+            if col not in cols:
+                cols.append(col)
+        cells += _rank_cells(a, cls, rws, mim, ann)
+    rows = [r for _cls, rws in parts for r in rws]
+    if len(parts) > 1:
+        # `cls` leads the model-dependent columns, because it is the key that says which model
+        # produced the rest of the row.
+        cols.insert(cols.index("allele_scored") + 1, "cls")
+    if a.score in ("aggregate", "features"):
+        if a.score == "features":
+            print(f"# --score features ({a.epitope}): every fitted column computed, nothing "
+                  f"scored. {', '.join(R.stand_in(a.epitope)['features'])}", file=sys.stderr)
+        else:
+            for cls, rws in parts:
+                model = rws[0].components.get("model", "") if rws else ""
+                print(f"# scored with {model or 'aggregate'}: "
+                      f"{', '.join(R.aggregate_features(cls, a.species, a.epitope))}",
+                      file=sys.stderr)
     # `--passthrough`: the caller's table comes back annotated and re-ordered, not replaced. Its
     # columns lead, in its own order; ours follow under `--prefix`. A join would not reproduce this
     # -- `rank` splits a multi-allele cell and the best presenter stands for the row, so the output
@@ -999,42 +1238,11 @@ def cmd_rank(a):
     out = open(a.out, "w") if a.out else sys.stdout
     try:
         print("\t".join(head), file=out)
-        for i, r in enumerate(rows, 1):
-            cells = [str(r.rank), r.peptide, _allele(a, r.allele),
-                     _allele(a, r.allele_scored) if r.allele_scored else "",
-                     r.gene, f"{r.score:.6g}",
-                     f"{r.p_response:.4g}",
-                     f"{r.presentation:.4g}", f"{r.binder:.4g}", f"{r.occupancy:.4g}",
-                     f"{r.d_occupancy:.4g}", "1" if r.wt_absent else "0",
-                     f"{r.agretopicity:.4g}",
-                     f"{r.physchem:.4g}", f"{r.expression:.4g}", f"{r.expr_pct:.4g}",
-                     "1" if r.expression_imputed else "0",
-                     str(r.n_alleles_presenting), r.alleles_presenting,
-                     r.imputed, r.wt_peptide,
-                     r.known_epitope, r.variant_type, str(r.keep), r.keep_reason]
-            if a.score in ("aggregate", "features"):
-                # `.get`: an artifact that does not declare an expression term never sets it, and
-                # an absent term is an empty cell rather than a KeyError or a fabricated 0.
-                cells += ["" if r.components.get(c) is None else f"{r.components[c]:.6g}"
-                          for c in R.EXPR_COLUMNS]
-                cells += [f"{r.components[c]:.6g}" for c in R.AGGREGATE_COLUMNS]
-            if a.extended:
-                s = mim[i - 1]
-                cells += [f"{s.logodds:.6g}", f"{s.autoimmune:.6g}"]
-                cells += [f"{s.components[c][ch]:.6g}" for c, ch in _MIM_PAIRS]
-            if a.annotate:
-                near = mim[i - 1].nearest
-                for c, ch in _MIM_PAIRS:
-                    n = (near.get(c) or {}).get(ch)
-                    cells += [n["peptide"], n["source"], str(n["subs"])] if n else ["", "", ""]
-                g = ann[i - 1]
-                cells += [str(g["neoag_distance"]), g["neoag_nearest"] or "",
-                          str(g["neoag_n_within"])]
-            if a.core:
-                cells += [r.core, str(r.core_offset), r.core_source]
+        for r, cell in zip(rows, cells):
+            line = [cell.get(k, "") for k in cols]
             if getattr(a, "passthrough", False):
-                cells = [str(r.row.get(c, "")) for c in carry] + cells
-            print("\t".join(cells), file=out)
+                line = [str(r.row.get(k, "")) for k in carry] + line
+            print("\t".join(line), file=out)
     finally:
         if a.out:
             out.close()
@@ -1046,7 +1254,16 @@ def cmd_rank(a):
 
 
 def cmd_explain(a):
-    """Print every component of the aggregate for one (peptide, allele), so a rank is auditable."""
+    """Print every component of the GATE for one (peptide, allele), so a rank is auditable.
+
+    **This prints the gate, not the fitted EPIC aggregate, and the two are different objects.**
+    The final line is :func:`mhcmatch.rank.gate_probability` -- presentation and recognition, the
+    two-term screen -- while the fitted aggregate is nine standardised slopes read out of
+    `aggregate_mhc1.json` and needs expression and the corpus channels this command does not
+    compute. It printed that line labelled ``AGGREGATE`` until 1.14.0, which is this package's
+    recurring hazard: one name over two meanings. `--epitope` names which fitted model *would*
+    score the row, so an audit says which coefficients the rank it is explaining came from.
+    """
     from . import complement as CM, posbayes, rank as R
     store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(a.cls,))
     from . import predict as P
@@ -1101,7 +1318,19 @@ def cmd_explain(a):
         print(f"  expression           {rec['median_tpm']:.4g} TPM "
               f"({'TCGA ' + a.tumor if a.tumor else 'GTEx ' + a.tissue}, n={rec['n']})"
               if rec else "  expression           (no reference row)")
-    print(f"  AGGREGATE  P         {R.gate_probability(pres, recog):.6f}")
+    print(f"  GATE       P         {R.gate_probability(pres, recog):.6f}   "
+          "(presentation x recognition -- NOT the fitted aggregate)")
+    # Which fitted model would score this row. `explain` does not compute the aggregate's
+    # expression or corpus columns, so it cannot evaluate it -- but naming it is the difference
+    # between an audit that identifies its own model and one that leaves the reader guessing.
+    try:
+        m = R.aggregate(a.cls, a.species, a.epitope)
+        print(f"  MODEL                {m.get('model_id', '?')} v{m.get('version')} "
+              f"({len(m['features'])} terms: {', '.join(m['features'])})")
+    except (ValueError, FileNotFoundError) as e:
+        print(f"  MODEL                -- no fitted artifact for "
+              f"{a.cls}.{a.species}.{a.epitope}; `mhcmatch models --all` lists the cells "
+              f"({str(e).split('.')[0]})")
 
 
 def cmd_complement(a):
@@ -1241,7 +1470,7 @@ def cmd_mimicry(a):
     peps = [r["peptide"] for r in rows] if rows else _read_peptides(None, a.input)
     if not peps:
         raise SystemExit("no peptides: pass them as arguments or with --peptides")
-    scores = _mimicry_scores(peps, a.cls, a.no_self)
+    scores = _mimicry_scores(peps, a.cls, a.no_self, getattr(a, "species", "human"))
     prob = MM.probability(scores, corpus=a.corpus, cls=a.cls) if a.corpus else None
     cols = [f"{c}_{ch}" for c, ch in _MIM_PAIRS]
     if a.annotate:
@@ -2738,8 +2967,26 @@ def main(argv=None):
                          "TSV and score nothing")
     rk.add_argument("--alleles", help="comma-separated HLA alleles, or a file holding them "
                                       "(required for mode=fasta)")
-    rk.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"),
-                    help="default %(default)s")
+    rk.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2", "both"),
+                    help="default %(default)s. `both` scores each class on ITS OWN fitted model "
+                         "and emits one table with a `cls` column -- not one model over two "
+                         "classes: mhc1 is nine terms and mhc2 is six with no corpus block. Rows "
+                         "resolve against the alleles they name, so a mixed table routes itself")
+    # **Not `--mode`, and the collision is why.** This command's POSITIONAL `mode` is the input
+    # SHAPE (fasta / table / pairs); this flag is the immunological mode -- which fitted artifact
+    # scores the rows. Two questions, so two names: a single `--mode` could not report which of
+    # them it had answered, and this package has paid for that mistake twice already
+    # (`--block-live`, `--keep`).
+    rk.add_argument("--epitope", default="neoantigen", choices=("neoantigen", "pathogen"),
+                    help="which fitted model scores the rows -- the artifact's `mode`. "
+                         "`neoantigen` (default) is the nine-term EPIC fit. `pathogen` is for a "
+                         "peptide the host does not encode -- a viral or bacterial epitope -- and "
+                         "drops the expression block: with no host transcript it is undefined "
+                         "rather than missing, so --tissue / --tumor / --expr-floor are not read. "
+                         "Which corpus channels it carries is the ARTIFACT's question, not the "
+                         "mode's, and the two HOST channels are always the tolerance term. NO "
+                         "pathogen artifact ships yet: `--score features` computes every column "
+                         "the mode admits, `--score aggregate` refuses by name")
     rk.add_argument("--tissue", help="GTEx tissue for reference expression, e.g. 'Skin - Sun "
                                      "Exposed (Lower leg)' (the safety read)")
     rk.add_argument("--tumor", help="TCGA cancer_type for tumour expression, e.g. SKCM (melanoma)")
@@ -2849,6 +3096,10 @@ def main(argv=None):
     ex.add_argument("peptide", nargs="?", default="",
                     help="the peptide; omit and pass --peptides FILE for a batch")
     ex.add_argument("--allele", required=True, help="the presenting MHC allele")
+    ex.add_argument("--epitope", default="neoantigen", choices=("neoantigen", "pathogen"),
+                    help="which fitted model to NAME for this row. `explain` prints the gate, "
+                         "which has no mode; this says which aggregate would score the same row, "
+                         "so an audit identifies its own coefficients")
     ex.add_argument("--cls", default="mhc1", choices=("mhc1", "mhc2"),
                     help="default %(default)s")
     ex.add_argument("--wt", help="wild-type counterpart -> also report agretopicity (DAI)")
@@ -3159,6 +3410,14 @@ def main(argv=None):
     xp.add_argument("--tsv", action="store_true",
                     help="emit TSV to stdout rather than the aligned text")
     xp.set_defaults(fn=cmd_expression)
+
+    md = sub.add_parser("models",
+                        help="which (cls, species, mode) fitted models this install ships")
+    md.add_argument("--all", action="store_true",
+                    help="also print the cells that ship NO artifact, marked `--`. Those are the "
+                         "combinations `rank` refuses by name rather than scoring with a "
+                         "neighbour's coefficients")
+    md.set_defaults(fn=cmd_models)
 
     bl = sub.add_parser("build",
                         help="regenerate the shipped data artifacts (release task), or --check them")
