@@ -72,11 +72,14 @@ def _at(field, term, i):
 def _headline(a):
     """The one discrimination figure this artifact records, and what it is called.
 
-    The four fits do not share a protocol and must not share a column header: the human class-I
-    fit reports **leave-one-screen-out**, a mean over seven screens held out whole, and the other
-    three report an **in-sample within-reference** figure, macro-averaged over the references
-    carrying at least three of each class. Naming them apart is the point -- averaged into one
-    column they would read as one quantity measured four times.
+    The shipped fits do not share a protocol and must not share a column header. Three protocols
+    are in play: the human class-I neoantigen fit reports **leave-one-screen-out**, a mean over
+    seven screens held out whole; the three single-deposit neoantigen fits report an **in-sample
+    within-reference** figure, macro-averaged over the references carrying at least three of each
+    class; and `mhc1.human.pathogen`, a whole-corpus GLM with one global intercept, has neither a
+    screen to hold out nor a per-reference intercept to exclude and reports **in-sample, pooled off
+    the logit**. Naming them apart is the point -- averaged into one column they would read as one
+    quantity measured five times.
     """
     fit = a.get("fit") or {}
     if "in_sample_auroc" in fit:

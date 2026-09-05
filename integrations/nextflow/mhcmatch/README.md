@@ -568,6 +568,7 @@ and never think about it.
 | `mhcmatch_keep` | `null` | **deprecated**: one list matched against gene *and* peptide alike. Kept so an existing command line still runs; use the two above, which say which claim kept a row |
 | `mhcmatch_rank_mode` | `fasta` | `rank` input kind: `fasta` or `table` |
 | `mhcmatch_rank_score` | `aggregate` | which model scores: the fitted aggregate, or `gate` (the product-of-sigmoids) |
+| `mhcmatch_rank_epitope` | `neoantigen` | which **fitted model** scores the rows — `neoantigen` or `pathogen`. NOT the input shape, which is `mhcmatch_rank_mode`. In `pathogen` mode `mhcmatch_tumor` is **dropped by the process**, because `rank` refuses `--tumor` there and would fail every task in the arm |
 | `mhcmatch_prevalence` | `null` (→ 0.0602) | assumed responding fraction of the candidate pool, the anchor for `p_response`. **A prior about your cohort** |
 | `mhcmatch_rank_core` | `false` | append `core` / `core_offset` / `core_source` |
 | `mhcmatch_predict_core` | `false` | the same for `predict` |

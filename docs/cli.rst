@@ -1,7 +1,7 @@
 Command-line reference
 ======================
 
-**Twenty-one commands, one binary** --- two of them, ``cassette`` and ``build``, have sub-verbs.
+**Twenty-two commands, one binary** --- two of them, ``cassette`` and ``build``, have sub-verbs.
 ``mhcmatch --help`` lists two more: ``vector`` and ``deslip``, deprecated aliases named once at the
 end of the cassette table and spelled currently everywhere else.
 

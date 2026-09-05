@@ -25,7 +25,7 @@ manuscript, and `build --check` cannot see that it changed — but
 **Two immunological modes, and `mode` is not the input shape.** `rank --epitope
 {neoantigen,pathogen}` picks which fitted model scores the rows; `AGGREGATE_ARTIFACTS` is keyed
 `(cls, species, mode)` and five cells ship — four `neoantigen` plus `mhc1.human.pathogen` (v1,
-release 1.13.0, five terms, 38,106 rows / 2,634 positive). The other three pathogen cells refuse by
+release 1.14.0, five terms, 38,106 rows / 2,634 positive). The other three pathogen cells refuse by
 name. It is **not** `--mode`: `rank`'s positional `mode` is the input SHAPE (fasta/table/pairs) and
 `span --mode` is the ligand-span method — the `--block-live` / `--keep` mistake, a third time.
 `mhcmatch models --all` prints which cells ship.

@@ -3,7 +3,7 @@
  "version": 1,
  "generator": "bench/pathogen/fit_pathogen.py",
  "model_id": "mhc1.human.pathogen",
- "release": "1.13.0",
+ "release": "1.14.0",
  "species": "human",
  "cls": "mhc1",
  "mode": "pathogen",

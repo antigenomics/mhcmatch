@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from .search import find_mimics
 
 __all__ = ["KINDS", "DEFAULT_REFS", "SPECIES_REFS", "ref_path", "PROTEOME_REFS",
+           "CANONICAL_LEN", "EXTENDED_LEN", "length_range",
            "MimicResult", "NATIVE_COLUMNS",
            "load_peptides", "proteome_peptides", "proteome_window_array", "load_reference_sets",
            "neighbours", "scan", "patient_summary", "write_table"]
@@ -43,7 +44,54 @@ csv.field_size_limit(10 ** 7)
 
 _SPECIES = {"human": "HomoSapiens", "mouse": "MusMusculus"}
 _CLS = {"mhc1": "MHCI", "mhc2": "MHCII"}
-_LEN = {"mhc1": range(8, 12), "mhc2": range(11, 26)}   # plausible presented lengths per class
+#: **Canonical presented lengths per class**, and what every shipped number rests on. The class-I
+#: groove is closed at both ends, so 8-11 is the range the corpus tables, the anchor models and
+#: every fitted artifact were built over.
+CANONICAL_LEN = {"mhc1": range(8, 12), "mhc2": range(11, 26)}
+
+#: **Extended class-I lengths, 12-14 -- real ligands, and deliberately NOT implemented.**
+#:
+#: MHC I does present past 11 by bulging the peptide out of the groove, and the deposits carry
+#: those rows: filtered to ``mhc_class = MHCI``, `viral_foreign_iedb.tsv.gz` holds 157 peptides of
+#: length 12-13 (0.3 % of its 55,084) and `thymus_immunopeptidome.tsv.gz` 195 (0.8 % of 25,891);
+#: the human neoantigen deposit holds **84,622 rows carrying 276 immunogenic peptides** outside
+#: 8-11. Mouse holds 1.
+#:
+#: They are excluded on purpose and the exclusion is held, not fixed: admitting them would rebuild
+#: every corpus table, move the human fit population that artifact version 11 was fitted on, and
+#: make no published number reproduce. :func:`length_range` therefore *refuses* the extended range
+#: rather than returning it -- a range no downstream path was fitted for is worse than an error,
+#: because it would score silently and wrongly.
+EXTENDED_LEN = {"mhc1": range(12, 15)}
+
+_LEN = CANONICAL_LEN            # the historical private name, kept: several modules import it
+
+
+def length_range(cls: str, extended: bool = False):
+    """The presented lengths ``cls`` admits. ``extended=True`` is **not implemented** and raises.
+
+    :param cls: ``"mhc1"`` or ``"mhc2"``.
+    :param extended: ask for the extended class-I range (12-14) instead of the canonical one.
+    :returns: a ``range`` of peptide lengths.
+    :raises NotImplementedError: when ``extended`` is true, naming what would have to change.
+    :raises ValueError: when ``cls`` is not a known class.
+
+    The two ranges are :data:`CANONICAL_LEN` and :data:`EXTENDED_LEN`; see the latter for how many
+    real ligands the canonical cut leaves out and why the cut is held anyway.
+    """
+    if cls not in CANONICAL_LEN:
+        raise ValueError(f"unknown class {cls!r}; expected one of {sorted(CANONICAL_LEN)}")
+    if not extended:
+        return CANONICAL_LEN[cls]
+    if cls not in EXTENDED_LEN:
+        raise ValueError(f"no extended range is defined for {cls!r}; only "
+                         f"{sorted(EXTENDED_LEN)} has one")
+    raise NotImplementedError(
+        f"the extended {cls} range {EXTENDED_LEN[cls].start}-{EXTENDED_LEN[cls].stop - 1} is held "
+        f"out, not supported. Admitting it means rebuilding every corpus table over the new "
+        f"lengths, refitting the aggregate artifacts on a changed population, and re-deriving the "
+        f"anchor models -- after which no published number reproduces. Pass extended=False for "
+        f"the canonical range that ships.")
 
 #: Default reference categories: (folder/file under pmhc_data, kind). ``self`` is the tolerance
 #: reference passed as ``find_mimics``' ``self_set``; the rest are foreign/database sets.

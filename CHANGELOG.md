@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.14.0] --- a second immunological mode, and what "mouse" means
+## [1.14.0] --- 2026-09-05 --- a second immunological mode, and what "mouse" means
 
 ### `mhc1.human.pathogen` ships --- the fifth artifact, and the first non-neoantigen one
 
@@ -47,8 +47,14 @@ error. Same shape as the `--passthrough` schema bug, and the same fix.
 Not spelled `--mode`: this command's *positional* `mode` is the input shape and `span --mode` is
 the ligand-span method. `pathogen` **refuses** `--tissue` / `--tumor` / `--expr-floor` rather than
 discarding them, and does not emit the wild-type columns (`agretopicity`, `d_occupancy`,
-`wt_absent`), which are degenerate rather than absent. Which corpus channels a fit carries is read
-off its own `features` list, never off the mode.
+`wt_absent`), which are degenerate rather than absent. `rank._expression_for` returns NaN with
+`imputed=False` there --- `imputed=True` would claim a substitution rung was walked, and every
+other rung in that function substitutes for a value that exists and was not supplied.
+
+**Which corpus channels a fit carries is read off its own `features` list, never off the mode**,
+because whether `C_corpus_viral` is admissible is a property of the *deposit*. `stand_in(mode)` is
+the single answer to "what would this mode compute with no artifact", read by both the channel
+builder and the `--score features` banner, which each carried their own list and could disagree.
 
 ### New: `mhcmatch models`, `--cls both`, `--epitope` on `explain`
 
@@ -57,6 +63,86 @@ off its own `features` list, never off the mode.
 model over two classes. `explain` now names the fitted model that would score the row, and its
 final line is labelled **`GATE`**: it prints the two-term screen, never the fitted aggregate, and
 had said `AGGREGATE` since it was written.
+
+### The release audit --- seven defects, none of which errored
+
+Found by reviewing this release against the code before it was tagged. Every one is the same two
+shapes: a value resolved from the **default** artifact instead of the one being scored, or a rule
+written for one mode and left un-generalised.
+
+- **`kappa` was still resolved bare.** The geometry fix above passed `k`, the face mask and the
+  kernel from the artifact and left `corpus_spectrum(shapes=...)` unpassed, so the corpus decay
+  fell through to `corpus_shapes()` -> `rank.aggregate()` -> `mhc1.human.neoantigen`. A table
+  contracted at one decay and multiplied by a coefficient fitted at another is a different feature,
+  which is the identical argument the geometry fix rests on --- one call site over.
+- **`rank --cls mhc2 --score aggregate` wrote NaN into three columns that carried measured
+  densities in 1.13.0.** The "emit what you computed" header filter was written for
+  `--epitope pathogen` only; both class-II artifacts declare no corpus block, so the channels were
+  correctly not built and the header kept their names anyway. The rule now applies in every mode:
+  a `C_corpus_*` name the fitted `features` list does not carry is absent, not present and NaN.
+- **`rank table --cls both` emitted every row twice.** The class filter tested `allele_scored`,
+  which `rank_table` sets from the caller's column without asking which class it is --- true for
+  `pairs`/`fasta`, where `split_alleles(cell, cls)` drops a name the class cannot resolve. So a
+  class-I allele was scored a second time under `aggregate_mhc2_human.json` with a class-II binding
+  core, and under `--passthrough` the caller got their own table back duplicated. Routing is by
+  `split_alleles` now, the same resolver the other two shapes use.
+- **`--top N` was applied once per class**, so `--cls both --top 100` promised 100 and wrote up to
+  200 --- and cut each pass *before* the cross-class filter had decided which class owns a row.
+  Applied once, to the table that is emitted.
+- **`explain` answered the flags `rank` refuses.** `explain --epitope pathogen --gene TP53 --tissue
+  Liver` printed a measured GTEx line and then named a five-term model that declares no expression
+  term. The refusal is per-command now and covers `--gene`, which only `explain` takes.
+- **`mhcmatch models --all` reported a broken install as an unfitted cell.** `rank.models()` skips
+  a cell whose file will not open, so a wheel missing `aggregate_mhc1_pathogen.json` printed the
+  same `--` as a cell nobody ever fitted, under a footer saying in words that `--` is not a broken
+  install. `NOT INSTALLED` is now a third state, and the grid is derived from the registry rather
+  than typed as `("mhc1","mhc2") x ("human","mouse")`.
+- **`rank --help` contradicted the shipped artifact**, still saying no pathogen artifact ships and
+  that `--tissue` is "not read" rather than refused.
+
+**The header has one implementation.** `cli._rank_columns` restated the rule; it calls
+`rank.columns(cls=, species=, mode=)` now, which is the public helper the nextflow module stub
+reads --- and which, before this, described a run this release could not produce.
+
+Three tests were strengthened where they asserted something weaker than their names: the channel-set
+test re-derived the rule in its own body instead of exercising the call site, the species test was a
+substring check over source text, and the model-doc test would have passed with the whole
+coefficient column shifted one row against the feature names. That last one is mutation-checked.
+
+### Nextflow: `params.mhcmatch_rank_epitope`
+
+Reaches both arms --- the de novo `MHCMATCH_RANK` and the rerank `MHCMATCH_RERANK`. Not
+`mhcmatch_rank_mode`, which is the input *shape*. **`mhcmatch_tumor` is dropped by the process** in
+pathogen mode rather than left to the caller: `rank` refuses it there with a non-zero exit, so a
+caller who set a TCGA study code once and switched the arm would otherwise stop every task in it.
+
+Both **stubs** now pass `cls`, `species` and `mode` to `rank.columns`, because the header is a
+property of the artifact being scored and not of the flags alone --- 34 columns for class-I
+neoantigen, 22 for pathogen, 31 for class II. Without them a `-stub-run` writes the class-I
+neoantigen header for every arm, which is the 18-against-57 drift `rank.columns` exists to prevent.
+
+### `mimics.length_range` --- the class-I length cut is named, and the extended range refuses
+
+`_LEN` stopped at 11 with no record that this was a choice. `CANONICAL_LEN` is what ships and what
+every fitted number rests on (mhc1 8--11, mhc2 11--25); `EXTENDED_LEN` is mhc1 12--14 and
+`length_range(cls, extended=True)` **raises `NotImplementedError`** rather than returning it --- a
+length range no downstream path was fitted for is worse than an error, because the corpus tables,
+the anchor models and the aggregate artifacts would every one of them score it silently and
+wrongly. `_LEN` stays as an alias.
+
+What the cut leaves out, measured: filtered to `mhc_class = MHCI`, `viral_foreign_iedb.tsv.gz`
+holds 157 peptides of length 12--13 (0.3 % of 55,084) and `thymus_immunopeptidome.tsv.gz` 195
+(0.8 % of 25,891); the human neoantigen deposit holds 84,622 rows carrying 276 immunogenic peptides
+outside 8--11, and mouse holds 1. Real ligands, excluded on purpose.
+
+### CI
+
+`docs.yml` had been failing since the generated model tables landed: `docs/conf.py` imports the
+package to render them, and `autodoc_mock_imports` does not cover an import in `conf.py` --- Sphinx
+applies that list inside autodoc's own machinery, which runs later. The same list is now applied by
+hand around the one import, so "sphinx + the theme" is true again. `sys.path` in that file also
+resolved `../src` **from the cwd**, which on CI is not the repo root; both are now resolved from the
+file. Also: the two workflow comments quoting the shipped-artifact count said 38 and 39.
 
 ### What "mouse" means, stated once
 
@@ -67,36 +153,9 @@ pre-1.13.0 opposite, `skills/mhcmatch/SKILL.md` most directly.
 
 ### Documentation
 
-### `mhcmatch rank --epitope pathogen`
-
-A tumour neoantigen and a pathogen epitope are answered by different mechanisms, so they are two
-models rather than one model with an extra covariate. `--epitope {neoantigen,pathogen}` picks
-which. It is **not** spelled `--mode`: `rank`'s positional `mode` is the input *shape*
-(fasta / table / pairs), and one flag over two questions cannot report which it answered --- the
-mistake `--block-live` and `--keep` each cost this package once already.
-
-**Expression is undefined in pathogen mode, not missing.** A peptide from an organism the host does
-not transcribe has no source-gene abundance and no matched normal, so `rank._expression_for`
-returns NaN with `imputed=False` --- `imputed=True` would claim a substitution rung was walked ---
-and `--tissue` / `--tumor` / `--expr-floor` are not read.
-
-**Which corpus channels a fit carries is read off its `features` list, never off the mode.**
-Whether `C_corpus_viral` is admissible is a property of the *deposit*: on the human Kesmir corpus
-100 % of both classes are exact members of the file that table is counted from, so it carries no
-class information; on CEDAR's mouse non-self class-I rows 0 % are, because that builder strips
-them. Two `pathogen` fits can therefore legitimately differ, and `cli._aggregate_channels` builds
-exactly the tables the run will score. `rank.stand_in(mode)` supplies the column list for
-`--score features`, which has no artifact to read one from --- one answer where the channel builder
-and the banner each used to carry their own.
-
-No `pathogen` artifact ships yet: `--score aggregate --epitope pathogen` refuses by name rather
-than serving the neoantigen coefficients. The candidate and its report are in the benchmark repo.
-
-### Documentation
-
-> **`docs/models.rst` is new**: all four fitted artifacts on one page --- every coefficient with
+> **`docs/models.rst` is new**: all five fitted artifacts on one page --- every coefficient with
 > its bootstrap interval, what each model was fitted on, the discrimination figure each one
-> records, and the caveats that come with each. `README.md` carries the four-row summary.
+> records, and the caveats that come with each. `README.md` carries the five-row summary.
 > **No artifact changed and no fit was re-run.**
 
 **The tables are generated from the artifacts, not typed.** `mhcmatch._modeldoc` renders them and
@@ -108,13 +167,15 @@ gitignored and there is no committed copy to drift. The one committed copy --- t
 This closes the reason the docs had refused to print a coefficient at all: six pages once carried
 their own transcription of the EPIC table and all six went stale together at the first refit.
 
-**The AUROC column is two protocols and the page says so in every place it appears.** The human
+**The AUROC column is three protocols and the page says so in every place it appears.** The human
 class-I fit spans seven screens and reports **leave-one-screen-out**, mean 0.7102. The other three
-are single-deposit fits with no second screen to hold out and report an **in-sample
-within-reference** figure --- the slope term alone, per-reference intercepts excluded from the
-score, macro-averaged over references carrying at least three of each class: mouse class I 0.6335
-(921 rows), human class II 0.6020 (1,112), mouse class II 0.5741 (468). A test asserts the two
-protocol labels never collapse into one column.
+neoantigen fits are single-deposit, with no second screen to hold out, and report an
+**in-sample within-reference** figure --- the slope term alone, per-reference intercepts excluded
+from the score, macro-averaged over references carrying at least three of each class: mouse class I
+0.6335 (921 rows), human class II 0.6020 (1,112), mouse class II 0.5741 (468). `mhc1.human.pathogen`
+is a whole-corpus GLM with one global intercept and reports **in-sample, pooled off the logit**,
+0.5926 against its own prevalence of 0.0691. A test asserts the protocol labels never collapse into
+one column.
 
 **Two human class-I screens read near chance because of how they were built, and the page now says
 which reading answers each.** ITSNdb admits a peptide only on validated MHC-I binding, so
