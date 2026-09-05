@@ -38,7 +38,19 @@ artifact instead — `aggregate_score` dropped `mode` when delegating to `aggreg
 `_aggregate_channels` read `corpus_geometry()` bare, and `_mimicry_scores` took no species at all,
 so `rank --species mouse --extended` reported the nearest **human** reference silently. All three
 were invisible because the shipped fits agree. **Whenever a global becomes a lookup, grep for the
-bare call.**
+bare call** — and then grep again, because the 1.14.0 release audit found a **fourth**:
+`corpus_spectrum` was still taking its `kappa` from `corpus_shapes()` bare, one call site *below*
+the `corpus_geometry` fix, in the same function. `k`, the face mask, the kernel and `kappa` are four
+halves of one definition and only three of them were passed.
+
+**The companion rule: a run emits the columns it COMPUTED, and that is not mode-specific.** The
+filter that drops an uncomputed `C_corpus_*` name was written for `--epitope pathogen` only, so
+`rank --cls mhc2 --score aggregate` kept all three names in the header while `_aggregate_channels`
+correctly built no table — three columns that carried measured densities in 1.13.0 became NaN,
+silently. A column that is always NaN reads as a failed measurement, not as a column this model does
+not have. `rank.columns(cls=, species=, mode=)` is the single implementation and `cli._rank_columns`
+plus both Nextflow stubs call it; two implementations of one header is how the module stub reached
+18 columns against 57.
 
 **`log10a` is not a wild-type quantity.** It is `log10([P]/Kd)` of the candidate itself
 (`rank._logit10`), defined for a frameshift with no germline counterpart. The WT-dependent columns
