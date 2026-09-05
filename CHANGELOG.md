@@ -1,5 +1,48 @@
 # Changelog
 
+## [Unreleased]
+
+### `mhcmatch rank --native-corpus` --- the mouse tables, on request, with a warning
+
+The mouse -> human corpus routing is a **default, not a constant**. This flag scores the two **host**
+components --- `self` and `thymus` --- against the query species' own reference tables instead. All
+twelve tables (`{mhc1,mhc2}|{self,thymus,viral}|{human,mouse}|3`) already ship, so it is a routing
+switch: nothing is fetched, rebuilt or refitted. `mimicry.reference_species(species, comp,
+native=True)` is the library entry point and `mimicry.NATIVE_CORPUS_COMPONENTS` names the two.
+
+**Off by default, and it warns on every run that uses it** --- because the substitution it undoes is
+a measurement rather than a convention, and because of a second reason that is easy to miss:
+
+- the mouse thymic deposit is **2 allotypes** (`H-2Db` 1,574, `H-2Kb` 1,089, nothing else) over
+  25,264 windows against human's 140,482, correlating at **r = 0.3245** --- and thinning the human
+  deposit to that window count still reproduces the human column at **r = 0.8933**, so it is *which*
+  grooves were sampled and not how few;
+- **every shipped mouse artifact was FITTED against the human tables** (`aggregate_mhc1_mouse.json`
+  is release 1.13.0), so under this flag its nine coefficients meet a column they never saw. That is
+  the same category of error as scoring a kappa fitted under one kernel with another. Use it to
+  *measure* the mouse tables, not to rank a cohort.
+
+`viral` is **not** a host compartment and stays human under the flag: a mouse viral table is a
+9-allotype sample of the same pathogen ligandome the human table samples at 129 --- a thinner sample
+of one compartment, not a different one --- so there is nothing to recover by switching.
+
+Measured on `SIINFEKL` / `H-2Kb`: `C_corpus_thymus` 0.000137 -> **0.001004** (7.3x, an H-2Kb epitope
+meeting an H-2b table), `C_corpus_self` +0.3 % (r = 0.9990 either way), `C_corpus_viral`
+bit-identical. Under `--species human` the flag is a no-op **and says so**, rather than staying
+silent and reading as though it had changed something.
+
+### Withdrawn: the "43-peptide corpus leak" in `aggregate_mhc1_mouse.json`
+
+Raised by the 1.14.0 audit and **withdrawn** --- it was wrong twice over. The reference
+`C_corpus_self` reads for a mouse fit is the **human** proteome table (121,968,158 windows), so
+being an exact *mouse*-proteome window says nothing about membership in it. And membership could
+not bias the channel anyway: it is a BLOSUM62-graded k-mer density contracted to an 8,000-cell
+table whose cells are all occupied, so 43 peptides are 1.8e-06 of it --- one part in 567,294 ---
+and an exact member and a one-substitution neighbour score almost identically by construction.
+`C_corpus_viral` was inadmissible in the pathogen fit because **100 % of both classes** were
+members, making it a class indicator; 4.68 % on one side against another species' table is not
+that.
+
 ## [1.14.0] --- 2026-09-05 --- a second immunological mode, and what "mouse" means
 
 ### `mhc1.human.pathogen` ships --- the fifth artifact, and the first non-neoantigen one

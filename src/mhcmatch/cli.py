@@ -731,7 +731,8 @@ def _mimicry_scores(peptides, cls: str, no_self: bool, species: str = "human"):
 
 
 def _aggregate_channels(cls: str, no_self: bool, species: str = "human",
-                        mode: str = "neoantigen", score: str = "aggregate"):
+                        mode: str = "neoantigen", score: str = "aggregate",
+                        native_corpus: bool = False):
     """Build the ``channels`` callable ``rank`` needs to score with the fitted aggregate.
 
     Returns ``list[peptide] -> {C_corpus_thymus, C_corpus_self, C_corpus_viral}``.
@@ -795,10 +796,18 @@ def _aggregate_channels(cls: str, no_self: bool, species: str = "human",
     # fixing the geometry alone looked complete.
     shapes = MM.corpus_shapes(art) if comps else None
 
+    # **`--native-corpus`: score the HOST components against the query species' own tables.**
+    # Off by default and warned about at the call site, because the substitution it undoes is
+    # measured rather than assumed -- mouse `thymus` correlates with the human table at r = 0.3245,
+    # and the matched-mass arm rules out thinness as the explanation, so the mouse table is a
+    # different question and not a smaller sample of the same one. `viral` is not a host compartment
+    # and stays human under the flag; see `mimicry.NATIVE_CORPUS_COMPONENTS`.
+    route = {c: MM.reference_species(species, c, native=native_corpus) for c in comps}
+
     def channels(peptides):
         spec = {}
-        for sp in sorted({MM.reference_species(species, c) for c in comps}):
-            part = tuple(c for c in comps if MM.reference_species(species, c) == sp)
+        for sp in sorted(set(route.values())):
+            part = tuple(c for c in comps if route[c] == sp)
             spec.update(MM.corpus_spectrum(cls=cls, components=part, k=g["k"], self_species=sp,
                                            shapes=shapes, mask=g["mask"], kernel=g["kernel"]))
         rows = MM.corpus_R(list(peptides), spec, cls=cls)
@@ -966,6 +975,44 @@ def _rank_model(a):
     out.close()
 
 
+def _native_corpus(a, cls: str) -> bool:
+    """`--native-corpus`, and the warning that has to come with it.
+
+    **The substitution it undoes is measured, not a convention**, so switching it off is a research
+    setting rather than a preference. `mimicry.reference_species` carries the per-component numbers;
+    the short version is that mouse `thymus` correlates with the human table at r = 0.3245 and a
+    matched-mass arm rules out thinness as the reason -- the mouse thymic deposit is 2 allotypes
+    (`H-2Db`, `H-2Kb`) and nothing else, so it encodes that groove's motif rather than what a thymus
+    presents.
+
+    **And every shipped mouse artifact was FITTED with the human tables.** Under this flag the
+    coefficients are applied to a column they were not fitted against, which is the same category
+    of error as scoring a kappa fitted under one kernel with another. Warned per run, once, on
+    stderr -- not raised, because measuring the mouse tables is exactly what the flag is for.
+    """
+    if not getattr(a, "native_corpus", False):
+        return False
+    from . import mimicry as MM
+    if a.species != "mouse":
+        # A human query already reads human tables; there is nothing to route back, and silence
+        # here would let `--native-corpus --species human` read as if it had changed something.
+        print(f"# --native-corpus: ignored, --species is {a.species!r} and its corpus components "
+              "already read their own tables", file=sys.stderr)
+        return False
+    comps = ", ".join(MM.NATIVE_CORPUS_COMPONENTS)
+    print(f"# WARNING --native-corpus: scoring {comps} against the MOUSE reference tables.\n"
+          "#   The mouse corpus is POOR and the human substitution it undoes was measured, not\n"
+          "#   assumed: the mouse thymic deposit is 2 allotypes (H-2Db 1,574, H-2Kb 1,089, nothing\n"
+          "#   else) over 25,264 windows against human's 140,482, correlating at r = 0.3245 -- and\n"
+          "#   thinning the human deposit to that window count still reproduces the human column at\n"
+          "#   r = 0.8933, so it is WHICH grooves were sampled and not how few. `self` transfers\n"
+          "#   either way (r = 0.9990). `viral` is not a host compartment and stays human.\n"
+          "#   Every shipped mouse artifact was FITTED against the human tables, so these\n"
+          "#   coefficients are being applied to a column they never saw. Use this to measure the\n"
+          "#   mouse tables, not to rank a cohort.", file=sys.stderr)
+    return True
+
+
 def _refuse_undefined_in_pathogen_mode(a, cmd: str = "rank"):
     """`--epitope pathogen` accepted the expression flags and silently discarded them.
 
@@ -1054,7 +1101,8 @@ def _rank_rows(a, cls: str):
                             prevalence=a.prevalence,
                             species=a.species, expr_floor=a.expr_floor,
                             expr_prefilter=a.expr_prefilter,
-                            channels=_aggregate_channels(cls, a.no_self, a.species, a.epitope, a.score)
+                            channels=_aggregate_channels(cls, a.no_self, a.species, a.epitope,
+                                                         a.score, _native_corpus(a, cls))
                             if a.score in ("aggregate", "features") else None)
     elif a.mode == "fasta":
         store = Store.from_pmhc(a.pmhc, tier=a.tier, species=a.species, classes=(cls,))
@@ -1066,7 +1114,8 @@ def _rank_rows(a, cls: str):
                             prevalence=a.prevalence,
                             species=a.species, expr_floor=a.expr_floor,
                             expr_prefilter=a.expr_prefilter,
-                            channels=_aggregate_channels(cls, a.no_self, a.species, a.epitope, a.score)
+                            channels=_aggregate_channels(cls, a.no_self, a.species, a.epitope,
+                                                         a.score, _native_corpus(a, cls))
                             if a.score in ("aggregate", "features") else None)
     else:
         store = None
@@ -1077,7 +1126,8 @@ def _rank_rows(a, cls: str):
                             prevalence=a.prevalence,
                             species=a.species, expr_floor=a.expr_floor,
                             expr_prefilter=a.expr_prefilter,
-                            channels=_aggregate_channels(cls, a.no_self, a.species, a.epitope, a.score)
+                            channels=_aggregate_channels(cls, a.no_self, a.species, a.epitope,
+                                                         a.score, _native_corpus(a, cls))
                             if a.score in ("aggregate", "features") else None)
     # `rank` floats an exact known-epitope match to the top of its *listing* -- a display choice,
     # documented on `Ranked.rank`, which the `rank` column does not follow. Under --passthrough the
@@ -3040,6 +3090,19 @@ def main(argv=None):
                          "and the two HOST channels are always the tolerance term. One pathogen "
                          "artifact ships -- mhc1.human.pathogen, five terms, from 1.14.0; the "
                          "other three cells refuse by name. `mhcmatch models --all` lists them")
+    rk.add_argument("--native-corpus", action="store_true",
+                    help="score the HOST corpus components (self, thymus) against the QUERY "
+                         "SPECIES' own reference tables instead of the human ones. Off by default, "
+                         "and it prints a warning every run: the mouse corpus is poor and the "
+                         "substitution this undoes was MEASURED, not assumed -- the mouse thymic "
+                         "deposit is 2 allotypes over 25,264 windows against human's 140,482 and "
+                         "correlates at r = 0.3245, while thinning the human deposit to that size "
+                         "still reproduces the human column at r = 0.8933, so it is WHICH grooves "
+                         "were sampled and not how few. `self` transfers either way (r = 0.9990) "
+                         "and `viral` is not a host compartment, so it stays human. Every shipped "
+                         "mouse artifact was FITTED against the human tables: under this flag the "
+                         "coefficients meet a column they never saw. For measuring the mouse "
+                         "tables, not for ranking a cohort. No-op for --species human")
     rk.add_argument("--tissue", help="GTEx tissue for reference expression, e.g. 'Skin - Sun "
                                      "Exposed (Lower leg)' (the safety read)")
     rk.add_argument("--tumor", help="TCGA cancer_type for tumour expression, e.g. SKCM (melanoma)")

@@ -76,7 +76,7 @@ __all__ = ["COMPONENTS", "CHANNELS", "params", "MimicryScore", "masks", "feature
            "corpus_R", "corpus_counts", "contract", "corpus_spectrum", "face_kmers",
            "SHAPES", "CORPUS_K", "LOCUS_W", "locus_weights", "corpus_shapes", "score",
            "probability", "annotate", "NEOAG_COLUMNS", "load_references", "safety",
-           "CORPUS_REFERENCE", "reference_species",
+           "CORPUS_REFERENCE", "NATIVE_CORPUS_COMPONENTS", "reference_species",
            ]
 
 AA = "ACDEFGHIKLMNPQRSTVWY"
@@ -589,9 +589,31 @@ VENDORED_COUNTS = "corpus_tables.npz"
 #: for the per-component measurement behind one uniform rule.
 CORPUS_REFERENCE: dict = {("mouse", c): "human" for c in COMPONENTS}
 
+#: The **host compartments**, and the two components ``native=True`` will route back to the query
+#: species' own table. ``viral`` is deliberately not one of them: it is not a host compartment, so
+#: "the mouse's own" makes no sense for it in the way it does for a proteome or a thymus. What a
+#: mouse viral table samples is 9 H-2 allotypes against the human table's 129 -- a thinner sample of
+#: the *same* pathogen ligandome, not a different compartment -- so there is nothing to recover by
+#: switching, and :data:`CORPUS_REFERENCE` keeps it human even under ``native``.
+NATIVE_CORPUS_COMPONENTS: tuple = ("self", "thymus")
 
-def reference_species(species: str, comp: str) -> str:
+
+def reference_species(species: str, comp: str, native: bool = False) -> str:
     """Which species' reference table a ``species`` query of component ``comp`` is scored against.
+
+    ``native=True`` overrides the redirect below for the **host** components named in
+    :data:`NATIVE_CORPUS_COMPONENTS` and returns ``species`` itself, so a mouse query is matched
+    against the mouse tables. It is **not** the default, and the reason is measured, not assumed --
+    see the per-component transfer figures below, and in particular ``thymus`` at ``r`` = 0.3245
+    with the matched-mass arm that rules out thinness as the explanation. `mhcmatch rank
+    --native-corpus` warns on every run that uses it. All twelve tables
+    (``{mhc1,mhc2}|{self,thymus,viral}|{human,mouse}|3``) ship, so this is a routing switch and
+    nothing is fetched or rebuilt.
+
+    **A coefficient fitted under one routing does not transfer to the other.** Every shipped mouse
+    artifact was fitted with the human tables, so ``--native-corpus`` scores those coefficients
+    against a different feature. Use it to *measure* the mouse tables, not to rank against a fit
+    that never saw them.
 
     Usually ``species`` itself. The exception is **mouse class I, whose whole corpus block --
     ``thymus``, ``self`` and ``viral`` alike -- is matched against the human tables**, because the
@@ -639,6 +661,8 @@ def reference_species(species: str, comp: str) -> str:
     orthologue is a different operation -- it fixes gene *identity* and still reads a mouse
     transcriptome.
     """
+    if native and comp in NATIVE_CORPUS_COMPONENTS:
+        return species
     return CORPUS_REFERENCE.get((species, comp), species)
 
 

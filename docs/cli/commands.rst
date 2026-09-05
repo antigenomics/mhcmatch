@@ -359,6 +359,18 @@ convention, outside a strong cut. Override either class alone with ``--map-thres
        on ``rank`` and on ``explain``) and all four :data:`mhcmatch.rank.WT_COLUMNS`
        (``agretopicity``, ``d_occupancy``, ``wt_absent``, ``wt_peptide``) plus the three gate-side
        expression readouts, which are degenerate rather than absent
+   * - ``--native-corpus``
+     - score the **host** corpus components (``self``, ``thymus``) against the QUERY SPECIES' own
+       reference tables instead of the human ones. **Off by default, and it warns on every run
+       that uses it.** The substitution it undoes was measured, not assumed: the mouse thymic
+       deposit is 2 allotypes over 25,264 windows against human's 140,482 and correlates at
+       ``r`` = 0.3245, while thinning the human deposit to that window count still reproduces the
+       human column at ``r`` = 0.8933 --- so it is *which* grooves were sampled, not how few.
+       ``self`` transfers either way (``r`` = 0.9990) and ``viral`` is not a host compartment, so
+       it stays human under the flag. **Every shipped mouse artifact was fitted against the human
+       tables**, so under this flag its coefficients meet a column they never saw: use it to
+       measure the mouse tables, not to rank a cohort. No-op under ``--species human``, which says
+       so rather than staying silent
    * - ``--cls {mhc1,mhc2,both}``
      - ``both`` scores each class on **its own** fitted model and emits one table with a ``cls``
        column. Not one model over two classes: nine terms against six, and no corpus block in

@@ -266,6 +266,14 @@ one it answered.
   `--score features` still computes every column the mode admits for them. `mhcmatch models --all`
   prints all eight cells; a registered file that is missing from the install prints
   `NOT INSTALLED` rather than the `--` of a cell nobody fitted.
+- **The mouse->human corpus routing is a DEFAULT, not a constant.** `mhcmatch rank
+  --native-corpus` scores the two host components (`self`, `thymus`) against the query species'
+  own tables; all twelve tables ship, so it is a routing switch. **Off by default and it warns
+  every run** — the mouse thymic table is the H-2b motif (`r` = 0.3245 against human, thinness
+  ruled out at `r` = 0.8933), and every shipped mouse artifact was *fitted* against the human
+  tables, so under the flag its coefficients meet a column they never saw. `viral` is not a host
+  compartment and stays human. `mimicry.reference_species(species, comp, native=True)` is the
+  library entry point.
 - **A run emits the columns it COMPUTED, in every mode.** A `C_corpus_*` name the fitted `features`
   list does not carry is not in the header — so `rank --cls mhc2 --score aggregate` has no corpus
   columns at all rather than three NaN ones.

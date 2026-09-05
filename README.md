@@ -547,6 +547,13 @@ being served a neighbour's coefficients, which is the mistake the lookup exists 
 looking like a broken install. A tumour neoantigen and a pathogen epitope are two mechanisms rather
 than two values of one covariate, which is why `mode` is a key and not a covariate.
 
+**`mhcmatch rank --native-corpus` overrides this for the two host components** (`self`, `thymus`),
+scoring them against the query species' own tables. All twelve tables ship, so it is a routing
+switch and nothing is fetched. It is **off by default and warns on every run**: the mouse thymic
+table is the H-2b motif and correlates with the human one at `r` = 0.3245 with thinness ruled out,
+and every shipped mouse artifact was *fitted* against the human tables, so under the flag its
+coefficients meet a column they never saw. `viral` is not a host compartment and stays human.
+
 **A mouse run reads the human corpus references — all three components, both classes.**
 `mimicry.reference_species(species, component)` routes all three mouse components to human, so a
 mouse query is matched against the identical `mhc1|{thymus,self,viral}|human|3` tables the human

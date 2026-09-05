@@ -105,6 +105,17 @@ The human class-II figure raised alongside it — 22 of 804 thymus-corpus member
 third reason: **no class-II artifact carries any `C_corpus_*` term** (`rank.TERMS_MHC2_EXPECTED`),
 so there is no coefficient for it to reach.
 
+**The mouse->human corpus routing is now a default rather than a constant.**
+`mhcmatch rank --native-corpus` scores the two **host** components — `self` and `thymus` — against
+the query species' own tables. All twelve tables already ship, so it is a routing switch and nothing
+is fetched or refitted. **Off by default and it warns every run**, for two measured reasons: the
+mouse thymic table is the H-2b motif (`r` = 0.3245 against human, and thinning the human deposit to
+the same window count still reproduces the human column at `r` = 0.8933, so it is *which* grooves,
+not how few), and **every shipped mouse artifact was fitted against the human tables**, so under the
+flag its coefficients meet a column they never saw. `viral` is not a host compartment and stays
+human. On `SIINFEKL`/`H-2Kb` the switch moves `C_corpus_thymus` 7.3x, `C_corpus_self` by 0.3 %, and
+`C_corpus_viral` not at all.
+
 **The extension checkout is retired and nothing was lost.**
 `~/vcs/projects/2026-mhcmatch-benchmark-ext` was a working tree seeded from the benchmark repo at
 `ext-integration` with its history deliberately dropped, and it then carried **nine commits with no

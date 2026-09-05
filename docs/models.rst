@@ -410,6 +410,18 @@ The two **host** channels always stay, and they are the point of the mode: ``C_c
 is the tolerance term. There is no circularity in them --- the corpus is foreign, the tables are
 human self.
 
+**The routing is a default, not a constant.** ``mhcmatch rank --native-corpus`` scores the two
+**host** components --- ``self`` and ``thymus`` --- against the query species' own tables instead.
+All twelve tables (``{mhc1,mhc2}|{self,thymus,viral}|{human,mouse}|3``) ship, so it is a routing
+switch and nothing is fetched. It is **off by default and warns on every run**, for two reasons that
+are both measurements rather than conventions: the mouse thymic table is the H-2b motif and
+correlates with the human one at ``r`` = 0.3245 with thinness ruled out, and every shipped mouse
+artifact was *fitted* against the human tables --- so under the flag its coefficients meet a column
+they never saw. ``viral`` is not a host compartment and stays human either way. Measured on
+``SIINFEKL`` / ``H-2Kb``, switching moves ``C_corpus_thymus`` 0.000137 -> 0.001004 (7.3x, an H-2Kb
+epitope meeting an H-2b table), moves ``C_corpus_self`` by 0.3 %, and leaves ``C_corpus_viral``
+bit-identical.
+
 ``mhc1.human.pathogen`` --- version 1
 --------------------------------------
 

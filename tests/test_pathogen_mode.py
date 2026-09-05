@@ -347,3 +347,91 @@ def test_models_tells_a_broken_install_from_an_unfitted_cell(monkeypatch, capsys
     assert "broken install" in out.err
     # The three cells that were never fitted keep reading `--`, so the two are told apart.
     assert "mhc1.mouse.pathogen\tmhc1\tmouse\tpathogen\t--" in out.out
+
+
+# ---------------------------------------------------------------------------------------------
+# `--native-corpus`: the mouse tables, off by default, warned about every run.
+
+
+def test_native_corpus_routes_only_the_host_components():
+    """`self` and `thymus` follow the flag; `viral` does not, because it is not a host compartment.
+
+    A mouse `viral` table is a 9-allotype sample of the SAME pathogen ligandome the human table
+    samples at 129 -- a thinner sample of one compartment, not a different one -- so there is
+    nothing for the flag to recover there.
+    """
+    from mhcmatch import mimicry as MM
+
+    assert MM.NATIVE_CORPUS_COMPONENTS == ("self", "thymus")
+    for comp in MM.COMPONENTS:
+        assert MM.reference_species("mouse", comp) == "human", "the DEFAULT must stay human"
+    assert MM.reference_species("mouse", "self", native=True) == "mouse"
+    assert MM.reference_species("mouse", "thymus", native=True) == "mouse"
+    assert MM.reference_species("mouse", "viral", native=True) == "human"
+    # A human query has nothing to route back.
+    for comp in MM.COMPONENTS:
+        assert MM.reference_species("human", comp, native=True) == "human"
+
+
+def test_native_corpus_asks_for_the_mouse_tables_and_only_those(monkeypatch):
+    """The tables `_aggregate_channels` actually requests, per species, under and without the flag."""
+    from mhcmatch import cli as C
+    from mhcmatch import mimicry as MM
+
+    def spy(**kw):
+        asked.append((kw["self_species"], tuple(sorted(kw["components"]))))
+        return {}
+
+    for native, want in ((False, [("human", ("self", "thymus", "viral"))]),
+                         (True, [("human", ("viral",)), ("mouse", ("self", "thymus"))])):
+        asked = []
+        MP = pytest.MonkeyPatch()
+        try:
+            MP.setattr(MM, "corpus_spectrum", spy)
+            MP.setattr(MM, "corpus_R", lambda peps, spec, cls="mhc1": [{} for _ in peps])
+            C._aggregate_channels("mhc1", False, "mouse", "neoantigen", "aggregate",
+                                  native_corpus=native)(["SIINFEKL"])
+        finally:
+            MP.undo()
+        assert sorted(asked) == sorted(want), f"native={native}: asked {asked}"
+
+
+def test_native_corpus_warns_every_run_and_is_off_by_default(capsys):
+    """A research setting that silently changes a scored column is the failure mode to avoid.
+
+    The substitution it undoes is measured rather than conventional, and every shipped mouse
+    artifact was fitted with the human tables -- so the warning names both, every run.
+    """
+    from mhcmatch import cli as C
+
+    class A:
+        native_corpus, species = True, "mouse"
+
+    assert C._native_corpus(A(), "mhc1") is True
+    err = capsys.readouterr().err
+    assert "WARNING" in err and "POOR" in err
+    assert "0.3245" in err, "the warning must carry the measurement, not just an adjective"
+    assert "FITTED against the human tables" in err
+
+    class B(A):
+        native_corpus = False
+    assert C._native_corpus(B(), "mhc1") is False
+    assert capsys.readouterr().err == "", "the default path must be silent"
+
+    # A human query cannot use it, and must not look as though it did.
+    class H(A):
+        species = "human"
+    assert C._native_corpus(H(), "mhc1") is False
+    assert "ignored" in capsys.readouterr().err
+
+
+def test_the_shipped_mouse_artifact_was_fitted_against_the_human_tables():
+    """Which is why `--native-corpus` warns rather than being a preference.
+
+    `aggregate_mhc1_mouse.json` records release 1.13.0 -- the release that made the human routing
+    the default -- so its nine coefficients meet a different column under the flag.
+    """
+    a = R.aggregate("mhc1", "mouse", "neoantigen")
+    assert a["release"] == "1.13.0"
+    assert [c for c in a["features"] if c.startswith("C_corpus_")], (
+        "if the mouse fit ever drops its corpus block this test's premise changes")
