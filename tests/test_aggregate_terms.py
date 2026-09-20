@@ -1,0 +1,597 @@
+"""Every fitted term is pinned to the column it is actually computed from.  # 2026-09-20
+
+The shipped artifact names nine features. Each one is a *specification* -- a named quantity on a
+stated scale -- and the library fills it from somewhere. Nothing enforced the correspondence, and
+the gap is silent in both directions: a term can be filled from the wrong column and the model
+still scores, still ranks, still writes a table.
+
+It had already happened once in the documentation. The manuscript describes the presentation term
+as the calibrated ``binder`` %rank, which is what v3 fitted; v4 respecified it as ``pres``, the
+presentation rank alone, because ``occupancy`` already carries the affinity axis (Spearman
+-1.000000 against ``kd_mt``) and ``binder`` would enter it twice. Both statements are defensible;
+only one is what ships, and no test said which.
+
+So each test below pins one term to its source, and every one of them fails loudly if the wiring
+moves without the artifact moving with it.
+"""
+from __future__ import annotations
+
+import math
+
+import numpy as np
+import pytest
+
+from mhcmatch import complement as CM
+from mhcmatch import rank as R
+from mhcmatch.rank import Ranked
+
+
+@pytest.fixture(scope="module")
+def art():
+    return R.aggregate()
+
+
+def _rows(n=2, **kw):
+    """`n` scoreable rows carrying every channel the aggregate demands, all identical.
+
+    Peptides are distinct so a row can be identified after :func:`rank._finish`, which **sorts the
+    list in place**. Indexing the list by its original position after that call reads whichever row
+    scored highest, not the row that was put there -- which is what made the first draft of three
+    of these tests fail against a library that was behaving correctly.
+    """
+    out = []
+    for i in range(n):
+        r = Ranked(peptide="AAAAAAAA" + "ACDEFGHIK"[i], allele="HLA-A*02:01",
+                   presentation=1.0, binder=1.0, occupancy=0.5, expression=1.0)
+        r.components.update({c: 0.0 for c in R.AGGREGATE_COLUMNS})
+        for k, v in kw.items():
+            setattr(r, k, v[i] if isinstance(v, (list, tuple)) else v)
+        out.append(r)
+    return out
+
+
+def test_the_feature_list_the_library_declares_is_the_one_the_artifact_carries(art):
+    """A hardcoded copy of the feature tuple is exactly what went stale twice before."""
+    assert list(R.AGGREGATE_FEATURES) == list(art["features"])
+    assert [c for _, cs in R.AGGREGATE_BLOCKS for c in cs] == list(art["features"])
+
+
+def test_binder_is_the_combined_rank_and_not_the_presentation_rank_alone():
+    """Which presentation column is fitted, pinned. It has changed twice.
+
+    ``binder`` Fisher-combines the presentation %rank with the Potts affinity %rank; ``pres`` is
+    the presentation rank alone. v3 fitted ``binder``, v4 swapped to ``pres`` on the argument that
+    ``occupancy`` already carried affinity, and **v6 swapped back**, because a %rank is a
+    within-allele quantity where occupancy is absolute -- measured, ``pres`` is the more collinear
+    of the two with ``binder`` (+0.8797 against +0.7431). Both columns are always emitted, so
+    neither name failing is a `KeyError`; only this test says which one moves the score.
+    """
+    lo = _rows(2, presentation=[0.0, 0.0])
+    hi = _rows(2, presentation=[0.0, 9.0])
+    R._finish(lo, gate=None)
+    R._finish(hi, gate=None)
+    assert {r.peptide: r.score for r in lo} == pytest.approx({r.peptide: r.score for r in hi}), (
+        "score moved with `presentation`: the fitted presentation term is `binder`, and `pres` is "
+        "an emitted column the aggregate does not read")
+
+    diff = _rows(2, binder=[0.0, 9.0])
+    by_binder = {r.peptide: r.binder for r in diff}
+    R._finish(diff, gate=None)
+    got = {r.peptide: r.score for r in diff}
+    assert len(set(got.values())) == 2
+    # and in the direction the coefficient declares: `binder` is positive in the shipped fit
+    i = list(R.AGGREGATE_FEATURES).index("binder")
+    assert R.aggregate()["coef"][i] > 0
+    assert max(got, key=got.get) == max(by_binder, key=by_binder.get)
+
+
+def test_the_density_term_is_occupancy_on_the_log_odds_scale(art):
+    """The fitted density term is ``log10a``, and it is derived from ``occupancy``, not beside it.
+
+    ``occ = a/(1+a)`` for ``a = [P]/Kd`` at the artifact's own ``peptide_nm``, so
+    ``occ/(1-occ) == a`` identically and ``log10a`` is its base-10 logit. Two things are pinned:
+    the score still moves with the row's ``occupancy`` -- the axis is unchanged -- and it moves
+    through ``log10a``, which is what a log-odds model can use linearly. v6 fitted ``occupancy``
+    raw and the term collapsed to z = +0.83; on the logit scale it is z = +3.53.
+    """
+    assert art["peptide_nm"] == 10.0
+    rows = _rows(2, occupancy=[0.1, 0.9])
+    by_occ = {r.peptide: r.occupancy for r in rows}
+    R._finish(rows, gate=None)
+    got = {r.peptide: r.score for r in rows}
+    i = list(R.AGGREGATE_FEATURES).index("log10a")
+    assert art["coef"][i] > 0
+    assert max(got, key=got.get) == max(by_occ, key=by_occ.get)
+    # the identity the derivation rests on, not merely the ordering it produces
+    for o in (0.1, 0.5, 0.9, 1.9996e-4, 0.909091):
+        assert abs(R._logit10(o) - math.log10(o / (1 - o))) < 1e-12
+    assert R._logit10(0.0) != R._logit10(0.0)        # NaN outside (0, 1), not an exception
+    assert R._logit10(1.0) != R._logit10(1.0)
+
+
+def test_the_density_term_is_the_same_number_the_fit_was_trained_on():
+    """The cross-repo invariant, and nothing else asserts it.
+
+    `bench/epic/fit.py` builds `log10a` from `kd_mt`; this library builds it from `occupancy`,
+    which is itself built from the same Kd. They are the same quantity only because
+    ``occ/(1-occ) == [P]/Kd`` identically -- if either side ever computed it a second way, the
+    model would be scored on a column it was not fitted on and nothing would say so. Checked over
+    the Kd range the clamp actually admits.
+    """
+    from mhcmatch.rank import PEPTIDE_NM, occupancy
+    for kd in (1.0, 3.7, 10.0, 250.0, 8_937.0, 49_999.0, 50_000.0):
+        via_library = R._logit10(occupancy(kd))
+        direct = math.log10(PEPTIDE_NM / kd)
+        assert abs(via_library - direct) < 1e-12, f"Kd={kd}: {via_library} != {direct}"
+
+
+def test_expr_pct_is_a_within_batch_percentile_and_a_missing_value_sits_at_one_half():
+    """The fitted expression term is a rank inside the scored batch, not a level.
+
+    Two properties the fit relies on and a caller can break: the column is invariant to any
+    monotone rescaling of abundance (TPM, FPKM and raw counts give the same term), and a row with
+    no value takes 0.5 rather than an imputed level plus an indicator.
+    """
+    rows = _rows(4, expression=[0.0, 1.0, 2.0, 3.0])
+    pct = R.expr_percentile(rows)
+    assert pct == sorted(pct) and all(0.0 < v < 1.0 for v in pct)
+    # monotone rescaling: exp() is strictly increasing, so the percentile column is unchanged
+    scaled = _rows(4, expression=[float(np.expm1(v)) for v in (0.0, 1.0, 2.0, 3.0)])
+    assert R.expr_percentile(scaled) == pytest.approx(pct)
+    # absent -> the midpoint of the scale, which is what "no information" means on a percentile.
+    # `Ranked.expression` defaults to NaN, which is how absence reaches this function.
+    nan = float("nan")
+    assert R.expr_percentile(_rows(2, expression=[nan, nan])) == [0.5, 0.5]
+    # a single row has no percentile, and neither does one finite value among NaNs
+    assert R.expr_percentile(_rows(1, expression=[2.0])) == [0.5]
+    assert R.expr_percentile(_rows(2, expression=[2.0, nan])) == [0.5, 0.5]
+
+
+def test_the_two_chemistry_columns_are_the_scales_the_artifact_declares(art):
+    """`C_phys_buried` is Rose 1985 burial and `C_phys_charge` is Atchley AF5, per residue.
+
+    A scale swap is invisible in a score and fatal to a coefficient: the standardiser shipped with
+    the artifact was fitted against one scale's mean and sd, so the same peptide read on another
+    scale is a different feature wearing the fitted term's name.
+    """
+    assert R.PHYS_COLUMNS == {"C_phys_buried": art["phys_scale"],
+                              "C_phys_charge": art["phys_scale_charge"]}
+    assert art["phys_scale"] == "Rose" and art["phys_scale_charge"] == "ATCHLEY:AF5"
+    # per residue, not summed: the summed form is mostly peptide length
+    assert art["phys_per_residue"] is True
+    peps = ["SIINFEKLA", "KKKKKKKKK", "LLLLLLLLL"]
+    buried = CM.burial(peps, scale=art["phys_scale"])
+    charge = CM.burial(peps, scale=art["phys_scale_charge"])
+    assert len(buried) == len(charge) == 3
+    # the poly-K peptide is the charged one and the poly-L peptide the buried one; if these two
+    # ever come out the same column, the scales have been aliased
+    assert charge[1] != pytest.approx(charge[2])
+    assert buried[2] > buried[1]
+
+
+def test_the_corpus_geometry_travels_with_the_coefficients(art):
+    """Mask, k-mer width and kernel are part of the term, not of the caller's convenience.
+
+    A `kappa` fitted against a graded BLOSUM62 contraction is not the same axis when contracted
+    against Hamming, so the artifact declares all four and the library must not default any of them.
+    """
+    assert art["corpus_mask"] == "slice" and art["corpus_k"] == 3
+    assert art["corpus_kernel"] == "blosum62_normalised"
+    assert set(art["corpus_shapes"]) == {"thymus", "self", "viral"}
+    # the three fitted channel names match the three shapes, one kappa each
+    chan = [c for c in art["features"] if c.startswith("C_corpus_")]
+    assert {c.removeprefix("C_corpus_") for c in chan} == set(art["corpus_shapes"])
+
+
+def test_the_corpus_channels_must_be_supplied_and_are_never_substituted():
+    """Scoring with a channel missing is an error, not a mean-imputed row.
+
+    A model scores on the features it declares or not at all: silently substituting the training
+    mean for a whole recognition block returns a number that reads like a prediction and is not one.
+    """
+    rows = _rows(1)
+    rows[0].components.pop("C_corpus_thymus")
+    with pytest.raises(ValueError, match="C_corpus_thymus"):
+        R._finish(rows, gate=None)
+
+
+def test_the_intercept_is_per_screen_and_the_shipped_artifact_carries_none(art):
+    """No global intercept ships, and that is why `score` is a log-odds up to a constant.
+
+    Every screen got its own unpenalised intercept in the fit, so there is no single intercept that
+    transfers. A reader who expects `score` to be calibrated on its own needs to see this stated in
+    the artifact rather than inferred from a missing key.
+    """
+    assert art["intercept"] is None
+    assert art["fit"]["per_screen_intercept"] is True
+    assert art["fit"]["tau"] == 0.25
+    # ranking is therefore invariant to any constant: the intercept cannot buy AUROC
+    a = _rows(3, presentation=[0.0, 1.0, 2.0])
+    R._finish(a, gate=None)
+    order = [r.peptide for r in sorted(a, key=lambda r: -r.score)]
+    b = _rows(3, presentation=[0.0, 1.0, 2.0])
+    R._finish(b, gate=None)
+    assert [r.peptide for r in sorted(b, key=lambda r: -r.score)] == order
+
+
+def test_a_non_finite_feature_takes_the_training_mean_and_says_so():
+    """The documented missing-value convention, which is the fit's own."""
+    rows = _rows(1)
+    rows[0].components["C_phys_buried"] = float("nan")
+    R._finish(rows, gate=None)
+    assert np.isfinite(rows[0].score)
+    assert "C_phys_buried" in rows[0].imputed
+
+
+def test_dai_names_one_quantity_on_both_paths():
+    """`Ranked.agretopicity` and `Prediction.agretopicity` are different quantities under one name.
+
+    `Ranked.agretopicity` is ``log10(Kd_WT/Kd_MT)``; `Prediction.agretopicity` is the raw ratio
+    ``Kd_MT/Kd_WT``, which runs the other way. A figure sourced from one path and labelled like the
+    other has its sign flipped, and nothing in the type system says so. `Ranked.dai` is the
+    unambiguous accessor -- it must agree with `Prediction.dai`, which is already the log form.
+    """
+    from mhcmatch.predict import Prediction
+
+    r = Ranked(peptide="SIINFEKL", allele="H2-Kb", agretopicity=+1.5)
+    assert r.dai == r.agretopicity == +1.5
+
+    # `Prediction` carries both, and `dai` is the log form -- the one `Ranked.dai` must match
+    assert "dai" in Prediction.__dataclass_fields__
+    assert "agretopicity" in Prediction.__dataclass_fields__
+
+
+def test_the_shipped_artifact_is_pinned_to_the_fit_that_produced_it(art):
+    """The one check `mhcmatch build --check` structurally cannot do.
+
+    ``aggregate_mhc1.json`` carries a *model* version (an int), so `_stamp` returns ``None`` for
+    it and `--check` presence-checks it and nothing more. It cannot tell a current artifact from a
+    stale one, and it cannot see a hand-copy at all -- the copy from the benchmark repo is a `cp`,
+    and 646 tests passed either side of the v9 -> v10 replacement without one of them noticing that
+    every `score` in the library had moved.
+
+    So the coefficients are pinned here, to the digest of the exact triple that ships. Failing this
+    means the scorer changed; that is a deliberate act (`PROVENANCE.md`, "History"), so update the
+    digest in the same commit that copies the artifact and put the old numbers in the message.
+    """
+    import hashlib
+    import json
+
+    blob = json.dumps([art["coef"], art["mu"], art["sigma"]], sort_keys=True).encode()
+    assert art["version"] == 12, art["version"]
+    assert art["features"] == [
+        "binder", "log10a", "expr_lvl", "expr_norm",
+        "C_phys_buried", "C_phys_charge",
+        "C_corpus_thymus", "C_corpus_self", "C_corpus_viral",
+    ], art["features"]
+    # v9  was e77a5325562a1547 (coef binder +0.5481, log10a +0.2914; BIC 4390.2, LOO mean 0.6942)
+    # v10 was 92e0b4e707e67f7f (coef binder +0.4623, log10a +0.4005; BIC 4328.3, LOO mean 0.6998)
+    # v11 was ec4bb310d10c688c (coef binder +0.7569, log10a +0.1713; BIC 3109.8, LOO mean 0.7102).
+    #     Fitted at `SCORER_EPOCH` 4 on 339,599 rows / 597 positives -- a frame the chain no longer
+    #     produces, and that is why v12 supersedes it rather than merely postdating it: the corpus
+    #     stage has emitted 420 IEDB_neoag rows, not 424, since `99ffac4`, so v11's fit population
+    #     cannot be regenerated from the current repo at any scorer epoch.
+    assert hashlib.sha256(blob).hexdigest()[:16] == "b3658d0c2a3ff974", (
+        hashlib.sha256(blob).hexdigest()[:16])
+
+
+# --- the mouse and class-II artifacts ------------------------------------------------------
+
+# v1 was 7658dc52466a27bf (mhc1) and 2982b50ab8b7dd85 (mhc2) -- three free corpus coefficients,
+# nine fitted terms. v2 constrains the corpus block to human v11's direction and fits one scalar
+# for it, so the file still lists nine features and the last three are proportional: SEVEN free
+# parameters. mhc1 within-reference AUROC 0.5930 -> 0.5958 peptide / 0.5950 -> 0.5977 reference,
+# BIC 1078.3 -> 1066.9; mhc2 0.5781 -> 0.5757 / 0.4598 -> 0.4901, BIC 571.5 -> 562.7.
+#
+# **Mouse class I is v3 for a data reason, not a specification one.** The neoantigen deposit was
+# cleaned (`bench/pmhc_data/clean_neoantigens.py`) and two of the three rows it removed from
+# `neoag_tested_mmu.tsv.gz` were in this fit: **923 / 380 -> 921 / 379**. The nine terms and the
+# pinned corpus axis are unchanged; BIC 1066.9 -> 1066.1. The version moves because a citation has
+# to name one fit, and two files both calling themselves v2 is exactly what the digest below exists
+# to catch.
+#
+# **v4 re-sourced one corpus table; v5 re-sourced the other two and freed all three coefficients.**
+# Both fit the same 921 rows. v4 read the human thymic table and kept the pinned axis (seven free
+# parameters); v5 routes all three components to human (`mimicry.reference_species`) and fits each
+# its own coefficient, so mouse class I is **NINE free parameters**, matching the human artifact
+# term for term. Deviance 602.494 -> 599.531, in-sample AUROC 0.6135 -> 0.6335, BIC 1066.6 ->
+# 1077.3 -- three parameters cost 3 * log(921) = 20.5 BIC, so BIC prefers the smaller model and v5
+# ships on the author's call that both class-I models carry the same nine terms. What the human
+# tables buy is sign coherence: `C_corpus_thymus` +0.2919 at sign stability 0.94 against -0.0056 at
+# 0.53 under the mouse tables, on the same rows and the same terms.
+#
+# **Mouse class II is v3 and has no corpus block at all**, on the author's instruction that neither
+# class-II model carries one: the channels are densities over a class-I thymic, self and viral
+# reference, and contracting a 15-mer register against a 9-mer density asks the wrong question.
+# Arm-vs-arm on the same 468 rows / 177 positives, `vanilla`, v2 -> v3:
+# BIC **562.3 -> 556.2**, which is log 468 = 6.15 -- one parameter's worth, and the block was
+# spending three names on it.
+#
+# **Human class II is v1**, the first fit for that cell: 1,112 rows / 656 positives over 157
+# references and 72 allotypes, from `neoantigens/cedar_neoag_mhc2_hsa.tsv.gz`. BIC 1595.8; `binder`
+# +0.3773 and `C_phys_buried` +0.1710 are the two coefficients the cluster bootstrap keeps the sign
+# of. No fit here holds anything out -- see `test_no_shipped_artifact_reports_a_holdout`.
+#
+# **The four PATHOGEN cells were unpinned until 2026-09-20, and that is how the gap gets found.**
+# This table covered three of the eight shipped cells; `aggregate_mhc1.json` has its own test
+# above; the four `*_pathogen.json` had nothing. `bench/epic/aggregate_mhc1_mouse.json` was
+# *suspected* of having drifted -- same model version, same release stamp, same rows and
+# positives, `C_corpus_viral` at +0.0063 against the shipped -0.3120 -- and rerunning cleared the
+# shipped file at max |delta| = 0: the candidate is what a DEFAULT-flag run writes, and the shipped
+# one needs `--corpus-axis free`. The pinned artifact had not drifted and could be shown not to
+# have; the unpinned ones could not have been checked either way. All eight are here now.
+@pytest.mark.parametrize("cls, species, mode, digest, version, rows, pos, terms", [
+    # **The three neoantigen digests are unchanged across the 2026-09-20 refit, and the versions
+    # moved anyway.** `(coef, mu, sigma)` is what SCORES, and it is bit-identical -- the refit
+    # changed which sd `z` and `p` divide by, not the model. A citation still has to be able to
+    # name one artifact, and two files reporting different P-values for the same coefficients under
+    # one version is exactly what a model version exists to prevent.
+    ("mhc1", "mouse", "neoantigen", "b06aa4802f942481", 6, 921, 379, "TERMS_MOUSE_EXPECTED"),
+    ("mhc2", "mouse", "neoantigen", "9d95c8602bd4fd0c", 4, 468, 177, "TERMS_MHC2_EXPECTED"),
+    ("mhc2", "human", "neoantigen", "fb8d861a778571f6", 2, 1112, 656, "TERMS_MHC2_EXPECTED"),
+    ("mhc1", "human", "pathogen", "94398dd5c86c046b", 2, 16790, 7002, None),
+    ("mhc1", "mouse", "pathogen", "b09ef7b8edd36946", 2, 10404, 2196, None),
+    ("mhc2", "human", "pathogen", "e8364e9bcd5d075f", 2, 7946, 5148, None),
+    ("mhc2", "mouse", "pathogen", "ee62a044ddeba15a", 2, 11725, 3324, None),
+])
+def test_the_fitted_artifacts_are_pinned_to_the_fits_that_produced_them(
+        cls, species, mode, digest, version, rows, pos, terms):
+    """The same guard as the human artifact, for the same reason: the copy is a `cp`.
+
+    `build --check` presence-checks a model version (an int) and can see nothing else, so a
+    hand-copied older fit stamped with the current version reads as current. Failing this means the
+    scorer changed -- a deliberate act -- so update the digest in the commit that copies the
+    artifact, and put the old numbers in the message.
+    """
+    import hashlib
+    import json
+
+    from mhcmatch import rank as R
+
+    a = R.aggregate(cls, species, mode)
+    assert a["version"] == version, a["version"]
+    if terms is not None:
+        assert a["features"] == list(getattr(R, terms)), a["features"]
+    assert a["fit"]["rows"] == rows and a["fit"]["positives"] == pos, a["fit"]
+    blob = json.dumps([a["coef"], a["mu"], a["sigma"]], sort_keys=True).encode()
+    assert hashlib.sha256(blob).hexdigest()[:16] == digest, (
+        hashlib.sha256(blob).hexdigest()[:16])
+
+
+def test_no_shipped_artifact_reports_a_holdout():
+    """These are GLMs, and the deliverable is a coefficient with an interval around it.
+
+    The interval is a cluster bootstrap over whole `reference_id` groups -- the publication is the
+    unit that repeats in these deposits. A `cv_*` block would read as a held-out score, which is a
+    different claim about a different object, so no artifact carries one and every fit is run at
+    `--folds 0`. What each file does carry is the resampling unit and how many resamples.
+    """
+    from mhcmatch import rank as R
+
+    for (cls, species, mode) in R.AGGREGATE_ARTIFACTS:
+        a = R.aggregate(cls, species, mode)
+        if a.get("generator", "").endswith("fit.py"):
+            continue                    # human class I predates this and records its own holdout
+        assert not [k for k in a if k.startswith("cv_")], f"{cls}.{species} ships a holdout block"
+        assert a["fit"]["bootstrap_unit"], f"{cls}.{species} names no resampling unit"
+        assert int(a["fit"]["n_boot"]) > 0, f"{cls}.{species} reports no resamples"
+
+
+def test_both_class_II_artifacts_carry_the_same_six_terms_and_no_corpus_block():
+    """One specification, two species. A class-II fit that grew a corpus channel would be a
+    different model from the other one, and the two would stop being comparable term by term --
+    which is the whole reason the mouse and human class-I fits share a feature list.
+    """
+    from mhcmatch import rank as R
+
+    for species in ("human", "mouse"):
+        a = R.aggregate("mhc2", species)
+        assert a["features"] == list(R.TERMS_MHC2_EXPECTED), (species, a["features"])
+        assert [b[0] for b in a["blocks"]] == ["presentation", "expression", "physchem"], species
+        assert not any(c.startswith("C_corpus_") for c in a["features"]), species
+
+
+def test_the_class_II_corpus_variant_ships_and_is_never_the_default():
+    """Two fits of one cell, and asking without `variant` must keep giving the six-term one.
+
+    The nine-term fit ships from 1.20.0 because the corpus block became computable at class II,
+    and it is not the default because computing it answered in the negative -- all three
+    coefficients span zero on the 1,112 CD4+ rows. A release that quietly promoted it would change
+    every class-II score without changing a documented default.
+    """
+    from mhcmatch import rank as R
+
+    default = R.aggregate("mhc2", "human")
+    variant = R.aggregate("mhc2", "human", variant="corpus")
+
+    assert default["features"] == list(R.TERMS_MHC2_EXPECTED)
+    assert len(variant["features"]) == 9
+    assert [b[0] for b in variant["blocks"]] == ["presentation", "expression", "physchem", "corpus"]
+
+    # The three corpus coefficients are the reason it is not the default: every interval spans 0.
+    for name in ("C_corpus_thymus", "C_corpus_self", "C_corpus_viral"):
+        lo, hi = variant["ci95"][variant["features"].index(name)]
+        assert lo < 0.0 < hi, (name, lo, hi)
+
+    # A variant nobody registered is an error, not a silent fall-through to the default.
+    with pytest.raises(ValueError, match="no 'nope' variant"):
+        R.aggregate("mhc2", "human", variant="nope")
+
+
+def test_a_species_class_with_no_fitted_artifact_refuses_rather_than_substituting():
+    """An unfitted `(cls, species)` must raise, not fall back to a neighbouring fit.
+
+    The registry is a lookup precisely so this is a `ValueError` at the point of asking rather than
+    a plausible number computed from the wrong coefficients. Human class II *was* the empty cell
+    this test named until it was fitted; a species with no panel is the standing case, and the
+    assertion is written against the registry rather than against one hardcoded gap so filling the
+    next cell does not silently turn the test into a tautology.
+    """
+    from mhcmatch import rank as R
+
+    assert ("mhc1", "rat", "neoantigen") not in R.AGGREGATE_ARTIFACTS
+    with pytest.raises(ValueError, match="no fitted artifact"):
+        R.aggregate("mhc1", "rat")
+    # every registered species-class *does* resolve, which is the other half of the contract
+    for (cls, species, mode) in R.AGGREGATE_ARTIFACTS:
+        assert R.aggregate(cls, species, mode)["cls"] == cls
+
+
+#: Every array in an artifact that is indexed by term. A consumer zips these against `features`,
+#: so one of them being short is not a smaller table -- it is the wrong term's number, and then an
+#: `IndexError`.
+PER_TERM_ARRAYS = ("coef", "mu", "sigma", "sd", "boot_sd", "z", "p", "ci95", "sign_stability")
+#: Indexed by term too, but only the fits that ran a cluster bootstrap carry them -- the four
+#: `pathogen` artifacts have `boot_sd` and no `z_boot`/`p_boot`. Absent is allowed; ragged is not,
+#: for the same reason as above: `rank --coefficients` prints these beside `features`.
+OPTIONAL_PER_TERM_ARRAYS = ("z_boot", "p_boot")
+
+
+def test_every_registered_artifact_declares_the_features_it_carries_coefficients_for():
+    """Every per-term array is exactly as long as `features`, on every shipped artifact.
+
+    **This is not a tidiness check; a ragged artifact shipped.** Mouse model version 2 constrains
+    the corpus block to one scalar, and the expansion back to three channels was applied to
+    `coef`/`mu`/`sigma`/`sd` and not to `boot_sd`/`z`/`p`/`ci95`/`sign_stability` -- so those five
+    were seven long against nine names. `mhcmatch rank --coefficients --species mouse` printed the
+    corpus *axis*'s p-value under `C_corpus_thymus` and then raised `IndexError` on
+    `C_corpus_self`. Checking `coef` alone, which is what this test used to do, could not see it.
+    """
+    from mhcmatch import rank as R
+
+    for (cls, species, mode) in R.AGGREGATE_ARTIFACTS:
+        a = R.aggregate(cls, species, mode)
+        n = len(a["features"])
+        for k in PER_TERM_ARRAYS:
+            assert len(a[k]) == n, f"{cls}.{species}.{mode}: {k} is {len(a[k])} against {n} terms"
+        for k in OPTIONAL_PER_TERM_ARRAYS:
+            assert k not in a or len(a[k]) == n, \
+                f"{cls}.{species}.{mode}: {k} is {len(a[k])} against {n} terms"
+        assert all(len(c) == 2 and c[0] <= c[1] for c in a["ci95"]), \
+            f"{cls}.{species}.{mode}: a ci95 pair is not an ordered (lo, hi)"
+        assert tuple(a["features"]) == R.aggregate_features(cls, species, mode)
+        # every block name in `blocks` is a term the artifact actually carries, and vice versa --
+        # `rank --coefficients` joins on this and would print an empty block cell otherwise
+        blocked = [t for _b, ts in a["blocks"] for t in ts]
+        assert blocked == list(a["features"]), (cls, species, mode, blocked)
+
+
+def test_every_shipped_model_names_itself_and_the_release_that_accepted_it():
+    """`model_id`, `cls`, `species`, `mode`, `version`, `release` -- on every artifact, no default.
+
+    **A manuscript pins a fit, not a library version.** The paper quotes numbers one specific
+    coefficient set produced, and the library keeps moving underneath it while mouse and class II
+    are worked on -- so `mhcmatch 1.11.0` is not a citation and `mhc1.human.neoantigen v11
+    (release 1.6.1)` is. `release` is the package version the fit was *accepted* in, which is why
+    it is stored rather than derived from `__version__`.
+    """
+    from mhcmatch import rank as R
+
+    recs = R.models()
+    assert recs, "no shipped aggregate resolved at all"
+    for r in recs:
+        a = R.aggregate(r["cls"], r["species"], r["mode"])
+        for field in ("model_id", "cls", "species", "mode", "version", "release"):
+            assert a.get(field) not in (None, ""), f"{r['file']} has no {field}"
+        assert a["model_id"] == f"{a['cls']}.{a['species']}.{a['mode']}"
+        assert (a["cls"], a["species"], a["mode"]) == (r["cls"], r["species"], r["mode"]), \
+            f"{r['file']} is registered under a key its own metadata contradicts"
+        assert isinstance(a["version"], int), "a model version is an int; a release is dotted"
+        assert a["release"].count(".") == 2, f"{r['file']} release {a['release']!r} is not dotted"
+    assert len({r["model_id"] for r in recs}) == len(recs), "two artifacts share a model_id"
+
+
+def test_a_cell_with_no_shipped_artifact_refuses_by_name(monkeypatch):
+    """A `(cls, species, mode)` that was never fitted must not serve a neighbour's coefficients.
+
+    **From 1.15.0 all eight cells ship**, so the empty-key path has to be produced rather than
+    found: the key is removed here. A full registry is not a reason to stop testing the refusal --
+    a cell can leave again, and that branch is the only thing standing between a withdrawn fit and
+    a silent score from the neighbouring one. An unknown mode is a different error again -- a typo,
+    not a gap -- and needs no monkeypatching.
+    """
+    import pytest
+
+    from mhcmatch import rank as R
+
+    assert "pathogen" in R.AGGREGATE_MODES
+    for cls, species in (("mhc2", "human"), ("mhc1", "mouse"), ("mhc2", "mouse")):
+        monkeypatch.setitem(R.__dict__, "AGGREGATE_ARTIFACTS",
+                            {k: v for k, v in R.AGGREGATE_ARTIFACTS.items()
+                             if k != (cls, species, "pathogen")})
+        monkeypatch.setitem(R.__dict__, "_AGG", {})
+        with pytest.raises(ValueError, match="pathogen"):
+            R.aggregate(cls, species, "pathogen")
+        monkeypatch.undo()
+    with pytest.raises(ValueError, match="not one of"):
+        R.aggregate("mhc1", "human", "tumour")
+
+
+def test_score_features_computes_every_fitted_column_and_scores_nothing():
+    """The bootstrap a refit needs: the design matrix without an artifact to score it with.
+
+    Until 1.10.0 only scoring could ask for the columns -- `_finish` drives every one off
+    `a["features"]` -- so a `(cls, species)` with no fitted artifact could not be *measured*, which
+    is exactly what fitting one requires. `score="features"` supplies `FEATURES_ONLY` in the
+    artifact's place: every fitted column on the row, `score` NaN, and no model name claimed.
+    """
+    import math
+
+    from mhcmatch import rank as R
+
+    rows = [R.Ranked(peptide=p, allele="H-2-Kb", presentation=2.3, binder=2.1, occupancy=0.77,
+                     d_occupancy=0.12, wt_absent=0.0, expression=3.0, gene="Trp53")
+            for p in ("SIINFEKL", "SIYRYYGL", "KAVYNFATC")]
+    for r in rows:
+        r.components.update({c: 1e-3 for c in R.CHANNEL_COLUMNS})
+
+    done = R._finish(list(rows), None, score="features", expr_floor=0.7174,
+                     cls="mhc1", species="mouse")
+
+    assert len(done) == len(rows)
+    for r in done:
+        assert math.isnan(r.score), "a features run must score nothing at all"
+        assert r.components["model"] == "", "no artifact was used, so none may be named"
+        for name in R.FEATURES_ONLY["features"]:
+            v = r.components.get(name)
+            assert v is not None and v == v, f"{name} is missing on a features run"
+
+    # and it is the same set of columns the CLI emits under --score aggregate
+    assert set(R.FEATURES_ONLY["features"]) <= set(R.columns(score="features"))
+    assert R.columns(score="features") == R.columns(score="aggregate")
+
+
+def test_every_shipped_artifact_agrees_on_the_corpus_geometry_the_defaults_assume():
+    """`mimicry.corpus_geometry()` and `luksza.shape()` read `aggregate()` **bare** when no
+    artifact is passed, so they answer with the human class-I one whatever species is running.
+
+    That is safe only while all three shipped fits were built on the same face, k and kernel --
+    which they were, deliberately, so the mouse coefficients compare to the human ones term by
+    term. It stops being safe the moment a refit moves one, and the failure would be silent: a
+    mouse `C_corpus_*` column built under one geometry and interpreted under another is a
+    different feature, not a smaller effect. Fail here rather than there.
+    """
+    from mhcmatch import rank as R
+
+    geo = {}
+    for (cls, species, mode) in R.AGGREGATE_ARTIFACTS:
+        a = R.aggregate(cls, species, mode)
+        if not any(c.startswith("C_corpus_") for c in a["features"]):
+            # A fit with no corpus block declares no corpus geometry, and inventing one for it
+            # would assert agreement about an axis it does not use. Both class-II artifacts are
+            # in this branch; see `rank.TERMS_MHC2_EXPECTED`.
+            assert "corpus_shapes" not in a, f"{cls}.{species} declares a geometry it never uses"
+            continue
+        geo[f"{cls}.{species}.{mode}"] = (a["corpus_k"], a["corpus_mask"], a["corpus_kernel"],
+                                          dict(a["corpus_shapes"]))
+    assert geo, "no corpus-carrying artifact resolved at all"
+    # **The face, k and kernel must agree across every corpus-carrying fit**; the SHAPES agree on
+    # the channels two fits share. A fit may legitimately carry fewer channels than another --
+    # `mhc1.human.pathogen` drops `C_corpus_viral`, because 100 % of both its classes are exact
+    # members of the deposit that table is counted from -- so requiring identical kappa DICTS
+    # would forbid that rather than check it. Compare per channel instead.
+    assert len({g[:3] for g in geo.values()}) == 1, {k: v[:3] for k, v in geo.items()}
+    shapes = {k: v[3] for k, v in geo.items()}
+    for comp in {c for d in shapes.values() for c in d}:
+        vals = {mid: d[comp] for mid, d in shapes.items() if comp in d}
+        assert len(set(vals.values())) == 1, f"{comp} kappa disagrees across fits: {vals}"

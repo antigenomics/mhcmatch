@@ -1,0 +1,190 @@
+{
+ "model": "EPIC",
+ "version": 2,
+ "generator": "bench/pathogen/fit_pathogen.py",
+ "model_id": "mhc2.human.pathogen",
+ "release": "1.15.0",
+ "species": "human",
+ "cls": "mhc2",
+ "mode": "pathogen",
+ "features": [
+  "binder",
+  "C_phys_buried",
+  "C_phys_charge"
+ ],
+ "coef": [
+  0.29474385318555346,
+  -0.11427065957246979,
+  -0.009411120806239763
+ ],
+ "sd": [
+  0.03460076802988183,
+  0.029345800797097733,
+  0.02855415937905101
+ ],
+ "boot_sd": [
+  0.03439874051148203,
+  0.029829225471386268,
+  0.027954136593839673
+ ],
+ "z": [
+  8.518419386847352,
+  -3.89393563878383,
+  -0.32958843863371823
+ ],
+ "p": [
+  1.6174556082528964e-17,
+  9.863082884557689e-05,
+  0.7417109595537634
+ ],
+ "ci95": [
+  [
+   0.22283691224856164,
+   0.36128749469410826
+  ],
+  [
+   -0.17816346204318154,
+   -0.05495604780893235
+  ],
+  [
+   -0.06526682712465455,
+   0.043277575411379665
+  ]
+ ],
+ "sign_stability": [
+  1.0,
+  1.0,
+  0.6425
+ ],
+ "mu": [
+  -1.0080726647369747,
+  0.7367944142965014,
+  0.0006689334983639583
+ ],
+ "sigma": [
+  0.809627596763087,
+  0.03513031629053194,
+  0.5013283252146706
+ ],
+ "intercept": null,
+ "intercept_fitted": 0.626858478569379,
+ "peptide_nm": 10.0,
+ "allele_policy": {
+  "kind": "panel",
+  "select": "presentation",
+  "source": "record",
+  "n": 80
+ },
+ "phys_scale": "Rose",
+ "phys_scale_charge": "ATCHLEY:AF5",
+ "phys_per_residue": true,
+ "expression": null,
+ "blocks": [
+  [
+   "presentation",
+   [
+    "binder"
+   ]
+  ],
+  [
+   "physchem",
+   [
+    "C_phys_buried",
+    "C_phys_charge"
+   ]
+  ]
+ ],
+ "fit": {
+  "rows": 7946,
+  "positives": 5148,
+  "peptides": 7946,
+  "alleles": 80,
+  "arm": "tcell",
+  "deposit": "immunogenicity/pathogen_tcell_mhc2_human.tsv.gz",
+  "per_group_intercept": false,
+  "intercepts": 1,
+  "tau": 0.25,
+  "seed": 17,
+  "iters": 5,
+  "n_boot": 400,
+  "n_boot_converged": 400,
+  "bootstrap_unit": "row",
+  "cv_folds": 5,
+  "cv_unit": "row",
+  "holdout": null,
+  "imputed": {},
+  "auroc": 0.5824045118451087,
+  "auprc": 0.7122567473365958,
+  "prevalence": 0.6478731437201108,
+  "ppv_at_prevalence": 0.6879162388556503,
+  "cv_auroc_mean": 0.5818043350338615,
+  "cv_auroc_sd": 0.01002189179627492,
+  "cv_auprc_mean": 0.7135070332974817,
+  "cv_auprc_sd": 0.015285546500299412,
+  "gof": {
+   "auroc": 0.5824045118451087,
+   "auprc": 0.7122557882174582,
+   "prevalence": 0.6478731437201108,
+   "auprc_lift": 1.09937538717481,
+   "mcfadden_r2": 0.013566898104066527,
+   "deviance": 10170.11311258983,
+   "null_deviance": 10309.987664690874,
+   "null": "single intercept",
+   "waic": 10179.796901208078,
+   "lppd": -5084.86590605816,
+   "p_waic": 5.032544545878777,
+   "n": 7946,
+   "kish_n_eff": 6578.543620549125,
+   "kish_frac": 0.8279063202301944,
+   "weighted": true
+  },
+  "uncertainty": {
+   "kind": "sandwich",
+   "cluster": null,
+   "prior_weights": true,
+   "note": "V = S^-1 J S^-1, J = sum_i pw_i^2 (y-mu)^2 x x'; the Laplace sd reports the precision of an unweighted design of the same row count, which a reweighted one does not have"
+  },
+  "candidates_per_peptide": 1.91,
+  "allele_balance": {
+   "variable": "netmhcpan_best_allele",
+   "tool": "NetMHCpan-4.2/NetMHCIIpan-4.3",
+   "target": "pooled",
+   "estimator": "weighted GLM (prior weights), no subsampling",
+   "allotypes": 82,
+   "w_min": 0.4208067249418365,
+   "w_max": 7.091798751200768,
+   "table": "nmbest_mhc2_human.tsv"
+  }
+ },
+ "posterior": {
+  "post_mean": [
+   0.29452594397523474,
+   -0.11570429435807524,
+   -0.009768302826144337
+  ],
+  "post_sd": [
+   0.03435903181981457,
+   0.029710147014271444,
+   0.02829779828967082
+  ],
+  "ci95": [
+   [
+    0.2289875603395648,
+    0.36318616288332
+   ],
+   [
+    -0.17467621531555527,
+    -0.05859317307026032
+   ],
+   [
+    -0.06833972215712732,
+    0.04503572214730562
+   ]
+  ],
+  "p_sign": [
+   1.0,
+   1.0,
+   0.636
+  ]
+ }
+}

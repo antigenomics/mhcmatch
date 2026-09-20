@@ -1,0 +1,152 @@
+"""Unit tests for mhcmatch.mimics — molecular-mimicry annotation of strong binders.
+
+Self-contained: uses tiny synthetic reference sets (no compendium download). The scan itself goes
+through seqtree's find_mimics, so it needs the compiled seqtree core (present in the dev venv).
+"""
+import os
+
+import pytest
+
+from mhcmatch import mimics as M
+
+
+def test_hamming():
+    assert M._hamming("KLINSQINL", "KLINSQINL") == 0
+    assert M._hamming("KLINSQINL", "KLINSQISL") == 1          # one substitution
+    assert M._hamming("KLINSQINL", "KLINSQINLL") > 100        # different length -> sentinel
+
+
+def test_scan_finds_exact_and_near_mimics():
+    # find_mimics excludes the exact query, so: a NEAR (1-sub) self mimic (tolerance flag) and an
+    # EXACT viral match (caught by membership, not find_mimics).
+    binder = "KLINSQINL"
+    self_set = ["KLINSQISL", "AAAAAAAAA", "GILGFVFTL"]        # 1-sub near-self mimic
+    foreign = {"viral": ["KLINSQINL", "MMMMMMMMM"]}           # exact viral match
+    res = M.scan([(binder, "HLA-A*02:01")], self_set, foreign, cls="mhc1", max_subs=2, near_subs=2)
+    by_cat = {r.category: r for r in res}
+    assert "thymus" in by_cat and by_cat["thymus"].n_exact == 0      # self_set -> 'thymus' category
+    assert by_cat["thymus"].top_subs == 1 and by_cat["thymus"].n_near == 1
+    assert "viral" in by_cat and by_cat["viral"].n_exact == 1 and by_cat["viral"].top_subs == 0
+    assert all(r.significant for r in res)
+
+
+def test_patient_summary_counts():
+    binder = "KLINSQINL"
+    res = M.scan([(binder, "HLA-A*02:01")], ["KLINSQISL"], {"viral": ["KLINSQINL"]},
+                 cls="mhc1", max_subs=2, near_subs=2)
+    s = M.patient_summary(res, [(binder, "HLA-A*02:01")])
+    assert s["n_strong_binders"] == 1
+    assert s["n_tolerance_risk"] == 1        # the near thymus/self mimic = a tolerance flag
+    assert s["n_foreign_mimic"] == 1         # the exact viral mimic
+
+
+def test_write_table(tmp_path):
+    res = M.scan([("KLINSQINL", "HLA-A*02:01")], ["KLINSQISL"], {"viral": ["KLINSQINL"]},
+                 cls="mhc1", max_subs=2, near_subs=2)
+    out = tmp_path / "m.tsv"
+    M.write_table(res, str(out))
+    lines = out.read_text().splitlines()
+    assert lines[0].split("\t") == list(M.NATIVE_COLUMNS)
+    assert any("KLINSQINL" in ln for ln in lines[1:])
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(pytest.main([__file__, "-v"]))
+
+
+def test_neighbours_batches_and_excludes_the_query():
+    """The fast path: same-length hits within max_subs, nearest first, query never its own mimic."""
+    got = M.neighbours(["GILGFVFTL", "SIINFEKL"],
+                       {"viral": ["GILGFVFTL", "GILGFVFTA", "AALGFVFTL", "DDDDDDDDD",
+                                  "SIINFEKL", "SIINFEKA"]})
+    assert got["GILGFVFTL"]["viral"] == [(1, "GILGFVFTA"), (2, "AALGFVFTL")]
+    assert got["SIINFEKL"]["viral"] == [(1, "SIINFEKA")]      # 9-mers cannot match an 8-mer
+    # a peptide with no neighbour gets an empty dict, not a missing key
+    assert M.neighbours(["WWWWWWWWW"], {"viral": ["DDDDDDDDD"]}) == {"WWWWWWWWW": {}}
+
+
+def test_neighbours_deduplicates_reference_rows():
+    """The compendia repeat a peptide once per allele it was deposited under. Counting rows makes
+    n_near a function of deposit frequency rather than of the sequence neighbourhood -- the defect
+    the batch path fixes (viral IEDB: 57,331 rows, 26,640 distinct peptides)."""
+    got = M.neighbours(["AAAAATMAL"], {"viral": ["EAAAATCAL"] * 3})
+    assert got["AAAAATMAL"]["viral"] == [(2, "EAAAATCAL")]
+
+
+def test_scan_fast_path_agrees_with_find_mimics():
+    """evalue=False must change only e_value/n_hits -- every other field is the same question."""
+    self_set = ["GILGFVFTA", "AILGFVFTL", "DDDDDDDDD", "SIINFEKL"]
+    foreign = {"viral": ["GILGFVFTL", "GILGFVFTM", "KKKKKKKKK"]}
+    binders = [("GILGFVFTL", "HLA-A*02:01")]
+    key = lambda r: (r.binder, r.category, r.n_exact, r.n_near, r.top_mimic, r.top_subs)
+    slow = sorted(key(r) for r in M.scan(binders, self_set, foreign, evalue=True))
+    fast = sorted(key(r) for r in M.scan(binders, self_set, foreign, evalue=False))
+    assert slow == fast
+    assert all(r.e_value != r.e_value                      # nan, i.e. not computed
+               for r in M.scan(binders, self_set, foreign, evalue=False))
+
+
+def test_kinds_covers_every_category_and_says_what_a_hit_argues():
+    """A category with no KINDS entry would be reported without an interpretation."""
+    for cat in list(M.DEFAULT_REFS) + list(M.PROTEOME_REFS):
+        assert cat in M.KINDS, cat
+    # self and thymus are both tolerance references but are deliberately NOT the same category:
+    # one is presented during negative selection, the other is merely encoded
+    assert M.KINDS["thymus"] == M.KINDS["self"] == "self"
+    assert "self" in M.PROTEOME_REFS and "thymus" not in M.PROTEOME_REFS
+    assert M.KINDS["viral"] == M.KINDS["bacterial"] == "foreign"
+
+
+def test_proteome_reference_sets_are_rejected_for_class_II():
+    """15 class-II lengths x several proteomes is tens of millions of windows; fail loudly --
+    and before any download, not after."""
+    with pytest.raises(ValueError, match="class II"):
+        M.load_reference_sets(None, "mhc2", proteomes=("bacterial",))
+
+
+@pytest.mark.skipif(not os.getenv("RUN_HF_FETCH"),
+                    reason="deposit-liveness check; set RUN_HF_FETCH=1 to run it")
+def test_default_reference_paths_exist_in_the_deposit():
+    """Regression: `neoag` pointed at immunogenicity/ after the deposit moved it to neoantigens/,
+    so the documented default set 404'd for anyone without a local mirror.
+
+    Deliberately opt-in: this asserts something about the **deposit**, not about the library, so it
+    is a liveness check rather than a unit test and must not download on a default run."""
+    from mhcmatch.store import fetch_file
+    for name, (rel, _) in M.DEFAULT_REFS.items():
+        assert os.path.exists(fetch_file(rel)), f"{name}: {rel}"
+
+
+# --- species-keyed references (mouse corpus arm, 2026-09-20) -------------------------------------
+
+def test_ref_path_swaps_the_thymus_deposit_per_species():
+    """`thymus` is one file per species; `viral` is one file for both."""
+    assert M.ref_path("thymus", "human") == M.DEFAULT_REFS["thymus"][0]
+    assert M.ref_path("thymus", "mouse").endswith("_mmu.tsv.gz")
+    assert M.ref_path("thymus", "human") != M.ref_path("thymus", "mouse")
+    # viral carries both species in one file, so the path must NOT change
+    assert M.ref_path("viral", "mouse") == M.ref_path("viral", "human") == M.DEFAULT_REFS["viral"][0]
+    # a category with no override still resolves
+    assert M.ref_path("neoag", "mouse") == M.DEFAULT_REFS["neoag"][0]
+
+
+def test_ref_path_rejects_an_unknown_species():
+    import pytest
+    with pytest.raises(ValueError):
+        M.ref_path("thymus", "rat")
+
+
+def test_corpus_memo_key_separates_species():
+    """A human and a mouse run must not collide in the `corpus_counts` memo.
+
+    The key blanked species for every component except `self`, which was harmless only while
+    `thymus` and `viral` were human-only deposits. With a mouse thymic deposit it would mean the
+    first run to touch a channel answers for the other species too.
+    """
+    from mhcmatch import mimicry
+    keys = set()
+    for comp in ("thymus", "viral", "self"):
+        for sp in ("human", "mouse"):
+            keys.add((("mhc1", comp, mimicry.CORPUS_K, sp, "", "")))
+    assert len(keys) == 6, "every (component, species) pair must be a distinct memo key"

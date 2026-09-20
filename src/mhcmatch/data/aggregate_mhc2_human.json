@@ -1,0 +1,351 @@
+{
+ "model": "EPIC",
+ "version": 2,
+ "generator": "bench/mhc2_human/fit_human_mhc2.py",
+ "species": "human",
+ "cls": "mhc2",
+ "mode": "neoantigen",
+ "model_id": "mhc2.human.neoantigen",
+ "release": "1.15.0",
+ "features": [
+  "binder",
+  "log10a",
+  "expr_lvl",
+  "expr_norm",
+  "C_phys_buried",
+  "C_phys_charge"
+ ],
+ "expression_arm": "vanilla",
+ "coef": [
+  0.37731937713714847,
+  -0.11928992223220729,
+  -0.2240414531329872,
+  -0.21198751462967924,
+  0.17095250126822298,
+  -0.1530236041143041
+ ],
+ "sd": [
+  0.16181382964272292,
+  0.33134172038740806,
+  0.5435218438663765,
+  0.44570930892570787,
+  0.08259602054635748,
+  0.11949804347731105
+ ],
+ "sd_laplace": [
+  0.1960565078085965,
+  0.27184728466430824,
+  0.3793207738927042,
+  0.4060019227804475,
+  0.1361920281455104,
+  0.1347045610225146
+ ],
+ "z": [
+  2.331811674998678,
+  -0.3600208331529525,
+  -0.4122032180698652,
+  -0.4756183242854682,
+  2.0697425873232587,
+  -1.280553217955895
+ ],
+ "p": [
+  0.019710600575483756,
+  0.7188315541487764,
+  0.6801904786312081,
+  0.6343463182682142,
+  0.03847645635789996,
+  0.20035064087786855
+ ],
+ "posterior": {
+  "post_mean": [
+   0.37085471218883126,
+   -0.11055010038571901,
+   -0.21367316446492915,
+   -0.2364710645906927,
+   0.16895628053776152,
+   -0.15128796327678037
+  ],
+  "post_sd": [
+   0.164113946182271,
+   0.32703851130093525,
+   0.5488999082453472,
+   0.45263865527632047,
+   0.08115035395560748,
+   0.11852949590181007
+  ],
+  "ci95": [
+   [
+    0.046889688570164366,
+    0.7020820651201851
+   ],
+   [
+    -0.747784795454941,
+    0.5209536201435422
+   ],
+   [
+    -1.3026048215326718,
+    0.859811400705335
+   ],
+   [
+    -1.1203316323758192,
+    0.644651247068513
+   ],
+   [
+    0.0038062082231458305,
+    0.32624882833680957
+   ],
+   [
+    -0.3866817970109173,
+    0.07891578613688052
+   ]
+  ],
+  "p_sign": [
+   0.987,
+   0.636,
+   0.6485,
+   0.696,
+   0.9785,
+   0.898
+  ]
+ },
+ "uncertainty": {
+  "kind": "sandwich",
+  "cluster": "reference_id",
+  "prior_weights": false,
+  "also": "cluster bootstrap, 400 resamples of the same unit"
+ },
+ "boot_sd": [
+  0.3415917047502512,
+  0.41384325445837156,
+  0.7327039787965639,
+  0.6113906975471772,
+  0.12367061690611307,
+  0.15883688449419706
+ ],
+ "z_boot": [
+  1.1045917447351918,
+  -0.28824904344117236,
+  -0.3057734905452077,
+  -0.34673002955417304,
+  1.382321084385023,
+  -0.963400941800106
+ ],
+ "p_boot": [
+  0.2693365297701725,
+  0.7731561098600279,
+  0.7597771138239907,
+  0.7287941478137459,
+  0.1668731348728409,
+  0.33534635386555117
+ ],
+ "ci95": [
+  [
+   0.03216171421827526,
+   1.3341697046629915
+  ],
+  [
+   -0.812590437375974,
+   0.7869723246658491
+  ],
+  [
+   -1.8058611540536573,
+   1.1542460319906114
+  ],
+  [
+   -1.260104768857671,
+   1.2560422548677153
+  ],
+  [
+   0.00027692441091366443,
+   0.49334128880000644
+  ],
+  [
+   -0.42426575903748837,
+   0.19903844382587466
+  ]
+ ],
+ "sign_stability": [
+  0.9775,
+  0.63,
+  0.6475,
+  0.6125,
+  0.975,
+  0.805
+ ],
+ "mu": [
+  -1.0108769559352517,
+  -1.7191569115450087,
+  5.700234951888489,
+  5.676136892446044,
+  0.7298050674460431,
+  -0.15898786042266186
+ ],
+ "sigma": [
+  0.8181263198236797,
+  0.7759231588696646,
+  3.893652774252973,
+  3.8595774451495646,
+  0.033745082171012186,
+  0.5060920867539079
+ ],
+ "intercept": null,
+ "peptide_nm": 10.0,
+ "phys_scale": "Rose",
+ "phys_scale_charge": "ATCHLEY:AF5",
+ "phys_per_residue": true,
+ "expression": {
+  "terms": [
+   "expr_lvl",
+   "expr_norm"
+  ],
+  "formula": "log2(1 + x / c); x is the gene's TPM for expr_lvl and the same gene's median in the disease's target tissue for expr_norm",
+  "floor_quantile": 0.25,
+  "floor_source": "q25 of non-zero gene medians over the GTEx tissue the disease maps to; rows whose disease maps to no tissue take the pooled human floor",
+  "norm_source": "the gene's median in that tissue, falling back to its own pan-tissue median where no tissue resolves -- never to missing",
+  "floor_pooled": 0.18000482022762299,
+  "floor_per_tissue": {
+   "(pooled)": 426,
+   "Artery - Aorta": 11,
+   "B-cell acute lymphoblastic leukemia": 1,
+   "Brain - Cortex": 51,
+   "Brain - Hypothalamus": 10,
+   "Lung": 4,
+   "Muscle - Skeletal": 1,
+   "Pancreas": 369,
+   "Prostate": 40,
+   "Skin - Sun Exposed (Lower leg)": 44,
+   "Small Intestine - Terminal Ileum": 1,
+   "acute myeloid leukemia": 2,
+   "breast cancer": 6,
+   "chronic lymphocytic leukemia": 1,
+   "colorectal cancer": 7,
+   "esophageal cancer": 1,
+   "follicular lymphoma": 3,
+   "gastric adenocarcinoma": 12,
+   "glioblastoma": 40,
+   "head and neck cancer": 1,
+   "head and neck squamous cell carcinoma": 1,
+   "hepatocellular carcinoma": 7,
+   "lymphoma": 1,
+   "melanoma": 27,
+   "ovarian cancer": 2,
+   "pancreatic cancer": 2,
+   "pancreatic ductal adenocarcinoma": 14,
+   "primary biliary cholangitis": 3,
+   "prostate cancer": 15,
+   "skin melanoma": 8,
+   "triple-receptor negative breast cancer": 1
+  },
+  "prefilter_tpm": 0.0,
+  "reference": "expression/reference_expression.tsv.gz"
+ },
+ "blocks": [
+  [
+   "presentation",
+   [
+    "binder",
+    "log10a"
+   ]
+  ],
+  [
+   "expression",
+   [
+    "expr_lvl",
+    "expr_norm"
+   ]
+  ],
+  [
+   "physchem",
+   [
+    "C_phys_buried",
+    "C_phys_charge"
+   ]
+  ]
+ ],
+ "fit": {
+  "rows": 1112,
+  "positives": 656,
+  "screens": [
+   "CEDAR"
+  ],
+  "per_screen_intercept": false,
+  "references": 157,
+  "alleles": 72,
+  "bic": 1595.8030252166852,
+  "deviance": 452.53480282256913,
+  "gof": {
+   "auroc": 0.574316636956091,
+   "auprc": 0.6226596551343682,
+   "prevalence": 0.5899280575539568,
+   "auprc_lift": 1.0554840495570388,
+   "mcfadden_r2": 0.02759489062215348,
+   "deviance": 452.53480282256913,
+   "null_deviance": 465.37682541806566,
+   "null": "per-group intercepts",
+   "waic": 490.3643279539511,
+   "lppd": -226.77271849222856,
+   "p_waic": 18.40944548474699,
+   "n": 1112,
+   "kish_n_eff": 1112.0,
+   "kish_frac": 1.0,
+   "weighted": false,
+   "auroc_pooled": 0.4956842372700043,
+   "auroc_within": 0.574316636956091,
+   "groups_decided": 23
+  },
+  "n_boot": 400,
+  "bootstrap_unit": "reference_id cluster",
+  "clusters": 157,
+  "tau": 0.25,
+  "seed": 20260904,
+  "in_sample_auroc": 0.6020433722213215,
+  "population": {
+   "deposit": "cedar_neoag_mhc2_hsa.tsv.gz",
+   "diseases": 46,
+   "rows_cancer": 143,
+   "rows_healthy_donor": 260,
+   "top": [
+    {
+     "disease": "type 1 diabetes mellitus",
+     "n": 364,
+     "pos": 91
+    },
+    {
+     "disease": "healthy",
+     "n": 260,
+     "pos": 138
+    },
+    {
+     "disease": "rheumatoid arthritis",
+     "n": 63,
+     "pos": 40
+    },
+    {
+     "disease": "(unrecorded)",
+     "n": 53,
+     "pos": 41
+    },
+    {
+     "disease": "multiple sclerosis",
+     "n": 51,
+     "pos": 51
+    },
+    {
+     "disease": "prostatitis",
+     "n": 40,
+     "pos": 40
+    },
+    {
+     "disease": "glioblastoma",
+     "n": 40,
+     "pos": 36
+    },
+    {
+     "disease": "systemic scleroderma",
+     "n": 35,
+     "pos": 35
+    }
+   ]
+  }
+ }
+}

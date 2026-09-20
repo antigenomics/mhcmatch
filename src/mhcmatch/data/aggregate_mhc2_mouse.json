@@ -1,0 +1,279 @@
+{
+ "model": "EPIC",
+ "version": 4,
+ "generator": "bench/epic/fit_mouse.py",
+ "species": "mouse",
+ "cls": "mhc2",
+ "mode": "neoantigen",
+ "model_id": "mhc2.mouse.neoantigen",
+ "release": "1.15.0",
+ "features": [
+  "binder",
+  "log10a",
+  "expr_lvl",
+  "expr_norm",
+  "C_phys_buried",
+  "C_phys_charge"
+ ],
+ "expression_arm": "vanilla",
+ "coef": [
+  0.233990720463219,
+  -0.045607964603815714,
+  0.20085046693295952,
+  -0.390422899693984,
+  0.060350733937271,
+  -0.07479242867109528
+ ],
+ "sd": [
+  0.4173824838137056,
+  0.40011706760754917,
+  0.23822136747634728,
+  0.2590252442335519,
+  0.3318632387451861,
+  0.19709695624620313
+ ],
+ "sd_laplace": [
+  0.27377644901751513,
+  0.269340432152251,
+  0.30339789580400545,
+  0.29244981078591775,
+  0.16114119606736907,
+  0.15857748936433833
+ ],
+ "boot_sd": [
+  0.6946358552435297,
+  0.7232791767359888,
+  0.5571997728458514,
+  0.6062683384964251,
+  0.5039524455152241,
+  0.27618838757659153
+ ],
+ "z": [
+  0.5606146149814432,
+  -0.11398655117744147,
+  0.843125321043679,
+  -1.5072774117026082,
+  0.18185423057240152,
+  -0.37947023685981496
+ ],
+ "p": [
+  0.5750602861591911,
+  0.9092484545591932,
+  0.3991583587013316,
+  0.13173956498972036,
+  0.8556971241781179,
+  0.704338702007481
+ ],
+ "z_boot": [
+  0.33685378993456233,
+  -0.06305720677544616,
+  0.36046401438236864,
+  -0.6439770558730673,
+  0.1197548190793487,
+  -0.2708022206413517
+ ],
+ "p_boot": [
+  0.7362271217347739,
+  0.9497209504933632,
+  0.7185001627599491,
+  0.5195903123864434,
+  0.9046773734360539,
+  0.7865431518508132
+ ],
+ "ci95": [
+  [
+   -1.7203204316759488,
+   0.7479142375217164
+  ],
+  [
+   -0.6815077202709893,
+   1.9777103781558658
+  ],
+  [
+   -0.4950242872070844,
+   1.7234005614033236
+  ],
+  [
+   -2.1780058334424357,
+   0.17134634179976904
+  ],
+  [
+   -1.2214917108083405,
+   0.4092951467120455
+  ],
+  [
+   -0.7426553079316844,
+   0.39259368143557516
+  ]
+ ],
+ "sign_stability": [
+  0.7,
+  0.5525,
+  0.795,
+  0.92,
+  0.525,
+  0.6075
+ ],
+ "posterior": {
+  "post_mean": [
+   0.2429204737940249,
+   -0.06871506032666827,
+   0.19499162363984476,
+   -0.3862387083017826,
+   0.058807246631197824,
+   -0.08828410271119765
+  ],
+  "post_sd": [
+   0.4193361713098207,
+   0.40532488335863015,
+   0.24620709948897349,
+   0.26260230013604197,
+   0.3271441614206838,
+   0.19663802197409921
+  ],
+  "ci95": [
+   [
+    -0.5731815177344628,
+    1.045096852685432
+   ],
+   [
+    -0.8529719112069328,
+    0.7218527009145013
+   ],
+   [
+    -0.29279461391182704,
+    0.6731511293103305
+   ],
+   [
+    -0.8879776224585494,
+    0.1518565662347701
+   ],
+   [
+    -0.5770438135182924,
+    0.6984887729447149
+   ],
+   [
+    -0.47690536777679116,
+    0.3137293202887921
+   ]
+  ],
+  "p_sign": [
+   0.7115,
+   0.5655,
+   0.789,
+   0.931,
+   0.58,
+   0.68
+  ]
+ },
+ "uncertainty": {
+  "kind": "sandwich",
+  "cluster": "reference_id",
+  "prior_weights": false,
+  "also": "cluster bootstrap, 400 resamples of the same unit"
+ },
+ "mu": [
+  -1.573551688034188,
+  -2.445610285425624,
+  2.1561886923076927,
+  2.144028876068376,
+  0.7326686431623931,
+  -0.1352291655982906
+ ],
+ "sigma": [
+  0.44700059302759615,
+  0.6823218891682105,
+  2.126197862073521,
+  2.2150040496830874,
+  0.03187463647117682,
+  0.4671393377403077
+ ],
+ "intercept": null,
+ "peptide_nm": 10.0,
+ "phys_scale": "Rose",
+ "phys_scale_charge": "ATCHLEY:AF5",
+ "phys_per_residue": true,
+ "expression": {
+  "terms": [
+   "expr_lvl",
+   "expr_norm"
+  ],
+  "formula": "log2(1 + x / c); x is this candidate's TPM for expr_lvl and the same gene's median in the model's tissue of origin for expr_norm",
+  "floor_quantile": 0.25,
+  "floor_source": "q of non-zero gene medians over the FANTOM5 mouse tissue the syngeneic model arose in (EBI E-MTAB-3579, 18,830 genes x 35 adult tissues). **A normal-tissue floor, not a tumour's**: there is no mouse TCGA, so the human convention of taking the floor from the tumour's own transcriptome -- roughly half its matched normal -- has no counterpart here, and these floors run high by that much. They also run high in absolute terms because CAGE tag density is not RNA-seq TPM: 0.60-2.00 against the human 0.10-0.40.",
+  "norm_source": "the gene's median in that tissue, falling back to its own pan-tissue median where the model maps to no FANTOM5 context -- never to missing",
+  "floor_pooled": 0.7173833847045898,
+  "floor_per_tissue": {
+   "(pooled)": 136,
+   "colon": 15,
+   "lung": 13,
+   "ovary": 1,
+   "pancreas": 236,
+   "skin": 36,
+   "urinary bladder": 31
+  },
+  "prefilter_tpm": 0.0,
+  "reference": "expression/reference_expression_mmu.tsv.gz"
+ },
+ "blocks": [
+  [
+   "presentation",
+   [
+    "binder",
+    "log10a"
+   ]
+  ],
+  [
+   "expression",
+   [
+    "expr_lvl",
+    "expr_norm"
+   ]
+  ],
+  [
+   "physchem",
+   [
+    "C_phys_buried",
+    "C_phys_charge"
+   ]
+  ]
+ ],
+ "fit": {
+  "rows": 468,
+  "positives": 177,
+  "screens": [
+   "IEDB_neoag"
+  ],
+  "per_screen_intercept": false,
+  "references": 30,
+  "alleles": 7,
+  "bic": 556.2202605464021,
+  "deviance": 334.87540189336676,
+  "gof": {
+   "auroc": 0.49687313811348294,
+   "auprc": 0.4731748794006746,
+   "prevalence": 0.3782051282051282,
+   "auprc_lift": 1.2511064607882243,
+   "mcfadden_r2": 0.013693982329762044,
+   "deviance": 334.87540189336676,
+   "null_deviance": 339.5248491785327,
+   "null": "per-group intercepts",
+   "waic": 361.286692618496,
+   "lppd": -167.28746479282967,
+   "p_waic": 13.355881516418311,
+   "n": 468,
+   "kish_n_eff": 468.0,
+   "kish_frac": 1.0,
+   "weighted": false,
+   "auroc_pooled": 0.557293183450793,
+   "auroc_within": 0.49687313811348294,
+   "groups_decided": 10
+  },
+  "n_boot": 400,
+  "bootstrap_unit": "reference_id cluster",
+  "clusters": 30,
+  "tau": 0.25,
+  "seed": 20260904,
+  "in_sample_auroc": 0.5741044830192614
+ }
+}

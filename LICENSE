@@ -1,0 +1,166 @@
+ISALGO LAB Academic and Non-Commercial Research License
+Version 1.0
+
+Copyright (c) 2026 ISALGO LAB. All rights reserved.
+
+0. DEFINITIONS
+
+   "Software" means the software, source code, scripts, models, trained
+   parameters, and associated documentation files distributed under this
+   license, together with any Modification thereof.
+
+   "Modification" means any change to, adaptation of, translation of, or work
+   derived from the Software, in whole or in part.
+
+   "Output" means any data produced by running the Software, including
+   predictions, scores, embeddings, annotations, labels, rankings, alignments,
+   simulated or synthetic data, and any file derived from them.
+
+   "Model" means any machine-learning or statistical system whose parameters
+   are fitted from data, including neural networks, gradient-boosted trees,
+   regression models, and any set of trained parameters, whether or not
+   distributed together with code.
+
+   "You" means the individual or legal entity exercising the rights granted
+   below.
+
+   "Non-Commercial Use" means use for academic, educational, or scientific
+   research purposes from which no commercial advantage or monetary
+   compensation is sought or obtained, whether directly or indirectly.
+
+   "Commercial Use" means any use that is not Non-Commercial Use, including
+   without limitation: (a) use in or to develop a product, service, or
+   pipeline that is sold, licensed, rented, or otherwise monetized;
+   (b) use by a for-profit entity in connection with its business operations,
+   including internal evaluation, benchmarking, or research and development;
+   (c) use to provide services to third parties for a fee, including
+   consulting, contract research, or hosted or cloud-based provision of the
+   Software's functionality; (d) use in research performed under contract for,
+   or funded directly by, a for-profit entity for that entity's proprietary
+   benefit; and (e) any use described in Section 3.
+
+1. GRANT OF RIGHTS
+
+   Permission is hereby granted, free of charge, to any person obtaining a
+   copy of the Software, to use, copy, modify, merge, publish, and distribute
+   the Software for Non-Commercial Use only, subject to all conditions below.
+   No rights are granted other than those expressly stated here; all rights
+   not expressly granted are reserved by the copyright holder.
+
+2. PROHIBITED USE
+
+   Commercial Use of the Software is prohibited without a separate written
+   license signed by the copyright holder.
+
+3. MACHINE-LEARNING AND MODEL TRAINING
+
+   3.1 The following are permitted under this license only when the resulting
+       Model and its Outputs are themselves put to Non-Commercial Use:
+
+       (a) training, fine-tuning, pre-training, continued training, or
+           retraining any Model on the Software, on its source code, or on
+           its Output;
+       (b) using the Output as training data, labels, targets, weak
+           supervision, reward or preference signal, validation data, or test
+           data for any Model;
+       (c) using the Software or its Output to filter, clean, augment, score,
+           rank, deduplicate, or otherwise curate a data set used to train
+           any Model;
+       (d) distilling, pruning, quantizing, compressing, or otherwise
+           deriving a second Model from any Model distributed as part of the
+           Software, or from that Model's Output;
+       (e) using the Software or its Output to benchmark, evaluate, validate,
+           tune hyperparameters of, or select among Models;
+       (f) embedding the Software, or a Model trained in any of the ways
+           above, in an automated or agent-driven pipeline.
+
+   3.2 Each activity listed in Section 3.1 is Commercial Use, and therefore
+       prohibited without a separate written license, whenever the resulting
+       Model, its Outputs, its parameters, or any system containing it is:
+       sold, licensed, rented, hosted, or otherwise monetized; used by or on
+       behalf of a for-profit entity in connection with its business
+       operations; used to provide services to third parties for a fee; or
+       used to support an application for, prosecution of, or exploitation of
+       a patent or other proprietary right held by a for-profit entity.
+
+   3.3 A Model is subject to this Section regardless of how much of the
+       Software or its Output contributed to that Model, and regardless of
+       whether the Software or its Output can be recovered from the trained
+       parameters. Intermediate steps do not remove a Model from the scope of
+       this Section: a Model trained on a data set that was itself produced,
+       curated, or filtered using the Software remains subject to it.
+
+   3.4 Where a Model is trained partly on the Software or its Output and
+       partly on other material, Section 3.2 applies to that Model in full.
+
+   3.5 Publication of research results, including trained parameters released
+       for Non-Commercial Use under terms no less restrictive than this
+       license, is permitted and encouraged.
+
+4. REDISTRIBUTION
+
+   You may distribute the Software, with or without Modification, provided
+   that You:
+
+   (a) retain this license in full, including the copyright notice of
+       Section 0 and the disclaimer of Section 9, in all copies and in all
+       Modifications;
+   (b) do not sublicense the Software or impose any additional or different
+       terms, so that every recipient receives exactly the rights and
+       restrictions granted here and no more;
+   (c) mark each Modification with a prominent notice stating that the file
+       has been changed, by whom, and on what date;
+   (d) charge no fee for the Software itself, beyond the actual cost of
+       physical media or transmission.
+
+5. ATTRIBUTION
+
+   Any publication, presentation, preprint, poster, or derived work that makes
+   use of the Software must cite this repository, or the corresponding
+   publication where one is specified in the repository. Any released Model
+   covered by Section 3 must state in its accompanying documentation that the
+   Software was used in its construction.
+
+6. NO TRADEMARK OR PATENT RIGHTS
+
+   This license grants no right to use the names, trademarks, or logos of
+   ISALGO LAB, the copyright holder, or any contributor, whether to endorse or
+   promote any work or otherwise, without prior written permission. This
+   license grants no patent rights, express or implied, under any patent owned
+   or controlled by the copyright holder.
+
+7. TERM AND TERMINATION
+
+   The rights granted here apply for as long as You comply with this license
+   and terminate automatically, without notice, upon any breach. Rights may be
+   reinstated in writing by the copyright holder. Sections 2, 3, 6, 8, and 9
+   survive termination. Upon termination You must cease all use of the
+   Software and destroy all copies in Your possession, except copies retained
+   solely for archival purposes required by law or institutional policy.
+
+8. COMMERCIAL AND TRIAL LICENSING
+
+   Parties seeking Commercial Use, use of the Software or its Output in
+   training a Model for Commercial Use, an evaluation or trial license, or any
+   rights beyond those granted here should contact ISALGO LAB. Such licenses are
+   granted only in writing.
+
+9. DISCLAIMER OF WARRANTY AND LIMITATION OF LIABILITY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+   THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+   DEALINGS IN THE SOFTWARE.
+
+   The Software is a research tool. It is not validated for clinical,
+   diagnostic, therapeutic, or any other use on which health, safety, or
+   financial decisions depend.
+
+10. SEVERABILITY
+
+   If any provision of this license is held unenforceable, that provision
+   shall be modified to the minimum extent necessary to make it enforceable,
+   and the remaining provisions shall remain in full effect.

@@ -1,0 +1,12 @@
+{
+ "default": {
+  "human": "posbayes",
+  "mouse": "posbayes"
+ },
+ "criterion": "lowest BIC on chowell_iedb_full_matched",
+ "models": [
+  "posbayes",
+  "physchem_glm",
+  "esm64_glm"
+ ]
+}

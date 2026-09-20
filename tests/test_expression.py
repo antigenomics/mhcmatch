@@ -1,0 +1,432 @@
+"""The expression block: the floor, the resolver, the rescaler, and the two fitted terms.
+
+Split by what each test needs. The transform itself is arithmetic and is checked offline; anything
+that reads a context, a gene or a transcriptome carries ``@pytest.mark.hfdata``, because it needs
+the ``isalgo/pmhc_data`` deposit staged (see ``conftest.py``).
+
+The values pinned here are the ones the module's own docstrings and ``expression/SOURCES.md`` quote.
+A drift between the deposit and the prose describing it is the failure this file exists to catch.
+"""
+import math
+
+import pytest
+
+from mhcmatch import expression as EX
+from mhcmatch.rank import expr_level, expr_norm_level
+
+
+def _rows(tpm=(), gene=()):
+    """Rows as ``rank`` builds them: ``expression`` is ``log1p(TPM)``, ``gene`` may be absent."""
+    n = max(len(tpm), len(gene))
+    tpm = list(tpm) + [None] * (n - len(tpm))
+    gene = list(gene) + [""] * (n - len(gene))
+    return [type("R", (), {"expression": (float("nan") if t is None else math.log1p(t)),
+                           "gene": g})() for t, g in zip(tpm, gene)]
+
+
+# --------------------------------------------------------------------------- the transform
+
+def test_the_abundance_ladder_is_one_unit_per_doubling_above_the_floor():
+    # log2(1 + TPM/0.25) at TPM = 0, 0.25, 0.5, 1, 2, 100.
+    got = expr_level(_rows(tpm=[0.0, 0.25, 0.5, 1.0, 2.0, 100.0]), 0.25)
+    assert got == pytest.approx([0.0, 1.0, 1.5849625007, 2.3219280949, 3.1699250014, 8.6474584024])
+
+
+def test_the_term_is_monotone_on_every_floor_and_a_zero_is_exactly_zero():
+    tpm = [0.0, 0.01, 0.1, 0.5, 1.0, 10.0, 1e3, 43706.0]        # the corpus maximum, uncapped
+    for c in (0.05, 0.1, 0.15, 0.25, 1.0, 2.0):
+        v = expr_level(_rows(tpm=tpm), c)
+        assert v[0] == 0.0
+        assert all(b > a for a, b in zip(v, v[1:]))
+        assert v[-1] < 21.0                                     # logarithmic: no cap is needed
+
+
+def test_a_negative_abundance_raises_and_is_never_read_as_a_zero():
+    # `expression` is log1p(TPM), so a negative abundance arrives as a negative value here.
+    # Reading it as zero would make a broken input indistinguishable from a silent gene.
+    neg = type("R", (), {"expression": -0.5, "gene": ""})()
+    with pytest.raises(ValueError, match=">= 0 TPM"):
+        expr_level([neg], 0.25)
+
+
+def test_a_negative_prefilter_raises_rather_than_being_ignored():
+    with pytest.raises(ValueError, match="prefilter must be >= 0"):
+        expr_level(_rows(tpm=[1.0]), 0.25, prefilter=-1.0)
+
+
+def test_a_row_with_no_abundance_at_all_is_nan_and_is_not_a_measured_zero():
+    v = expr_level(_rows(tpm=[None, 0.0]), 0.25)
+    assert v[0] != v[0] and v[1] == 0.0
+
+
+def test_the_unit_cancels_while_the_floor_is_a_quantile_of_the_same_column():
+    tpm = [0.0, 0.3, 2.0, 91.0]
+    base = expr_level(_rows(tpm=tpm), 0.18)
+    for lam in (1e-3, 7.0, 1e3):
+        assert expr_level(_rows(tpm=[lam * x for x in tpm]), lam * 0.18) == pytest.approx(base)
+
+
+def test_a_floor_of_zero_or_less_raises_rather_than_dividing():
+    for bad in (0.0, -1.0):
+        with pytest.raises(ValueError, match="positive TPM"):
+            expr_level(_rows(tpm=[1.0]), bad)
+
+
+def test_a_declared_prefilter_raises_the_floor_and_a_smaller_one_does_not_lower_it():
+    assert expr_level(_rows(tpm=[1.0]), 0.25, prefilter=1.0) == pytest.approx([1.0])
+    assert expr_level(_rows(tpm=[1.0]), 0.25, prefilter=0.05) == expr_level(_rows(tpm=[1.0]), 0.25)
+
+
+# --------------------------------------------------------------------------- the floor
+
+@pytest.mark.hfdata
+def test_a_tumour_type_gets_its_own_floor_and_it_is_not_its_matched_normals():
+    skcm, lung = EX.context_floor(tumor="SKCM"), EX.context_floor(tissue="Lung")
+    assert skcm == pytest.approx(0.1600, abs=1e-4)
+    assert EX.context_floor(tumor="LUAD") == pytest.approx(0.2000, abs=1e-4)
+    assert EX.context_floor() == pytest.approx(0.1800, abs=1e-4)       # pooled TCGA
+    assert lung == pytest.approx(0.3500, abs=1e-4)
+    # The whole reason the floor moved off the matched normal in v9.
+    assert EX.context_floor(tumor="LUAD") < lung
+
+
+@pytest.mark.hfdata
+def test_the_floor_is_clamped_at_both_ends_so_a_degenerate_input_cannot_divide_by_zero():
+    hi = EX.context_floor(tumor="SKCM", prefilter=1e9, detail=True)
+    assert hi["floor"] == EX.C_MAX and hi["clamped"] is True
+    assert EX.C_MIN <= EX.context_floor(tumor="SKCM") <= EX.C_MAX
+
+
+@pytest.mark.hfdata
+def test_every_deposited_floor_lands_inside_the_clamp_so_the_clamp_never_bites_in_practice():
+    _, ci, _, _ = EX._matrix()
+    for key in ci:
+        v, n = EX._floor_from((key,), 0.25)
+        if n:                                                    # a context that cleared _MIN_GENES
+            assert EX.C_MIN < v < EX.C_MAX, key
+
+
+@pytest.mark.hfdata
+def test_the_deposited_floors_table_still_agrees_with_the_matrix_it_was_built_from():
+    """``toil_floors.tsv`` is what a caption cites; the matrix is what scoring computes from."""
+    import csv
+
+    with open(EX.fetch_reference(file=EX.FLOORS_FILE)) as fh:
+        rows = [r for r in csv.DictReader(fh, delimiter="\t") if r["context"] != "__pooled__"]
+    assert len(rows) >= 86
+    for r in rows:
+        key = f'{r["source"]}|{r["context"]}'
+        for q in ("q05", "q10", "q25"):
+            got, _ = EX._floor_from((key,), float(q[1:]) / 100.0)
+            assert got == pytest.approx(float(r[q]), abs=1e-6), (key, q)
+
+
+@pytest.mark.hfdata
+def test_an_unrecognised_quantile_raises_rather_than_being_clipped_into_range():
+    for bad in (0.0, 1.0, -0.1, 1.7):
+        with pytest.raises(ValueError, match="q must be in"):
+            EX.context_floor(tumor="SKCM", q=bad)
+
+
+# --------------------------------------------------------------------------- the resolver
+
+@pytest.mark.hfdata
+def test_a_free_text_origin_resolves_however_it_was_spelled():
+    for text in ("liver", "Liver", "LIHC", "lihc", "hepatocellular"):
+        codes, tissues = EX.resolve_context(text)
+        assert "LIHC" in codes and "Liver" in tissues, text
+
+
+@pytest.mark.hfdata
+def test_an_organ_that_is_several_studies_returns_all_of_them_and_not_one_of_them():
+    codes, tissues = EX.resolve_context("lung")
+    assert set(codes) == {"LUAD", "LUSC"} and tissues == ("Lung",)
+
+
+@pytest.mark.hfdata
+def test_an_unrecognised_origin_raises_instead_of_reaching_the_pooled_reference():
+    with pytest.raises(ValueError, match="not a TCGA study code"):
+        EX.resolve_context("lvier")
+    with pytest.raises(ValueError, match="empty origin"):
+        EX.resolve_context("")
+
+
+# --------------------------------------------------------------------------- one gene, three ways
+
+@pytest.mark.hfdata
+def test_a_gene_reads_out_in_the_tumour_in_its_matched_normal_and_across_tissues():
+    d = EX.gene_level("PMEL", tumor="SKCM")
+    assert d["found"] is True
+    # A melanocyte lineage antigen: high in melanoma, present in skin, near-silent elsewhere.
+    assert d["tumor"] > d["normal"] > d["pan"] > 0
+
+
+@pytest.mark.hfdata
+def test_a_gene_absent_from_the_reference_is_not_a_gene_measured_at_zero():
+    d = EX.gene_level("NOT_A_REAL_GENE_SYMBOL", tumor="SKCM")
+    assert d["found"] is False and d["pan"] is None
+    silent = EX.gene_level("PMEL", tumor="SKCM")
+    assert silent["found"] is True                                # ignorance and silence differ
+
+
+# --------------------------------------------------------------------------- the rescaler
+
+@pytest.mark.hfdata
+def test_a_whole_transcriptome_recovers_a_known_factor_over_nine_orders_of_magnitude():
+    import numpy as np
+
+    gi, ci, V, _ = EX._matrix()
+    vals = V[:, ci["toil_tcga|SKCM"]]
+    on = vals > 0
+    genes = np.array(list(gi.keys()))[on]
+    ref = vals[on].astype(float)
+    for lam in (1e-3, 1.0, 7.0, 1e3, 1e6):
+        scale, n, fell_back = EX.batch_scale(list(ref * lam), list(genes), tumor="SKCM")
+        assert scale == pytest.approx(lam, rel=1e-9) and not fell_back
+        assert n == ref.size
+
+
+@pytest.mark.hfdata
+def test_a_candidate_sized_list_is_refused_however_many_genes_it_carries():
+    """The gate is coverage, not count: the biggest real screen shares 4,772 and is still wrong."""
+    import numpy as np
+
+    gi, ci, V, _ = EX._matrix()
+    vals = V[:, ci["toil_tcga|SKCM"]]
+    on = vals > 0
+    genes = np.array(list(gi.keys()))[on][:4000]
+    ref = vals[on].astype(float)[:4000]
+    scale, n, fell_back, _spread, cover = EX.batch_scale(list(ref * 7.0), list(genes),
+                                                         tumor="SKCM", detail=True)
+    assert n >= EX.MIN_SHARED                                     # clears the count
+    assert cover < EX.MIN_COVERAGE                                # and is refused anyway
+    assert scale == 1.0 and fell_back is True
+
+
+@pytest.mark.hfdata
+def test_a_negative_value_in_the_submitted_column_raises_rather_than_being_dropped():
+    with pytest.raises(ValueError, match="must be >= 0"):
+        EX.batch_scale([1.0, -2.0], ["PMEL", "TP53"], tumor="SKCM")
+
+
+@pytest.mark.hfdata
+def test_a_negative_prefilter_on_the_floor_raises_rather_than_being_ignored():
+    with pytest.raises(ValueError, match="prefilter must be >= 0"):
+        EX.context_floor(tumor="SKCM", prefilter=-1.0)
+
+
+@pytest.mark.hfdata
+def test_a_column_of_genes_the_reference_has_never_heard_of_falls_back_rather_than_dividing():
+    scale, n, fell_back = EX.batch_scale([1.0, 2.0], ["NOT_A_GENE", "ALSO_NOT_A_GENE"],
+                                         tumor="SKCM")
+    assert scale == 1.0 and n == 0 and fell_back is True
+
+
+# --------------------------------------------------------------------------- the second term
+
+@pytest.mark.hfdata
+def test_the_normal_tissue_term_reads_the_matched_normal_and_falls_back_to_pan_tissue():
+    c = EX.context_floor(tumor="SKCM")
+    matched = expr_norm_level(_rows(gene=["PMEL"]), c, tumor="SKCM")[0]
+    pan = expr_norm_level(_rows(gene=["PMEL"]), c)[0]             # no tumour, no tissue
+    assert matched == pytest.approx(math.log2(1 + EX.gene_level("PMEL", tumor="SKCM")["normal"] / c))
+    assert pan == pytest.approx(math.log2(1 + EX.gene_level("PMEL")["pan"] / c))
+    assert matched > pan > 0                                     # never missing, either way
+
+
+@pytest.mark.hfdata
+def test_a_candidate_with_no_gene_or_an_unknown_one_scores_nan_and_is_never_dropped():
+    c = EX.context_floor(tumor="SKCM")
+    v = expr_norm_level(_rows(gene=["", "NOT_A_REAL_GENE_SYMBOL", "PMEL"]), c, tumor="SKCM")
+    assert len(v) == 3 and v[0] != v[0] and v[1] != v[1] and v[2] == v[2]
+
+
+# --------------------------------------------------------------------------- what a row reports
+
+def test_both_fitted_expression_terms_are_emitted_columns():
+    """`expression` is log1p(TPM) and says nothing about the floor, so neither is recoverable."""
+    from mhcmatch import rank as R
+
+    cols = R.columns(score="aggregate")
+    assert "expr_lvl" in cols and "expr_norm" in cols
+    for f in R.AGGREGATE_FEATURES:
+        assert f in cols or f in ("log10a",), f          # log10a == logit10 of emitted `occupancy`
+    assert "expr_lvl" not in R.columns(score="gate")     # gate does not fit them
+    # the floor the two terms divided by is reported beside them: the value alone cannot say where
+    # it came from -- GTEx Liver's floor is 0.1800 TPM against the artifact's pooled 0.180005
+    assert "expr_floor" in cols and "expr_floor_pooled" in cols
+
+
+def test_an_unresolvable_tumour_reaches_the_caller_and_the_row_names_the_floor(monkeypatch):
+    """`resolve_context` raises `ValueError` to stop an unrecognised context becoming the pooled
+    reference. `rank._finish` caught it, so `rank table --tumor <unlisted>` on a gene-less input
+    scored `expr_lvl` -- a fitted term -- against the artifact's pooled 0.180005 TPM while the seven
+    fitted screens' own floors span 0.140003-0.239999, and nothing on the output row said which had
+    been used. Both halves are pinned here: the guard propagates, and every row records its floor.
+    """
+    from mhcmatch import rank as R
+    from mhcmatch.rank import Ranked, _finish
+
+    chan = {"C_corpus_thymus": 1.2e-3, "C_corpus_self": 2.9e-4, "C_corpus_viral": 2.0e-4}
+
+    def rows():
+        # no gene, so `expr_norm_level` short-circuits and no deposit is read
+        return [Ranked(peptide="SIINFEKL", allele="H2-Kb", presentation=2.0, binder=2.0,
+                       occupancy=0.9, physchem=1.5, expression=3.0, components=dict(chan))]
+
+    def raising(exc):
+        def f(**kw):
+            raise exc
+        return f
+
+    monkeypatch.setattr(EX, "context_floor", raising(ValueError("resolve_context: 'Wilms' is not")))
+    with pytest.raises(ValueError, match="resolve_context"):
+        _finish(rows(), None, tumor="Wilms")
+
+    # a *staging* failure is a different fact and still falls back -- a missing download is not a
+    # reason to refuse to rank -- but the row then says the floor it used was the pooled one
+    pooled = R.aggregate()["expression"]["floor_pooled"]
+    monkeypatch.setattr(EX, "context_floor", raising(OSError("expression matrix not staged")))
+    out, = _finish(rows(), None, tumor="SKCM")
+    assert out.components["expr_floor"] == pytest.approx(pooled)
+    assert out.components["expr_floor_pooled"] == 1.0
+
+    # and a context that does resolve reports its own floor, flagged as not the fallback
+    monkeypatch.setattr(EX, "context_floor", lambda **kw: {"floor": 0.160003, "pooled": False})
+    out, = _finish(rows(), None, tumor="SKCM")
+    assert out.components["expr_floor"] == pytest.approx(0.160003)
+    assert out.components["expr_floor_pooled"] == 0.0
+
+
+@pytest.mark.hfdata
+def test_passing_a_tumour_type_moves_the_floor_off_the_pooled_value():
+    """Both terms divide by one floor, and `--tumor` is what sets it."""
+    pooled = EX.context_floor()
+    assert EX.context_floor(tumor="SKCM") < pooled < EX.context_floor(tumor="LUAD")
+
+
+# --------------------------------------------------------------------------- the mouse deposits
+
+@pytest.mark.hfdata
+def test_the_mouse_tumour_rung_reads_the_syngeneic_deposit_and_not_the_tissue_one():
+    """`expr_lvl` and `expr_norm` stop being one column, which is why this file was added.
+
+    Before 1.10.0 a mouse row with no deposited abundance took the gene's normal-tissue median for
+    both terms -- measured identical on 100% of the 923 class-I rows of the neoantigen deposit.
+    """
+    models = EX.tumor_types(species="mouse")
+    assert models == ["B16F10", "CT26", "E0771", "LLC", "MC38", "Panc02"]
+
+    # three independent melanocytic markers, three orders of magnitude apart from every other model
+    for gene, b16 in (("Tyr", 398.878), ("Dct", 4611.8), ("Pmel", 4636.7)):
+        assert EX.lookup(gene, tumor="B16F10", species="mouse")["median_tpm"] == pytest.approx(
+            b16, rel=1e-3)
+        assert max(EX.lookup(gene, tumor=m, species="mouse")["median_tpm"]
+                   for m in models if m != "B16F10") < 5.0
+
+    # n is animals here (3 replicates), not transcripts as in the FANTOM5 file
+    assert EX.lookup("Tyr", tumor="B16F10", species="mouse")["n"] == 3
+    assert EX.lookup("Tyr", tumor="b16f10", species="mouse") is not None      # case folds
+
+
+@pytest.mark.hfdata
+def test_a_tumour_model_is_not_a_tissue_anywhere_it_could_be_mistaken_for_one():
+    """The two mouse deposits share a table, a key type apart -- so this is the invariant.
+
+    They are in different units (length-normalised RNA-seq against CAGE tag density), so a model
+    that reached `tissues()`, `safety_profile()` or the floor's quantile would put a number from
+    the wrong distribution somewhere nothing downstream could see it.
+    """
+    models = set(EX.tumor_types(species="mouse"))
+    assert models
+    assert not models & set(EX.tissues(species="mouse"))
+    assert len(EX.tissues(species="mouse")) == 35
+    assert not models & {c for c, _ in EX.safety_profile("Trp53", species="mouse")}
+
+    # and the floors are taken from disjoint row sets, so they are free to differ
+    assert EX.context_floor(tumor="B16F10", species="mouse") != EX.context_floor(
+        tissue="skin", species="mouse")
+
+
+@pytest.mark.hfdata
+def test_an_unknown_mouse_model_raises_instead_of_reading_as_not_expressed():
+    """`None` from a lookup means "this gene is not in this tumour", so a bad key must not make one."""
+    for bad in ("SKCM", "Renca", "B16-F10"):
+        with pytest.raises(ValueError, match="not a mouse tumour model"):
+            EX.lookup("Trp53", tumor=bad, species="mouse")
+
+    # tissue_floor is the one function whose whole question is the matched-normal map, and that map
+    # is TCGA-keyed with no mouse equivalent -- so it still refuses, and says what to pass instead
+    with pytest.raises(ValueError, match="matched-normal map"):
+        EX.tissue_floor(tumor="B16F10", species="mouse")
+
+
+@pytest.mark.hfdata
+def test_the_human_tumour_half_is_still_peptide_keyed_and_unmoved():
+    """The mouse deposit is folded into `load` under its own key type; human must not notice."""
+    assert EX.lookup("AAAAAFTAF", tumor="SKCM")["median_tpm"] == pytest.approx(840.557, rel=1e-5)
+    assert EX.lookup("PMEL", tumor="SKCM") is None                # a gene is not a TCGA key
+    assert "B16F10" not in EX.tumor_types()
+    assert len(EX.tumor_types()) == 19
+    assert EX.context_floor(tumor="SKCM") == pytest.approx(0.16, abs=5e-3)
+
+
+@pytest.mark.hfdata
+def test_the_mouse_tumour_and_tissue_floors_are_finally_one_scale():
+    """The point of the harmonised compendium, as a number rather than a claim.
+
+    Before it, a mouse `expr_lvl` divided by a floor taken from RNA-seq TPM (0.9964) and `expr_norm`
+    by one taken from CAGE tag density (0.8000), and nothing in either return value said the two
+    were different quantities. The matrix puts all 68 contexts on one scale.
+    """
+    tum = [EX.context_floor(tumor=m, species="mouse") for m in ("B16F10", "P815", "Renca", "MC38")]
+    tis = [EX.context_floor(tissue=t, species="mouse") for t in ("thymus", "lung", "skin")]
+    pooled = EX.context_floor(species="mouse")
+
+    # every floor within a factor of 2 of the pooled one, both halves alike
+    assert all(0.5 * pooled <= f <= 2.0 * pooled for f in tum + tis), (tum, tis, pooled)
+    # and the two halves' spreads overlap rather than sitting apart
+    assert min(tum) < max(tis) and min(tis) < max(tum), (tum, tis)
+
+
+@pytest.mark.hfdata
+def test_the_matrix_carries_models_the_tsv_deposit_never_had():
+    """`P815`, `Renca` and `EMT6` are named by the neoantigen deposit and absent from GSE245293."""
+    _tis, mat = EX._mouse_matrix_contexts()
+    models = {k.split("|", 1)[1] for k in mat.values()}
+    assert {"P815", "Renca", "EMT6"} <= models
+    assert len(models) == 33 and len(_tis) == 35
+
+    # they resolve all three rungs, on the scale the tissues use
+    d = EX.gene_level("Psmb11", tumor="Renca", tissue="thymus", species="mouse")
+    assert d["found"] and d["normal"] > 50 and d["tumor"] < 1.0      # thymus-restricted, correctly
+
+    # `tumor_types` still reports the TSV deposit's six -- the same split human has, where
+    # `tumor_types()` is 19 TCGA codes and the matrix carries 33
+    assert len(EX.tumor_types(species="mouse")) == 6
+
+
+@pytest.mark.hfdata
+@pytest.mark.parametrize("species,known", [("human", "TP53"), ("mouse", "Trp53")])
+def test_the_resolution_chain_ends_at_the_pan_tissue_median_not_at_nan(species, known):
+    """A row that names a gene and no context resolves; only a nameless or unknown gene is `nan`.
+
+    The chain used to return `nan` the moment neither a tissue nor a tumour was given, so
+    `expr_lvl` was missing on every such row *even though the gene was in hand and the matrix
+    resolves it* -- 485 of 968 mouse class-I neoantigen rows and 289 of 522 class-II. That made the
+    missing-indicator a proxy for which publication deposited a TPM rather than for anything about
+    the gene, which is the one thing an imputation flag must not be.
+    """
+    from mhcmatch.rank import _expression_for as F
+
+    v, imputed = F(known, None, None, None, species=species)
+    assert v == v and v > 0.0, f"{known} should resolve to its pan-tissue median, got {v}"
+    assert imputed is True, "a pan-tissue median is not this candidate's own measurement"
+
+    for absent in ("", "NOT_A_REAL_GENE_SYMBOL"):
+        v, imputed = F(absent, None, None, None, species=species)
+        assert v != v and imputed is True, f"{absent!r} must stay nan, got {v}"
+
+    # A deposited abundance still wins outright, and is the only case that is not imputed.
+    v, imputed = F(known, 12.5, None, None, species=species)
+    assert imputed is False and abs(v - math.log1p(12.5)) < 1e-12

@@ -1,0 +1,60 @@
+name: ci
+
+on:
+  push:
+    branches: [dev, master]
+  pull_request:
+    branches: [dev, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install (pulls seqtree from PyPI; pure-Python package, no build)
+        run: pip install -e ".[test]"
+      - name: No shipped artifact is stale for this version
+        # Builds nothing, exits 1 if any of the 40 files under src/mhcmatch/data is stamped behind
+        # __version__. Kept as a separate step even though `test_no_shipped_artifact_is_stale` now
+        # calls `_build.check()` over the same 40: this one fails BEFORE the suite, so a stale
+        # artifact is named in one line instead of found inside a 700-test run. The two older
+        # pytest guards cover the anchor models and the corpus tables only, and both carry
+        # @pytest.mark.hfdata, so conftest skips them in CI. publish.yml runs this again after a
+        # real rebuild, as the last gate before the wheel is cut.
+        run: mhcmatch build --check
+      - name: Run tests
+        run: pytest -q
+      # **The notebooks' own stated lint gate, which nothing ran until 1.17.0.** They are plain
+      # Python with `@app.cell` decorators, so a name bound in two cells is a real error that an
+      # import check cannot see -- and marimo reports it at the top of the file rather than where
+      # the mistake is, which is why it wants a linter and not a traceback. Two of the six notebooks
+      # hit exactly that while being written.
+      #
+      # EXECUTING them is deliberately not in CI: every one fetches from HuggingFace, and a network
+      # dependency inside a required check is a flaky check. `python notebooks/<name>.py` is the
+      # execution gate and is run by hand before a release.
+      # **The gate before anything is pushed.** This repo is public and carries integrations
+      # written against a private clinical pipeline; the boundary is one-directional. Cheap, and
+      # first, so a leak fails in seconds rather than after the suite.
+      # The name screens need `$MHCMATCH_PRIVACY_TOKENS`, whose file lives OUTSIDE this public
+      # repo on purpose -- so CI runs the structural screens (Cyrillic, variant-table shapes)
+      # and the step is named for what it actually checks. `--require-tokens` is the operator's
+      # pre-push invocation; a positive-control test proves the name screens still fire.
+      - name: Privacy screens (structural; name screens need a local token file)
+        run: python tools/privacy_check.py
+      - name: Lint the notebooks
+        run: |
+          pip install marimo
+          marimo check notebooks/*.py

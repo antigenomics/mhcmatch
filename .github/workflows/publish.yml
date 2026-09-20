@@ -1,0 +1,104 @@
+name: Publish To PyPI
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # mhcmatch is pure Python (hatchling) -> one sdist + one universal wheel via `build`.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build tooling
+        run: python -m pip install --upgrade pip build twine
+      - name: Regenerate vendored models for this release
+        # Vendored artifacts are version-guarded: one built under an older version is ignored at
+        # runtime and refitted. Rebuild here so the PUBLISHED wheel can never ship a stale one.
+        # Editable install first, so the regen writes into src/mhcmatch/data that `build` then
+        # packages; inputs come from the public isalgo/pmhc_data panel over HF. ~6.5 min for the
+        # two in-process families (anchor ~250 s, corpus ~130 s). A build hook cannot do this --
+        # `python -m build` runs in an isolated env with no numpy, no seqtree and no panel.
+        #
+        # `mhcmatch build` is the supported entry point and rebuilds every target that has an
+        # in-process builder; `--check` then fails the release if ANY of the 43 shipped artifacts
+        # is still stamped behind __version__, including the ones whose generator lives in the
+        # benchmark repo and which this step cannot rebuild. ci.yml's staleness test is the
+        # earlier guard; this is the last one before the wheel is cut.
+        run: |
+          pip install -e ".[test]"
+          mhcmatch build
+          mhcmatch build --check
+          git diff --stat -- src/mhcmatch/data/ || true
+      - name: Build sdist + wheel
+        run: python -m build
+      - name: Check distributions
+        run: python -m twine check dist/*
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+
+  smoke:
+    name: Smoke-test wheel (py${{ matrix.python-version }})
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+      - name: Install built wheel (deps incl. seqtree resolved from PyPI)
+        run: |
+          pip install --upgrade pip
+          pip install dist/*.whl
+      - name: Import mhcmatch
+        run: python -c "import mhcmatch; print('[OK] mhcmatch', mhcmatch.__version__)"
+
+  publish:
+    name: Publish To PyPI
+    needs: [build, smoke]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write  # required for OIDC trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+      - name: Validate package version matches release tag
+        if: github.event_name == 'release'
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import tomllib
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          tag = "${{ github.event.release.tag_name }}"
+          norm = tag[1:] if tag.startswith("v") else tag
+          if version != norm:
+              raise SystemExit(f"Version mismatch: pyproject.toml={version}, tag={tag}")
+          print(f"Version check passed: {version} == {tag}")
+          PY
+      - name: List distributions
+        run: ls -R dist/
+      - name: Publish distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

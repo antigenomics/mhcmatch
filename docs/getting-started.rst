@@ -1,0 +1,110 @@
+Getting started
+===============
+
+Install
+-------
+
+**This documentation is built from mhcmatch** |release|.
+
+.. code-block:: bash
+
+   pip install mhcmatch
+   mhcmatch bootstrap       # optional: pre-fetch the ligand panel (~16 MB)
+
+Every reference table is fetched on first use, so nothing above is required. ``bootstrap`` only
+decides *when* the download happens, which is what a compute node with no outbound network needs
+decided in advance --- the four staging tiers are in :ref:`bootstrap-tiers`.
+
+From a checkout
+~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   bash setup.sh            # repo-local .venv + editable install (uses sibling ../seqtree if present)
+   bash setup.sh --tests    # + pytest
+   bash setup.sh --logo     # + logomaker/matplotlib for rendering logos
+
+Quickstart
+----------
+
+Every command line behind these calls is in :doc:`cli`; the recognition axis is
+:doc:`complementarity`, and the shipped neoantigen scorer end to end is :doc:`neoantigen`.
+
+.. code-block:: python
+
+   import mhcmatch
+
+   # build from the isalgo/pmhc_data table (full or shortlist tier; auto-fetched from HF, cached)
+   store = mhcmatch.Store.from_pmhc(tier="shortlist", species="human")
+
+   store.restriction("NLVPMVATV")                 # ranked presenting alleles + binder flags
+   store.is_binder("NLVPMVATV", "HLA-A*02:01")
+   store.scan_protein(my_protein, cls="mhc1")      # presented peptides in a protein
+   store.decompose("NLVPMVATV", cls="mhc1")        # (tcr_facing, presentation) with X masks
+
+   # similarity at scale
+   mhcmatch.search.search("NLVPMVATV", big_peptide_set, mode="tcr")
+   mhcmatch.search.find_mimics("EAAGIGILTV", self_set, bacterial_sets={...})
+
+   # near-exact source of a neoantigen (proteome auto-fetched from HF, cached)
+   pm = mhcmatch.Proteome.from_hf("human")          # or from_fasta(path) to override
+   pm.find_source("NLVPMVATV", max_subs=1)
+
+   # diffusion-powered forward scorer (rescues rare alleles)
+   am = store.anchor_model("mhc1")
+   am.score("NLVPMVATV", "HLA-A*02:01")            # am.score(..., raw=True) disables borrowing
+
+   # calibrated, cross-allele-comparable presentation: %rank / P(present) / band
+   store.restriction("NLVPMVATV", diffuse=True, calibrated=True)
+
+   # quantitative affinity: IC50 (nM) + neoantigen amplitude / DAI vs the wild-type peptide (Potts head)
+   aff = store.affinity_model("mhc1")
+   aff.predict_ic50("NLVPMVATV", "HLA-A*02:01")
+
+   # generalized binder score: calibrated combined %rank (Fisher of presentation %rank x affinity
+   # %rank), ranked over alleles -- a soft-AND, strong only when a peptide is both presented and binds
+   store.binder_score("NLVPMVATV", alleles="HLA-A*02:01,HLA-B*07:02", cls="mhc1")
+   aff.amplitude("NLVPMVATL", "NLVPMVATV", "HLA-A*02:01")     # (wild-type, mutant, allele)
+
+   # physicochemical immunogenicity -- no store, no download (see "Immunogenicity features")
+   from mhcmatch import complement, immuno
+   immuno.features("GILGFVFTL")                    # 141 features = 20 scales x 7 statistics + length
+   complement.score(["GILGFVFTL"])                 # the shipped recognition log-odds (vectorised)
+
+Pipeline integration
+--------------------
+
+Score a variant peptide-window FASTA (the neoantigen-pipeline schema) into the pipeline's
+``.scored.csv`` plus mhcmatch's richer native table. The native table carries, per predicted binder,
+the presentation ``percent_rank`` / ``p_present`` / ``band``, the Potts ``affinity_nm`` / ``affinity_rank``,
+the WT counterpart + agretopicity / amplitude / DAI, and the
+**generalized binder score**
+(``binder_rank`` = calibrated combined %rank, plus ``binder_band``):
+
+.. code-block:: bash
+
+   mhcmatch predict sample.windows.fasta --alleles 'HLA-A*02:01,HLA-B*07:02' \
+       --cls mhc1 --species human --scored-csv out.scored.csv --native out.native.tsv
+
+A ready nf-core-style Nextflow module lives in ``integrations/nextflow/mhcmatch/`` — nine processes
+(``MHCMATCH_ALLELES``, ``_PREDICT``, ``_RANK``, ``_RERANK``, ``_NEOAG``, ``_MIMICRY``,
+``_CASSETTE_SELECT``, ``_CASSETTE``, ``_CASSETTE_SCORE``), two subworkflows chaining them into a
+**rerank** and a **de novo** arm, and ``pipeline.nf``, which runs either or both over a directory of
+files. ``MHCMATCH_PREDICT`` is the drop-in for MHCflurry (class I) and TLimmuno2 (class II); species
+follows ``params.genome``, mirroring the ``arda`` module. :doc:`pipeline` is the cohort story and
+that directory's ``README.md`` is the per-process contract.
+
+Data
+----
+
+- **Reference ligands** — ``isalgo/pmhc_data`` (full / shortlist tiers); pass the path to
+  :meth:`mhcmatch.store.Store.from_pmhc` or set ``MHCMATCH_PMHC``.
+- **Pseudosequences** — 34-mer groove pseudosequences vendored in ``src/mhcmatch/data/``.
+- **Reference proteomes** — :meth:`mhcmatch.proteome.Proteome.from_hf` auto-fetches the human (UP000005640),
+  mouse (UP000000589), and pathogen proteomes from HF on first use (cached);
+  ``mhcmatch bootstrap --proteome human,mouse`` pre-fetches them. Pass your own FASTA to :meth:`mhcmatch.proteome.Proteome.from_fasta` to override.
+- **The proteome search index** — nothing to fetch and nothing to stage. Peptide origin search
+  builds one :class:`seqtree.TextIndex` per proteome on first use, in **0.7 s / 0.6 GB** for the
+  human proteome, and that one index answers every peptide length and every substitution radius.
+  The per-length window indexes this replaced were GB-scale apiece and had a cache directory, a
+  build marker and a staging flag to go with them; none of that exists now.
