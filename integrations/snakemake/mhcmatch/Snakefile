@@ -1,0 +1,50 @@
+# mhcmatch as a Snakemake module.
+#
+# Two arms and a cassette over a samplesheet CSV -- `sample,class,candidates,windows,hla`, one row
+# per sample per class. The assumed upstream is nf-core/sarek -> VEP -> pVACtools for the candidates
+# and the peptide windows, OptiType / arcasHLA / HLA-LA for the typing; nothing here reads a
+# filename convention or names a cluster.
+#
+# Runnable on its own:
+#     snakemake --sdm conda --cores 8 --config input=/path/to/samplesheet.csv
+#
+# Or included from your own workflow, which is the better spelling -- see README.md:
+#     module mhcmatch:
+#         snakefile: github("antigenomics/mhcmatch",
+#                           path="integrations/snakemake/mhcmatch/Snakefile", tag="v1.20.0")
+#         config: config["mhcmatch"]
+#         prefix: "results/mhcmatch"
+#     use rule * from mhcmatch as mhcmatch_*
+import os
+
+from snakemake.utils import min_version, validate
+
+min_version("8.0")
+
+
+# **Joined onto `workflow.basedir`, because a bare relative `configfile:` is resolved against the
+# WORKING directory, not against this file.** `--directory /tmp/run` therefore looked for
+# `/tmp/run/config/config.yaml` and stopped the workflow before a single rule was read -- i.e. the
+# module could only be driven from its own directory. `validate` below needs no such join: it
+# resolves its schema relative to the calling Snakefile already.
+configfile: os.path.join(workflow.basedir, "config", "config.yaml")
+
+
+# **The schema is the reason to prefer this over a Nextflow config**, and it is not decoration: an
+# unknown `--param` is silently IGNORED by Nextflow, so a typo'd setting reads as "the default was
+# fine". `validate` fails here, before the DAG is built, naming the key.
+validate(config, "config/schema.yaml")
+
+
+include: "workflow/rules/common.smk"
+include: "workflow/rules/alleles.smk"
+include: "workflow/rules/rerank.smk"
+include: "workflow/rules/denovo.smk"
+include: "workflow/rules/annotate.smk"
+include: "workflow/rules/cassette.smk"
+
+
+rule all:
+    input:
+        collect_targets(),
+    default_target: True

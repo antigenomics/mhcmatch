@@ -1,0 +1,136 @@
+// The RERANK arm: a caller's own candidate table in, the same table out with this model appended
+// and re-ordered by it, then the cassette.
+//
+//   epitopes.tsv ─► RERANK ─► *.epitopes.mhcmatch.tsv ─┬─► NEOAG    ─► neoag.tsv      class I
+//   (+ windows.fasta as --context)                     ├─► MIMICRY  ─► mimicry.tsv    class I
+//                                                      └─► CASSETTE_SELECT ─► units.tsv
+//                                                            └─► CASSETTE ─► .faa / .fna / map
+//                                                                  └─► CASSETTE_SCORE (all donors)
+//
+// The whole point of this arm is that **the caller's columns survive**. `rank --passthrough` emits
+// them verbatim and in the caller's order, ahead of ours, so the deliverable is their table with a
+// column block added -- not a different table they then have to join back.
+//
+// CASSETTE needs the LONG (~27 aa) window, and this arm has two possible sources for it. The
+// samplesheet's `windows` cell travels in as `ch_tables`' third element and is handed straight to
+// `--context`; where a row gives none, `--unit-column` names the column of the caller's own table
+// that carries it (`params.mhcmatch_vector_unit_column`), since a scored candidate table usually
+// holds the window beside the minimal epitope under whatever name its upstream chose. **Passing
+// the context was missing until 1.19.0**: this arm hardcoded the NO_FILE sentinel, so with
+// `unit_column` no longer defaulting to one upstream's name, MHCMATCH_CASSETTE refused every
+// rerank sample -- including the README's own fixture command. A minimal epitope loads onto any
+// cell without costimulation and is the tolerising configuration, so neither path may inject one
+// and the process still refuses when it genuinely has neither source.
+
+include { MHCMATCH_RERANK          } from '../main.nf'
+include { MHCMATCH_NEOAG           } from '../main.nf'
+include { MHCMATCH_MIMICRY         } from '../main.nf'
+include { MHCMATCH_CASSETTE_SELECT } from '../main.nf'
+include { MHCMATCH_CASSETTE        } from '../main.nf'
+include { MHCMATCH_CASSETTE_SCORE  } from '../main.nf'
+
+//: The class-I list, whichever of the two shapes the allele value has. Only MHCMATCH_CASSETTE reads
+//: the class-II half, so every other consumer goes through this.
+def mhc1Of(a) {
+    a instanceof Map ? (a.mhc1 ?: '') : (a ?: '')
+}
+
+workflow MHCMATCH_RERANK_ARM {
+
+    take:
+    ch_tables         // [ val(meta), path(table), path(context|NO_FILE), val(cls) ]
+    ch_alleles        // [ val(meta), val(alleles) ] -- the donor's DISTINCT class-I allotypes as a
+                      // String, or `[mhc1: '...', mhc2: '...']` to give the cassette map the same
+                      // donor's class-II allotypes and with them `self_help`. ../pipeline.nf builds
+                      // the Map; a String keeps working and is what an outside caller passes.
+
+    main:
+    ch_versions = Channel.empty()
+
+    MHCMATCH_RERANK( ch_tables )
+    ch_versions = ch_versions.mix( MHCMATCH_RERANK.out.versions.first() )
+
+    // CLASS I ONLY for NEOAG, MIMICRY and the cassette -- by design, not omission. Prior evidence
+    // and safety are built on a CD8 mechanism; CD4 self-reactivity runs through help,
+    // hypersensitivity and allergy, which has different thresholds and none of them measured here.
+    // See docs/safety.rst and the same filter in ./mhcmatch.nf.
+    ch_mhc1 = MHCMATCH_RERANK.out.reranked.filter { meta, cls, tsv -> cls == 'mhc1' }
+    ch_pep  = ch_mhc1.map { meta, cls, tsv -> [ meta, tsv, cls ] }
+
+    MHCMATCH_NEOAG( ch_pep )
+    // **Mimicry is an ANNOTATION step and ships off.** It says what a candidate resembles; it does
+    // not feed the ranking, because `rank`'s corpus channels are a `corpus_spectrum` table
+    // contraction rather than a neighbour search and build no index at all. Turning it on costs a
+    // whole-proteome reference index -- 65.0 s warm-cached, and ~194 s per task cold, because in a
+    // fan-out every task misses the cache at once and builds it simultaneously. That was the
+    // dominant stage of the whole pipeline. Same truthiness rule as main.nf's `isOn`.
+    ch_mim = "${params.mhcmatch_mimicry}".toLowerCase() in ['false', '0', 'no', '', 'null']
+                 ? Channel.empty() : ch_pep
+    MHCMATCH_MIMICRY( ch_mim )
+    ch_versions = ch_versions.mix( MHCMATCH_NEOAG.out.versions.first() )
+    ch_versions = ch_versions.mix( MHCMATCH_MIMICRY.out.versions.first() )
+
+    ch_pool = ch_mhc1.map { meta, cls, tsv -> [ meta, tsv ] }
+
+    // `remainder: true` so a sample with no allele list still reaches the selector (it loses the
+    // allotype channel and its coverage denominator, and says so) -- but the SAME flag also emits
+    // an allele entry that matched no pool, which is a real shape under `--mode both` over a mixed
+    // directory: a donor with a window FASTA and no candidate table has a class-I allele list and
+    // nothing to rerank. Handing that through gives the process a null path, so it is filtered.
+    MHCMATCH_CASSETTE_SELECT( ch_pool.join( ch_alleles, remainder: true )
+                                     .filter { meta, tsv, alleles -> tsv != null }
+                                     .map { meta, tsv, alleles -> [ meta, tsv, mhc1Of(alleles) ] } )
+    ch_versions = ch_versions.mix( MHCMATCH_CASSETTE_SELECT.out.versions.first() )
+
+    // **The window FASTA this arm was already handed, carried through to `--context`.** It is
+    // `ch_tables`' third element, but `MHCMATCH_RERANK.out.reranked` does not re-emit it, so it
+    // was dropped here and replaced with the NO_FILE sentinel -- which is why every rerank sample
+    // hit MHCMATCH_CASSETTE's "no source for the cassette unit" refusal once `unit_column` stopped
+    // defaulting. Class I only, to match the process. A row that genuinely names no `windows`
+    // still arrives as the sentinel from ../pipeline.nf, so `--unit-column` remains the other
+    // source and the refusal survives for a sample with neither.
+    //
+    // `alleles` goes in WHOLE here, where the selector got only the class-I half: this is the one
+    // process that reads the class-II list, to compute `self_help` for the cassette map.
+    ch_ctx = ch_tables.filter { meta, tsv, ctx, cls -> cls == 'mhc1' }
+                      .map    { meta, tsv, ctx, cls -> [ meta, ctx ] }
+    MHCMATCH_CASSETTE(
+        MHCMATCH_CASSETTE_SELECT.out.units
+            .join( ch_alleles, remainder: true )
+            .filter { meta, units, alleles -> units != null }
+            .join( ch_ctx, remainder: true )
+            .map { meta, units, alleles, ctx ->
+                // `moduleDir` and not `projectDir`: projectDir is the ENTRY script's directory, so
+                // an integrator including this subworkflow resolves the sentinel against THEIR
+                // repo root, where it does not exist.
+                [ meta, units, ctx ?: file("${moduleDir}/../NO_FILE"), alleles ?: '', 'mhc1' ] }
+    )
+    ch_versions = ch_versions.mix( MHCMATCH_CASSETTE.out.versions.first() )
+
+    // ONE calibration for the whole run, which is why this collects. `rank` anchors `p_response`
+    // on the batch it is handed, so a per-donor call makes every donor's mean the declared
+    // prevalence and no two donors comparable -- see the comment on the process in ../main.nf.
+    //
+    // It takes the **units** table and not the `.cassette.tsv` report: `cassette score` wants one
+    // row per manufactured unit with a peptide and a score, and the report is long-form with
+    // neither. Joined on CASSETTE so the score still waits for assembly -- a cassette that failed
+    // its safety screen should not be scored as if it shipped.
+    MHCMATCH_CASSETTE_SCORE(
+        MHCMATCH_CASSETTE_SELECT.out.units
+            .join( MHCMATCH_CASSETTE.out.report )
+            .map { meta, units, report -> units }.collect(),
+        ch_pool.map { meta, tsv -> tsv }.collect()
+    )
+    ch_versions = ch_versions.mix( MHCMATCH_CASSETTE_SCORE.out.versions )
+
+    emit:
+    reranked = MHCMATCH_RERANK.out.reranked            // [ meta, cls, *.epitopes.mhcmatch.tsv ]
+    neoag    = MHCMATCH_NEOAG.out.neoag
+    mimicry  = MHCMATCH_MIMICRY.out.mimicry
+    units    = MHCMATCH_CASSETTE_SELECT.out.units      // [ meta, *.vaccine.units.tsv ]
+    cassette = MHCMATCH_CASSETTE.out.protein           // [ meta, *.cassette.faa ]
+    cds      = MHCMATCH_CASSETTE.out.cds               // [ meta, *.cassette.fna ]
+    report   = MHCMATCH_CASSETTE.out.report
+    score    = MHCMATCH_CASSETTE_SCORE.out.score       // ONE per run
+    versions = ch_versions
+}

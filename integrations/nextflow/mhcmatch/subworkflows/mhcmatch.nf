@@ -1,0 +1,115 @@
+// End-to-end mhcmatch: variant windows in, ranked candidates and a screened cassette out.
+//
+// Chains five of the processes in ./main.nf. Its channel topology is UNCHANGED -- an existing
+// `include` of it keeps working -- with one removal: the CASSETTE_SCORE call, which had never once
+// completed because it was handed a report it cannot read (see the note further down). ../subworkflows/rerank.nf and denovo.nf are the two arms ../pipeline.nf runs; this one is
+// the original chain. Take it as written or as a template -- the useful part is
+// which output feeds which input, because that is the thing a README sentence gets wrong.
+//
+//   windows.fasta ─► PREDICT ─► native.tsv                        both classes
+//                 └► RANK ────► ranked.tsv ─┬─► NEOAG   ─► neoag.tsv     class I only
+//                                           ├─► MIMICRY ─► mimicry.tsv   class I only
+//                                           └─► CASSETTE─► cassette      class I only
+//
+// PREDICT and RANK serve both classes. NEOAG, MIMICRY and CASSETTE are CD8-only by design, not
+// by omission -- see the comment at the filter and docs/safety.rst.
+//
+// There is no CASSETTE_SCORE step here -- see the note where it used to be called. Use
+// ./rerank.nf or ./denovo.nf, which run `cassette select` and can supply the shape it needs.
+//
+// CASSETTE takes `ranked.tsv` as its candidate table AND the original `windows.fasta` as `--context`:
+// `rank` emits minimal epitopes and a unit is the long window around the mutation, so neither side
+// alone can build one (see mhcmatch.vector.units_from_context). Injecting the minimal epitope is not
+// a smaller version of the right thing, it is the tolerising configuration.
+
+include { MHCMATCH_PREDICT  } from '../main.nf'
+include { MHCMATCH_RANK     } from '../main.nf'
+include { MHCMATCH_NEOAG    } from '../main.nf'
+include { MHCMATCH_MIMICRY  } from '../main.nf'
+include { MHCMATCH_CASSETTE       } from '../main.nf'
+
+workflow MHCMATCH {
+
+    take:
+    ch_windows        // [ val(meta), path(fasta), val(alleles), val(cls) ]
+
+    main:
+    // **This subworkflow is the documented integration surface, and including it is not enough on
+    // its own -- the module's `nextflow.config` has to be loaded too.** Nextflow auto-loads the
+    // config beside the ENTRY script, so `nextflow run pipeline.nf` gets it for free and an
+    // outside pipeline that only `include`s this file does not. Every `params.mhcmatch_*` is then
+    // undefined, which Nextflow reports as a WARN among many and evaluates as null -- and
+    // `isOn(null)` is FALSE, so `mhcmatch_vector_screen` reads as *off* and MHCMATCH_CASSETTE
+    // builds a cassette with **no safety screen at all**, exactly the direction main.nf's `isOn`
+    // comment calls the one that matters. A WARN is not enough warning for that, so this is an
+    // error. `containsKey`, not truth: a caller who deliberately set `false` has made a choice and
+    // is left alone; only an ABSENT param means the wiring is wrong.
+    if( !params.containsKey('mhcmatch_vector_screen') )
+        error "mhcmatch: params.mhcmatch_vector_screen is not defined, so the module's config was " +
+              "never loaded -- and the cassette safety screen would run OFF without saying so. Add " +
+              "`includeConfig 'integrations/nextflow/mhcmatch/nextflow.config'` to your pipeline's " +
+              "config (after your own params), or define the mhcmatch_* params yourself."
+
+    ch_versions = Channel.empty()
+
+    MHCMATCH_PREDICT( ch_windows )
+    ch_versions = ch_versions.mix( MHCMATCH_PREDICT.out.versions.first() )
+
+    MHCMATCH_RANK( ch_windows )
+    ch_versions = ch_versions.mix( MHCMATCH_RANK.out.versions.first() )
+
+    // `neoag` and `mimicry` read a table with a `peptide` column and carry every other column
+    // through, so the ranked table goes in unchanged and comes back annotated.
+    ch_ranked = MHCMATCH_RANK.out.ranked                       // [ meta, cls, ranked.tsv ]
+
+    // CLASS I ONLY, for all three of NEOAG, MIMICRY and CASSETTE. Prior evidence and safety are built
+    // on a CD8 mechanism -- a minimal epitope close enough to a confirmed neoantigen that one
+    // clonotype could see both, and a register that IS an essential-tissue self peptide killing the
+    // cell presenting it. Neither becomes a class-II question by widening the length range: CD4
+    // self-reactivity runs through help, hypersensitivity and allergy, which has different
+    // thresholds and none of them measured here. Running these on class II would produce columns
+    // that look like answers and are not. See docs/safety.rst.
+    ch_pep    = ch_ranked
+        .filter { meta, cls, tsv -> cls == 'mhc1' }
+        .map    { meta, cls, tsv -> [ meta, tsv, cls ] }
+
+    MHCMATCH_NEOAG( ch_pep )
+    MHCMATCH_MIMICRY( ch_pep )
+    ch_versions = ch_versions.mix( MHCMATCH_NEOAG.out.versions.first() )
+    ch_versions = ch_versions.mix( MHCMATCH_MIMICRY.out.versions.first() )
+
+    // Cassette assembly is class-I only for the reason above, and for a second one: `select`
+    // spends per-allotype capacity, and the class-II locus call is not good enough to spend it on
+    // (mhcmatch and ISP agree on the presenting locus for 52.7% of class-II rows against 78.1% for
+    // class I).
+    ch_vector = ch_ranked
+        .filter { meta, cls, tsv -> cls == 'mhc1' }
+        .join( ch_windows.map { meta, fa, alleles, cls -> [ meta, fa, alleles ] } )
+        .map { meta, cls, ranked, fa, alleles -> [ meta, ranked, fa, alleles, cls ] }
+
+    MHCMATCH_CASSETTE( ch_vector )
+    ch_versions = ch_versions.mix( MHCMATCH_CASSETTE.out.versions.first() )
+
+    // **MHCMATCH_CASSETTE_SCORE is not called here, and cannot be.** It wants one row per
+    // manufactured unit with a peptide and a score; what this chain has is `.cassette.tsv`, which is
+    // long-form (`section, i, key, value, detail`) with the peptide absent and `p` inside a
+    // free-text field. This subworkflow passed that report to it from the day the process was added,
+    // so the step had never once completed -- it was removed on 2026-09-20 rather than left as a
+    // wiring that always fails at the last stage of a long run.
+    //
+    // The units table comes from `cassette select`, which this chain does not run: it sizes by the
+    // per-allotype `--n0` stopping rule, not by a fixed k. To score a cohort, use
+    // ../subworkflows/rerank.nf or denovo.nf, which put MHCMATCH_CASSETTE_SELECT in front and hand
+    // its output to the scorer.
+
+    emit:
+    scored   = MHCMATCH_PREDICT.out.scored     // [ meta, cls, *.mhcmatch.scored.csv ]
+    native_tsv = MHCMATCH_PREDICT.out.native_tsv   // [ meta, cls, *.mhcmatch.native.tsv ]
+    ranked   = MHCMATCH_RANK.out.ranked        // [ meta, cls, *.mhcmatch.ranked.tsv ]
+    neoag    = MHCMATCH_NEOAG.out.neoag        // [ meta, cls, *.mhcmatch.neoag.tsv ]
+    mimicry  = MHCMATCH_MIMICRY.out.mimicry    // [ meta, cls, *.mhcmatch.mimicry.tsv ]
+    cassette = MHCMATCH_CASSETTE.out.protein   // [ meta, *.cassette.faa ]
+    cds      = MHCMATCH_CASSETTE.out.cds       // [ meta, *.cassette.fna ]
+    report   = MHCMATCH_CASSETTE.out.report    // [ meta, *.cassette.tsv ]
+    versions = ch_versions
+}

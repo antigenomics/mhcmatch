@@ -1,0 +1,5 @@
+sample,class,candidates,windows,hla
+S1,mhc1,S1.mhc1.candidates.tsv,S1.mhc1.windows.fasta,S1.hla.tsv
+S1,mhc2,S1.mhc2.candidates.tsv,S1.mhc2.windows.fasta,S1.hla.tsv
+S2,mhc1,S2.mhc1.candidates.tsv,S2.mhc1.windows.fasta,S2.hla.tsv
+S2,mhc2,S2.mhc2.candidates.tsv,S2.mhc2.windows.fasta,S2.hla.tsv

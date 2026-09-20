@@ -47,8 +47,13 @@ docs/_generated/
 .coverage
 
 CLAUDE.md
-# Working notes and integration scaffolding — held out of the public repo for now.
+# Working notes — held out of the public repo.
 # PROVENANCE.md must come after the `!src/mhcmatch/data/**` negation above to take effect.
 ROADMAP.md
 src/mhcmatch/data/PROVENANCE.md
-integrations/
+
+# `integrations/` IS tracked: docs/pipeline.rst tells readers to run files from it, and three
+# tests read those paths. Ignored, it made both impossible from a clone and turned CI red.
+integrations/snakemake/mhcmatch/results/
+integrations/**/.snakemake/
+integrations/**/work/

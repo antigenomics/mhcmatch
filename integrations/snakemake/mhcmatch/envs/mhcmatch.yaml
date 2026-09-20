@@ -1,0 +1,11 @@
+# Same body as `integrations/nextflow/mhcmatch/environment.yml`, deliberately: the two engines run
+# the same commands from the same release, and a version skew between them is a difference nobody
+# would think to look for. The pin moves with `pyproject.toml`; a test checks it.
+name: mhcmatch
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - mhcmatch==1.20.0

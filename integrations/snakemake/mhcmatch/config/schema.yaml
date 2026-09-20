@@ -1,0 +1,75 @@
+# 2020-12 because that is the validator jsonschema actually uses here. Declared as draft-07, every
+# run printed "No validator found for ... draft-07 ... Defaulting to ... 2020-12. Note that schema
+# file may not be validated correctly" -- a three-line warning on a CORRECT run, which reads as a
+# broken schema and trains the reader to ignore the one place this module reports a typo'd key.
+$schema: "https://json-schema.org/draft/2020-12/schema"
+description: |
+  mhcmatch Snakemake module configuration.
+
+  This file is the reason to prefer the Snakemake module over a Nextflow config for a new
+  deployment: an unknown `--param` is silently IGNORED by Nextflow, so a typo'd setting reads as
+  "the default was fine and I chose it". `snakemake.utils.validate` fails before the DAG is built
+  and names the key.
+type: object
+properties:
+  input:
+    description: >
+      The samplesheet CSV: `sample,class,candidates,windows,hla`, one row per sample per class.
+      Relative paths in it resolve against the samplesheet's own directory.
+    type: ["string", "null"]
+  outdir: {type: string, default: results}
+  mode: {type: string, enum: [rerank, denovo, both], default: both}
+  alleles: {type: ["string", "null"]}
+  alleles_mhc2: {type: ["string", "null"]}
+  tier: {type: string, enum: [full, shortlist], default: full}
+  rank_threshold:
+    description: "`none`, a published cut-off name, or a %rank percentile used as given."
+    oneOf:
+      - {type: string, enum: [none, sb, wb]}
+      - {type: number, minimum: 0}
+    default: none
+  rank_epitope: {type: string, enum: [neoantigen, pathogen], default: neoantigen}
+  rank_extended: {type: boolean, default: false}
+  rank_annotate: {type: boolean, default: false}
+  neoag_max_subs: {type: integer, minimum: 0, maximum: 3, default: 2}
+  mimicry_annotate: {type: boolean, default: false}
+  tumor: {type: ["string", "null"]}
+  prevalence: {type: ["number", "null"], minimum: 0, maximum: 1}
+  rerank_prefix: {type: string, default: mm_}
+  cassette:
+    type: object
+    properties:
+      k: {type: integer, minimum: 1, default: 20}
+      tol: {type: integer, minimum: 0, default: 0}
+      score_column: {type: ["string", "null"]}
+      block_live:
+        description: >
+          The HLA-LOSS rate. Its own key, separate from `vector.block_live`, so the collision the
+          Nextflow config can only warn about in prose is structurally impossible here.
+        type: number
+        minimum: 0
+        maximum: 1
+        default: 1.0
+      rho: {type: ["number", "null"], minimum: 0, maximum: 1}
+      per_donor_offset: {type: boolean, default: false}
+    additionalProperties: false
+  vector:
+    type: object
+    properties:
+      screen: {type: boolean, default: true}
+      unit_column:
+        description: >
+          The column holding the LONG (~27 aa) window, for a sample with no `windows` FASTA to
+          hand `--context`. Null by default and deliberately undefaulted: the CLI's own fallback is
+          `peptide`, the MINIMAL epitope, which is the tolerising configuration. With neither a
+          `windows` path nor this column the run stops and names the sample.
+        type: ["string", "null"]
+        default: null
+      block_live:
+        description: "P(a block is live) in the quota's response model. NOT the HLA-loss rate."
+        type: number
+        minimum: 0
+        maximum: 1
+        default: 0.5
+    additionalProperties: false
+additionalProperties: false

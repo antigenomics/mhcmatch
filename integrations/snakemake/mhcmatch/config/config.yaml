@@ -1,0 +1,62 @@
+# Every key carries the name, the default and the meaning of the CLI flag it sets, so a setting
+# read here and a setting read in `mhcmatch --help` are the same setting. `config/schema.yaml`
+# validates all of it before the DAG is built.
+
+input: null                  # the samplesheet CSV: `sample,class,candidates,windows,hla`.
+                             # Required unless you drive the rules yourself. Relative paths inside
+                             # it resolve against ITS directory, not the working directory
+outdir: results
+mode: both                   # rerank | denovo | both
+
+# One literal allele list for EVERY sample, bypassing the typing step. The mouse case: an inbred
+# line's H-2 haplotype is a property of the line, so there is nothing to type. Required for any
+# sample whose samplesheet row has no `hla` path.
+alleles: null
+alleles_mhc2: null
+
+tier: full                   # reference panel tier: full | shortlist
+rank_threshold: none         # what to DROP. none | sb | wb | a number. Nothing is dropped by default
+rank_epitope: neoantigen     # which fitted model scores: neoantigen | pathogen
+rank_extended: false         # append the fitted mimicry aggregate and its six signed channels
+rank_annotate: false         # append each channel's nearest reference peptide, then the known lookup
+neoag_max_subs: 2
+mimicry_annotate: false
+
+tumor: null                  # TCGA study code for tumour-matched expression -- SET THIS.
+                             # Without it, expression is the GTEx cross-tissue median, which answers
+                             # "is this gene expressed anywhere" when the question is "is it
+                             # expressed in this tumour". `mhcmatch expression --list-contexts`.
+prevalence: null             # the responding fraction you expect of YOUR pool. A prior you own:
+                             # it shifts every probability and moves no rank
+rerank_prefix: mm_           # the prefix on the columns the rerank arm adds
+
+cassette:
+  k: 20                      # how many EPITOPES are selected. The construct carries fewer -- several
+                             # can fall in one 27-mer window, and the screen then withdraws some
+  tol: 0                     # manufacturing tolerance: the size in [k-tol, k+tol] with the best
+                             # objective. A spent tolerance is a result, not a detail
+  score_column: null         # which column holds the aggregate. Left null the rerank arm is given
+                             # `<prefix>score` -- do not leave this to the fallback there, because a
+                             # caller's table HAS a `score` column of its own
+  block_live: 1.0            # the HLA-LOSS RATE this prices: below 1, two units on one allotype are
+                             # lost together. NOT `vector.block_live` -- see the note there
+  rho: null                  # intra-cassette response correlation (default 0.091, IVAC MUTANOME).
+                             # Measure your own with `mhcmatch.portfolio.betabinom_rho`
+  per_donor_offset: false    # fit one offset per donor instead of one over the run. Reports an
+                             # ENRICHMENT against each donor's own background rather than a level,
+                             # so no two donors' numbers are comparable. Choose deliberately
+
+vector:
+  screen: true               # the essential-tissue / self-origin exclusion. ON: one `seqtree.TextIndex`
+                             # answers every register length, so the screen costs ~0.9 s and 0.8 GB.
+                             # `false` means NO safety check runs at all
+  unit_column: null          # the column holding the LONG (~27 aa) window, for a sample with no
+                             # `windows` FASTA to hand `--context`. NULL and no default on purpose:
+                             # the CLI's own fallback is `peptide`, which on a reranked table is the
+                             # MINIMAL epitope -- a 9-mer loads onto any cell without costimulation
+                             # and is the TOLERISING configuration. With neither a `windows` path
+                             # nor this column the run STOPS and names the sample. `context_peptide`
+                             # is the column in `integrations/fixtures/`
+  block_live: 0.5            # P(a block is live) in the quota's response model. Same flag name as
+                             # `cassette.block_live`, DIFFERENT question and different default.
+                             # Passing the quota's value to the other one stops the run
