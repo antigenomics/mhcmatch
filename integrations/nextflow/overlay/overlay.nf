@@ -7,7 +7,7 @@
 // That is the whole argument for an overlay: a host pipeline that wires mhcmatch in by hand ends up
 // with a FORK of the processes, and a fork drifts. One we reviewed had drifted five ways within a
 // few releases -- a stub hard-typing an 18-column header against a real 57, an `emit:` name that no
-// longer matched, an image pinned to mhcmatch 1.0.1, a `--rank-threshold 2.0` on its predictor (the
+// longer matched, an image pinned to a stale mhcmatch, a `--rank-threshold 2.0` on its predictor (the
 // weak class-I cut and the STRONG class-II one), and a class-II bridge calling `predict` once per
 // allele where one call takes the list. An alias cannot drift; a sixth divergence will.
 //

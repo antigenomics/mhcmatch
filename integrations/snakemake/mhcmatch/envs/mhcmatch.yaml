@@ -8,4 +8,4 @@ dependencies:
   - python=3.12
   - pip
   - pip:
-      - mhcmatch==1.20.0
+      - mhcmatch==1.20.1

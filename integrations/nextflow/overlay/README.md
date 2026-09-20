@@ -18,7 +18,7 @@ ways within a few releases:
 |---|---|
 | `-stub-run` hard-typed an 18-column header | stubs no longer matched the real 57-column table |
 | it emitted `native_table` where ours emits `native_tsv` | a rename that only shows up when a downstream `include` is added |
-| its image was pinned to mhcmatch **1.0.1** | sixteen releases behind, and nothing in a run says so |
+| its image was pinned to a **stale** mhcmatch | many refits behind, and nothing in a run says so |
 | its `rank_threshold` defaulted to **2.0** | the weak class-I cut applied at the predictor, throwing away candidates the later aggregation could still have ranked. The same number is the **strong** cut for class II: measured on one window pair against `DRB1*15:01`, **0 of 56** scored pairs survive it |
 | its class-II bridge called `mhcmatch predict` **once per allele**, in a Python loop | `predict` takes the whole allotype list and batches internally; N sequential calls also reload the model and rebuild the calibration N times |
 

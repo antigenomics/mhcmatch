@@ -6,7 +6,7 @@
 # Or included from your own workflow, which is the better spelling -- see README.md:
 #     module mhcmatch:
 #         snakefile: github("antigenomics/mhcmatch",
-#                           path="integrations/snakemake/mhcmatch/Snakefile", tag="v1.20.0")
+#                           path="integrations/snakemake/mhcmatch/Snakefile", tag="v1.20.1")
 #         config: config["mhcmatch"]
 #         prefix: "results/mhcmatch"
 #     use rule * from mhcmatch as mhcmatch_*
@@ -351,7 +351,7 @@ rule mhcmatch_rank:
         tumor=lambda w: opt("--tumor", config.get("tumor")
                             if config["rank_epitope"] == "neoantigen" else None),
         prev=lambda w: opt("--prevalence", config.get("prevalence")),
-        # **`--rank-threshold`, not `--threshold`.** This read `--threshold` until 1.21.0, which
+        # **`--rank-threshold`, not `--threshold`.** This once read `--threshold`, which
         # `rank` has never accepted; it was latent only because the default is `none`, so `opt()`
         # emitted nothing. Setting the documented config key would have exited 2 on every task.
         thr=lambda w: opt("--rank-threshold", config["rank_threshold"]),

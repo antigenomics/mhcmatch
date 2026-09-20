@@ -47,7 +47,7 @@ process MHCMATCH_PREFLIGHT {
         fail "mhcmatch is not on PATH for this executor. Install it, or set params.mhcmatch_container."
     else
         # **The LAST whitespace-separated field, not the whole line.** `mhcmatch --version` prints
-        # `mhcmatch 1.17.0`, so stripping whitespace gives `mhcmatch1.17.0` and the comparison
+        # `mhcmatch 1.20.0`, so stripping whitespace gives `mhcmatch1.20.0` and the comparison
         # below rejects every correct install. Caught by running this for real; a stub would not
         # have, because a stub runs no command.
         GOT=\$(mhcmatch --version 2>/dev/null | tail -1 | awk '{print \$NF}')

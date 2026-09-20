@@ -21,7 +21,7 @@ Or include it from your own workflow, which is the better spelling:
 ```python
 module mhcmatch:
     snakefile: github("antigenomics/mhcmatch",
-                      path="integrations/snakemake/mhcmatch/Snakefile", tag="v1.20.0")
+                      path="integrations/snakemake/mhcmatch/Snakefile", tag="v1.20.1")
     config: config["mhcmatch"]
     prefix: "results/mhcmatch"
 
