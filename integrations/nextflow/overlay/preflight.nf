@@ -21,7 +21,6 @@ process MHCMATCH_PREFLIGHT {
     label 'process_single'
 
     conda "${moduleDir}/../mhcmatch/environment.yml"
-    container params.mhcmatch_container
 
     input:
     path table          // one candidate table, purely to read its header
@@ -29,10 +28,6 @@ process MHCMATCH_PREFLIGHT {
 
     output:
     path 'mhcmatch_preflight.txt', emit: report
-    path 'versions.yml'          , emit: versions
-
-    when:
-    task.ext.when == null || task.ext.when
 
     script:
     def want = params.mhcmatch_overlay_require_version ?: ''
@@ -86,20 +81,11 @@ PY
 
     echo "MHCMATCH PREFLIGHT OK (mode=${mode})" >> mhcmatch_preflight.txt
     cat mhcmatch_preflight.txt
-
-    cat <<-END_VERSIONS > versions.yml
-    "${task.process}":
-        mhcmatch: \$(mhcmatch --version 2>/dev/null || echo "not installed")
-    END_VERSIONS
     exit 0
     """
 
     stub:
     """
     echo "MHCMATCH PREFLIGHT OK (stub, mode=${mode})" > mhcmatch_preflight.txt
-    cat <<-END_VERSIONS > versions.yml
-    "${task.process}":
-        mhcmatch: stub
-    END_VERSIONS
     """
 }

@@ -39,17 +39,12 @@ process MHCMATCH_RESCORE {
     label 'process_single'
 
     conda "${moduleDir}/../mhcmatch/environment.yml"
-    container params.mhcmatch_container
 
     input:
     tuple val(meta), path(reranked), val(cls)
 
     output:
     tuple val(meta), path("*.epitopes.mhcmatch.scored.csv"), val(cls), emit: csv
-    path "versions.yml",                                              emit: versions
-
-    when:
-    task.ext.when == null || task.ext.when
 
     script:
     def prefix = task.ext.prefix ?: "${meta.id}"
@@ -130,21 +125,10 @@ print("MHCMATCH_RESCORE: %d row(s), %s := %.1f x minmax(%s) x %s; %d row(s) unsc
          " x ".join(["driver(driver_class)"] + factors), unscored, kept_col),
       file=sys.stderr)
 PY
-
-    cat <<-END_VERSIONS > versions.yml
-    "${task.process}":
-        mhcmatch: \$(python -c "import mhcmatch; print(mhcmatch.__version__)")
-    END_VERSIONS
     """
 
     stub:
-    def prefix = task.ext.prefix ?: "${meta.id}"
     """
-    head -1 ${reranked} | tr '\\t' ',' > ${prefix}.${cls}.epitopes.mhcmatch.scored.csv
-
-    cat <<-END_VERSIONS > versions.yml
-    "${task.process}":
-        mhcmatch: stub
-    END_VERSIONS
+    head -1 ${reranked} | tr '\\t' ',' > ${task.ext.prefix ?: meta.id}.${cls}.epitopes.mhcmatch.scored.csv
     """
 }

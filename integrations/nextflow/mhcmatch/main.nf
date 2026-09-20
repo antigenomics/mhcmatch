@@ -509,7 +509,9 @@ process MHCMATCH_CASSETTE {
 
 
 process MHCMATCH_CASSETTE_SCORE {
-    tag "${arm}:${tables.size()}"
+    // `tables` is a single path when the arm has one donor, and `String.size()` is then the
+    // FILENAME LENGTH -- a tag reading `rerank:220`.
+    tag "${arm}:${tables instanceof List ? tables.size() : 1}"
     label 'process_single'
 
     // `moduleDir`, not `projectDir`: an integrator's entry script is elsewhere, and
