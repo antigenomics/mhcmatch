@@ -88,9 +88,11 @@ the WT counterpart + agretopicity / amplitude / DAI, and the
 
 A ready nf-core-style Nextflow module lives in ``integrations/nextflow/mhcmatch/`` — nine processes
 (``MHCMATCH_ALLELES``, ``_PREDICT``, ``_RANK``, ``_RERANK``, ``_NEOAG``, ``_MIMICRY``,
-``_CASSETTE_SELECT``, ``_CASSETTE``, ``_CASSETTE_SCORE``), two subworkflows chaining them into a
-**rerank** and a **de novo** arm, and ``pipeline.nf``, which runs either or both over a directory of
-files. ``MHCMATCH_PREDICT`` is the drop-in for MHCflurry (class I) and TLimmuno2 (class II); species
+``_CASSETTE_SELECT``, ``_CASSETTE``, ``_CASSETTE_SCORE``), one ``MHCMATCH`` subworkflow carrying
+both the **rerank** and the **de novo** arm, and ``pipeline.nf``, which runs either or both from a
+samplesheet. ``integrations/nextflow/overlay/`` attaches the same processes to a pipeline you
+already run, and ``integrations/snakemake/mhcmatch/`` is the same commands as a Snakemake module.
+``MHCMATCH_PREDICT`` is the drop-in for MHCflurry (class I) and TLimmuno2 (class II); species
 follows ``params.genome``, mirroring the ``arda`` module. :doc:`pipeline` is the cohort story and
 that directory's ``README.md`` is the per-process contract.
 

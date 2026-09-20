@@ -18,21 +18,30 @@ commands it runs and :doc:`cassette` is what the last stage decides.
        --input  samplesheet.csv \
        --outdir results \
        --mode   both \
-       --mhcmatch_vector_n0 8 \
+       --mhcmatch_cassette_n0 8 \
        --mhcmatch_tumor     SKCM
 
 ``integrations/nextflow/mhcmatch/README.md`` is the full contract — every process's input and
 output tuple, every parameter. What follows is what a caller needs to decide.
 
-Two entry points, and they are different objects
-------------------------------------------------
+Three entry points, and they are different objects
+--------------------------------------------------
 
-``pipeline.nf`` is for a caller who has files on disk and wants the chain, driven by a
-samplesheet. The nine processes in
-``main.nf`` and the two arms in ``subworkflows/`` are for a pipeline that wants mhcmatch as a
-*component* and supplies its own channel topology — which is the case for anything that already
-does variant calling, HLA typing and expression quantification and reaches mhcmatch holding all
-three. Neither is a wrapper around the other; ``pipeline.nf`` includes the arms.
+``pipeline.nf`` is for a caller who has files on disk and wants the chain, driven by a samplesheet.
+The nine processes in ``main.nf`` and the ``MHCMATCH`` subworkflow that chains them are for a
+pipeline that wants mhcmatch as a *component* and supplies its own channel topology — which is the
+case for anything that already does variant calling, HLA typing and expression quantification and
+reaches mhcmatch holding all three. ``integrations/nextflow/overlay/`` is that second case wired up
+for you: it contributes no scoring process of its own, attaches at two named seams, and defaults to
+a mode that changes nothing.
+
+None is a wrapper around another; ``pipeline.nf`` and the overlay both include the one subworkflow.
+The arm — ``rerank`` or ``denovo`` — rides in ``meta.arm`` rather than in a process alias, so one
+instance of each process serves both and the cohort calibration still fits one offset per arm.
+
+The same commands run as a Snakemake module in ``integrations/snakemake/mhcmatch/``, whose
+``config/schema.yaml`` rejects a misspelled key before the DAG is built — where an unknown
+``--param`` is silently ignored by Nextflow, and so reads as "the default was fine".
 
 The two arms
 ------------
@@ -114,11 +123,11 @@ The map annotates against the **NetMHCpan** cut-offs, and the two classes do not
    * - strong
      - ``%rank <= 0.5``
      - ``%rank <= 2.0``
-     - ``--mhcmatch_vector_map_binder strong``
+     - ``--mhcmatch_cassette_map_binder strong``
    * - **weak** (default)
      - ``%rank <= 2.0``
      - ``%rank <= 10.0``
-     - ``--mhcmatch_vector_map_binder weak``
+     - ``--mhcmatch_cassette_map_binder weak``
 
 **One number for both classes is the mistake this replaces.** A single ``2.0`` is the *weak* cut for
 class I and the *strong* cut for class II, so a construct carrying an ordinary class-II weak binder
@@ -275,7 +284,7 @@ HLA-E, -F or -G.
 .. warning::
 
    **The screen default depends on which layer you call, so it is worth knowing per layer.**
-   Both engines ship it **on** (``params.mhcmatch_vector_screen = true``, ``vector.screen: true``),
+   Both engines ship it **on** (``params.mhcmatch_cassette_screen = true``, ``vector.screen: true``),
    so a pipeline run withdraws units on essential-tissue self-origin. ``mhcmatch cassette build`` /
    ``order`` invoked directly is the other way round --- ``--screen`` is a flag you pass, and
    without it **no safety check runs at all** and the cassette carries whatever it was handed.
@@ -317,7 +326,7 @@ allotypes, and under ``pipeline.nf`` those are the donor's own, with nothing to 
      - what the process does with it
    * - ``'HLA-A*02:01,…'`` — a String
      - the class-I list, exactly as before. The map takes
-       ``params.mhcmatch_vector_map_alleles_mhc2`` if set, and is class I only if not
+       ``params.mhcmatch_cassette_map_alleles_mhc2`` if set, and is class I only if not
    * - ``[mhc1: '…', mhc2: '…']`` — a Map
      - the same class-I list to ``--alleles``, and this donor's class-II list to
        ``--map-alleles-mhc2``
@@ -367,10 +376,10 @@ allowed to inject one, and the two arrive at the same object from opposite sides
   FASTA (:func:`mhcmatch.vector.units_from_context`), because ``rank fasta`` emits minimal epitopes
   and the FASTA is the only thing that knows where the mutation sits.
 - **rerank** — either the samplesheet's ``windows`` FASTA as ``--context``, or
-  ``--mhcmatch_vector_unit_column <name>`` when the caller's table already carries the window in a
+  ``--mhcmatch_cassette_unit_column <name>`` when the caller's table already carries the window in a
   column of its own (the shipped fixtures carry it as ``context_peptide``).
 
-``params.mhcmatch_vector_unit_column`` has **no default**, and with neither a context FASTA nor a
+``params.mhcmatch_cassette_unit_column`` has **no default**, and with neither a context FASTA nor a
 named column the process stops. That is deliberate: the fallback ``_read_units`` would otherwise
 reach is ``peptide``, which on a reranked table is the *minimal* epitope --- so the quiet failure
 is a tolerising cassette rather than an error. Until 1.19.0 the default was one particular
@@ -422,7 +431,7 @@ Species follows ``params.genome``, so there is no extra parameter — but there 
        --genome GRCm39 \
        --alleles      'H2-K*d,H2-D*d,H2-L*d' \
        --alleles_mhc2 'H-2-IAd,H-2-IEd' \
-       --mhcmatch_vector_n0 8 --mhcmatch_vector_block_live 0.999
+       --mhcmatch_cassette_n0 8 --mhcmatch_quota_block_live 0.999
 
 - **``--alleles`` / ``--alleles_mhc2`` rather than a typing file.** An inbred line's H-2 haplotype
   is a property of the line, so there is nothing to type. All three spellings resolve —
@@ -430,7 +439,7 @@ Species follows ``params.genome``, so there is no extra parameter — but there 
 - **Leave ``--mhcmatch_tumor`` unset.** The tumour-matched expression contexts are TCGA study codes
   and there is no mouse equivalent; setting one scores mouse candidates against a human
   transcriptome's abundance floor.
-- ``--mhcmatch_vector_block_live 0.999`` is what the shipped mouse bundles used, against 0.95 for
+- ``--mhcmatch_quota_block_live 0.999`` is what the shipped mouse bundles used, against 0.95 for
   human. A stated design parameter, not a fitted one — measure your own with
   :func:`mhcmatch.portfolio.betabinom_rho`.
 - Do **not** reach for ``background="ligand-pooled"`` on mouse class II. It is the self-inclusive
@@ -450,7 +459,7 @@ Running it
 
    nextflow run integrations/nextflow/mhcmatch/pipeline.nf -profile conda \
        --input samplesheet.csv --outdir results \
-       --mhcmatch_vector_n0 8 --mhcmatch_tumor SKCM -resume
+       --mhcmatch_cassette_n0 8 --mhcmatch_tumor SKCM -resume
 
 Stage the references once rather than per run. Two environment variables decide where they land,
 and the distinction matters: ``MHCMATCH_PMHC_DIR`` is a **read** override, consulted first and used
