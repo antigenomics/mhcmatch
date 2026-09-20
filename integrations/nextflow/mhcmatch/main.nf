@@ -92,9 +92,6 @@ process MHCMATCH_ALLELES {
     // nextflow.config beside `container`.
     conda "${moduleDir}/environment.yml"
 
-    // `moduleDir`, not `projectDir`: an integrator's entry script is elsewhere.
-    conda \"${moduleDir}/environment.yml\"
-
     // **The step whose absence is silent.** Every HLA typer writes the G-group form
     // (`A*01:01:01G`), the pseudosequence tables are keyed at two fields, and `Store._allele_set`
     // drops what it cannot find WITHOUT A WORD -- so a run handed a raw typing file scores against
@@ -114,8 +111,13 @@ process MHCMATCH_ALLELES {
     """
 
     stub:
+    // **Not an empty file.** An empty allele list is filtered out downstream -- correctly, since
+    // `predict` REQUIRES `--alleles` and a silently empty panel is the failure this process exists
+    // to prevent -- so an empty stub made the whole de novo arm unreachable under `-stub-run`, and
+    // the topology check silently covered half the graph. Two resolvable allotypes per class.
+    def demo = cls == 'mhc2' ? 'HLA-DRB1*15:01,HLA-DRB1*03:01' : 'HLA-A*02:01,HLA-B*07:02'
     """
-    printf '' > ${task.ext.prefix ?: meta.id}.${cls}.mhcmatch.alleles.txt
+    echo '${demo}' > ${task.ext.prefix ?: meta.id}.${cls}.mhcmatch.alleles.txt
     """
 }
 
@@ -128,9 +130,6 @@ process MHCMATCH_PREDICT {
     // a config file has no equivalent -- which is why this one directive is not in
     // nextflow.config beside `container`.
     conda "${moduleDir}/environment.yml"
-
-    // `moduleDir`, not `projectDir`: an integrator's entry script is elsewhere.
-    conda \"${moduleDir}/environment.yml\"
 
     input:
     tuple val(meta), path(fasta), val(alleles), val(cls)
@@ -174,9 +173,6 @@ process MHCMATCH_RANK {
     // a config file has no equivalent -- which is why this one directive is not in
     // nextflow.config beside `container`.
     conda "${moduleDir}/environment.yml"
-
-    // `moduleDir`, not `projectDir`: an integrator's entry script is elsewhere.
-    conda \"${moduleDir}/environment.yml\"
 
     // `rank` reads the known-epitope sets, the mimicry references and the expression tables on top
     // of the ligand panel. The image bakes them (`bootstrap --reference`); a bare `bootstrap` image
@@ -233,9 +229,6 @@ process MHCMATCH_RERANK {
     // a config file has no equivalent -- which is why this one directive is not in
     // nextflow.config beside `container`.
     conda "${moduleDir}/environment.yml"
-
-    // `moduleDir`, not `projectDir`: an integrator's entry script is elsewhere.
-    conda \"${moduleDir}/environment.yml\"
 
     // `rank pairs --passthrough`: the caller's OWN table comes back with every column it arrived
     // with, in its own order, plus this model's under `--prefix`, re-ordered by the aggregate. Not
@@ -297,9 +290,6 @@ process MHCMATCH_NEOAG {
     // nextflow.config beside `container`.
     conda "${moduleDir}/environment.yml"
 
-    // `moduleDir`, not `projectDir`: an integrator's entry script is elsewhere.
-    conda \"${moduleDir}/environment.yml\"
-
     input:
     tuple val(meta), path(peptides), val(cls)
 
@@ -335,9 +325,6 @@ process MHCMATCH_MIMICRY {
     // nextflow.config beside `container`.
     conda "${moduleDir}/environment.yml"
 
-    // `moduleDir`, not `projectDir`: an integrator's entry script is elsewhere.
-    conda \"${moduleDir}/environment.yml\"
-
     input:
     tuple val(meta), path(peptides), val(cls)
 
@@ -370,9 +357,6 @@ process MHCMATCH_CASSETTE_SELECT {
     // a config file has no equivalent -- which is why this one directive is not in
     // nextflow.config beside `container`.
     conda "${moduleDir}/environment.yml"
-
-    // `moduleDir`, not `projectDir`: an integrator's entry script is elsewhere.
-    conda \"${moduleDir}/environment.yml\"
 
     // Fixed k, where MHCMATCH_CASSETTE sizes by the per-allotype stopping rule of `--n0`. Both are
     // real answers to "how many units": `--n0` says how many the recipient's allotypes can carry,
@@ -424,9 +408,6 @@ process MHCMATCH_CASSETTE {
     // a config file has no equivalent -- which is why this one directive is not in
     // nextflow.config beside `container`.
     conda "${moduleDir}/environment.yml"
-
-    // `moduleDir`, not `projectDir`: an integrator's entry script is elsewhere.
-    conda \"${moduleDir}/environment.yml\"
 
     // `alleles` is the class-I list as a String, or a `[mhc1: '...', mhc2: '...']` Map when the
     // caller has a per-donor class-II list too. The Map is how a per-donor class-II list gets here
@@ -535,9 +516,6 @@ process MHCMATCH_CASSETTE_SCORE {
     // a config file has no equivalent -- which is why this one directive is not in
     // nextflow.config beside `container`.
     conda "${moduleDir}/environment.yml"
-
-    // `moduleDir`, not `projectDir`: an integrator's entry script is elsewhere.
-    conda \"${moduleDir}/environment.yml\"
 
     // THE WHOLE POINT OF THIS PROCESS IS THAT IT IS NOT PER DONOR.
     //

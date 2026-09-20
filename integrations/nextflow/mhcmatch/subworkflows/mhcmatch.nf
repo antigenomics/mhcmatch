@@ -88,19 +88,20 @@ workflow MHCMATCH {
                       ? Channel.empty()
                       : ch_pool.map { meta, tsv -> [ meta, tsv, 'mhc1' ] } )
 
-    // `remainder: true` so a sample with no allele list still reaches the selector -- it loses the
-    // allotype channel and its coverage denominator, and says so. The filter drops the mirror case
-    // the same flag emits: an allele entry that matched no pool, which is a real shape when a
-    // donor has a window FASTA and no candidate table.
-    ch_scored = ch_pool.join( ch_alleles, remainder: true )
-                       .filter { meta, tsv, alleles -> tsv != null }
-
-    MHCMATCH_CASSETTE_SELECT( ch_scored.map { meta, tsv, a -> [ meta, tsv, mhc1Of(a) ] } )
+    // **Plain joins below, never `remainder: true`.** The caller emits one `ch_alleles` entry per
+    // (donor, arm) and one context per class-I row, so every pool already has both -- a donor with
+    // no typing file carries the empty string, which is an entry. `remainder: true` here bought
+    // nothing and cost arity: an unmatched RIGHT item is emitted as a SHORTER tuple, so the
+    // `{ a, b, c, d -> }` closure below is handed three values and the run dies with "Invalid
+    // method invocation `call`" naming a closure number rather than a channel.
+    MHCMATCH_CASSETTE_SELECT( ch_pool.join( ch_alleles )
+                                     .map { meta, tsv, a -> [ meta, tsv, mhc1Of(a) ] } )
 
     // The window FASTA, carried to `--context`: `rank`/`rerank` emit MINIMAL epitopes and a unit is
     // the long (~27 aa) window around the mutation, so neither side alone can build one. A row that
-    // genuinely names no window still arrives as the NO_FILE sentinel, so `--unit-column` remains
-    // the other source and MHCMATCH_CASSETTE's refusal survives for a sample with neither.
+    // genuinely names no window arrives as the NO_FILE sentinel rather than as nothing -- which is
+    // what lets this be a plain join -- so `--unit-column` remains the other source and
+    // MHCMATCH_CASSETTE's refusal survives for a sample with neither.
     //
     // `alleles` goes in WHOLE here where the selector got only the class-I half: this is the one
     // process that reads the class-II list.
@@ -111,14 +112,9 @@ workflow MHCMATCH {
 
     MHCMATCH_CASSETTE(
         MHCMATCH_CASSETTE_SELECT.out.units
-            .join( ch_alleles, remainder: true )
-            .filter { meta, units, alleles -> units != null }
-            .join( ch_ctx, remainder: true )
-            // `moduleDir` and not `projectDir`: projectDir is the ENTRY script's directory, so an
-            // integrator including this subworkflow resolves the sentinel against THEIR repo root,
-            // where it does not exist.
-            .map { meta, units, alleles, ctx ->
-                [ meta, units, ctx ?: file("${moduleDir}/../NO_FILE"), alleles ?: '', 'mhc1' ] }
+            .join( ch_alleles )
+            .join( ch_ctx )
+            .map { meta, units, alleles, ctx -> [ meta, units, ctx, alleles ?: '', 'mhc1' ] }
     )
 
     // ONE calibration per arm over every donor in it, which is why this collects -- see the note on
