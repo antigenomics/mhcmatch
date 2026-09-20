@@ -157,72 +157,6 @@ def test_the_documented_artifact_count_is_the_real_one():
     assert checked, ("no doc states the artifact count any more -- either it was removed on "
                      "purpose (delete this test) or the wording drifted out of the pattern")
 
-
-def test_nextflow_pins_match_pyproject():
-    """The container pins must name the version this checkout builds -- unless it is a dev version.
-
-    A ``.devN`` suffix means no wheel has been published and no image has been pushed, so there is
-    nothing for `mhcmatch==<version>` to resolve to; pinning it would produce a module that cannot
-    build. On a dev version the pins are therefore allowed to lag by exactly one patch-level bump,
-    which is the release they were last valid for. They are checked again at release, when the
-    suffix is dropped.
-    """
-    import re
-    want, root = _declared_version()
-    if ".dev" in want:
-        return
-    nf = root / "integrations" / "nextflow"
-    if not nf.is_dir():                       # sdist/wheel checkouts do not carry integrations/
-        return
-    # **Match the pin, not any version-shaped string.** This scan used to be
-    # ``re.findall(r"\b0\.\d+\.\d+\b", ...)``, which made it VACUOUS the day 1.0.0 shipped: every
-    # pin it guards has been ``1.x.y`` since, so it found nothing and passed. It also never opened
-    # the two files whose pins actually drifted -- ``nextflow.config`` is not ``*.nf``, so
-    # ``params.mhcmatch_container`` went unchecked (it sat on 1.6.0 while the rest were on 1.6.1),
-    # and ``templates/*.sbatch`` was never in the list at all, though ``setup.sbatch`` asserts the
-    # installed version equals its own ``VERSION=`` and so installs the wrong release when stale.
-    # Anchoring on the five spellings of a *mhcmatch* pin also keeps Nextflow's own ``21.10.6`` in
-    # main.nf from reading as a stale pin, which a bare ``\d+\.\d+\.\d+`` would.
-    #
-    # ``README.md`` is in the glob because it is the file a collaborator actually follows, and it
-    # was the last one left out: at 1.9.0 it still said ``git clone --branch v1.8.0`` and
-    # ``pip install "mhcmatch==1.8.0"`` in twelve places while every machine-read pin beside it had
-    # moved. Following it installed 1.8.0 and then ``setup.sbatch`` failed its own assertion. A
-    # human-read pin goes stale exactly like a machine-read one; only the check was missing.
-    # **Four more spellings, added in 1.17.0, and each of them was stale when it was added.** The
-    # guard matched five forms and every one of them was current, while beside them in the same
-    # README sat `mhcmatch-1.15.0.tar.gz`, `/v1.15.0.tar.gz`, "This directory pins 1.15.0" and, in
-    # `templates/README.md`, a table cell reading `1.10.0` -- two minor versions behind the
-    # `VERSION=` in the script it documented. A pin the guard cannot see is not a pin.
-    # **1.18.0: a pin was invisible on BOTH axes at once, and it terminated every real run.**
-    # The overlay beside this module sat on 1.17.0 while all four guarded sites moved -- because the
-    # scan root was `integrations/nextflow/mhcmatch` and the overlay is its SIBLING, never opened,
-    # AND because that pin is spelled as a bare `?: '1.17.0'`, which none of the eight prefixes
-    # above matches. Widening the root alone would still have passed. `preflight.nf` compares it to
-    # `mhcmatch --version` with `!=` under `errorStrategy = 'terminate'`, so every overlay mode
-    # except `off` died at its FIRST process -- and `-stub-run` cannot see it, because the stub
-    # echoes OK without running the command. The scan is rooted at `integrations/nextflow` and
-    # globbed by KIND, so a new subdirectory or a re-added `.sbatch` is covered the day it lands
-    # rather than the release after someone remembers.
-    PINS = re.compile(r"(?:mhcmatch==|mhcmatch:|mhcmatch-|MHCMATCH_VERSION=|VERSION=|"
-                      r"--branch v|/v|pins |require_version[^\n']*')"
-                      r"(\d+\.\d+\.\d+)", re.M)
-    scanned, stale = [], {}
-    for p in sorted(set(nf.rglob("*.nf")) | set(nf.rglob("*.config")) | set(nf.rglob("*.sbatch"))
-                    | set(nf.rglob("README.md")) | set(nf.rglob("Dockerfile"))
-                    | set(nf.rglob("environment.yml"))):
-        if not p.is_file():
-            continue
-        for v in set(PINS.findall(p.read_text())):
-            scanned.append(str(p.relative_to(root)))
-            if v != want:
-                stale.setdefault(str(p.relative_to(root)), set()).add(v)
-    assert not stale, f"version pins behind pyproject {want}: {stale}"
-    # A guard that matches nothing is the failure mode this test just had. Fail loudly instead.
-    assert scanned, ("found no mhcmatch version pin at all under integrations/nextflow -- "
-                     "the pin spelling changed and this guard has gone vacuous again")
-
-
 # --- what `bootstrap` stages must remain ingestible by ------------------------------------------
 # `mhcmatch bootstrap --reference` stages a fixed list of files from `isalgo/pmhc_data`, and each
 # one has exactly one module function that reads it. Staging and reading are tested together
@@ -336,47 +270,7 @@ def test_the_documented_shipped_fit_count_is_the_real_one():
                      "pattern, which is the drift this test exists to catch")
 
 
-def test_snakemake_module_pins_match_pyproject():
-    """The Snakemake env pins the release the same way the Nextflow one does, and for the same
-    reason: the rules call the CLI by flag name, so a module ahead of the installed release passes
-    flags that release has never heard of. Two engines running one library is two more places for a
-    version to go stale, so both are gated by the same kind of check."""
-    import re
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parents[1]
-    want = re.search(r'^version = "([^"]+)"', (root / "pyproject.toml").read_text(),
-                     re.M).group(1)
-    sm = root / "integrations" / "snakemake" / "mhcmatch"
-    assert sm.is_dir(), "the Snakemake module is gone"
-
-    found = {}
-    for p in (sm / "envs" / "mhcmatch.yaml", sm / "README.md", sm / "Snakefile"):
-        for v in set(re.findall(r"(?:mhcmatch==|tag=\"v)(\d+\.\d+\.\d+)", p.read_text())):
-            found.setdefault(str(p.relative_to(root)), set()).add(v)
-    assert found, "no mhcmatch version pin found in the Snakemake module -- the guard is vacuous"
-    stale = {k: v for k, v in found.items() if v != {want}}
-    assert not stale, f"Snakemake pins behind pyproject {want}: {stale}"
-
-
-def test_snakemake_cohort_rule_expands_over_every_sample():
-    """**The property the whole cohort design rests on**, and it is checkable by reading the rule.
-
-    `cassette score` fits ONE offset over every donor in the run. Its input must be `expand()` over
-    the module-level `SAMPLES`, resolved once from the input directory -- never a glob over the
-    OUTPUT directory, which is evaluated against whatever exists when the DAG is built and would
-    silently fit the offset over a subset. That is the 'every donor's mean equals the declared
-    prevalence' defect the cohort step exists to prevent, and it would reappear looking fixed.
-    """
-    from pathlib import Path
-
-    smk = (Path(__file__).resolve().parents[1] / "integrations" / "snakemake" / "mhcmatch"
-           / "workflow" / "rules" / "cassette.smk").read_text()
-    assert "def _all_units(w):" in smk and "def _all_pools(w):" in smk
-    # both collectors expand over SAMPLES, and neither reaches for a glob
-    _units = smk[smk.index("def _all_units(w):"):smk.index("def _all_pools(w):")]
-    assert "expand(" in _units and "sample=SAMPLES" in _units, _units
-    assert "glob(" not in smk, "the cohort rule must not glob an output directory"
-    # ...and there is exactly one cohort output per arm, not one per sample
-    assert '{OUT}/{{arm}}/cohort.cassette_score.tsv' in smk
-    assert "{sample}" not in smk[smk.index("rule mhcmatch_cassette_score:"):]
+# The `integrations/` guards -- the Nextflow and Snakemake version pins, the cohort rule's
+# shape, and the flag-by-flag check against argparse -- live in `test_integrations.py`.
+# They were here because `_declared_version` is, and that is not a reason: they read a
+# tree this module knows nothing about, and two of them broke when it was reorganised.
