@@ -58,3 +58,65 @@ jobs:
         run: |
           pip install marimo
           marimo check notebooks/*.py
+
+  # **The gate that found four defects in one session, none of them reachable from a unit test.**
+  # `tests/test_integrations.py` asks argparse about every flag either engine passes, which is the
+  # cheap half; this is the other half -- whether the workflow files COMPILE and whether the graph
+  # they describe is the one intended. Nextflow 26.x strict syntax rejects a leading `+` on a
+  # continuation line, a top-level closure and `workflow.onComplete`, all at compile time, so
+  # `-stub-run` catches them and a unit test never will.
+  #
+  # A stub runs no command, so this cannot catch an unrecognised CLI flag; that is what the flag
+  # guard in the suite above is for. The two together are the whole check. Neither executes
+  # mhcmatch on real data -- that needs the HF panel, and a network dependency inside a required
+  # check is a flaky check.
+  integrations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install (the stubs ask the library for its own column schemas)
+        run: pip install -e . snakemake
+      - name: Nextflow
+        # Into the runner's own bin, not /usr/local/bin: the latter happens to be writable on the
+        # current ubuntu image and is not a property of the runner anyone should depend on.
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o "$HOME/.local/bin/nextflow" https://get.nextflow.io
+          chmod +x "$HOME/.local/bin/nextflow"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/nextflow" -version
+      - name: pipeline.nf -stub-run, both arms
+        # Both arms, or the check covers half the graph: the MHCMATCH_ALLELES stub used to write an
+        # EMPTY file, which the de novo arm filters out (correctly -- `predict` requires
+        # `--alleles`), so `-stub-run` had never once exercised it.
+        run: |
+          nextflow run integrations/nextflow/mhcmatch/pipeline.nf -stub-run \
+              --input integrations/fixtures/samplesheet.csv \
+              --outdir results --mode both \
+              --mhcmatch_cassette_unit_column context_peptide
+      - name: overlay -stub-run, every mode
+        run: |
+          for mode in off annotate rerank denovo cassette; do
+            echo "== $mode"
+            nextflow run integrations/nextflow/overlay/test/main.nf -stub-run \
+                -c integrations/nextflow/overlay/overlay.config \
+                --mhcmatch_overlay_mode "$mode" \
+                --mhcmatch_cassette_unit_column context_peptide \
+                --table integrations/fixtures/S1.mhc1.candidates.tsv \
+                --fasta integrations/fixtures/S1.mhc1.windows.fasta
+          done
+      - name: Snakemake module builds its DAG
+        # `-n` resolves every input lambda and every `params:` callable, so a samplesheet the parser
+        # cannot read, a missing wildcard and a rule whose input does not exist all fail here.
+        run: |
+          snakemake -s integrations/snakemake/mhcmatch/Snakefile --directory "$RUNNER_TEMP/smk" \
+              -n --cores 2 --config input=$PWD/integrations/fixtures/samplesheet.csv \
+              | tail -20
