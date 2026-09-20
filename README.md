@@ -92,15 +92,19 @@ Four things that surprise people, and each is a link away from its detail:
 
 ## The shipped model
 
-**E**xpression, **P**resentation, **I**mmunogenic **C**omplementarity — four blocks, entered in
-pipeline order, so a later block's coefficient is what that term is worth *after* the earlier ones.
+**E**xpression, **P**resentation, **I**mmunogenic **C**omplementarity — four blocks, listed here
+in the order that spells the name:
 
 | letter | block | columns |
 |---|---|---|
-| `P` | presentation | `binder`, `log10a` |
 | `E` | expression | `expr_lvl`, `expr_norm` |
+| `P` | presentation | `binder`, `log10a` |
 | `I` | immunogenic — physchem | `C_phys_buried`, `C_phys_charge` |
 | `C` | complementarity — corpus | `C_corpus_thymus`, `C_corpus_self`, `C_corpus_viral` |
+
+The **fit** enters them presentation first — `presentation, expression, physchem, corpus`, which is
+the `blocks` list on the artifact itself — so a later block's coefficient is what that term is
+worth *after* the earlier ones. Read a coefficient against that order, not against the acronym.
 
 One artifact per `(cls, species, mode)`, and **no fallback** — asking for a cell that was never
 fitted raises rather than scoring it with a neighbour's coefficients.
