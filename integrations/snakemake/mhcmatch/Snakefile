@@ -1,9 +1,4 @@
-# mhcmatch as a Snakemake module.
-#
-# Two arms and a cassette over a samplesheet CSV -- `sample,class,candidates,windows,hla`, one row
-# per sample per class. The assumed upstream is nf-core/sarek -> VEP -> pVACtools for the candidates
-# and the peptide windows, OptiType / arcasHLA / HLA-LA for the typing; nothing here reads a
-# filename convention or names a cluster.
+# mhcmatch as a Snakemake module: two arms and a cassette over a samplesheet CSV.
 #
 # Runnable on its own:
 #     snakemake --sdm conda --cores 8 --config input=/path/to/samplesheet.csv
@@ -15,6 +10,20 @@
 #         config: config["mhcmatch"]
 #         prefix: "results/mhcmatch"
 #     use rule * from mhcmatch as mhcmatch_*
+#
+# The assumed upstream is nf-core/sarek -> VEP -> pVACtools for the candidates and the peptide
+# windows, OptiType / arcasHLA / HLA-LA for the typing. Nothing here reads a filename convention or
+# names a cluster.
+#
+# **One file, where there were six.** The rules were split across `workflow/rules/*.smk` by arm,
+# which put the samplesheet parser, the two collectors it feeds and the rule that reads them in
+# three places; the cohort rule below is the one whose SHAPE matters, and it is now beside the
+# function that builds its input.
+#
+# The commands here are the ones `../../nextflow/mhcmatch/main.nf` runs, flag for flag. Two engines
+# running one library is two places for a flag name to go stale, which is why
+# `tests/test_integrations.py` asks argparse about every flag either of them passes.
+import csv
 import os
 
 from snakemake.utils import min_version, validate
@@ -22,13 +31,12 @@ from snakemake.utils import min_version, validate
 min_version("8.0")
 
 
-# **Joined onto `workflow.basedir`, because a bare relative `configfile:` is resolved against the
+# **Joined onto `workflow.basedir`, because a bare relative `configfile:` resolves against the
 # WORKING directory, not against this file.** `--directory /tmp/run` therefore looked for
-# `/tmp/run/config/config.yaml` and stopped the workflow before a single rule was read -- i.e. the
-# module could only be driven from its own directory. `validate` below needs no such join: it
-# resolves its schema relative to the calling Snakefile already.
+# `/tmp/run/config/config.yaml` and stopped before a single rule was read -- i.e. the module could
+# only be driven from its own directory. `validate` needs no such join: it resolves its schema
+# relative to the calling Snakefile already.
 configfile: os.path.join(workflow.basedir, "config", "config.yaml")
-
 
 # **The schema is the reason to prefer this over a Nextflow config**, and it is not decoration: an
 # unknown `--param` is silently IGNORED by Nextflow, so a typo'd setting reads as "the default was
@@ -36,15 +44,560 @@ configfile: os.path.join(workflow.basedir, "config", "config.yaml")
 validate(config, "config/schema.yaml")
 
 
-include: "workflow/rules/common.smk"
-include: "workflow/rules/alleles.smk"
-include: "workflow/rules/rerank.smk"
-include: "workflow/rules/denovo.smk"
-include: "workflow/rules/annotate.smk"
-include: "workflow/rules/cassette.smk"
+OUT = config.get("outdir", "results")
+ARMS = {"rerank": ["rerank"], "denovo": ["denovo"], "both": ["rerank", "denovo"]}[config["mode"]]
+CLASSES = ["mhc1", "mhc2"]
+
+#: **`config['input']` -- a samplesheet CSV -- is the entire input contract**, and it replaced a
+#: filename convention for one reason: a convention is a claim about someone else's pipeline. The
+#: columns are `sample,class,candidates,windows,hla`; one row per sample per class.
+#:
+#: * `candidates` -- the rerank arm's input: any table with a peptide column and an allele column.
+#: * `windows` -- the de novo arm's input AND the rerank arm's `--context`, which is what makes
+#:   agretopicity and `d_occupancy` defined there. `pvacseq generate_protein_fasta` writes it.
+#: * `hla` -- a typing file for `mhcmatch alleles`. Omit it and the `alleles` / `alleles_mhc2`
+#:   config literal must be given instead.
+_SHEET_COLUMNS = ("sample", "class", "candidates", "windows", "hla")
+
+
+def _samplesheet():
+    """`{sample: {kind: path}}` from `config['input']`, read ONCE at DAG-build time.
+
+    Read once and stored, never re-read inside a rule and never discovered by globbing a directory.
+    A rule whose input globs a directory is evaluated against whatever happens to exist when that
+    rule is considered, which for the cohort step below would silently fit the offset over a subset
+    of the donors -- the exact "every donor's mean equals the declared prevalence" defect that step
+    exists to avoid.
+
+    The keys are `table_<cls>` (candidates), `fasta_<cls>` (windows) and `typing`.
+    """
+    path = config.get("input")
+    if not path:
+        return {}
+    home = os.path.dirname(os.path.abspath(path))
+
+    def _resolve(cell):
+        """A cell's path, **resolved against the samplesheet's own directory** when relative.
+
+        Not against the working directory. A samplesheet is written beside the files it names and
+        then run from somewhere else -- `--directory`, or a `module` include -- and resolving
+        against the cwd turns every relative cell into a file that does not exist. Snakemake then
+        reports a missing *input*, which reads as a broken upstream rather than as a samplesheet
+        read from the wrong place.
+        """
+        cell = (cell or "").strip()
+        if not cell:
+            return None
+        return cell if os.path.isabs(cell) else os.path.normpath(os.path.join(home, cell))
+
+    found, seen = {}, {}
+    # `utf-8-sig`: a samplesheet that has been through Excel carries a BOM, and the first column
+    # would otherwise read as `﻿sample` -- i.e. every row would have no sample id.
+    with open(path, newline="", encoding="utf-8-sig") as fh:
+        reader = csv.DictReader(fh)
+        header = [(c or "").strip() for c in (reader.fieldnames or [])]
+        for req in ("sample", "class"):
+            if req not in header:
+                raise WorkflowError(
+                    f"{path}: no `{req}` column (header: {header}). The samplesheet columns are "
+                    f"{','.join(_SHEET_COLUMNS)} -- see README.md")
+        for lineno, row in enumerate(reader, start=2):
+            sid = (row.get("sample") or "").strip()
+            cls = (row.get("class") or "").strip()
+            if not sid:
+                raise WorkflowError(f"{path}:{lineno}: empty `sample`")
+            if cls not in CLASSES:
+                raise WorkflowError(f"{path}:{lineno}: sample {sid!r} has class {cls!r}, which is "
+                                    f"not one of {CLASSES}")
+            table, fasta = _resolve(row.get("candidates")), _resolve(row.get("windows"))
+            if not table and not fasta:
+                raise WorkflowError(
+                    f"{path}:{lineno}: sample {sid!r} ({cls}) gives neither `candidates` nor "
+                    "`windows`, so there is nothing for either arm to read")
+            # **One row per (sample, class).** Taking the last row silently made the second row's
+            # paths win: measured, a sheet with two `S1,mhc1` rows scored S2's candidates and
+            # published them under S1's name, exit 0, no warning. Nextflow refuses the same sheet by
+            # name, so this is also the two engines agreeing.
+            if (sid, cls) in seen:
+                raise WorkflowError(
+                    f"{path}:{lineno}: sample {sid!r} already has a {cls!r} row at line "
+                    f"{seen[(sid, cls)]}. One row per (sample, class)")
+            seen[(sid, cls)] = lineno
+            rec = found.setdefault(sid, {})
+            if table:
+                rec[f"table_{cls}"] = table
+            if fasta:
+                rec[f"fasta_{cls}"] = fasta
+            hla = _resolve(row.get("hla"))
+            if hla:
+                # One sample's two rows naming two DIFFERENT typing files is a samplesheet error.
+                # Taking the last silently would score one class against the other donor's panel.
+                if rec.get("typing", hla) != hla:
+                    raise WorkflowError(f"{path}:{lineno}: sample {sid!r} already carries typing "
+                                        f"{rec['typing']!r} and this row says {hla!r}")
+                rec["typing"] = hla
+    # **No existence check here, on purpose.** Under `module` / `use rule * from mhcmatch` a listed
+    # path may be an output the caller's own rules have yet to produce, and refusing it at parse
+    # time would break that spelling. Snakemake names a genuinely missing file when it builds the DAG.
+    return found
+
+
+SAMPLES_MAP = _samplesheet()
+SAMPLES = sorted(SAMPLES_MAP)
+# **An unset `input` used to reach `Nothing to be done` and exit 0**, which reads as a successful
+# run. `pipeline.nf` refuses the same case by name; this is the two engines agreeing that a workflow
+# with no declared input is a mistake and not an empty one.
+if not config.get("input"):
+    raise WorkflowError(
+        "no `input`: point it at a samplesheet CSV, either in `config/config.yaml` or on the "
+        "command line (`--config input=samplesheet.csv`). Columns: "
+        + ",".join(_SHEET_COLUMNS) + " -- see README.md")
+if not SAMPLES:
+    raise WorkflowError(f"{config['input']}: no sample rows -- see README.md for the samplesheet")
+
+# The cassette and the cohort offset are class I, and `cassette score` fits ONE offset over EVERY
+# sample in the run, so an arm cannot be run with one sample missing from it. Said here, naming the
+# sample and the column, rather than left to a `KeyError` inside an input lambda.
+for _s in SAMPLES:
+    for _arm in ARMS:
+        _need, _col = (("table_mhc1", "candidates") if _arm == "rerank" else ("fasta_mhc1", "windows"))
+        if _need not in SAMPLES_MAP[_s]:
+            raise WorkflowError(
+                f"sample {_s!r} has no `class: mhc1` row with a `{_col}` path, which the {_arm} arm "
+                f"needs: the cassette is class I and its cohort offset is fitted over every sample "
+                f"at once. Add the row, drop the sample, or choose another `mode`")
+
+
+# --- the option helpers every rule shares -------------------------------------------------------
+
+def opt(flag, value):
+    """`--flag value` when the value is set, and nothing at all when it is not."""
+    return f"{flag} {value}" if value not in (None, "", False, "none") else ""
+
+
+def flag(name, value):
+    """A bare `--flag` when true. Accepts the strings a CLI `--config` produces."""
+    return name if str(value).lower() not in ("false", "0", "no", "none", "") else ""
+
+
+def pool_for(arm, sample, cls="mhc1"):
+    """The scored table an arm's cassette is chosen from."""
+    return (f"{OUT}/rerank/{sample}.{cls}.epitopes.mhcmatch.tsv" if arm == "rerank"
+            else f"{OUT}/denovo/{sample}.{cls}.mhcmatch.ranked.tsv")
+
+
+def score_column(arm):
+    """Which column of the pool holds the aggregate.
+
+    **Do not leave this to the CLI fallback on the rerank arm.** A caller's candidate table HAS a
+    `score` column -- theirs -- so an unqualified fallback selects on the upstream tool's ranking
+    while looking as though it selected on ours.
+    """
+    if config.get("cassette", {}).get("score_column"):
+        return config["cassette"]["score_column"]
+    return f"{config['rerank_prefix']}score" if arm == "rerank" else ""
+
+
+def alleles_in(w, cls="mhc1"):
+    """The typing-derived allele file, unless one literal list was given for every sample."""
+    cls = getattr(w, "cls", cls)
+    if config.get("alleles" if cls == "mhc1" else "alleles_mhc2"):
+        return []
+    return [f"{OUT}/alleles/{w.sample}.{cls}.txt"] if "typing" in SAMPLES_MAP[w.sample] else []
+
+
+def alleles_arg(w, input, cls="mhc1"):
+    """`--alleles` as a literal, from the config or from the file `mhcmatch alleles` wrote."""
+    lit = config.get("alleles" if getattr(w, "cls", cls) == "mhc1" else "alleles_mhc2")
+    if lit:
+        return f"--alleles '{lit}'"
+    return f'--alleles "$(cat {input.alleles[0]})"' if input.alleles else ""
+
+
+def collect_targets():
+    """What `rule all` asks for: one cassette per sample per arm, plus one cohort file per arm."""
+    out = []
+    for arm in ARMS:
+        out += [f"{OUT}/{arm}/{s}.cassette.faa" for s in SAMPLES]
+        out += [f"{OUT}/{arm}/cohort.cassette_score.tsv",
+                f"{OUT}/{arm}/cohort.cassette_report.html"]
+        # The scored table for EVERY row of the samplesheet, both classes. The cassette is class I,
+        # so without these a `class: mhc2` row would drive no job at all and the class-II path would
+        # be unreachable in a dry run.
+        kind = "table" if arm == "rerank" else "fasta"
+        for s in SAMPLES:
+            for c in CLASSES:
+                if f"{kind}_{c}" in SAMPLES_MAP[s]:
+                    out.append(pool_for(arm, s, c))
+                    if arm == "denovo":
+                        out.append(f"{OUT}/denovo/{s}.{c}.mhcmatch.native.tsv")
+    return out
 
 
 rule all:
     input:
         collect_targets(),
     default_target: True
+
+
+# --- alleles ------------------------------------------------------------------------------------
+# **The step whose absence is silent.** Every HLA caller writes the G-group form (`A*01:01:01G`) and
+# the pseudosequence tables are keyed at two fields, so an untrimmed name resolves to NOTHING -- and
+# `Store._allele_set` drops what it cannot find without a word, so the run scores against an empty
+# panel and exits 0. `mhcmatch alleles` also splits the classes and joins the DP/DQ alpha-beta
+# pairs, neither of which a `cut -f2` does.
+
+rule mhcmatch_alleles:
+    input:
+        typing=lambda w: SAMPLES_MAP[w.sample]["typing"],
+    output:
+        f"{OUT}/alleles/{{sample}}.{{cls}}.txt",
+    threads: 1
+    resources:
+        mem_mb=2000,
+        runtime=20,
+    conda:
+        "envs/mhcmatch.yaml"
+    shell:
+        "mhcmatch alleles {input.typing} --cls {wildcards.cls} --out {output}"
+
+
+# --- the rerank arm -----------------------------------------------------------------------------
+
+rule mhcmatch_rerank:
+    """Your candidate table in, the same table plus an `mm_` block out.
+
+    No `--alleles`: `rank pairs` refuses it, because the rows name their own. No `--rank-threshold`
+    either -- every row of the caller's table comes back, which is the contract this arm exists for.
+    """
+    input:
+        table=lambda w: SAMPLES_MAP[w.sample][f"table_{w.cls}"],
+        # `--context` is not redundancy. A candidate table carries the MUTANT k-mer and nothing the
+        # germline counterpart is recoverable from; the window FASTA carries the wild-type arm
+        # beside it, which is where agretopicity comes from. Without it every row reads `wt_absent`
+        # -- correct, and a weaker model.
+        context=lambda w: [SAMPLES_MAP[w.sample][f"fasta_{w.cls}"]]
+        if f"fasta_{w.cls}" in SAMPLES_MAP[w.sample] else [],
+    output:
+        f"{OUT}/rerank/{{sample}}.{{cls}}.epitopes.mhcmatch.tsv",
+    params:
+        prefix=lambda w: config["rerank_prefix"],
+        ctx=lambda w, input: opt("--context", input.context[0] if input.context else None),
+        tier=lambda w: opt("--tier", config["tier"]),
+        species=lambda w: opt("--species", config["species"]),
+        # Dropped in pathogen mode: `rank` refuses `--tumor` there (undefined without a host
+        # transcript) and would exit 2 on every task in the arm.
+        tumor=lambda w: opt("--tumor", config.get("tumor")
+                            if config["rank_epitope"] == "neoantigen" else None),
+        prev=lambda w: opt("--prevalence", config.get("prevalence")),
+        epitope=lambda w: opt("--epitope", config["rank_epitope"]),
+        extra=lambda w: " ".join(filter(None, [flag("--extended", config["rank_extended"]),
+                                               flag("--annotate", config["rank_annotate"])])),
+    threads: 8
+    resources:
+        mem_mb=lambda w: 16000 if config["rank_extended"] else 8000,
+        runtime=lambda w: 240 if config["rank_extended"] else 60,
+    conda:
+        "envs/mhcmatch.yaml"
+    shell:
+        "mhcmatch rank pairs {input.table} --cls {wildcards.cls} "
+        "--passthrough --prefix {params.prefix} "
+        "{params.ctx} {params.tier} {params.species} {params.tumor} {params.prev} "
+        "{params.epitope} {params.extra} --out {output}"
+
+
+# --- the de novo arm ----------------------------------------------------------------------------
+
+rule mhcmatch_predict:
+    """Per-allele binding over the mutation windows, in the generic native TSV.
+
+    `--native` is the output to read. `--scored-csv` beside it is a legacy wide-CSV compatibility
+    export in a fixed column schema, kept for a caller whose downstream already reads that shape.
+    """
+    input:
+        fasta=lambda w: SAMPLES_MAP[w.sample][f"fasta_{w.cls}"],
+        alleles=alleles_in,
+    output:
+        scored=f"{OUT}/denovo/{{sample}}.{{cls}}.mhcmatch.scored.csv",
+        native=f"{OUT}/denovo/{{sample}}.{{cls}}.mhcmatch.native.tsv",
+    params:
+        alleles=alleles_arg,
+        tier=lambda w: opt("--tier", config["tier"]),
+        species=lambda w: opt("--species", config["species"]),
+        thr=lambda w: opt("--rank-threshold", config["rank_threshold"]),
+    threads: 8
+    resources:
+        mem_mb=16000,
+        runtime=240,
+    conda:
+        "envs/mhcmatch.yaml"
+    shell:
+        "mhcmatch predict {input.fasta} {params.alleles} --cls {wildcards.cls} "
+        "{params.tier} {params.species} {params.thr} "
+        "--scored-csv {output.scored} --native {output.native}"
+
+
+rule mhcmatch_rank:
+    """The fitted EPIC aggregate over the same windows, one ordered table."""
+    input:
+        fasta=lambda w: SAMPLES_MAP[w.sample][f"fasta_{w.cls}"],
+        alleles=alleles_in,
+    output:
+        f"{OUT}/denovo/{{sample}}.{{cls}}.mhcmatch.ranked.tsv",
+    params:
+        alleles=alleles_arg,
+        tier=lambda w: opt("--tier", config["tier"]),
+        species=lambda w: opt("--species", config["species"]),
+        tumor=lambda w: opt("--tumor", config.get("tumor")
+                            if config["rank_epitope"] == "neoantigen" else None),
+        prev=lambda w: opt("--prevalence", config.get("prevalence")),
+        # **`--rank-threshold`, not `--threshold`.** This read `--threshold` until 1.21.0, which
+        # `rank` has never accepted; it was latent only because the default is `none`, so `opt()`
+        # emitted nothing. Setting the documented config key would have exited 2 on every task.
+        thr=lambda w: opt("--rank-threshold", config["rank_threshold"]),
+        epitope=lambda w: opt("--epitope", config["rank_epitope"]),
+        extra=lambda w: " ".join(filter(None, [flag("--extended", config["rank_extended"]),
+                                               flag("--annotate", config["rank_annotate"])])),
+    threads: 8
+    resources:
+        mem_mb=lambda w: 16000 if config["rank_extended"] else 8000,
+        runtime=lambda w: 240 if config["rank_extended"] else 60,
+    conda:
+        "envs/mhcmatch.yaml"
+    shell:
+        "mhcmatch rank fasta {input.fasta} {params.alleles} --cls {wildcards.cls} "
+        "{params.tier} {params.species} {params.tumor} {params.prev} {params.thr} "
+        "{params.epitope} {params.extra} --out {output}"
+
+
+# --- annotation: both off by default, both reported beside the score --------------------------
+# Neither changes an ordering. A near-exact match to an already-tested neoantigen is prior evidence,
+# not a prediction, and is only meaningful for a cohort that did not contribute to the reference;
+# mimicry's two channel families carry opposite signs and are read separately or not at all.
+#
+# CLASS I ONLY, by design: prior evidence and safety are built on a CD8 mechanism. See
+# docs/safety.rst and the same filter in ../../nextflow/mhcmatch/subworkflows/mhcmatch.nf.
+
+rule mhcmatch_neoag:
+    input:
+        lambda w: pool_for(w.arm, w.sample),
+    output:
+        f"{OUT}/{{arm}}/{{sample}}.mhc1.mhcmatch.neoag.tsv",
+    params:
+        subs=lambda w: opt("--max-subs", config["neoag_max_subs"]),
+    threads: 4
+    resources:
+        mem_mb=32000,
+        runtime=240,
+    conda:
+        "envs/mhcmatch.yaml"
+    shell:
+        "mhcmatch neoag --peptides {input} --cls mhc1 {params.subs} --out {output}"
+
+
+rule mhcmatch_mimicry:
+    input:
+        lambda w: pool_for(w.arm, w.sample),
+    output:
+        f"{OUT}/{{arm}}/{{sample}}.mhc1.mhcmatch.mimicry.tsv",
+    params:
+        ann=lambda w: flag("--annotate", config["mimicry_annotate"]),
+    threads: 4
+    resources:
+        mem_mb=32000,
+        runtime=240,
+    conda:
+        "envs/mhcmatch.yaml"
+    shell:
+        "mhcmatch mimicry --peptides {input} --cls mhc1 {params.ann} --out {output}"
+
+
+# --- the cassette -------------------------------------------------------------------------------
+
+def _unit_source(w, input):
+    """Where the assembly step reads each unit's LONG window from: `--context`, or a column.
+
+    **There is no third option, and the CLI's fallback is not one.** A cassette unit is the ~27 aa
+    window around the variant. `mhcmatch cassette`'s own `--unit-column` fallback is `peptide`,
+    which on a reranked table is the MINIMAL epitope -- a 9-mer loads onto any cell without
+    costimulation and is the TOLERISING configuration (PMID 17911588). So with neither a `windows`
+    FASTA nor a configured `vector.unit_column` this stops the run and names the sample.
+    """
+    if input.context:
+        return f"--context {input.context[0]}"
+    col = config.get("vector", {}).get("unit_column")
+    if not col:
+        raise WorkflowError(
+            f"sample {w.sample!r} ({w.arm} arm): no `windows` FASTA to pass as `--context` and no "
+            "`vector.unit_column` set, so nothing names the long window a cassette unit has to be. "
+            "The fallback would be `peptide` -- the MINIMAL epitope, which is the tolerising "
+            "configuration -- so this is refused rather than defaulted. Give the sample a `windows` "
+            "path in the samplesheet, or set `vector.unit_column` to the column carrying the ~27 aa "
+            "window (`context_peptide` in integrations/fixtures/).")
+    return f"--unit-column {col}"
+
+
+def _universe(w, input):
+    """`--universe` is the DENOMINATOR coverage is reported against.
+
+    Without it, coverage is taken over the labels the cassette happens to carry and cannot see the
+    allotype it missed entirely -- which is the number a designer is asking for.
+    """
+    if config.get("alleles"):
+        return f"--universe '{config['alleles']}'"
+    return f'--universe "$(cat {input.alleles[0]})"' if input.alleles else ""
+
+
+rule mhcmatch_cassette_select:
+    """Choose k epitopes by maximising the certainty-equivalent objective.
+
+    Pass the WHOLE pool, not a shortlist: binding and expression carry the two largest coefficients
+    in the model, so a pool already cut on them has no range left along the axes being traded.
+
+    NO `--species` and no `--tier`: `cassette select` accepts neither and exits 2 if handed one.
+    """
+    input:
+        pool=lambda w: pool_for(w.arm, w.sample),
+        alleles=alleles_in,
+    output:
+        f"{OUT}/{{arm}}/{{sample}}.vaccine.units.tsv",
+    params:
+        k=lambda w: config["cassette"]["k"],
+        tol=lambda w: opt("--tol", config["cassette"]["tol"]),
+        universe=_universe,
+        scol=lambda w: opt("--score-column", score_column(w.arm)),
+        prev=lambda w: opt("--prevalence", config.get("prevalence")),
+        rho=lambda w: opt("--rho", config["cassette"]["rho"]),
+        # **NOT `vector.block_live`.** The two share a CLI flag name and are different knobs: here
+        # it is the HLA-LOSS rate (1.0 = nothing is ever lost); under `cassette build --quota` it is
+        # P(a block is live) and defaults to 0.5. Passing 0.5 here makes any unit whose marginal p
+        # exceeds it unrepresentable and the run stops -- measured on a real donor, 1 of 20 chosen
+        # units at p = 0.7782.
+        block=lambda w: opt("--block-live", config["cassette"]["block_live"]),
+    threads: 1
+    resources:
+        mem_mb=2000,
+        runtime=20,
+    conda:
+        "envs/mhcmatch.yaml"
+    shell:
+        "mhcmatch cassette select --candidates {input.pool} -k {params.k} {params.tol} "
+        "{params.universe} {params.scol} {params.prev} {params.rho} {params.block} "
+        "--passthrough --out {output}"
+
+
+rule mhcmatch_cassette:
+    """Order the chosen units, screen them, choose the linker, back-translate, emit the map.
+
+    `order` and not `build`: `cassette select` has already chosen exactly k units, and `build` would
+    re-select them under the per-allotype `--n0` stopping rule -- a different question, and measured
+    on a real donor it turned `-k 20` into 2 units and 54 aa. `order` is the same code path with the
+    sizing rule skipped, so the safety screen, the junction sweep and the back-translation all still
+    run.
+    """
+    input:
+        units=f"{OUT}/{{arm}}/{{sample}}.vaccine.units.tsv",
+        # The window FASTA on EITHER arm when the samplesheet gives one. A unit is the long window
+        # whichever arm scored it, and `units_from_context` joins on the minimal epitope the units
+        # table carries, so there is no reason for the two arms to read a different unit.
+        context=lambda w: [SAMPLES_MAP[w.sample]["fasta_mhc1"]]
+        if "fasta_mhc1" in SAMPLES_MAP[w.sample] else [],
+        alleles=alleles_in,
+    output:
+        report=f"{OUT}/{{arm}}/{{sample}}.cassette.tsv",
+        protein=f"{OUT}/{{arm}}/{{sample}}.cassette.faa",
+        cds=f"{OUT}/{{arm}}/{{sample}}.cassette.fna",
+        map=f"{OUT}/{{arm}}/{{sample}}.cassette.map.tsv",
+    params:
+        alleles=alleles_arg,
+        tier=lambda w: opt("--tier", config["tier"]),
+        species=lambda w: opt("--species", config["species"]),
+        ctx=_unit_source,
+        # `false` means NO safety check runs at all, which is why it is spelled out in config.yaml.
+        screen=lambda w: flag("--screen", config["vector"]["screen"]),
+        # **A TIER, not a number.** The two classes do not share a %rank cut-off: NetMHCpan calls
+        # class I strong <= 0.5 / weak <= 2.0, NetMHCIIpan class II strong <= 2.0 / weak <= 10.0, so
+        # a flat 2.0 is the weak cut for one and the STRONG cut for the other.
+        binder=lambda w: opt("--map-binder", config["vector"]["map_binder"]),
+        mhc2=lambda w: opt("--map-alleles-mhc2", config.get("alleles_mhc2")),
+    threads: 4
+    resources:
+        mem_mb=8000,
+        runtime=60,
+    conda:
+        "envs/mhcmatch.yaml"
+    shell:
+        "mhcmatch cassette order --candidates {input.units} {params.ctx} {params.alleles} "
+        "{params.tier} {params.species} {params.screen} "
+        "--map {output.map} {params.binder} {params.mhc2} "
+        "--fasta {output.protein} --fasta-nt {output.cds} --out {output.report}"
+
+
+# ------------------------------------------------------------------------------------------------
+# The cohort step. This is the one rule whose SHAPE matters more than its command.
+# ------------------------------------------------------------------------------------------------
+def _all_units(w):
+    return expand(f"{OUT}/{{arm}}/{{sample}}.vaccine.units.tsv", arm=w.arm, sample=SAMPLES)
+
+
+def _all_pools(w):
+    return [pool_for(w.arm, s) for s in SAMPLES]
+
+
+rule mhcmatch_cassette_score:
+    """One offset over EVERY donor in the run, and that is the whole point of the rule.
+
+    `rank` anchors `p_response` on the batch it is handed, so a per-donor fit makes every donor's
+    mean candidate probability equal the declared prevalence whatever their pool holds -- measured
+    on 7,261 TCGA donors, every pool mean lands on 0.060163 with a standard deviation of 2.75e-17.
+    Two donors' numbers are then the same number and a cross-donor triage built on them reads noise.
+
+    **`expand()` over the module-level SAMPLES, never a glob over the output directory.** A glob is
+    evaluated against whatever exists when the DAG is built, so it would silently fit the offset
+    over a SUBSET -- reintroducing exactly the defect above while looking like it had been fixed.
+    `expand` makes this rule unable to start until every donor's units exist.
+
+    No `checkpoint`: the sample set is known from the samplesheet before the DAG is built, so a
+    checkpoint would add re-evaluation machinery for nothing.
+    """
+    input:
+        units=_all_units,
+        pools=_all_pools,
+    output:
+        f"{OUT}/{{arm}}/cohort.cassette_score.tsv",
+    params:
+        scol=lambda w: opt("--score-column", score_column(w.arm)),
+        prev=lambda w: opt("--prevalence", config.get("prevalence")),
+        rho=lambda w: opt("--rho", config["cassette"]["rho"]),
+        per=lambda w: flag("--per-donor-offset", config["cassette"]["per_donor_offset"]),
+        block=lambda w: opt("--block-live", config["cassette"]["block_live"]),
+    threads: 1
+    resources:
+        mem_mb=2000,
+        runtime=20,
+    conda:
+        "envs/mhcmatch.yaml"
+    shell:
+        "mhcmatch cassette score --cassettes {input.units} --pool {input.pools} "
+        "{params.scol} {params.prev} {params.rho} {params.per} {params.block} --out {output}"
+
+
+rule mhcmatch_cassette_report:
+    """One self-contained HTML page over the same cohort. No jinja2, no matplotlib, no CDN."""
+    input:
+        units=_all_units,
+        pools=_all_pools,
+    output:
+        f"{OUT}/{{arm}}/cohort.cassette_report.html",
+    params:
+        scol=lambda w: opt("--score-column", score_column(w.arm)),
+        prev=lambda w: opt("--prevalence", config.get("prevalence")),
+    threads: 1
+    resources:
+        mem_mb=2000,
+        runtime=20,
+    conda:
+        "envs/mhcmatch.yaml"
+    shell:
+        "mhcmatch cassette report --cassettes {input.units} --pool {input.pools} "
+        "{params.scol} {params.prev} --out {output}"

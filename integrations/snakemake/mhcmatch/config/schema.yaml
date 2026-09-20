@@ -22,6 +22,14 @@ properties:
   alleles: {type: ["string", "null"]}
   alleles_mhc2: {type: ["string", "null"]}
   tier: {type: string, enum: [full, shortlist], default: full}
+  species:
+    description: >
+      Which species' fitted models and reference tables score the run. The Nextflow module derives
+      this from `params.genome` (the iGenomes key); Snakemake has no such convention, so it is a
+      key of its own rather than something inferred from an allele name.
+    type: string
+    enum: [human, mouse]
+    default: human
   rank_threshold:
     description: "`none`, a published cut-off name, or a %rank percentile used as given."
     oneOf:
@@ -71,5 +79,14 @@ properties:
         minimum: 0
         maximum: 1
         default: 0.5
+      map_binder:
+        description: >
+          The cassette map's %rank cut-off, as a NetMHCpan TIER and not a number: the two classes do
+          not share one. Class I is strong <= 0.5 / weak <= 2.0, class II strong <= 2.0 / weak
+          <= 10.0, so a flat 2.0 is the weak cut for one and the strong cut for the other -- which
+          is why one mouse construct reported zero class-II epitopes with its best window at 4.095.
+        type: string
+        enum: [strong, weak]
+        default: weak
     additionalProperties: false
 additionalProperties: false

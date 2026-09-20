@@ -14,6 +14,9 @@ mode: both                   # rerank | denovo | both
 alleles: null
 alleles_mhc2: null
 
+species: human               # which fitted models score the run: human | mouse. The Nextflow
+                             # module derives this from `params.genome`; there is no such
+                             # convention here, so it is a key
 tier: full                   # reference panel tier: full | shortlist
 rank_threshold: none         # what to DROP. none | sb | wb | a number. Nothing is dropped by default
 rank_epitope: neoantigen     # which fitted model scores: neoantigen | pathogen
@@ -60,3 +63,7 @@ vector:
   block_live: 0.5            # P(a block is live) in the quota's response model. Same flag name as
                              # `cassette.block_live`, DIFFERENT question and different default.
                              # Passing the quota's value to the other one stops the run
+  map_binder: weak           # the cassette map's %rank cut-off, as a TIER not a number: class I is
+                             # strong <=0.5 / weak <=2.0 and class II strong <=2.0 / weak <=10.0,
+                             # so one number is the weak cut for one class and the strong cut for
+                             # the other
