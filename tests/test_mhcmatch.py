@@ -1103,6 +1103,59 @@ def test_route_dispatches_by_ligand_count_and_is_inert_when_off():
     unrouted model, a rare one exactly as its own override fit, and neither is the other.
     """
     rng = random.Random(11)
+
+    def pep(core):
+        return ("".join(rng.choice(_FLANK) for _ in range(3)) + core
+                + "".join(rng.choice(_FLANK) for _ in range(3)))
+
+    # The frequent allele is BIMODAL on purpose, and K=2 with it. `converge-frequent` differs from a
+    # fixed `register_em=2` only where convergence has somewhere to go, and its gate is on the
+    # mixture: on a unimodal allele at K=1 the two fits are bit-identical, so every equality below
+    # would hold for the wrong reason and the test would pass with the dispatch removed.
+    recs = []
+    for core in (_MODE_A, _MODE_B):
+        recs += [{"epitope": pep(core), "mhc_a": "DRA*01:01", "mhc_b": "DRB1*15:01",
+                  "mhc_class": "MHCII"} for _ in range(400)]
+    recs += [{"epitope": pep(_MODE_C), "mhc_a": "DRA*01:01", "mhc_b": "DRB1*13:01",
+              "mhc_class": "MHCII"} for _ in range(12)]          # 12 <= rare_max=30
+    store = Store.from_records(recs)
+    kw = dict(n_motifs=2, register_em="converge-frequent", prior_strength="auto")
+    primary = store.anchor_model("mhc2", **kw)                   # what ships today
+    override = store.anchor_model("mhc2", **{**kw, "register_em": 2})
+    routed = store.anchor_model("mhc2", **kw, route={"register_em": 2})
+    freq, rare = "DRB1_1501", "DRB1_1301"
+
+    assert type(routed).__name__ == "RoutedAnchorModel", "route={...} must build the pair"
+    # The router reads the TRAINING panel's counts, so the fixture has to straddle the cut there.
+    # A premise about the fixture, deliberately not about the dispatch -- the score equalities below
+    # are what has to catch a broken dispatch, and they cannot if this short-circuits first.
+    assert routed._counts[freq] > routed._rare_max >= routed._counts[rare], \
+        f"the fixture must straddle rare_max={routed._rare_max}: {dict(routed._counts)}"
+    for probe in (pep(_MODE_A), pep(_MODE_B), pep(_MODE_C)):
+        # Raw scores from two fits compare within an allele only -- every comparison here is one
+        # allele under two fits, never one fit under two alleles.
+        assert primary.score(probe, freq) != override.score(probe, freq), \
+            f"the two fits must disagree on the frequent allele, or the dispatch is untestable: {probe}"
+        assert primary.score(probe, rare) != override.score(probe, rare), \
+            f"the two fits must disagree on the rare allele, or the dispatch is untestable: {probe}"
+        assert routed.score(probe, freq) == primary.score(probe, freq), \
+            f"a frequent allele must score as the unrouted model, exactly: {probe}"
+        assert routed.score(probe, rare) == override.score(probe, rare), \
+            f"a rare allele must score as the override fit, exactly: {probe}"
+
+    assert routed.cls == "mhc2" and routed.ps is routed.frequent.ps, \
+        "an attribute this wrapper does not define must come from the frequent model"
+
+    # `route=None` is inert: not merely equal to today's model but not wrapped at all, so a caller
+    # who never passes `route` cannot pay for the feature.
+    inert = store.anchor_model("mhc2", **kw, route=None)
+    assert type(inert) is type(primary), "route=None must not wrap"
+    for probe in (pep(_MODE_A), pep(_MODE_B), pep(_MODE_C)):
+        for a in (freq, rare):
+            assert inert.score(probe, a) == primary.score(probe, a), \
+                f"route=None must be bit-identical to no route= at all: {a} {probe}"
+
+
 def test_reverse_auto_learns_which_allele_binds_backwards():
     """The per-allele prior has to find a reverse-binding allele from the corpus alone.
 
@@ -1126,26 +1179,6 @@ def test_reverse_auto_learns_which_allele_binds_backwards():
         return ("".join(rng.choice(_FLANK) for _ in range(3)) + core
                 + "".join(rng.choice(_FLANK) for _ in range(3)))
 
-    recs = [{"epitope": pep(_MODE_A), "mhc_a": "DRA*01:01", "mhc_b": "DRB1*15:01",
-             "mhc_class": "MHCII"} for _ in range(400)]
-    recs += [{"epitope": pep(_MODE_C), "mhc_a": "DRA*01:01", "mhc_b": "DRB1*13:01",
-              "mhc_class": "MHCII"} for _ in range(12)]        # 12 <= rare_max=30
-    store = Store.from_records(recs)
-    kw = dict(n_motifs=1, register_em=2)
-    plain = store.anchor_model("mhc2", **kw)
-    other = store.anchor_model("mhc2", **{**kw, "register_em": 0})
-    routed = store.anchor_model("mhc2", **kw, route={"register_em": 0})
-
-    assert type(plain).__name__ == "AnchorModel", "route=None must not wrap"
-    probe = pep(_MODE_A)
-    assert store.anchor_model("mhc2", **kw, route=None).score(probe, "DRB1_1501") == \
-        plain.score(probe, "DRB1_1501"), "route=None must score identically to no route= at all"
-    assert routed.score(probe, "DRB1_1501") == plain.score(probe, "DRB1_1501"), "frequent -> primary"
-    assert routed.score(probe, "DRB1_1301") == other.score(probe, "DRB1_1301"), "rare -> override"
-    assert routed.score(probe, "DRB1_1301") != plain.score(probe, "DRB1_1301"), \
-        "the fixture must actually separate the two fits, or this test proves nothing"
-    assert routed.cls == "mhc2" and routed.ps is routed.frequent.ps, \
-        "an attribute this wrapper does not define must come from the frequent model"
     recs = []
     for i in range(400):
         recs.append({"epitope": pep(rev if i % 10 < 3 else fwd),      # 30% read backwards
