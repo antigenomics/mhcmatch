@@ -15,7 +15,7 @@ What this checks, over every tracked file:
 1. **Donor tokens and internal hostnames**, matched case-sensitively on a word boundary --- read
    from a file **outside this repository**, named by ``$MHCMATCH_PRIVACY_TOKENS``. A guard that
    carries its own blocklist in a public tree is the single largest concentration of exactly the
-   thing it exists to keep out, which is what this file was until 1.19.0. Unset, these two screens
+   thing it exists to keep out, which is what this file once was. Unset, these two screens
    are skipped and ``main`` says so; screens 2 and 4 do not need a name to work.
 2. **Cyrillic.** No tracked file in the collaboration repository contains any; a real name is the
    only reason it would appear here.

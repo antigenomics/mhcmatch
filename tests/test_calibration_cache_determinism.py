@@ -3,7 +3,7 @@
 **"Calibration should always ship the same."** A cache is an optimisation, so a cached run and a
 cold run have to be indistinguishable in their output. The one way that fails is a key that cannot
 see something the value depends on, and it has happened here: `predict.SCORER_EPOCH`'s own comment
-records 1.3.0 serving a background cached before a scoring change to a caller after it, *within one
+records a background cached before a scoring change being served to a caller after it, *within one
 released version*, because everything else in the key is data and no hash over data sees code.
 
 Two guards now, and this file checks both.

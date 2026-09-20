@@ -477,7 +477,7 @@ def test_burial_reproduces_the_shipped_rose_column():
 
 
 def test_burial_per_residue_is_not_a_length_detector():
-    """The pre-0.24.0 sum was 91% peptide-length variance. The averaged column is not.
+    """The earlier sum was 91% peptide-length variance. The averaged column is not.
 
     Rose is strictly positive (0.52 to 0.91) and the class-I TCR face is `L - 5` wide, so summing
     it gives roughly `0.75 (L - 5)` -- a chemistry term that is mostly a ruler. This pins the fix

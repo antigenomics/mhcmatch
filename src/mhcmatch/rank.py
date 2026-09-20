@@ -174,7 +174,7 @@ def columns(extended: bool = False, annotate: bool = False, score: str = "aggreg
     should carry the features that produced it and nothing else. ``score="gate"`` does not use them
     and does not emit them.
 
-    **``(cls, species, mode)`` matter too, and this is the one implementation.** From 1.14.0 a run
+    **``(cls, species, mode)`` matter too, and this is the one implementation.** A run
     emits the columns it COMPUTED and no others, which is a property of the artifact being scored
     rather than of the flags: ``mode="pathogen"`` drops the wild-type columns and the whole
     expression block, and any fit whose ``features`` list names no ``C_corpus_thymus`` -- which is
@@ -216,12 +216,12 @@ def columns(extended: bool = False, annotate: bool = False, score: str = "aggreg
 #: move all of that and buy nothing.
 #:
 #: **A missing key is a refusal, not a fallback.** All four ``(cls, species)`` neoantigen cells are
-#: fitted from 1.12.0, ``mhc1.human.pathogen`` from 1.14.0, and the remaining three pathogen cells
-#: from 1.15.0 -- **eight of eight**. An unregistered cell raises rather than being served a
-#: neighbour's coefficients; scoring class-II candidates with class-I ones is the mistake the
-#: lookup exists to make impossible. The branch that raises is kept even with the table full,
-#: because a cell can leave the registry -- a refit withdrawn, an artifact not vendored -- and the
-#: honest refusal is what must survive that, not a table that happens to be complete today.
+#: fitted, and so are all four pathogen cells -- **eight of eight**. An unregistered cell raises
+#: rather than being served a neighbour's coefficients; scoring class-II candidates with class-I
+#: ones is the mistake the lookup exists to make impossible. The branch that raises is kept even
+#: with the table full, because a cell can leave the registry -- a refit withdrawn, an artifact not
+#: vendored -- and the honest refusal is what must survive that, not a table that happens to be
+#: complete today.
 #:
 #: The term set the mouse **class-I** artifact declares. It is :data:`AGGREGATE_FEATURES` -- that
 #: fit was run on the human specification deliberately, so the two are comparable coefficient by
@@ -247,7 +247,7 @@ AGGREGATE_ARTIFACTS: dict = {
     ("mhc2", "mouse", "neoantigen"): "aggregate_mhc2_mouse.json",
     ("mhc2", "human", "neoantigen"): "aggregate_mhc2_human.json",
     ("mhc1", "human", "pathogen"): "aggregate_mhc1_pathogen.json",
-    # The three cells that had no fit until 1.15.0. **All four pathogen cells are fitted on the
+    # The three cells that were fitted last. **All four pathogen cells are fitted on the
     # IEDB T-cell corpora**, whose negative class is "assayed and did not respond". The Kesmir
     # eluted-negative construction -- "eluted with no positive T-cell record", so presentation is
     # held fixed on both sides -- is a different question, and the line above was on it until the
@@ -306,8 +306,8 @@ AGGREGATE_VARIANTS: dict = {
 #: **It is not a property of the class**, and the human variant is the proof: the block is
 #: computable on class-II references and was computed. Only the artifacts that declare this tuple
 #: drop it. Do not read the class-II *pathogen* cells as a second proof -- they carry no corpus
-#: block either, for the mouse reason above, and PROVENANCE records that the four-cell refit of
-#: 1.15.0 superseded every pathogen term set that did.
+#: block either, for the mouse reason above, and PROVENANCE records that the four-cell refit
+#: superseded every pathogen term set that did.
 TERMS_MHC2_EXPECTED: tuple = ("binder", "log10a", "expr_lvl", "expr_norm",
                               "C_phys_buried", "C_phys_charge")
 
@@ -350,7 +350,7 @@ TERMS_MHC2_EXPECTED: tuple = ("binder", "log10a", "expr_lvl", "expr_norm",
 #: ``C_corpus_self`` **stays on class I**, and it is the theoretically interesting one: it is a
 #: *host* compartment, so a foreign epitope resembling host self should be seen by a tolerised
 #: repertoire and be less immunogenic. There is no circularity -- the negatives are foreign, the
-#: table is host. ``C_corpus_thymus`` went with the 1.15.0 allele-balanced refit: the two correlate
+#: table is host. ``C_corpus_thymus`` went with the allele-balanced refit: the two correlate
 #: at +0.683 to +0.792 on these corpora and took near-equal-and-opposite coefficients, so what was
 #: fitted was ``thymus - self`` rather than two channels, and only one of the pair survives alone.
 #:
@@ -443,7 +443,7 @@ def expr_level(rows, floor: float, prefilter: float = 0.0) -> list:
     SKCM, 0.2000 for LUAD, and 0.1800 for the pooled reference when the tumour type is unknown,
     over 35 cancer types spanning 0.1400 to 0.2400 TPM.
 
-    **A tumour's floor is not its matched normal's.** Through 1.1.0 this term took ``c`` from the
+    **A tumour's floor is not its matched normal's.** An earlier form of this term took ``c`` from the
     matched normal tissue, because that was the only gene-keyed reference on disk. Measured against
     a gene-keyed tumour reference on the same pipeline, a tumour sits at roughly half its matched
     normal -- SKCM 0.1600 against skin 0.3050 TPM (0.52x), BLCA 0.1700 against bladder 0.3600
@@ -582,7 +582,7 @@ def expr_percentile(rows) -> list:
 #: **Every fitted column, and no coefficients.** The artifact-shaped stand-in that
 #: ``score="features"`` supplies in a real artifact's place.
 #:
-#: Computing the design matrix and scoring it are two things, and until 1.10.0 only the second could
+#: Computing the design matrix and scoring it are two things, and earlier only the second could
 #: ask for the first -- ``_finish`` drives every column off ``a["features"]``, so a species or class
 #: with no artifact yet could not be *measured*, which is exactly what fitting one requires. That is
 #: a bootstrap the library owed a refit: `bench/epic/fit_mouse.py` needs these nine columns for H-2
@@ -640,7 +640,7 @@ def stand_in(mode: str = "neoantigen", cls: str = "mhc1") -> dict:
     answers that must agree, and did not when each carried its own list.
 
     **This is the ADMISSIBLE set, not the shipped one.** A pathogen fit may be fitted on any subset
-    of these; the four shipped in 1.15.0 use two or three each. Narrowing this to whatever the
+    of these; the four released ones use two or three each. Narrowing this to whatever the
     current artifacts happen to use would make the next arm unfittable, which is the bootstrap
     ``FEATURES_ONLY`` exists to avoid -- a column that cannot be *measured* cannot be *fitted*.
     ``cls`` is required for ``pathogen`` because class II has no corpus block to compute.
@@ -674,11 +674,11 @@ def models() -> list:
     and class II are worked on. So each artifact carries its own identity -- ``model_id``
     (``mhc1.human.neoantigen``), an integer ``version`` that moves on a specification change, and
     ``release``, the dotted package version the fit was **accepted** under. Citing
-    ``mhc1.human.neoantigen v12 (release 1.15.0)`` names a fit that no later library version can
-    move, which is exactly what quoting a package version cannot do. The two coincide at 1.15.0
-    because all eight cells were accepted there; they will diverge again at the next release that
-    leaves a cell alone, and the ``release`` field is what keeps the citation attached to the fit
-    rather than to the wheel that happened to carry it.
+    ``mhc1.human.neoantigen v12 (release 1.20.0)`` names a fit that no later library version can
+    move, which is exactly what quoting a package version cannot do. Every shipped cell was accepted
+    at 1.20.0 and the package has moved past it since, which is the ordinary state: the ``release``
+    field is what keeps the citation attached to the fit rather than to the wheel that happened to
+    carry it.
 
     Returns records sorted by ``model_id``, each with ``cls``, ``species``, ``mode``, ``model_id``,
     ``version``, ``release``, ``file``, ``features`` and the fit's own row/positive counts where the
@@ -2072,7 +2072,7 @@ def rank_table(path: str, *, channels=None, keep=None,
             except ValueError:
                 tpm = None
             expr, imputed = _expression_for(gene, tpm, tissue, tumor, pep, species, mode)
-            # The two heads, kept apart. Until 0.27 this path wrote the *binder* rank into both
+            # The two heads, kept apart. An earlier form of this path wrote the *binder* rank into both
             # `presentation` and `binder`, because `binder_score` was called for the binder rank
             # and the presentation rank it also returns was thrown away -- so a v4 artifact, whose
             # presentation block reads `pres`, would silently have been handed the combined score

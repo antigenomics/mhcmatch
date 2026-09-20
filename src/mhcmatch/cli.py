@@ -137,7 +137,7 @@ def _keep(a):
     pre-built ``seqtree`` index off disk, and a run that rebuilt it per sample would pay for it a
     thousand times over and race on any cache it wrote to avoid that.
 
-    ``--keep`` is the deprecated 1.8.0 spelling and folds into both lists, which is exactly what it
+    ``--keep`` is the deprecated spelling and folds into both lists, which is exactly what it
     used to do.
     """
     from . import predict as P
@@ -920,7 +920,7 @@ def _mimicry_scores(peptides, cls: str, no_self: bool, species: str = "human"):
     Shared by ``rank --extended/--annotate`` and ``mimicry``: the reference index is built once for
     the whole list, which is the only way this is affordable at all.
 
-    **``species`` reaches the references, and until 1.14.0 it did not.** This helper took no species
+    **``species`` reaches the references, and earlier it did not.** This helper took no species
     and :func:`mhcmatch.mimicry.load_references` defaults ``self_species="human"``, so
     ``rank --species mouse --extended`` reported the nearest *human* reference peptide for a mouse
     candidate and said nothing. ``a.species`` was in scope at both call sites and simply was not
@@ -1097,7 +1097,7 @@ def _rank_model(a):
     refitted here, so a figure built on this output and a run of ``rank`` are the same model by
     construction rather than by a comparison someone has to make.
 
-    **Which artifact is ``--cls`` / ``--species``, and it was not until 1.11.0.** This read
+    **Which artifact is ``--cls`` / ``--species``, and earlier it was not.** This read
     ``aggregate()`` bare, so ``rank --coefficients --cls mhc2 --species mouse`` printed
     ``mhc1.human.neoantigen`` and said nothing -- and the ``model_id`` line added in the same
     release made the wrong answer look authoritative. A pair with no fitted artifact refuses here
@@ -1120,13 +1120,13 @@ def _rank_model(a):
     # carry `intercepts` where the neoantigen fits carry `screens`, and write no `bic` at all. So
     # `f["screens"]` was a KeyError on all four of them and `f["bic"]` is the next one in the same
     # statement -- `rank --epitope pathogen --coefficients` could not print anything. This is the
-    # same shape as the `holdout` guard below, added in 1.12.0 for exactly this reason.
+    # same shape as the `holdout` guard below, added for exactly this reason.
     scr = f.get("screens")
     over = (f"over {len(scr)} screen{'' if len(scr) == 1 else 's'}"
             if scr is not None else "on one corpus")
     bic = f"BIC {f['bic']:.1f}, " if "bic" in f else ""
     say(f"{f['rows']:,} rows / {f['positives']:,} positives {over}; {bic}ridge tau {f['tau']}")
-    # **A fit may hold nothing out, and then there is no holdout to name.** From 1.12.0 the mouse
+    # **A fit may hold nothing out, and then there is no holdout to name.** The mouse
     # and class-II fits are run at `--folds 0`: they are GLMs whose deliverable is a coefficient and
     # its cluster-bootstrap interval, so no `holdout` key and no `cv_*` block is written. Printing
     # "holdout None" would be worse than saying it, and `f["holdout"]` was a KeyError.
@@ -1297,7 +1297,7 @@ def cmd_rank(a):
     if not a.mode or not a.input:
         raise SystemExit("rank needs a mode and an input, or --coefficients / --holdout")
     # **A run that scores nothing must say so, not exit 0 with a header.** The help has said
-    # "required for mode=fasta" since 1.0, and nothing enforced it: `_read_alleles(None)` returns
+    # "required for mode=fasta" all along, and nothing enforced it: `_read_alleles(None)` returns
     # `[]`, every tile is then skipped for want of an allele to score against, and the run writes a
     # header-only table and exits 0 -- the same shape as "nothing is presented". That is the failure
     # `_allele_set` was fixed for, one command over. `predict` gets it right with `required=True`;
@@ -1526,7 +1526,7 @@ def _rank_columns(a, cls: str):
 def _rank_cells(a, cls, rows, mim, ann):
     """One name-keyed dict per row.
 
-    **Keyed by name, then projected onto the header.** This was a positional list until 1.14.0,
+    **Keyed by name, then projected onto the header.** This was a positional list earlier,
     which silently assumed the header was `BASE_COLUMNS` in order -- so the moment a mode dropped
     a column (the WT triple in `--epitope pathogen`) the header moved and the values did not, and
     every field past the first drop was off by one. It did not error; it produced a `variant_type`
@@ -1684,7 +1684,7 @@ def cmd_explain(a):
     The final line is :func:`mhcmatch.rank.gate_probability` -- presentation and recognition, the
     two-term screen -- while the fitted aggregate is nine standardised slopes read out of
     `aggregate_mhc1.json` and needs expression and the corpus channels this command does not
-    compute. It printed that line labelled ``AGGREGATE`` until 1.14.0, which is this package's
+    compute. It printed that line labelled ``AGGREGATE`` earlier, which is this package's
     recurring hazard: one name over two meanings. `--epitope` names which fitted model *would*
     score the row, so an audit says which coefficients the rank it is explaining came from.
     """
@@ -1993,7 +1993,7 @@ def cmd_expression(a):
     """Reference expression for a gene in a normal tissue, or a peptide in a tumour type.
 
     ``--species mouse`` reads the mouse deposits instead: 35 FANTOM5 adult tissues for ``--tissue``
-    and 6 syngeneic models for ``--tumor``, both gene-keyed. Until 1.10.0 this command declared
+    and 6 syngeneic models for ``--tumor``, both gene-keyed. An earlier form of this command declared
     ``--species`` and ignored it, so a mouse gene was looked up in GTEx and came back empty."""
     from . import expression as EX
     sp = getattr(a, "species", "human")
@@ -2321,7 +2321,7 @@ def cmd_vector(a):
     # Which unit set becomes a *sequence*. Without `--quota` it is `select`'s, as it always was.
     # With `--quota` the composed set is the deliverable and the same slot budgets filled by score
     # alone ride along as a second cassette -- because "a portfolio is not a ranking" is a claim that
-    # has to be laid out on the caller's own candidates, not asserted. Until 0.24.1 `--quota`
+    # has to be laid out on the caller's own candidates, not asserted. An earlier form of `--quota`
     # composed a set and then built the sequence from `select` anyway, so it reported and did not act.
     plans = [("cassette", sel.units)]
     if comp is not None:
@@ -3052,7 +3052,7 @@ def cmd_cassette_select(a):
                 if named < len(g):
                     say(f"{donor}: {len(g) - named} of {len(g)} unit(s) have no gene symbol and are "
                         "coupled to each other as one unnamed locus", level=1)
-            # Off is the default from 1.18.0, so the flag that turns it ON is the one that does
+            # Off is the default, so the flag that turns it ON is the one that does
             # something. `--no-dominance` is accepted and says nothing, because it now asks for
             # what it already gets -- warning on every run of an existing command line would be
             # noise, and the release note is where the change is stated.
@@ -4082,7 +4082,7 @@ def main(argv=None):
                          "peptide one substitution from a whitelisted one. Equal length only -- a "
                          "9-mer never matches a 20-mer by containment")
     pr.add_argument("--keep", metavar="LIST|FILE",
-                    help="DEPRECATED (1.8.0): one list matched against gene AND peptide alike. "
+                    help="DEPRECATED: one list matched against gene AND peptide alike. "
                          "Equivalent to passing the same list to both --keep-genes and "
                          "--keep-epitopes. Use those instead -- they say which claim kept a row")
     pr.add_argument("--top", type=int, help="cap binders kept per window (strongest first)")
@@ -4191,7 +4191,7 @@ def main(argv=None):
                          "block: with no host transcript it is undefined rather than missing, so "
                          "--tissue / --tumor / --expr-floor are REFUSED rather than ignored. Which "
                          "corpus channels it carries is the ARTIFACT's question, not the mode's. "
-                         "All four pathogen cells ship from 1.15.0, fitted on the allele-balanced "
+                         "All four pathogen cells are fitted on the allele-balanced "
                          "IEDB T-cell corpora: class I is `binder + C_corpus_self` (two terms, the "
                          "host tolerance channel), class II `binder + C_phys_buried + "
                          "C_phys_charge` (three, no corpus block -- the mimicry tables are "
@@ -4235,7 +4235,7 @@ def main(argv=None):
                          "peptide one substitution from a whitelisted one. Equal length only -- a "
                          "9-mer never matches a 20-mer by containment")
     rk.add_argument("--keep", metavar="LIST|FILE",
-                    help="DEPRECATED (1.8.0): one list matched against gene AND peptide alike. "
+                    help="DEPRECATED: one list matched against gene AND peptide alike. "
                          "Equivalent to passing the same list to both --keep-genes and "
                          "--keep-epitopes. Use those instead -- they say which claim kept a row")
     rk.add_argument("--rank-threshold", default=None, metavar="TIER|PCT",
@@ -4259,7 +4259,7 @@ def main(argv=None):
     rk.add_argument("--score", choices=("aggregate", "gate", "features"), default="aggregate",
                     help="`aggregate` (default) scores with the fitted model for this "
                          "--cls/--species. `gate` is the two-term noisy-AND that was the default "
-                         "before 0.19.0, kept so a run can be compared against the old ordering. "
+                         "earlier, kept so a run can be compared against the old ordering. "
                          "`features` computes and emits every fitted column and scores nothing -- "
                          "what a refit needs before its artifact exists; it needs a real floor, so "
                          "pass --tissue or --tumor")
@@ -4598,17 +4598,17 @@ def main(argv=None):
                          "Reads the `gene` column; a gene the panel does not carry contributes no "
                          "pair information rather than being dropped")
     cs.add_argument("--dominance", action="store_true",
-                    help="ADD the score-dominance channel, which is off by default from 1.18.0 and "
-                         "was on before it. It is the one channel built from the score rather than "
+                    help="ADD the score-dominance channel, which is off by default and "
+                         "was on before. It is the one channel built from the score rather than "
                          "from a mechanism, the statistic it corresponds to fits ATTRACTIVE on the "
                          "observational arm where the greedy 1-1/e guarantee does not hold, and it "
                          "never abstains -- it is zero on 0.03%% of within-donor pairs against "
                          "97.5%% for the 3-mer channel, so it supplied 71-79%% of the channel mass "
                          "and the allotype channel entered at a third weight. **Pass this to "
-                         "reproduce a cassette recorded before 1.18.0**, and say so beside the "
+                         "restore the three-channel form**, and say so beside the "
                          "number")
     cs.add_argument("--no-dominance", action="store_true",
-                    help="DEPRECATED and a no-op since 1.18.0, when it became the default. Accepted "
+                    help="DEPRECATED and a no-op, since off is now the default. Accepted "
                          "so an existing command line keeps working; use --dominance to turn the "
                          "channel back on")
     cs.add_argument("--collapse-allotype", action="store_true",

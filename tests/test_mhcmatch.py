@@ -800,7 +800,7 @@ def test_mhc1_positions_never_double_counts():
 
 
 def test_length_prior_is_on_by_default_and_exactly_additive():
-    # ON by default since v0.5.0 (+0.031 maxF1 on the MixMHCpred3 benchmark, precision AND recall up).
+    # ON by default (+0.031 maxF1 on the MixMHCpred3 benchmark, precision AND recall up).
     # The anchor log-odds sums a length-INVARIANT number of terms, so without this a 10-mer and a
     # 9-mer with the same anchors score bit-identically -- see data/PROVENANCE.md and the CHANGELOG.
     s = _mhc1_store()
@@ -1024,7 +1024,7 @@ def test_frame_score_memo_is_bit_identical_to_recompute():
 
 
 def test_register_em_converge_reaches_a_real_fixed_point():
-    # v0.7.2 HEADLINE, previously untested: register_em="converge" runs the best-frame EM to each
+    # A HEADLINE feature, previously untested: register_em="converge" runs the best-frame EM to each
     # allele's OWN fixed point. Mutation-tested -- freezing every allele after pass 1 (which deletes the
     # entire DP gain, frequent AUPRC 0.667->0.625) left all tests green until this one existed.
     # The defining property is exactly a fixed point: one more UNFROZEN pass must change nothing.
@@ -1246,7 +1246,7 @@ def test_footprint_adaptive_masks_rare_and_not_frequent():
 
 
 def test_prior_strength_auto_fits_lower_tau_where_alleles_differ():
-    # v0.7.2, previously untested: empirical-Bayes tau per position -- small where alleles genuinely
+    # Previously untested: empirical-Bayes tau per position -- small where alleles genuinely
     # differ (trust own data), large where they agree (shrink to the pool). Tested on _fit_tau directly
     # since it reads only self.prefs/self.anchors. Anchor 1: four alleles each peak on their OWN residue
     # (max between-allele variance -> tau at the floor). Anchor 2: all four share one flat mix
@@ -1625,8 +1625,8 @@ def test_precursor_self_check():
     Skipped rather than failed without it: precursor is an optional extra ([precursor]), so a
     plain install must not be red because the recombination model is absent.
 
-    Guarded on **vdjmatch**, not vdjtools: since 0.12.0 the module re-exports
-    ``vdjmatch.precursor``, and anyone upgrading from 0.11.0 has vdjtools already but not vdjmatch
+    Guarded on **vdjmatch**, not vdjtools: the module now re-exports
+    ``vdjmatch.precursor``, and anyone upgrading from an older install has vdjtools but not vdjmatch
     -- which is precisely the state where a vdjtools guard passes and the import then fails.
     """
     pytest.importorskip("vdjmatch", reason="mhcmatch[precursor] not installed")

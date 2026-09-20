@@ -9,8 +9,8 @@ useful for *accepting* input and dangerous for *keying* anything, which is what 
 def test_all_three_mouse_class1_spellings_fold_to_one_key():
     """``H-2Kb`` (pmhc), ``H2-Kb`` (deposits) and ``H-2-Kb`` (FASTA) are one molecule.
 
-    ``mhci_pseudo.fa`` carries the last two as *separate* keys on a byte-identical 34-mer, so before
-    1.4.1 ``resolve_allele('H2-Kb', 'mhc1')`` returned ``('H2-Kb', True)`` -- exact, and backed by
+    ``mhci_pseudo.fa`` carries the last two as *separate* keys on a byte-identical 34-mer, so
+    ``resolve_allele('H2-Kb', 'mhc1')`` once returned ``('H2-Kb', True)`` -- exact, and backed by
     zero panel ligands. The panel is keyed on the pmhc spelling, so the presentation head silently
     fell back to kernel shrinkage: SIINFEKL scored presentation %rank 20.19 under ``'H-2-Kb'``
     against 0.0040 under ``'H-2Kb'``, a 5,000x move driven by nothing but how the caller typed it.

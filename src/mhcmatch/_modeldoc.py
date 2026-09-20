@@ -25,7 +25,7 @@ __all__ = ["ORDER", "summary_rows", "readme_markdown", "model_rst", "summary_rst
 #: The shipped cells, in the order the documentation reads them: human class I first because it is
 #: the fit the manuscript pins, then the three that were added around it, then the second mode.
 #:
-#: **Keyed by ``(cls, species, mode)``, and it was ``(cls, species)`` until 1.14.0.** ``_art``
+#: **Keyed by ``(cls, species, mode)``, and it was ``(cls, species)`` earlier.** ``_art``
 #: hardcoded ``"neoantigen"``, so a pathogen artifact would have shipped, scored, and appeared in
 #: ``rank.models()`` while every documentation page silently omitted it. That is the one failure
 #: mode this module exists to prevent, arriving through the door it left open.

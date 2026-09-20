@@ -63,7 +63,7 @@ def normalize_allele(a: str) -> str:
     Drops the ``*`` (``'HLA-A*02:01'`` -> ``'HLA-A02:01'``) and folds **all three** mouse H-2
     spellings onto one key: pmhc ``'H-2Kb'``, deposit ``'H2-Kb'`` and FASTA ``'H-2-Kb'`` name the
     same molecule, and ``mhci_pseudo.fa`` carries the last two as separate keys on a byte-identical
-    34-mer. Until 1.4.0 only the first was folded, so ``'H2-Kb'`` resolved ``exact=True`` to a key
+    34-mer. Earlier only the first was folded, so ``'H2-Kb'`` resolved ``exact=True`` to a key
     with **zero** panel ligands and SIINFEKL scored at presentation %rank 20.19 instead of 0.0040.
     One molecule, one key -- the invariant :func:`hla_spellings` already enforces for human class I
     and :func:`class2_from_name` for class II.

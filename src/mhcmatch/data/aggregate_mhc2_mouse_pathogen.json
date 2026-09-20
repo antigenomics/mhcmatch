@@ -3,7 +3,7 @@
  "version": 2,
  "generator": "bench/pathogen/fit_pathogen.py",
  "model_id": "mhc2.mouse.pathogen",
- "release": "1.15.0",
+ "release": "1.20.0",
  "species": "mouse",
  "cls": "mhc2",
  "mode": "pathogen",

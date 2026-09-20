@@ -87,9 +87,9 @@ def test_fallback_version_matches_pyproject():
 def test_installed_metadata_matches_pyproject():
     # mhcmatch.__version__ reads the *install* metadata, not pyproject -- so a stale editable install
     # makes every version-keyed test compare a stale value against itself and pass. That is how a
-    # 0.25.0 -> 0.26.0 bump shipped vendored models stamped 0.25.0 with a green local suite and two
-    # red CI runs: CI installs fresh, so only CI saw the mismatch. Fail here instead, where the
-    # message says what to do.
+    # version bump once shipped vendored models stamped with the previous version, with a green
+    # local suite and two red CI runs: CI installs fresh, so only CI saw the mismatch. Fail here
+    # instead, where the message says what to do.
     from importlib.metadata import PackageNotFoundError, version
     want, _ = _declared_version()
     try:
@@ -107,10 +107,10 @@ def test_no_shipped_artifact_is_stale():
     # and conftest skips them whenever it is not already staged -- which is always, in CI. This one
     # reads only shipped files, so it is the guard CI actually runs.
     #
-    # Both older guards were correct and both were defeated at 0.26.0 by the same thing: a stale
-    # editable install made mhcmatch.__version__ report 0.25.0, so each compared a stale artifact
-    # against a stale expectation and passed. test_installed_metadata_matches_pyproject closes that;
-    # this closes the coverage half.
+    # Both older guards were correct and both were defeated once by the same thing: a stale
+    # editable install made mhcmatch.__version__ report the old version, so each compared a stale
+    # artifact against a stale expectation and passed. test_installed_metadata_matches_pyproject
+    # closes that; this closes the coverage half.
     from mhcmatch import _build
     stale = _build.check()
     assert not stale, (
@@ -232,7 +232,7 @@ def test_the_documented_shipped_fit_count_is_the_real_one():
     artifacts, so those cannot drift; every hand-written restatement can, and did.
 
     **`ROADMAP.md` is deliberately not scanned.** It is a dated, reverse-chronological log -- "all
-    four cells fitted" is the correct heading of the 1.12.0 section and must stay wrong-looking.
+    four cells fitted" is the correct heading of an earlier section and must stay wrong-looking.
     The files below state *current* truth, which is what a count in them claims.
     """
     import re

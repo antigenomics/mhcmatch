@@ -576,7 +576,7 @@ confirmed every figure below reproduces from the recorded frame.
 
 .. note::
 
-   The shipped base is **v12** from 1.15.0. This section is left as measured on the v11 base, and
+   The shipped base is **v12**. This section is left as measured on the v11 base, and
    the stage is still named ``decor-v11``, because v12 is v11's specification on a newer scorer
    epoch and the three corpus coefficients moved by at most 0.0058 between them
    (``C_corpus_thymus`` +0.1733 → +0.1754, ``C_corpus_self`` −0.4578 → −0.4525, ``C_corpus_viral``

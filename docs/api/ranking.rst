@@ -17,7 +17,7 @@ the nine-term class-II corpus fit is read; it is not the default, because at cla
 block was measured and adds nothing. **Which cells ship is not restated here** --- that
 list is generated from the artifacts themselves at build time, so it cannot drift; see
 :doc:`../models`, or run ``mhcmatch models --all`` against an install. This paragraph carried a
-hand-typed copy of it until 1.15.0 and was four facts stale by then.
+hand-typed copy of it once and was four facts stale by the time it was replaced.
 
 Two other scores exist: the noisy-AND **gate**, a product of sigmoids, as ``--score gate`` /
 :data:`mhcmatch.rank.GATE`; and ``--score features`` /

@@ -55,8 +55,8 @@ FIT_MAX_SUBS = 4
 
 
 #: The shape ``viral_R`` was fitted with, vendored here rather than read out of the aggregate
-#: artifact. It lived in the artifact while ``viral_R`` was a model term; ``EPIC`` retired it in
-#: 0.21.0 (it is a near-duplicate of ``C_corpus_thymus`` -- their raw neighbour counts correlate
+#: artifact. It lived in the artifact while ``viral_R`` was a model term; ``EPIC`` retired it
+#: (it is a near-duplicate of ``C_corpus_thymus`` -- their raw neighbour counts correlate
 #: 0.96 at d=1, and carrying both, deleting *either* improves BIC), so a shape for a term the
 #: shipped model does not score with no longer belongs in that model's artifact.
 SHAPE: tuple = (2.25, 20.0)

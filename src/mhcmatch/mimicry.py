@@ -366,7 +366,7 @@ def corpus_shapes(artifact: dict | None = None) -> dict:
     re-vendored moves the scored column rather than leaving it on a stale module constant;
     otherwise returns :data:`SHAPES`. Same convention as :func:`mhcmatch.luksza.shape`.
 
-    Accepts the pre-0.24.0 ``(kappa, a0)`` pair form for reading an old artifact and keeps only
+    Accepts the older ``(kappa, a0)`` pair form for reading an old artifact and keeps only
     ``kappa``; nothing writes that form any more.
     """
     if artifact is None:
@@ -415,7 +415,7 @@ def corpus_geometry(artifact: dict | None = None) -> dict:
 #: every class-I length can supply**: the face is ``L - 5`` residues wide (the anchors are P1-P3 and
 #: POmega-1/POmega) and the shortest ligand is an 8-mer, so ``W_min = 3``. At ``k = 4`` an 8-mer has
 #: no window at all and at ``k = 5`` neither an 8- nor a 9-mer does -- which reads as a low score and
-#: is really a structural zero, the exact failure mode this module removed in 0.24.0. Measured on
+#: is really a structural zero, the exact failure mode this module removed. Measured on
 #: 3,600 real epitopes balanced 900 per length, none of them in the thymic reference, the normalized
 #: density correlates with peptide length at Spearman +0.036 for k=3 against +0.587 (k=4) and +0.830
 #: (k=5) -- and against -0.502 for the fixed-face column this replaced.
@@ -429,7 +429,7 @@ WILDCARD: int = 20
 
 #: How the MHC-facing positions are removed from a peptide before its k-mers are taken.
 #:
-#: ``"slice"`` (through 0.26.0) keeps only the TCR-facing residues, so the class-I face is the
+#: ``"slice"`` keeps only the TCR-facing residues, so the class-I face is the
 #: contiguous strip ``peptide[3:L-2]`` and is ``L - 5`` wide. That width is what **forced** ``k=3``:
 #: the shortest ligand is an 8-mer and supplies exactly three face residues, so at ``k=4`` it has no
 #: window at all and the missing window reads as a low score rather than as a structural zero.
@@ -656,10 +656,10 @@ def reference_species(species: str, comp: str, native: bool = False) -> str:
     by one allotype measures that allotype. Mouse class II is the extreme case -- its thymic deposit
     is 1,490 peptides, **all** ``I-Ab``.
 
-    **The redirect is not keyed on class, and from 1.15.0 that matters.** This function takes
+    **The redirect is not keyed on class, and that matters.** This function takes
     ``(species, comp)`` only, so a mouse class-II query is routed to the human class-II tables by
     the same rule -- ``cls`` is carried separately and selects which of the twelve tables is read.
-    Until 1.15.0 the point was moot: both class-II artifacts were the six-term *neoantigen* fits,
+    The point was once moot: both class-II artifacts were the six-term *neoantigen* fits,
     which declare no corpus block, so nothing read a class-II corpus table. The two class-II
     **pathogen** fits do declare one, and they were fitted under this redirect -- ``C_corpus_self``
     resolves in both (p = 1.1e-03 human, 3.5e-10 mouse) and ``C_corpus_thymus`` in neither mouse
@@ -891,7 +891,7 @@ def contract(T, kappa: float, k: int = CORPUS_K, kernel=None):
 
     ``A`` is inferred from ``len(T)`` (:func:`alphabet`), so a wildcard-masked ``21**k`` table works
     unchanged. ``kernel`` defaults to the Hamming form ``K = (1-beta)I + beta*J`` with
-    ``beta = exp(-kappa)``, kept only so pre-0.27 results stay reproducible; pass
+    ``beta = exp(-kappa)``, kept only so older results stay reproducible; pass
     :func:`blosum62_kernel` for the graded score. Any **position-additive, ungapped** score
     factorises this way; a gapped alignment does not, which is the one real limit.
     """
@@ -924,7 +924,7 @@ def corpus_spectrum(pmhc_dir=None, cls: str = "mhc1", components=None, k: int = 
     ``n_kmers`` the total reference window count. Feed it to :func:`corpus_R`, which reads the mask
     back off the tuple so a query cannot be posed against a table built the other way.
 
-    ``kernel`` is passed to :func:`contract`. ``None`` keeps the pre-0.27 Hamming form; pass a
+    ``kernel`` is passed to :func:`contract`. ``None`` keeps the original Hamming form; pass a
     callable ``kappa -> (A, A)`` array -- :func:`blosum62_kernel` partially applied, or
     ``functools.partial(blosum62_kernel, mask=mask)`` -- to grade the substitutions, since each
     component carries its own ``kappa``.
@@ -956,7 +956,7 @@ def corpus_spectrum(pmhc_dir=None, cls: str = "mhc1", components=None, k: int = 
     the substitution measurable. But the SCORER does not call it that way: it resolves each
     component through :func:`reference_species` first, and that map sends every mouse component to
     ``"human"``, in **both classes**. So a mouse run is scored against the human tables throughout,
-    not the mouse ones, and this docstring said the opposite until 1.14.0.
+    not the mouse ones, and this docstring once said the opposite.
 
     The mouse tables remain reachable and are the arm that measures the difference: they stand on
     25,264 and 40,244 reference windows against 140,482 and 136,618 for class I. See
@@ -1017,7 +1017,7 @@ def corpus_R(peptides, spectrum: dict, cls: str = "mhc1", registers=None) -> lis
         reg = registers[i] if registers is not None else None
         for comp, entry in spectrum.items():
             table, n, k = entry[0], entry[1], entry[2]
-            mask = entry[3] if len(entry) > 3 else "slice"   # pre-0.27 3-tuples are `slice`
+            mask = entry[3] if len(entry) > 3 else "slice"   # older 3-tuples are `slice`
             if n <= 0:
                 continue
             idx = face_kmers(pep, cls, k, reg, mask)
@@ -1190,7 +1190,7 @@ def safety(scores, top: int = 5, symbols=None) -> list[dict]:
     """Where the self/thymus mimics are expressed -- the autoimmunity read-out, made actionable.
 
     **There is no tumour argument, and there used to be one that did nothing.** ``tumor`` sat at
-    positional #2 through 1.5.0 and was never read -- :func:`mhcmatch.expression.safety_profile`
+    positional #2 and was never read -- :func:`mhcmatch.expression.safety_profile`
     conditions on no context at all -- so ``safety(scores, "SKCM")`` returned the pooled profile
     while reading as if it had been conditioned. On a read-out whose job is to say which tissue you
     cannot afford to damage, a caller believing they narrowed the question is the dangerous

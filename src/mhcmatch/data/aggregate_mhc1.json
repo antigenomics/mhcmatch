@@ -5,7 +5,7 @@
  "cls": "mhc1",
  "species": "human",
  "mode": "neoantigen",
- "release": "1.15.0",
+ "release": "1.20.0",
  "generator": "bench/epic/fit.py",
  "features": [
   "binder",

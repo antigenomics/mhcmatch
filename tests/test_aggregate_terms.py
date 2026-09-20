@@ -481,8 +481,8 @@ def test_every_shipped_model_names_itself_and_the_release_that_accepted_it():
 
     **A manuscript pins a fit, not a library version.** The paper quotes numbers one specific
     coefficient set produced, and the library keeps moving underneath it while mouse and class II
-    are worked on -- so `mhcmatch 1.11.0` is not a citation and `mhc1.human.neoantigen v11
-    (release 1.6.1)` is. `release` is the package version the fit was *accepted* in, which is why
+    are worked on -- so the library version alone is not a citation and `mhc1.human.neoantigen v12
+    (release 1.20.0)` is. `release` is the package version the fit was *accepted* in, which is why
     it is stored rather than derived from `__version__`.
     """
     from mhcmatch import rank as R
@@ -504,7 +504,7 @@ def test_every_shipped_model_names_itself_and_the_release_that_accepted_it():
 def test_a_cell_with_no_shipped_artifact_refuses_by_name(monkeypatch):
     """A `(cls, species, mode)` that was never fitted must not serve a neighbour's coefficients.
 
-    **From 1.15.0 all eight cells ship**, so the empty-key path has to be produced rather than
+    **All eight cells ship**, so the empty-key path has to be produced rather than
     found: the key is removed here. A full registry is not a reason to stop testing the refusal --
     a cell can leave again, and that branch is the only thing standing between a withdrawn fit and
     a silent score from the neighbouring one. An unknown mode is a different error again -- a typo,
@@ -530,7 +530,7 @@ def test_a_cell_with_no_shipped_artifact_refuses_by_name(monkeypatch):
 def test_score_features_computes_every_fitted_column_and_scores_nothing():
     """The bootstrap a refit needs: the design matrix without an artifact to score it with.
 
-    Until 1.10.0 only scoring could ask for the columns -- `_finish` drives every one off
+    Only scoring could once ask for the columns -- `_finish` drives every one off
     `a["features"]` -- so a `(cls, species)` with no fitted artifact could not be *measured*, which
     is exactly what fitting one requires. `score="features"` supplies `FEATURES_ONLY` in the
     artifact's place: every fitted column on the row, `score` NaN, and no model name claimed.

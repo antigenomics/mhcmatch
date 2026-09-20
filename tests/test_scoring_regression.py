@@ -75,7 +75,7 @@ def test_every_row_scores_and_no_fitted_term_is_imputed(scored):
 
     `aggregate_score` substitutes a non-finite feature at the training mean and records the name in
     `imputed`. That is right for a genuinely missing value and wrong as a steady state -- under the
-    1.0.5 genotype bug 15,023 real rows scored that way, *above* the rows that resolved, because
+    genotype bug 15,023 real rows scored that way, *above* the rows that resolved, because
     three missing terms all sat at the mean. So: nothing here may be imputed.
     """
     assert len(scored) == len(_subset()), "a real row failed to score at all"
@@ -88,7 +88,7 @@ def test_every_row_scores_and_no_fitted_term_is_imputed(scored):
 
 @pytest.mark.hfdata
 def test_every_allele_resolves_to_something_scored(scored):
-    """`allele_scored` is the allele the numbers are actually against (1.0.5).
+    """`allele_scored` is the allele the numbers are actually against.
 
     A restriction cell that resolves to nothing used to yield NaN presentation, NaN binder and NaN
     occupancy while still emitting a score.

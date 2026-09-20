@@ -295,11 +295,11 @@ HLA-E, -F or -G.
 How long it takes, and the one stage that ships off
 ---------------------------------------------------
 
-Two donors, both arms, 8 cpu / 24 GB on one node (2026-09-20, measured against the pre-1.19.0
-module): **197 s** with the screen and the mimicry annotation both off, longest single task 60 s;
+Two donors, both arms, 8 cpu / 24 GB on one node (2026-09-20, measured against an earlier form of
+the module): **197 s** with the screen and the mimicry annotation both off, longest single task 60 s;
 341 s with both on.
 
-The safety screen ships **on** in both engines from 1.17.0. ``--mhcmatch_mimicry`` is the one that
+The safety screen ships **on** in both engines. ``--mhcmatch_mimicry`` is the one that
 is still off, and it is a different case: it is annotation only, and **scores are identical either
 way**, because ``rank``'s corpus channels are a ``corpus_spectrum`` table contraction rather than a
 neighbour search. Both need a whole-proteome index, which is **built on demand and never
@@ -382,8 +382,8 @@ allowed to inject one, and the two arrive at the same object from opposite sides
 ``params.mhcmatch_cassette_unit_column`` has **no default**, and with neither a context FASTA nor a
 named column the process stops. That is deliberate: the fallback ``_read_units`` would otherwise
 reach is ``peptide``, which on a reranked table is the *minimal* epitope --- so the quiet failure
-is a tolerising cassette rather than an error. Until 1.19.0 the default was one particular
-upstream's column name, which was the right failure only for that upstream.
+is a tolerising cassette rather than an error. An earlier default named one particular
+upstream's column, which was the right failure only for that upstream.
 
 Expression: use ``tpm``, and know what the other columns are
 -------------------------------------------------------------
@@ -449,7 +449,7 @@ Species follows ``params.genome``, so there is no extra parameter — but there 
 Running it
 ----------
 
-**Local, from 1.19.0.** The SLURM profiles and the sbatch templates are gone; ``-profile conda`` and
+**Local only.** No SLURM profile and no sbatch template ships; ``-profile conda`` and
 ``-profile docker`` are the deployment story, and the per-process ``cpus``/``memory``/``time`` in
 ``nextflow.config`` are what each process was measured consuming rather than scheduler policy.
 

@@ -191,7 +191,7 @@ def test_every_batch_capable_command_makes_its_positional_optional(capsys):
 def test_cli_reports_its_version():
     """`mhcmatch --version` is the gate `bench/run_epic.sh` stage 0 runs on.
 
-    It did not exist until 0.27.0, so the guard's `grep` found nothing, `pipefail` killed the
+    It did not always exist, so the guard's `grep` found nothing, `pipefail` killed the
     script, and the whole reproduction chain stopped at stage 0 without saying so.
     """
     import subprocess
@@ -257,7 +257,7 @@ def test_rank_holdout_dumps_every_screen_and_both_cross_validations(capsys):
     ("mhc2", "mouse", "mhc2.mouse.neoantigen"),
 ])
 def test_rank_coefficients_dumps_the_artifact_the_flags_asked_for(cls, species, model_id, capsys):
-    """`--cls` / `--species` select which model is printed, and until 1.11.0 they did not.
+    """`--cls` / `--species` select which model is printed, and they once did not.
 
     `_rank_model` read `aggregate()` bare, so `rank --coefficients --cls mhc2 --species mouse`
     printed the human class-I fit and said nothing -- and the `model_id` line added in the same
@@ -297,7 +297,7 @@ def test_rank_holdout_prints_the_holdout_design_the_artifact_actually_records(ca
 def test_rank_holdout_says_so_when_the_fit_holds_nothing_out(capsys):
     """A GLM fitted at `--folds 0` has no held-out table, and must say that rather than print one.
 
-    From 1.12.0 the mouse and class-II artifacts carry no `cv_*` block: their whole uncertainty
+    The mouse and class-II artifacts carry no `cv_*` block: their whole uncertainty
     statement is the cluster bootstrap over `reference_id`, which `--coefficients` prints. An empty
     holdout table would read as a holdout that scored nothing, and `f["holdout"]` was a KeyError
     before this refused by name.
@@ -312,8 +312,8 @@ def test_rank_holdout_says_so_when_the_fit_holds_nothing_out(capsys):
 def test_asking_for_a_model_that_was_never_fitted_is_an_error_not_a_traceback():
     """An unfitted cell refuses in one line rather than tracebacking or serving a neighbour.
 
-    Human class II was the gap this test named until 1.12.0 fitted it; `mhc2.human.pathogen` was
-    the stand-in after that, until 1.15.0 fitted **every** cell. Every `(cls, species, mode)` the
+    Human class II was the gap this test named until it was fitted; `mhc2.human.pathogen` was
+    the stand-in after that, until **every** cell was fitted. Every `(cls, species, mode)` the
     CLI can express now resolves, and the refusal has moved *up* to argparse: a species with no
     panel is rejected by name before `aggregate()` is reached.
 

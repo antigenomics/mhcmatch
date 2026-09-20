@@ -74,8 +74,8 @@ _MIX_PASSES = 3
 
 # Human proteome amino-acid frequencies (UniProt UP000005640). The log-odds NULL: with
 # ``background="ligand"`` (default) the denominator is the anchor marginal over **every other
-# allele's** ligands -- leave-one-allele-out since 1.5.0 -- so the score measures allele
-# *specificity* (this allele vs the average other presented ligand). Before 1.5.0 the pool included
+# allele's** ligands -- leave-one-allele-out -- so the score measures allele
+# *specificity* (this allele vs the average other presented ligand). Earlier the pool included
 # the queried allele, which on a skewed panel made the null the allele's own motif: `H-2-IAb` is
 # 6,483 of 6,705 mouse class-II ligands, and its benchmark AUROC read 0.322. ``"ligand-pooled"``
 # reproduces the old behaviour -- best for the
@@ -197,8 +197,8 @@ class AnchorModel:
         ``length_prior`` (MHC-I only) adds the per-allele ligand-length factor the anchor log-odds is
         structurally blind to -- see :meth:`length_logodds`. ``"score"`` (default) folds it into
         :meth:`score`, so ``%rank`` and everything downstream inherit it; ``"post"`` only exposes
-        :meth:`length_logodds` for a caller that composes it itself; ``False`` is the length-blind v0.4
-        behaviour.
+        :meth:`length_logodds` for a caller that composes it itself; ``False`` is the earlier
+        length-blind behaviour.
 
         ``length_motifs`` (MHC-I only) estimates the residue distributions **per peptide length**
         instead of pooling every length into one counter -- see :meth:`_dist_len`. Complementary to
@@ -206,7 +206,7 @@ class AnchorModel:
 
         ``register`` (MHC-II only) decides how the unobserved binding register enters :meth:`score`:
         ``"marginal"`` (default) integrates it out under a learned core-offset prior; ``"max"`` is the
-        pre-v0.6 max-over-frames. See :meth:`score`.
+        earlier max-over-frames. See :meth:`score`.
 
         ``n_motifs`` (MHC-II only) fits that many motif components per allele by EM and scores their
         mixture -- see :meth:`_refit_mixture`. ``3`` (default, human MHC-II) closes ~40% of the
@@ -978,8 +978,8 @@ class AnchorModel:
         that one allele. Subtracting the queried allele's own counts makes the null "the other
         alleles' ligands", which is what the allele-specificity task actually asks -- its decoys are
         drawn from exactly that pool. Measured over 24 cells on three panels, it never regresses by
-        more than 0.006 and repairs that one cell by +0.294 AUROC, so it is the default from 1.5.0.
-        ``"ligand-pooled"`` keeps the pre-1.5.0 self-inclusive null, for reproducing older numbers.
+        more than 0.006 and repairs that one cell by +0.294 AUROC, so it is the default.
+        ``"ligand-pooled"`` keeps the self-inclusive null, for reproducing older numbers.
         `bench/results/mhc2_ligand_loo.md`.
 
         ``allele`` is otherwise read only under ``background="ligand"`` and only when the gate is on
@@ -1418,7 +1418,7 @@ class AnchorModel:
         offset about as often as not, while a real ligand's lands at the peaked one, and because the
         prior is normalized within a length the term still separates length-matched candidates.
 
-        ``"max"`` is the pre-v0.6 behaviour, ``max_r s_r`` -- a max over ``L-8`` frames, which grows
+        ``"max"`` is the earlier behaviour, ``max_r s_r`` -- a max over ``L-8`` frames, which grows
         with peptide length even under the null (`bench/results/binder_gate_length_bias.md`).
 
         With ``n_motifs > 1`` the motif mixture wraps that marginal --

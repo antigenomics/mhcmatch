@@ -1,6 +1,6 @@
 """The de novo filter: what it drops, what it labels, and what it must never drop.
 
-Through 1.7.3 ``rank_threshold`` was a bare ``2.0`` and ``band`` took class-I cut-offs whatever the
+``rank_threshold`` used to be a bare ``2.0`` and ``band`` took class-I cut-offs whatever the
 class. Both are the same category error -- NetMHCpan calls class I weak at ``%rank <= 2.0`` and
 NetMHCIIpan calls class II *strong* there -- and on the filter it was silent and destructive: a
 class-II de novo arm returned an empty table with returncode 0.
@@ -69,7 +69,7 @@ def test_a_whitelist_reads_a_file_and_skips_comments(tmp_path):
 
 
 # --- two whitelists, not one ------------------------------------------------------------------
-# 1.8.0 matched a single list against gene *and* peptide. That cannot say which claim kept a row:
+# One list used to be matched against gene *and* peptide. That cannot say which claim kept a row:
 # "this gene is a driver" and "this peptide has a validated response" are different assertions, and
 # the second is evidence about the peptide while the first is not.
 
@@ -161,11 +161,11 @@ def test_a_file_feeds_either_list(tmp_path):
 
 
 def test_the_deprecated_flat_list_still_behaves_as_it_did():
-    """A 1.8.0 command line must keep running: one list, matched both ways, exact."""
+    """The older command line must keep running: one list, matched both ways, exact."""
     k = P.as_keep("TP53,GILGFVFTL")
     assert k.reason(gene="TP53") == "gene"
     assert k.reason(peptide="GILGFVFTL") == "epitope"
-    assert k.reason(peptide="GILGFVFTA") == ""          # exact, as 1.8.0 was
+    assert k.reason(peptide="GILGFVFTA") == ""          # exact, as the flat list was
     assert k.reason(peptide="SIINFEKL", gene="MDM2") == ""
 
 

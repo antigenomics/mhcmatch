@@ -505,7 +505,7 @@ def test_every_notebook_parses_on_the_oldest_python_we_support():
 
 
 # --- the generic upstream contract ---------------------------------------------------------------
-# From 1.19.0 the integrations assume a standard neoantigen stack (VEP -> pVACtools for candidates
+# The integrations assume a standard neoantigen stack (VEP -> pVACtools for candidates
 # and windows, OptiType / arcasHLA / HLA-LA for typing) rather than one collaborator's pipeline.
 # Each test below is a shape that stack really emits and that mhcmatch read as nothing before.
 
@@ -616,11 +616,11 @@ def test_a_positional_header_still_parses_positionally():
 
 def test_the_privacy_guard_fires_on_a_planted_leak_of_each_kind(tmp_path, monkeypatch):
     """**A guard that matches nothing reports the same thing as a clean tree.** The screened tokens
-    moved out of this repository in 1.19.0 and the variant-table screen gained the VEP/pVACseq
+    moved out of this repository and the variant-table screen gained the VEP/pVACseq
     column spelling, and neither change is worth anything unless a planted leak still fires. The
     companion negative control is `test_nothing_in_this_public_repo_identifies_a_patient` above;
     this is the positive one, and the repo has been burned by a vacuous guard before -- the
-    integration version-pin scan matched `0.\\d+.\\d+` and passed for every release after 1.0.0.
+    integration version-pin scan matched `0.\\d+.\\d+` and passed once the major version reached 1.
     """
     import importlib.util
     from pathlib import Path

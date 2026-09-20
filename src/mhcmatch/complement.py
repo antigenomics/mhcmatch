@@ -329,7 +329,7 @@ def _basis(paratope: str = "loop") -> dict[str, np.ndarray]:
         # below, rather than out of a fitted artifact: a basis that only exists inside one makes
         # `import mhcmatch.complement` -- and with it `burial`, the shipped `C_phys` term --
         # depend on that artifact still shipping. It stopped shipping: `ipred_mhc1.json`, which
-        # first carried these vectors, was removed in 0.22.0 and this line kept working.
+        # first carried these vectors, was removed and this line kept working.
         "pc1": _scale_vec(aa_tables.PROPERTY_PC1),
         "pc2": _scale_vec(aa_tables.PROPERTY_PC2),
         "kf4": _scale_vec(aa_tables.DESCRIPTORS["KIDERA"]["KF4"]),
@@ -468,14 +468,14 @@ def burial(peptides, cls: str = "mhc1", scale=PHYS_SCALE, registers=None,
     cannot memorise the corpus's cysteine gradient (correlation with per-peptide cysteine count
     +0.108, against +0.688 for the full fitted :func:`score`).
 
-    **``per_residue=True`` since 0.24.0, and the old sum was a length detector.** The TCR face is
+    **``per_residue=True``, and the old sum was a length detector.** The TCR face is
     ``L - 5`` residues wide and the Rose scale is strictly positive (0.52 to 0.91), so summing it
     gives roughly ``0.75 (L - 5)``: on 60,000 fit-corpus peptides the summed column correlates with
     peptide length at **Pearson +0.954**, against **+0.052** for a centred scale like Kidera KF4.
     A chemistry term that is 91 % length variance is not measuring chemistry, and it made the two
     scales incomparable -- one carrying length, one not. Dividing by the face width is the same
     correction :func:`mhcmatch.mimicry.corpus_R` makes with its per-window divisor, for the same
-    reason. Pass ``per_residue=False`` to reproduce a pre-0.24.0 number.
+    reason. Pass ``per_residue=False`` to restore the summed form.
 
     ``scale=`` is for **exploration, not for scoring**. Passing another basis re-parameterises a
     result that was selected by BIC inside the general model over 576 candidates, so a number

@@ -303,8 +303,8 @@ column is carried through. See :ref:`parent-gene`.
        ``<name>_in`` and the swap is announced -- see :doc:`../pipeline`. A restriction cell
        naming a whole genotype is resolved to the presented **set** rather than compared as a
        string (``--collapse-allotype`` keeps the one-label reading); the score-dominance channel
-       is **off by default from 1.18.0** and ``--dominance`` restores it, which is what
-       reproduces a cassette recorded before then; ``--weight-coverage`` states an exchange rate
+       is **off by default** and ``--dominance`` restores it, which is what
+       reproduces the three-channel form; ``--weight-coverage`` states an exchange rate
        in expected responding units for reaching an allotype the set has missed, and
        ``--overlap-combine worst`` reduces the coupling channels by their worst axis rather than
        their mean. ``--sequence blosum`` swaps the exact 3-mer sequence channel --- zero on
@@ -435,7 +435,7 @@ convention, outside a strong cut. Override either class alone with ``--map-thres
    * - ``--epitope {neoantigen,pathogen}``
      - which fitted model scores the rows. ``neoantigen`` (default) is the nine-term EPIC fit under
        ``--cls mhc1`` and the six-term one under ``--cls mhc2``; ``pathogen`` is for a peptide the
-       host does not encode, and **all four pathogen cells ship** from 1.15.0 --- two terms for
+       host does not encode, and **all four pathogen cells ship** --- two terms for
        ``mhc1``, three for ``mhc2``, each host. ``mhcmatch models --all`` prints the current
        table, which is the answer that cannot go stale. Not spelled ``--mode``: this command's
        *positional* ``mode`` is the input shape. ``pathogen`` drops the expression block (undefined

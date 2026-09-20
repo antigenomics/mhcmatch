@@ -37,7 +37,7 @@ def test_cache_reproduces_the_uncached_percent_rank(tmp_path, monkeypatch):
 
 
 def test_cache_is_on_by_default(tmp_path, monkeypatch):
-    """0.27.0 inverted this. The cache used to be opt-in through the env var and essentially
+    """This was inverted once. The cache used to be opt-in through the env var and essentially
     nothing set it, so every process rebuilt every allele it touched -- 1,788 s of a neoantigen
     feature build that takes 15 s warm. Unset now means ON, under XDG_CACHE_HOME."""
     monkeypatch.delenv(C.CACHE_ENV, raising=False)

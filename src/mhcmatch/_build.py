@@ -19,7 +19,7 @@ exact command rather than pretending it can run it.
 **A bump-only rebuild moves no prediction, and both builders are instrumented to prove rather than
 assume it**: :func:`corpus_tables` prints ``** MOVED **`` for any cell that changed, and
 :func:`anchor_models` is checked against the previous file by the caller. Measured for the anchor
-models at 0.25.0 → 0.26.0: max |new − old| = 0 over 9,000 scorings.
+models rebuilt across a refit: max |new − old| = 0 over 9,000 scorings.
 """
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ def anchor_models(say=print) -> list:
     library refuses to load. That is a *provenance* guard, not a correctness one: ``panel_sha`` and
     ``params`` are unchanged by a bump and the refit is deterministic.
 
-    **One panel per species, and the species is the loop, not a flag.** Until 1.10.0 this built
+    **One panel per species, and the species is the loop, not a flag.** An earlier form built
     only from ``species="human"``, so a mouse panel missed the ``panel_sha`` guard on every entry
     and refit at runtime -- correct, and slow in exactly the place the pickles exist to avoid.
     """
@@ -309,11 +309,11 @@ def _stamp(path: str):
     Two version vocabularies live in this directory and they are told apart **by the shape of the
     value, not by the file extension**. A *model* version is an int — EPIC is ``11``, the recognition
     heads are ``2`` — and comparing one to a package version is a category error that reports every
-    head stale at every release. A *package* version is dotted (``"0.26.0"``), and an artifact that
+    head stale at every release. A *package* version is dotted (``"1.20.0"``), and an artifact that
     carries one is asserting which release built it, so it is checked.
 
     Blanket-exempting ``.json`` was the earlier rule, and it hid exactly one thing:
-    ``mimicry_mhc1.json`` carried ``"0.12.0"`` and went unchecked across fifteen minor releases; it now carries the int ``1``.
+    ``mimicry_mhc1.json`` carried a dotted stamp and went unchecked; it now carries the int ``1``.
 
     An artifact with no version record at all is not stale — several are static reference data, and
     demanding a stamp would make the check cry wolf on files no release touches.
@@ -343,8 +343,8 @@ def _stamp(path: str):
             # is an int -- EPIC is 11, the recognition heads are 2 -- and comparing it to a package
             # version reports every head stale at every release. A *package* version is dotted, and
             # an artifact carrying one is making a claim about which release built it, so it is
-            # checked. `mimicry_mhc1.json` is the file this distinction exists for: it carried
-            # "0.12.0" and was never checked, because JSON was blanket-exempted.
+            # checked. `mimicry_mhc1.json` is the file this distinction exists for: it carried a
+            # dotted stamp and was never checked, because JSON was blanket-exempted.
             return v if isinstance(v, str) and "." in v else None
     except Exception as exc:                       # a file that will not open IS corrupt
         return f"unreadable: {type(exc).__name__}"

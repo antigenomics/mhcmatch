@@ -6,7 +6,7 @@
  "cls": "mhc1",
  "mode": "neoantigen",
  "model_id": "mhc1.mouse.neoantigen",
- "release": "1.15.0",
+ "release": "1.20.0",
  "features": [
   "binder",
   "log10a",

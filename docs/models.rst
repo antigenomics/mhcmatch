@@ -22,11 +22,11 @@ Three identifiers, and only one of them moves with the library
   a term added, a column respecified, a population redefined.
 - ``release`` --- the dotted package version the fit was **accepted** in, stored rather than
   derived. A manuscript pins a fit while the library keeps moving underneath it, so
-  ``mhc1.human.neoantigen v12 (release 1.15.0)`` is a citation and ``mhcmatch 1.15.0`` is not.
+  ``mhc1.human.neoantigen v12 (release 1.20.0)`` is a citation and ``mhcmatch 1.20.1`` is not.
 
 ``mode`` is ``neoantigen`` on four and ``pathogen`` on four. It is a key rather than a covariate
 because a tumour neoantigen and a pathogen epitope are two mechanisms, not two values of one
-variable. From 1.15.0 **all eight cells are fitted**; the refusal branch stays, because a cell can
+variable. **All eight cells are fitted**; the refusal branch stays, because a cell can
 leave the registry again --- a refit withdrawn, an artifact not vendored --- and what has to survive
 that is the honest refusal, not a table that happens to be complete today. ``mhcmatch models --all``
 prints all eight and marks an unfitted one ``--``.
@@ -188,7 +188,7 @@ What it delivers
 Caveats
 ~~~~~~~
 
-**All three corpus channels read the human tables**, from 1.13.0.
+**All three corpus channels read the human tables.**
 :func:`mhcmatch.mimicry.reference_species` routes ``thymus``, ``self`` and ``viral`` alike to
 human, so a mouse query is matched against the identical ``mhc1|…|human|3`` tables the human
 artifact scores against. **Nothing is trained on human data** --- a corpus channel is a k-mer
@@ -298,7 +298,7 @@ What it delivers
 
 - In-sample within-reference AUROC **0.5741**, AUPRC 0.5917, over the 7 of 30 references carrying
   at least three of each class.
-- It completes the lookup: all four ``(cls, species)`` **neoantigen** cells are fitted from 1.12.0,
+- It completes the lookup: all four ``(cls, species)`` **neoantigen** cells are fitted,
   so a mouse class-II run scores against a mouse class-II fit instead of refusing.
 
 Caveats
@@ -414,7 +414,7 @@ The second mode: ``--epitope pathogen``
 Every artifact above is a **neoantigen** fit. A pathogen epitope is answered by a different
 mechanism --- autoimmunity is not inflammation --- so it is a second model rather than the same
 model with an extra covariate, and ``mhcmatch rank --epitope pathogen`` selects it. All four
-``(cls, species)`` cells are fitted in this mode from 1.15.0:
+``(cls, species)`` cells are fitted in this mode:
 
 .. code-block:: zsh
 
@@ -472,7 +472,7 @@ for the interval and a 5-fold row cross-validation beside it.
 
 .. warning::
 
-   Three of these cells looked unfittable until 1.15.0, on the explanation that IEDB's T-cell
+   Three of these cells looked unfittable, on the explanation that IEDB's T-cell
    export is **positives-only**. **It is not.** The full export (``dump/tcell_full_v3_tsv.zip``,
    577,219 assay rows) carries **363,181** assays labelled ``Negative``. What is positives-only is
    a *query-filtered download* of it, and reading that download's absence as the database's own is
@@ -508,8 +508,8 @@ What they deliver
 ~~~~~~~~~~~~~~~~~
 
 - **The lookup closes at eight of eight.** ``mhc2.human.pathogen`` and ``mhc2.mouse.pathogen`` are
-  the first class-II pathogen fits and ``mhc1.mouse.pathogen`` the first mouse one; before 1.15.0
-  those three cells raised.
+  the first class-II pathogen fits and ``mhc1.mouse.pathogen`` the first mouse one; earlier in
+  development those three cells raised.
 - ``binder`` **is the largest coefficient in all four**, from **+0.1819** on
   ``mhc1.mouse.pathogen`` (10,404 peptides) to **+0.5240** on ``mhc2.mouse.pathogen`` (11,725), and
   its sign holds in 400 of 400 resamples on every one of them.

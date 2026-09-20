@@ -36,7 +36,7 @@ jobs:
         run: mhcmatch build --check
       - name: Run tests
         run: pytest -q
-      # **The notebooks' own stated lint gate, which nothing ran until 1.17.0.** They are plain
+      # **The notebooks' own stated lint gate, which nothing ran before this job.** They are plain
       # Python with `@app.cell` decorators, so a name bound in two cells is a real error that an
       # import check cannot see -- and marimo reports it at the top of the file rather than where
       # the mistake is, which is why it wants a linter and not a traceback. Two of the six notebooks

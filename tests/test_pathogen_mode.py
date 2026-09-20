@@ -69,7 +69,7 @@ def test_the_channel_set_is_read_off_the_features_list_not_off_the_mode(mode, wa
     """The tables `cli._aggregate_channels` actually asks for, not a re-derivation of the rule.
 
     This test used to recompute the comprehension in its own body and assert a tautology over a
-    literal, so reverting the call site to the pre-1.14.0 hardcoded `("thymus","self","viral")` --
+    literal, so reverting the call site to the earlier hardcoded `("thymus","self","viral")` --
     the exact regression its name describes -- left it green.
     """
     from mhcmatch import cli as C
@@ -92,7 +92,7 @@ def test_every_registered_mode_has_a_stand_in():
 def test_an_unfitted_cell_refuses_by_name_rather_than_serving_a_neighbour(cls, species, monkeypatch):
     """The refusal branch, kept alive now that all eight cells ship.
 
-    Until 1.15.0 these three pathogen cells had no fit and the test could ask for them directly.
+    These three pathogen cells once had no fit and the test could ask for them directly.
     A full registry is not a reason to stop testing the empty-key path: a cell can leave it again
     -- a refit withdrawn, an artifact not vendored -- and what has to survive that is the refusal,
     not a table that happens to be complete. So the key is removed here rather than found missing.
@@ -265,7 +265,7 @@ def test_mimicry_references_follow_the_species_flag():
 
 
 # ---------------------------------------------------------------------------------------------
-# The 1.14.0 release audit. Seven defects, all reproduced before they were fixed; each of these
+# A release audit. Seven defects, all reproduced before they were fixed; each of these
 # fails on the code as shipped in the merge commit and passes after it. The two things they have
 # in common are worth more than any one of them: every defect was a value resolved from the
 # DEFAULT artifact instead of the one being scored, or a rule written for one mode and left
@@ -306,7 +306,7 @@ def test_a_corpus_column_is_emitted_only_when_it_was_computed(cls, species, mode
     `_aggregate_channels` builds exactly the tables the fitted `features` list names, and the
     header filter was written for `mode == "pathogen"` only. Both class-II artifacts declare no
     corpus block, so `rank --cls mhc2 --score aggregate` turned three columns that carried measured
-    densities in 1.13.0 into NaN -- silently, with the header unchanged.
+    densities into NaN -- silently, with the header unchanged.
     """
     cols = R.columns(score="aggregate", cls=cls, species=species, mode=mode)
     assert ("C_corpus_viral" in cols) is want
@@ -400,7 +400,7 @@ def test_models_tells_a_broken_install_from_an_unfitted_cell(monkeypatch, capsys
     out = capsys.readouterr()
     assert "NOT INSTALLED" in out.out, "a registered file that will not open is a third state"
     assert "broken install" in out.err
-    # **The `--` half needs a cell that is not registered at all, and from 1.15.0 there is none**
+    # **The `--` half needs a cell that is not registered at all, and there is none**
     # -- all eight ship. So the second state is produced the same way the first one is: by taking
     # a key out. Without this the test would assert only the NOT-INSTALLED branch and stop being
     # about telling the two apart, which is its whole subject.
@@ -496,18 +496,18 @@ def test_the_shipped_mouse_artifact_was_fitted_against_the_human_tables():
     """Which is why `--native-corpus` warns rather than being a preference.
 
     The mouse fit's corpus channels read the HUMAN tables -- `mimicry.reference_species` has routed
-    all three there since **1.13.0** -- so its nine coefficients meet a different column under the
+    all three there -- so its nine coefficients meet a different column under the
     flag, and the warning is a statement about the fit rather than a preference about the query.
 
-    **The bound is `>= 1.13.0`, not `== 1.13.0`.** This pinned the exact string and broke on the
-    2026-09-20 refit, which moved the stamp to 1.15.0 and changed nothing about the routing: the
+    **The bound is `>= 1.20.0`, not `== 1.20.0`.** This pinned the exact string and broke on the
+    2026-09-20 refit, which moved the stamp to 1.20.0 and changed nothing about the routing: the
     release a fit was accepted in is not the fact this test is about. Pinning the artifact's
     identity is `test_the_fitted_artifacts_are_pinned_to_the_fits_that_produced_them`'s job, and it
     digests `(coef, mu, sigma)` for exactly this reason.
     """
     a = R.aggregate("mhc1", "mouse", "neoantigen")
     got = tuple(int(x) for x in a["release"].split("."))
-    assert got >= (1, 13, 0), a["release"]
+    assert got >= (1, 20, 0), a["release"]
     assert [c for c in a["features"] if c.startswith("C_corpus_")], (
         "if the mouse fit ever drops its corpus block this test's premise changes")
 

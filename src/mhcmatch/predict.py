@@ -199,7 +199,7 @@ class Keep:
 
     Independent on purpose: a gene symbol keeps every candidate in a driver gene, and an epitope
     sequence keeps the ones with a validated response. They answer different questions, so one list
-    matched against both fields (which is what ``--keep`` did in 1.8.0) cannot say which claim a
+    matched against both fields (which is what ``--keep`` did) cannot say which claim a
     surviving row rests on.
     """
     __slots__ = ("genes", "index", "params", "mismatch")
@@ -251,7 +251,7 @@ def as_keep(spec):
 
     A ``Keep`` passes through; ``None`` stays ``None``; anything else is the deprecated flat
     ``--keep`` list and becomes one ``Keep`` with the same entries on both sides, which is exactly
-    what 1.8.0 did with it.
+    what that flag did with it.
     """
     if spec is None or isinstance(spec, Keep):
         return spec
@@ -263,9 +263,9 @@ def as_keep(spec):
 
 
 def keep_set(spec) -> frozenset:
-    """**Deprecated** -- the 1.8.0 ``--keep`` list, matched against gene *and* peptide alike.
+    """**Deprecated** -- the flat ``--keep`` list, matched against gene *and* peptide alike.
 
-    Kept so a command line written against 1.8.0 still runs. Use :class:`Keep` with separate
+    Kept so a command line written against that flag still runs. Use :class:`Keep` with separate
     ``genes=`` and ``epitopes=``: one list matched both ways cannot report which claim kept a row,
     and it cannot do the 1-substitution epitope match at all.
     """
@@ -325,7 +325,7 @@ SCORED_COLUMNS = (
 
 #: ``type`` is the header's provenance (``Somatic`` / ``Fusion`` / ``Isoform`` / ``CNV``);
 #: ``variant_type`` beside it is the **product class** :func:`variant_product` derives, the same
-#: value ``rank`` emits under that name, so the two tables join on it. Added in 0.24.1 -- appended
+#: value ``rank`` emits under that name, so the two tables join on it. Appended
 #: to the group it belongs with rather than at the end, because this is mhcmatch's own native
 #: format and not the fixed 57-column pipeline contract (:data:`SCORED_COLUMNS`), which is unchanged.
 NATIVE_COLUMNS = ("source", "type", "variant_type", "gene_name", "chrom", "pos", "ref", "alt",
@@ -598,12 +598,12 @@ def tile(seq: str, lengths) -> list:
 # ----------------------------------------------------------------- scoring ---
 #: Bumped by hand when the *scoring code* changes what a head returns, independently of any
 #: version bump or artifact rebuild. This exists because everything else in `_fingerprint` is data,
-#: and no hash over data can see a code change: 1.3.0 gained the corpus length prior in
-#: `PottsAffinity.predict_y` and an extrapolated upper tail in `calibrate.percent_rank` *within one
-#: released version*, so a background cached before those and one cached after shared a key and the
-#: stale one was served. Same discipline as the EPIC model version -- an int, moved deliberately.
+#: and no hash over data can see a code change: the corpus length prior in
+#: `PottsAffinity.predict_y` and an extrapolated upper tail in `calibrate.percent_rank` both arrived
+#: *within one released version*, so a background cached before those and one cached after shared a
+#: key and the stale one was served. Same discipline as the EPIC model version -- an int, moved deliberately.
 #:
-#: 1 = pre-1.3.0 heads. 2 = length-aware Potts + extrapolated %rank tail. 3 = canonical allele keys
+#: 1 = the original heads. 2 = length-aware Potts + extrapolated %rank tail. 3 = canonical allele keys
 #: (`H-2Kb` / `H2-Kb` / `H-2-Kb` collapsed to one molecule, so a cached background is no longer
 #: keyed on which spelling the caller typed). 4 = the `background="ligand"` null leaves the queried
 #: allele out. 5 = the expression reference is keyed by species, so `expr_lvl` and `expr_norm` on a
@@ -636,7 +636,7 @@ def _scoring_digest() -> str:
 
     :data:`SCORER_EPOCH` is the hand-maintained version of this and it has exactly one failure mode:
     somebody changes a head and does not bump it. That is not hypothetical --- the comment on
-    `SCORER_EPOCH` records 1.3.0 serving a background cached before a scoring change to a caller
+    `SCORER_EPOCH` records a release serving a background cached before a scoring change to a caller
     after it, *within one released version*, which is the bug the int was introduced to prevent and
     which it only prevents when remembered. Hashing the source removes the remembering: any edit to
     any module below changes every key that depends on it.
@@ -1106,7 +1106,7 @@ def write_native(preds, path: str, core: bool = False) -> None:
     with open(path, "w", newline="") as fh:
         # `lineterminator="\n"`: the csv module defaults to the excel dialect's CRLF, which is
         # wrong for a Unix TSV and is not what the pipelines that consume this emit. Shipped as
-        # CRLF from 0.8.0 until 0.14.1, where it broke awk on the last column of every table.
+        # CRLF for a time, and it broke awk on the last column of every table.
         w = csv.writer(fh, delimiter="\t", lineterminator="\n")
         w.writerow(NATIVE_COLUMNS + (CORE_COLUMNS if core else ()))
         for p in preds:

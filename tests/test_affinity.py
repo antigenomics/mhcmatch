@@ -241,7 +241,7 @@ def test_potts_shipped_path_scores_are_pinned():
     Moves if the weights move, if the panel's length histogram moves, or if the factor's scale
     changes. Update deliberately, never reflexively, and record the old values.
 
-    **Updated 2026-09-20, 1.4.0 -> 1.4.1: NLVPMVATV 18.6 -> 18.9, GILGFVFTL 11.2 -> 11.4,
+    **Updated 2026-09-20: NLVPMVATV 18.6 -> 18.9, GILGFVFTL 11.2 -> 11.4,
     SLYNTGAT 50000.0 -> 40046.4 nM.** The length factor was reaching ``AnchorModel`` under the
     *pseudosequence* key (``'HLA-A02:01'``) while the panel is keyed on the corpus spelling
     (``'HLA-A*02:01'``), so ``length_logodds`` missed on every class-I allele and returned a

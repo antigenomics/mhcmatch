@@ -242,9 +242,9 @@ def test_vendored_models_load_and_are_current():
     # Every shipped model loads (monkeypatched panel hash), scores finitely, AND is not stale for this
     # version -- the last assert fails a release that bumps __version__ without regenerating the models.
     #
-    # BOTH registries, since 1.10.0 shipped five mouse pickles. Iterating only `_VENDORED_MODELS`
-    # left the mouse half with no currency guard at all -- which is the exact hole that shipped
-    # three stale `AnchorModel`s in 0.26.0, and the reason this test exists.
+    # BOTH registries, since five mouse pickles ship too. Iterating only `_VENDORED_MODELS`
+    # left the mouse half with no currency guard at all -- which is the exact hole that once
+    # shipped three stale `AnchorModel`s, and the reason this test exists.
     from mhcmatch import __version__, diffusion as D
 
     class _Store:                       # `load_vendored_anchor_model` reads only this attribute
@@ -333,7 +333,7 @@ def test_binder_ranks_is_the_transpose_of_binder_score_and_scores_identically():
 
 
 def test_calibration_cache_is_on_by_default_and_can_be_turned_off(tmp_path, monkeypatch):
-    """Shipped on since 0.27.0. It was opt-in, nothing set it, and every run rebuilt every allele.
+    """Released on by default. It was opt-in, nothing set it, and every run rebuilt every allele.
 
     A per-allele background costs ~0.95 s and is a pure function of the model, the draw and the
     library version -- all of which are in the cache key -- so defaulting it on cannot serve a
@@ -367,7 +367,7 @@ def test_spelling_does_not_change_a_score():
     heads keyed on different name spaces inside one call, and the panel was keyed on a third (the
     raw pmhc string, because ``Store.from_records`` normalised class II and not class I).
 
-    Measured before the fix, library 1.4.0, on the full pmhc panel -- SIINFEKL, the canonical
+    Measured before the fix, on the full pmhc panel -- SIINFEKL, the canonical
     H-2Kb ligand:
 
     ===========  ==================  ==========  ==========

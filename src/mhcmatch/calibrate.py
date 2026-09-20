@@ -35,7 +35,7 @@ _OFF = {"0", "off", "none", "false", "no"}
 def cache_dir() -> str | None:
     """The calibration cache directory, or ``None`` if caching is off. Created on first use.
 
-    **On by default since 0.27.0.** A per-allele background is a random-peptide draw scored under
+    **On by default.** A per-allele background is a random-peptide draw scored under
     one allele's model: ~0.95 s to build, and a pure function of
     ``(allele, model, background, footprint, seed, library version)`` -- every one of which is in
     the cache key, so a stale entry cannot be served across a refit or a version bump. Before this

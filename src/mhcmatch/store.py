@@ -825,7 +825,7 @@ class Store:
         (MHC-I) adds the per-allele ligand-length factor the anchor log-odds is blind to --
         see :meth:`mhcmatch.diffusion.AnchorModel.length_logodds`. ``register="marginal"`` (MHC-II
         default) integrates the unobserved binding register out under a learned core-offset prior;
-        ``"max"`` restores the pre-v0.6 max-over-frames -- see
+        ``"max"`` restores the earlier max-over-frames -- see
         :meth:`mhcmatch.diffusion.AnchorModel.score`. ``n_motifs`` (MHC-II) fits that many motif
         components per allele and scores their mixture; ``3`` (default) closes ~40% of the
         frequent-stratum gap to NetMHCIIpan, ``1`` is the single-PWM model --

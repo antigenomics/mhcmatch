@@ -1904,8 +1904,8 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
         is how much a pair shares, the other is what a pair loses.
 
     ``dominance``
-        ``True`` adds the score-dominance channel to :func:`overlap`. **Off by default from
-        1.18.0**, where it was on before. It is the one channel built from the score rather than
+        ``True`` adds the score-dominance channel to :func:`overlap`. **Off by default**,
+        where it was on before. It is the one channel built from the score rather than
         from a mechanism, the pairwise statistic it corresponds to fits *attractive* on the
         observational arm where :func:`greedy` carries no bound, and it never abstains: measured
         over every within-donor pair of TESLA's 736 units and HiTIDE's 1,558, it is zero on 0.03 %
@@ -1915,7 +1915,7 @@ def select(scores, peptides, alleles=None, k: int = 20, tol: int = 0, *,
         entropy 0.9629 -> 0.9883 of maximum and Gini 0.1745 -> 0.0889 for 4.466 -> 4.368 expected
         responding units on a 20-unit cassette, over 19 donors.
 
-        **Pass ``dominance=True`` to reproduce a result recorded before 1.18.0**, and say so beside
+        **Pass ``dominance=True`` to restore the three-channel form**, and say so beside
         the number: every published cassette figure was computed with the channel on, and the arm
         that drops it was published beside it as the mechanism-only rule. ``rule="v2"`` has always
         run without it, so the two rules now agree on channels.

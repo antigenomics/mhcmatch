@@ -311,7 +311,7 @@ def test_passing_a_tumour_type_moves_the_floor_off_the_pooled_value():
 def test_the_mouse_tumour_rung_reads_the_syngeneic_deposit_and_not_the_tissue_one():
     """`expr_lvl` and `expr_norm` stop being one column, which is why this file was added.
 
-    Before 1.10.0 a mouse row with no deposited abundance took the gene's normal-tissue median for
+    A mouse row with no deposited abundance once took the gene's normal-tissue median for
     both terms -- measured identical on 100% of the 923 class-I rows of the neoantigen deposit.
     """
     models = EX.tumor_types(species="mouse")

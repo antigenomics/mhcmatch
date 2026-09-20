@@ -227,7 +227,7 @@ def test_compose_charges_a_non_missense_variant_to_its_own_arm():
 
 
 def test_the_arm_survives_the_trip_from_a_real_pipeline_header():
-    """The end-to-end gap that let the arms be unfillable in 0.24.0.
+    """The end-to-end gap that once let the arms be unfillable.
 
     Every unit test above builds ``Unit(kind=...)`` by hand, so all of them passed while `rank` was
     emitting the header's ``type`` field -- ``"Somatic"`` -- as ``variant_type``. Read through

@@ -40,7 +40,7 @@ Environment
 
 Fanning out over more than one machine, point ``MHCMATCH_PMHC_DIR``,
 ``MHCMATCH_CALIBRATION_CACHE`` and ``HF_HOME`` at one shared directory every worker can see, and set
-them in your own executor config --- the workflow modules ship **local-only** from 1.19.0 and carry
+them in your own executor config --- the workflow modules ship **local-only** and carry
 no scheduler profile. Sharing the calibration cache under concurrency is safe by construction: an
 entry is written to a tempfile in the same directory and moved into place with ``os.replace``, which
 is atomic on POSIX, so there is no lock and nothing to leak when a task is killed.

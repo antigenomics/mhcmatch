@@ -15,7 +15,7 @@ from mhcmatch import rank as R
 
 #: Plausible values for the aggregate's four recognition channels, on the scales it was fitted with
 #: (``viral_R`` sits near 4e-11; the three mimicry channels are log1p per-million window densities).
-#: Since 0.20.0 the model refuses to score without them, so any test exercising the aggregate has to
+#: The model refuses to score without them, so any test exercising the aggregate has to
 #: supply them -- which is the point: a model scores on the features it declares or not at all.
 #: What `channels()` supplies -- the three corpus densities, each on its fitted 1e-3/1e-4 scale.
 #: The `C_phys` pair is deliberately absent: the library computes both, so a caller never passes
@@ -299,7 +299,7 @@ def test_aggregate_artifact_is_self_consistent():
 def test_aggregate_score_is_monotone_in_presentation_and_refuses_a_subset():
     """Higher presentation ranks higher, and a model handed 4 of its 9 features does not score.
 
-    Until 0.20.0 a missing column became the training mean. That reads as "no information" and is
+    A missing column used to become the training mean. That reads as "no information" and is
     not: after standardization it contributes ``coef * 0`` to *every* candidate, so the feature is
     inert rather than neutral and the emitted score names a model that never ran. Four of BOECRT's
     nine were never populated on the shipped path, which left 38.0% of its total absolute weight
@@ -373,7 +373,7 @@ def test_written_tables_use_unix_line_endings(tmp_path):
 
     The csv module defaults to the excel dialect, whose terminator is CRLF; nothing in this
     codebase wants that, and the collaborator tables these files sit beside are LF. Shipped wrong
-    from 0.8.0 until 0.14.1, where `awk -F'\\t'` on the final column started failing.
+    once, until `awk -F'\\t'` on the final column started failing.
     """
     from mhcmatch import predict as P
 
@@ -388,7 +388,7 @@ def test_written_tables_use_unix_line_endings(tmp_path):
 
 
 # --- the Luksza recognition term ----------------------------------------------------------------
-# `viral_R` is one of the fitted aggregate's nine features and until 0.17.0 nothing in the library
+# `viral_R` is one of the fitted aggregate's nine features and at first nothing in the library
 # could produce it, so `aggregate_score` was callable with a feature no caller could supply.
 
 def test_luksza_r_term_matches_the_benchmark_implementation():
@@ -413,7 +413,7 @@ def test_luksza_r_term_matches_the_benchmark_implementation():
 
 
 def test_luksza_shape_is_vendored_and_an_artifact_still_overrides_it():
-    """`viral_R` left the model in 0.21.0, so its shape left the model's artifact with it.
+    """`viral_R` left the model, so its shape left the model's artifact with it.
 
     A shape for a term the shipped model does not score with does not belong in that model's
     artifact. It is vendored on the module instead -- and an artifact that *does* carry a `luksza`
@@ -445,7 +445,7 @@ def test_luksza_counts_by_distance_drops_beyond_radius():
     assert lengths[0] == 9.0
 
 
-# ------------------------------------------------------------------ occupancy (0.18.0)
+# ----------------------------------------------------------------------------- occupancy
 
 def test_occupancy_is_langmuir_and_saturates():
     """a/(1+a) with a = [P]/Kd: half the groove at Kd = [P], and monotone decreasing in Kd."""
@@ -467,10 +467,10 @@ def test_occupancy_needs_no_wild_type():
     assert r.wt_peptide == ""
 
 
-# ------------------------------------------------- the fitted aggregate is the score (0.19.0)
+# ----------------------------------------------------------- the fitted aggregate is the score
 
 def test_default_score_is_the_fitted_aggregate_not_the_gate():
-    """Until 0.19.0 `rank` scored with the two-term noisy-AND while the fitted aggregate sat
+    """`rank` once scored with the two-term noisy-AND while the fitted aggregate sat
     vendored with no internal caller -- the shipped ranking and the published coefficients were two
     different models. This pins the default and keeps `gate` reachable."""
     from mhcmatch import complement
@@ -505,7 +505,7 @@ def test_default_score_is_the_fitted_aggregate_not_the_gate():
 def test_scoring_without_the_recognition_channels_is_an_error_naming_the_feature():
     """`_finish` must not score when a channel the model declares was never computed.
 
-    This is the 0.20.0 behaviour change. The old path substituted their training means, so
+    This is a behaviour change. The old path substituted their training means, so
     `mhcmatch rank` reported BOECRT and scored BOEC on every run, with or without `--extended` --
     the CLI computed the channels *after* scoring and only printed them. The ordering was
     unaffected (a constant offset cannot reorder), but the reported model was wrong.

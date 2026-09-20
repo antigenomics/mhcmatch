@@ -64,7 +64,7 @@ def test_rank_extended_appends_columns_without_moving_the_ranking(tmp_path, caps
                  "GILGFVFTL,HLA-A*02:01,PMEL,3.0,0.9\n"
                  "KLVVVGACGV,HLA-A*02:01,KRAS,12.0,0.8\n")
 
-    # `--score gate` throughout: since 0.20.0 the aggregate computes all nine of its features
+    # `--score gate` throughout: the aggregate computes all nine of its features
     # before scoring, which loads the self-mimicry reference (6 min 15 s, ~7.5 GB). The property
     # under test is that --extended/--annotate append columns without moving the order, and that is
     # a property of those flags, not of the scorer.
@@ -86,7 +86,7 @@ def test_rank_extended_appends_columns_without_moving_the_ranking(tmp_path, caps
 
 
 def test_the_aggregate_no_longer_needs_the_host_proteome_index():
-    """`--no-self` and `--score aggregate` were mutually exclusive through 0.20.0, because BOECRT
+    """`--no-self` and `--score aggregate` were once mutually exclusive, because BOECRT
     scored on `self_tcr` -- its second-largest coefficient at +0.3154 of 1.3875 total absolute
     weight -- and that forced the host-proteome index: 6 min 15 s and ~7.5 GB, the largest single
     cost in the package.
@@ -148,7 +148,7 @@ def test_self_is_the_recipients_proteome_not_a_constant():
     assert p["self_species"].default == "human", "the fitted coefficients are the human ones"
 
 
-# ------------------------------------------------------------------ the reference cache (0.20.0)
+# --------------------------------------------------------------------------- the reference cache
 @pytest.mark.hfdata
 def test_backing_reads_str_pairs_from_arrays():
     """`features` indexes the backing only for a best hit, so it stays memory-mapped; it still has
@@ -279,7 +279,7 @@ def test_corpus_R_takes_any_position_additive_kernel():
 
 
 def test_load_references_no_longer_takes_a_cache(monkeypatch):
-    """The reference cache is gone (0.24.0). A caller who passes `cache=` gets a TypeError naming
+    """The reference cache is gone. A caller who passes `cache=` gets a TypeError naming
     it, which is the deprecation; the env var is simply unread and has no failure mode."""
     import inspect
     assert "cache" not in inspect.signature(mimicry.load_references).parameters
@@ -290,7 +290,7 @@ def test_load_references_no_longer_takes_a_cache(monkeypatch):
 @pytest.mark.parametrize("peptide", ["AAAKFVAAWTLKAAA", "PKYVKQNTLKLATGM", "GELIGILNAAKVPAD"])
 def test_class_ii_masks_follow_the_register_not_the_length(peptide):
     """A class-II ligand is anchored by a 9-mer core that floats, so its face is a function of the
-    register. `masks` took only a length until 0.21.0 and `corpus_R` accepted `cls` and ignored it,
+    register. `masks` once took only a length and `corpus_R` accepted `cls` and ignored it,
     which read every class-II ligand on the class-I layout -- a confident, wrong face."""
     from mhcmatch import complement
 
@@ -309,9 +309,9 @@ def test_an_unmeasured_component_reports_nan_not_zero():
     index, and standardizing its absence to the training mean made it contribute exactly zero --
     which prints as `0` and reads as "no self-similarity found" when the truth is "never looked".
 
-    Only reachable through `allow_missing=True`, but reachable by default since 0.21.0: EPIC does
-    not score on `self_tcr`, so `--no-self --score aggregate` is now allowed where 0.20.0 refused
-    it, and `--extended` prints these columns beside a score that is perfectly well defined.
+    Only reachable through `allow_missing=True`, but reachable by default now: EPIC does
+    not score on `self_tcr`, so `--no-self --score aggregate` is allowed where it was once
+    refused, and `--extended` prints these columns beside a score that is perfectly well defined.
     """
     import math
 
@@ -403,7 +403,7 @@ def test_safety_reports_only_the_tolerance_side():
 
 
 def test_safety_takes_no_tumour_argument():
-    """`safety` accepted `tumor` at positional #2 through 1.4.0 and never read it, because
+    """`safety` once accepted `tumor` at positional #2 and never read it, because
     `expression.safety_profile` conditions on no context at all. `safety(scores, "SKCM")` therefore
     returned the pooled tolerance profile while reading as if it had been narrowed to melanoma --
     on the read-out whose job is to say which tissue you cannot afford to damage, that is the

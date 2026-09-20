@@ -1524,7 +1524,7 @@ def _index(path, col):
 
 
 # --------------------------------------------------------------------------------------------
-# Regressions from the 1.17.0 review. Each of these shipped in 1.16.0 and each failed silently:
+# Regressions from an internal review. Each of these shipped once and each failed silently:
 # the run exited 0 and produced a table that looked right.
 # --------------------------------------------------------------------------------------------
 
@@ -1779,7 +1779,7 @@ def test_a_composite_restriction_cell_is_not_an_allotype_of_its_own():
     into the cell, and `overlap` couples on string equality --- so the unit equalled no other label,
     read as a private allotype, and held a slot beside both of its constituents.
 
-    Measured on 1.17.0 with this exact pool at `k = 10`: two of ten slots on `HLA-A01,HLA-A03`
+    Measured with this exact pool at `k = 10`: two of ten slots on `HLA-A01,HLA-A03`
     alongside **both** `HLA-A01` and `HLA-A03`, and the row reported `n_covered = 7` /
     `n_allotypes = 7` against a universe naming **six**.
     """
@@ -1834,8 +1834,8 @@ def test_an_unresolvable_restriction_cell_keeps_its_unit_and_covers_nothing():
 
 
 def test_the_new_selection_knobs_are_inert_at_their_defaults():
-    """The claim the release rests on: a caller who asks for none of this gets the cassette 1.17.0
-    built, given the channel set 1.17.0 would have built it with."""
+    """The claim the release rests on: a caller who asks for none of this gets the cassette the
+    earlier release built, given the channel set it would have built it with."""
     s, peps, alle = pool(n=40)
     a = CA.select(s, peps, alle, k=10, dominance=True)
     b = CA.select(s, peps, alle, k=10, dominance=True,
@@ -1851,7 +1851,7 @@ def test_the_new_selection_knobs_are_inert_at_their_defaults():
 
 
 def test_dominance_is_off_by_default_and_stays_reachable():
-    """Flipped in 1.18.0. The channel is zero on 0.03% of within-donor pairs against 97.5% for the
+    """Flipped once. The channel is zero on 0.03% of within-donor pairs against 97.5% for the
     3-mer channel, so it never abstains, and it supplied 71-79% of the channel mass --- the allotype
     channel, the only mechanism of the three, was entering `H` at a third weight."""
     s, peps, alle = pool(n=40)
@@ -1940,7 +1940,7 @@ def test_cli_select_offers_dominance_as_an_opt_in_and_accepts_the_retired_flag(t
 
     assert channels() == "sequence+allotype"
     assert channels("--dominance") == "sequence+allotype+dominance"
-    assert channels("--no-dominance") == "sequence+allotype"     # retired in 1.18.0, and a no-op
+    assert channels("--no-dominance") == "sequence+allotype"     # retired, and a no-op
 
 
 def test_cli_select_refuses_a_coverage_floor_wider_than_the_cassette(tmp_path):

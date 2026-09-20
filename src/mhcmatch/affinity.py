@@ -77,7 +77,7 @@ class PottsAffinity:
         self.w, self.b = d["w"], float(d["b"])
         meta = [int(x) for x in d["meta"]]
         self.PEPP, self.PSP, self.Q = meta[:3]
-        # meta[4] is the peptide-encoding version, bound to the weights: 0 (or absent) is the pre-v0.6.1
+        # meta[4] is the peptide-encoding version, bound to the weights: 0 (or absent) is the original
         # ``core[:5] + core[-4:]`` slice the shipped weights were fit with; 1 is the de-duplicated
         # ``mhc1_positions`` mapping (see _pep_idx). The scorer follows the weights so the two cannot
         # disagree about an 8-mer -- switching the runtime encoding without a refit would desync them.
@@ -103,7 +103,7 @@ class PottsAffinity:
 
         Not the same string as :meth:`_key`: the panel is keyed on the raw corpus spelling and the
         pseudosequence table on the resolved one. Passing the pseudosequence key to ``am`` is why
-        the 1.4.0 MHC-I length prior silently used a kernel fallback instead of the allele's own
+        an earlier MHC-I length prior silently used a kernel fallback instead of the allele's own
         length histogram -- for HLA-A*02:01 a 0.72-nat error on 8-mers, and for H-2Kb a 1.74-nat one
         in the wrong direction (H-2Kb *prefers* 8-mers; the human-shaped fallback penalises them).
         """
@@ -120,10 +120,10 @@ class PottsAffinity:
 
         Two encodings, selected by :attr:`enc` so the scorer always matches the weights it loaded:
 
-        - ``enc == 0`` (shipped weights, pre-v0.6.1): ``core[:5] + core[-4:]``. On an 8-mer ``+5`` and
+        - ``enc == 0`` (shipped weights, the original encoding): ``core[:5] + core[-4:]``. On an 8-mer ``+5`` and
           ``-4`` both land on index 4, so that residue contributes two perfectly-correlated field
           terms and a double-weighted coupling -- an inflated, mis-normalised likelihood ratio, the
-          same defect v0.5.0 fixed for ``AnchorModel`` and never propagated here.
+          same defect fixed for ``AnchorModel`` and never propagated here.
         - ``enc == 1``: the signed :data:`mhcmatch.diffusion.MHC1_CORE` anchors resolved by
           :func:`mhcmatch.store.mhc1_positions`, the de-duplicated mapping the anchor scorer already
           shares with its estimator. The two encodings agree for every ``L >= 9``, so **only 8-mer

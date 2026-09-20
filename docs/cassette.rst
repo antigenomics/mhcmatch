@@ -108,7 +108,7 @@ channel            what it says two units share
                    :func:`~mhcmatch.cassette.profile_overlap`). Pass ``terms`` and
                    ``terms_cov`` to :func:`~mhcmatch.cassette.select`, with
                    ``dominance`` left off, which is the default
-**dominance**      closeness on the score axis. **Off by default from 1.18.0**, and always
+**dominance**      closeness on the score axis. **Off by default**, and always
                    off in v2 — it is the one channel built from the score rather than from
                    a mechanism, its pairwise statistic fits *attractive* on the
                    observational arm where :func:`~mhcmatch.cassette.greedy` carries no
@@ -116,7 +116,7 @@ channel            what it says two units share
                    against 97.3% for the 3-mer channel, so it supplied 71-79% of the total
                    channel mass and the allotype channel — the only mechanism of the three
                    — entered :math:`H` at a third weight. Pass ``dominance=True`` to
-                   reproduce a cassette recorded before 1.18.0, and say so beside the
+                   restore the three-channel form, and say so beside the
                    number
 =================  ==========================================================================
 

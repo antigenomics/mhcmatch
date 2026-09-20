@@ -305,7 +305,7 @@ def test_a_gly_ser_linker_can_manufacture_a_slippery_site():
 def test_store_binder_calls_a_store_method_that_actually_exists():
     """`store_binder` reaches into `Store`, so a rename there must fail here and not in a
     four-minute analysis run. (It did once: the first version read `percent_rank`, which does not
-    exist.) The coupling moved in 0.26.0 from `Restriction.rank` to `Store.percent_ranks` -- the
+    exist.) The coupling moved from `Restriction.rank` to `Store.percent_ranks` -- the
     ranking half without the neighbour tally -- so this pins the new surface.
     """
     from mhcmatch.store import Store
@@ -1098,7 +1098,7 @@ def _run_vector(tmp_path, n, extra):
 
 
 def test_quota_emits_the_composed_cassette_and_the_score_only_one(tmp_path):
-    """Through 0.24.0 ``--quota`` composed a set and then built the sequence from ``select`` anyway.
+    """``--quota`` used to compose a set and then build the sequence from ``select`` anyway.
 
     It reported and did not act. Both cassettes now reach the FASTA, so the caller can compare the
     layout the portfolio chose against the one a ranked list gives on the *same* slot budget.

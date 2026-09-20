@@ -30,15 +30,15 @@ linear in `k` and its variance quadratic, so `gamma` is divided by the design ef
 to mean the same trade at every size). `rho_ij` spreads `rho` over pairs by how much two units share
 a way of failing.
 
-**Two ways, from 1.18.0, where there used to be three.** The channels are the shared **allotype** and
+**Two ways, where an earlier design had three.** The channels are the shared **allotype** and
 the shared **sequence** — both mechanisms. A third, *score dominance*, coupled two units for scoring
 alike, which is not a mechanism, and it never abstained: over every within-donor pair of the TESLA
 and HiTIDE pools it is zero on 0.03% and 0.01% of pairs against 97.5% and 96.5% for the sequence
 channel, so it supplied **71–79% of the total channel mass** and the allotype channel — the only
 mechanism among the three — reached `H` at a third weight. Dropping it buys allotype entropy
 0.9629 → 0.9883 of maximum and Gini 0.1745 → 0.0889 for 4.466 → 4.368 expected responding units on a
-20-unit cassette, across 19 donors. It is off by default now; `--dominance` restores it, and that is
-what reproduces a cassette recorded before 1.18.0.
+20-unit cassette, across 19 donors. It is off by default; `--dominance` restores it, and that is
+what reproduces the three-channel form.
 
 A restriction cell naming a whole genotype (`HLA-A*01:01,HLA-A*03:01`) is resolved to the presented
 *set* rather than compared as a string, so a unit whose restriction was never resolved no longer
@@ -418,8 +418,8 @@ Pseudosequences (34-mer grooves) and the fitted model parameters are vendored in
 
 ## Deployment
 
-Three integrations, all under `integrations/`, all calling the same CLI, all **local-only** from
-1.19.0 — the SLURM profiles and sbatch templates are gone, and `-profile conda` / `-profile docker`
+Three integrations, all under `integrations/`, all calling the same CLI, all **local-only** — no
+scheduler profile and no sbatch template ships, and `-profile conda` / `-profile docker`
 is the whole deployment story. What each was run against is recorded in
 the module READMEs under `integrations/`.
 
@@ -473,7 +473,7 @@ the FASTA header rather than assuming *k*.
 > runs at all** and the cassette carries whatever it was handed. Every `MHCMATCH_CASSETTE` task
 > prints a line when no screen ran, so the absence is never silent.
 >
-> It was off in both engines between 2026-09-20 and 1.17.0, and what changed is the **cost, not the
+> It was off in both engines while it was expensive, and what changed is the **cost, not the
 > judgement**: the whole-proteome index was rebuilt inside every task, once per register length. One
 > text index now answers every length and builds in **0.7 s**, so there is nothing to stage and no
 > longer a reason to turn it off.

@@ -41,7 +41,7 @@ Size-matched cross-species transfer, mean over 10 matched subsamples:
 * **mouse -> human: 0.692** (sd 0.000)
 
 is not like-for-like. It is quoted because an in-sample baseline that still loses is the
-conservative direction, not because it is a fair contest. The module is gone as of 0.22.0; the
+conservative direction, not because it is a fair contest. The module is gone; the
 measurement is not, and neither is this row.
 
 .. warning::

@@ -6,7 +6,7 @@ is an `exit 2` inside a task log, hours into a fan-out, or worse: a flag whose v
 unset, so the wrapper emits nothing and the mistake stays latent until somebody sets it.
 
 That is not hypothetical. `integrations/snakemake/.../denovo.smk` passed `--threshold` to
-`mhcmatch rank`, which has never accepted it, from the day the rule was written until 1.21.0. It
+`mhcmatch rank`, which has never accepted it, from the day the rule was written. It
 survived because the default is `none` and the `opt()` helper emits nothing for an unset value --
 and it would have exited 2 on every task in the arm the first time anyone set the documented
 `rank_threshold` key. `--threshold` is a real flag, just not on that command: `cassette
@@ -227,17 +227,17 @@ def test_nextflow_pins_match_pyproject():
     checked again at release, when the suffix is dropped.
 
     **Match the pin, not any version-shaped string.** This scan used to be
-    ``re.findall(r"\\b0\\.\\d+\\.\\d+\\b", ...)``, which went VACUOUS the day 1.0.0 shipped. It also
-    never opened the two files whose pins actually drifted: ``nextflow.config`` is not ``*.nf``, so
-    ``params.mhcmatch_container`` went unchecked. Anchoring on the spellings of a *mhcmatch* pin
-    also keeps Nextflow's own ``22.10.0`` from reading as a stale one.
+    ``re.findall(r"\\b0\\.\\d+\\.\\d+\\b", ...)``, which went VACUOUS as soon as the major version
+    reached 1. It also never opened the two files whose pins actually drifted: ``nextflow.config``
+    is not ``*.nf``, so ``params.mhcmatch_container`` went unchecked. Anchoring on the spellings of
+    a *mhcmatch* pin also keeps Nextflow's own ``22.10.0`` from reading as a stale one.
 
     A ``README.md`` is in the glob because it is the file a collaborator actually follows, and it
-    was the last one left out: at 1.9.0 it still said ``pip install "mhcmatch==1.8.0"`` in twelve
-    places while every machine-read pin beside it had moved.
+    was the last one left out: it once carried a superseded ``pip install "mhcmatch=="`` pin in
+    twelve places while every machine-read pin beside it had moved.
 
     Rooted at ``integrations/`` and globbed by KIND, so a new subdirectory is covered the day it
-    lands rather than the release after someone remembers -- the overlay sat on 1.17.0 under a scan
+    lands rather than the release after someone remembers -- the overlay sat on a stale pin under a scan
     rooted one directory too deep, and ``preflight.nf`` compares its pin to ``mhcmatch --version``
     under ``errorStrategy = 'terminate'``, so every overlay mode except ``off`` died at its FIRST
     process.

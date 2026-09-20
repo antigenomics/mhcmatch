@@ -14,7 +14,7 @@ author = "ISALGO laboratory"
 copyright = f"{datetime.date.today().year}, {author}"
 
 # **The release, read from the package, never typed into a page.** Docs used to name the version in
-# prose -- ">= 1.7.3" in three places, three different numbers, none of them the shipped pin -- and
+# prose -- in three places, three different numbers, none of them the shipped pin -- and
 # every one of them went stale at a release nobody remembered to grep. `|release|` substitutes this,
 # so a page can say which version it documents and cannot be wrong about it. Read from the installed
 # metadata, falling back to pyproject for a docs build in a bare checkout.
