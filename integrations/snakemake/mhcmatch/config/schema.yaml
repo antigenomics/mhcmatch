@@ -12,6 +12,9 @@ description: |
   and names the key.
 type: object
 properties:
+  threads:
+    type: integer
+    minimum: 1
   input:
     description: >
       The samplesheet CSV: `sample,class,candidates,windows,hla`, one row per sample per class.

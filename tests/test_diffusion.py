@@ -239,10 +239,8 @@ def test_every_method_that_drops_the_theta_caches_drops_the_logodds_table_too():
     """`_lo_cache` holds ``log((theta+eps)/(p_bg+eps))``, so it is stale exactly when ``theta`` is --
     i.e. wherever ``_cache`` / ``_cache_len`` / ``_cache_mix`` are dropped, and nowhere else.
 
-    Deliberately **not** keyed to `_frame_cache`, which is dropped at two further sites
-    (`_fit_reverse`, the anticore fit) for reasons that do not touch the per-anchor terms: one is a
-    memory reclaim after scoring reversed strings, the other reassigns `anticore`, and `_lo_table`
-    reads neither. Pinning the wrong family would have demanded two clears that are not needed.
+    Query frame vectors are no longer retained. Reverse orientation and anticore changes do not
+    touch the fitted anchor distributions and need no invalidation of this table.
 
     A behavioural test cannot see a missed site: the model goes on scoring a *previous* EM pass's
     motif, which is a plausible number rather than an error -- a fit that silently stops converging.

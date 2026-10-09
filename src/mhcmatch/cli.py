@@ -16,10 +16,9 @@ life of the process, so one process over a whole list is the difference between 
 a few thousand per second. A shell ``while read`` loop around the single-peptide form is the wrong
 way to use this CLI and the benchmark repo measures exactly how wrong (``bench/cli/``).
 
-``--threads`` is offered only where it does something: the C++ neighbour search (``source``,
-``mimics``, ``genes``) releases the GIL and scales across cores. The scoring heads are small numpy
-products per peptide, so threads there would buy nothing and the flag is not offered rather than
-being offered and ignored.
+``--threads`` controls C++ searches (including rank annotations), with one thread by default.
+The neighbour searches release the GIL and can scale across cores on large batches. Scoring
+heads use small NumPy operations, so scoring itself remains serial.
 """
 from __future__ import annotations
 
@@ -109,8 +108,8 @@ def _add_batch_opts(p, what="peptide"):
 
 
 def _add_thread_opt(p):
-    p.add_argument("--threads", type=int, default=0, metavar="N",
-                   help="worker threads for the C++ neighbour search (0 = every core)")
+    p.add_argument("--threads", type=int, default=1, metavar="N",
+                   help="native search threads (default 1; 0 = allocated CPUs)")
 
 
 def _add_mhc2_report(p):
@@ -914,7 +913,7 @@ def _load_refs(spec):
 from .rank import MIMICRY_PAIRS as _MIM_PAIRS      # noqa: E402  (the emitted-column order)
 
 
-def _mimicry_scores(peptides, cls: str, no_self: bool, species: str = "human"):
+def _mimicry_scores(peptides, cls: str, no_self: bool, species: str = "human", threads: int = 1):
     """Score a candidate list on the mimicry aggregate, warning about what it is about to cost.
 
     Shared by ``rank --extended/--annotate`` and ``mimicry``: the reference index is built once for
@@ -940,7 +939,7 @@ def _mimicry_scores(peptides, cls: str, no_self: bool, species: str = "human"):
               "--no-self skips it at the cost of the largest coefficients",
               file=sys.stderr, flush=True)
     refs = MM.load_references(cls=cls, with_self=not no_self, self_species=species, lengths=lens)
-    return MM.score(peptides, refs, cls=cls, allow_missing=no_self)
+    return MM.score(peptides, refs, cls=cls, allow_missing=no_self, threads=threads)
 
 
 def _aggregate_channels(cls: str, no_self: bool, species: str = "human",
@@ -1608,9 +1607,9 @@ def _rank_emit(a, parts, carry):
     for cls, rws in parts:
         mim, ann = [], []
         if a.extended or a.annotate:
-            mim = _mimicry_scores([r.peptide for r in rws], cls, a.no_self, a.species)
+            mim = _mimicry_scores([r.peptide for r in rws], cls, a.no_self, a.species, a.threads)
         if a.annotate:
-            ann = MM.annotate([r.peptide for r in rws], cls=cls)
+            ann = MM.annotate([r.peptide for r in rws], cls=cls, threads=a.threads)
         for col in _rank_columns(a, cls):
             if col not in cols:
                 cols.append(col)
@@ -1845,7 +1844,7 @@ def cmd_neoag(a):
     peps = [r["peptide"] for r in rows] if rows else _read_peptides(None, a.input)
     if not peps:
         raise SystemExit("no peptides: pass them as arguments or with --peptides")
-    ann = MM.annotate(peps, cls=a.cls, max_subs=a.max_subs)
+    ann = MM.annotate(peps, cls=a.cls, max_subs=a.max_subs, threads=a.threads)
     cols = MM.NEOAG_COLUMNS
     extra = [c for c in (rows[0] if rows else {}) if c != "peptide"]
     # This command has no store and no allele, so a class-II core here is the allele-agnostic
@@ -1897,7 +1896,7 @@ def cmd_mimicry(a):
     peps = [r["peptide"] for r in rows] if rows else _read_peptides(None, a.input)
     if not peps:
         raise SystemExit("no peptides: pass them as arguments or with --peptides")
-    scores = _mimicry_scores(peps, a.cls, a.no_self, getattr(a, "species", "human"))
+    scores = _mimicry_scores(peps, a.cls, a.no_self, getattr(a, "species", "human"), a.threads)
     prob = MM.probability(scores, corpus=a.corpus, cls=a.cls) if a.corpus else None
     cols = [f"{c}_{ch}" for c, ch in _MIM_PAIRS]
     if a.annotate:
@@ -4311,6 +4310,7 @@ def main(argv=None):
     rk.add_argument("--top", type=int, help="print only the top N candidates")
     rk.add_argument("--out", help="write TSV here instead of stdout")
     _add_store_opts(rk)
+    _add_thread_opt(rk)
     rk.set_defaults(fn=cmd_rank)
     _add_mhc2_report(rk)
 
@@ -4368,6 +4368,7 @@ def main(argv=None):
                          "This command has no allele, so a class-II core is the allele-agnostic "
                          "register and `core_source` reads `heuristic`")
     _add_batch_opts(ng, "candidate")
+    _add_thread_opt(ng)
     ng.set_defaults(fn=cmd_neoag)
 
     my = sub.add_parser("mimicry",
@@ -4390,6 +4391,7 @@ def main(argv=None):
     my.add_argument("--coefficients", action="store_true",
                     help="print the shipped model's coefficients and fit record; score nothing")
     _add_batch_opts(my, "candidate")
+    _add_thread_opt(my)
     my.set_defaults(fn=cmd_mimicry)
 
     mi = sub.add_parser("mimics",

@@ -7,6 +7,7 @@ input: null                  # the samplesheet CSV: `sample,class,candidates,win
                              # it resolve against ITS directory, not the working directory
 outdir: results
 mode: both                   # rerank | denovo | both
+threads: 1                   # one native search budget per task; --cores bounds the whole workflow
 
 # One literal allele list for EVERY sample, bypassing the typing step. The mouse case: an inbred
 # line's H-2 haplotype is a property of the line, so there is nothing to type. Required for any

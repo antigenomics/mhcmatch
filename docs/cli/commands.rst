@@ -267,7 +267,7 @@ says nothing about the peptide). Matched rows carry ``keep = 1`` **and** ``keep_
 totalling ~950,000 rows, so assembling them is a download plus a full-file scan. A thousand-sample
 Nextflow run would pay that a thousand times, or race on whatever cache it wrote to avoid doing so.
 Pre-built by ``mhcmatch build known``, it reloads in **~1 ms** and answers **~1.45 M queries/s**
-through ``seqtree.Index.search_batch``, which releases the GIL and uses every core --- one call per
+through ``seqtree.Index.search_batch``, which releases the GIL and defaults to one thread --- one call per
 table, never one per row. Concurrent tasks share nothing but a read-only file.
 
 **A gene symbol has to reach the row before it can be matched.** The rerank and de novo arms carry

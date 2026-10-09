@@ -161,10 +161,8 @@ def fetch_reference(path: str | None = None, file: str | None = None,
         beside = os.path.join(os.path.dirname(env), os.path.basename(file))
         if os.path.isfile(beside):
             return beside
-    from huggingface_hub import hf_hub_download
-
-    from .store import PMHC_REPO
-    return hf_hub_download(repo_id=PMHC_REPO, repo_type="dataset", filename=file)
+    from .store import fetch_file
+    return fetch_file(file)
 
 
 @functools.lru_cache(maxsize=8)
@@ -697,7 +695,6 @@ def coexpression(genes, path: str | None = None, absolute: bool = False):
 
 
 @functools.lru_cache(maxsize=2)
-@functools.lru_cache(maxsize=8)
 def _mouse_matrix_contexts(path: str | None = None) -> tuple:
     """``({normalised tissue: key}, {normalised tumour model: key})`` from the mouse matrix.
 

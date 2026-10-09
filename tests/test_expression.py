@@ -15,6 +15,33 @@ from mhcmatch import expression as EX
 from mhcmatch.rank import expr_level, expr_norm_level
 
 
+def test_expression_references_use_the_common_offline_mirror(tmp_path, monkeypatch):
+    mirror = tmp_path / "mirror"
+    expression = mirror / "expression"
+    expression.mkdir(parents=True)
+    for name in ("reference_expression_mmu.tsv.gz", "toil_matrix_mmu.npz", "context_synonyms.tsv"):
+        (expression / name).write_bytes(b"reference")
+    monkeypatch.setenv("MHCMATCH_PMHC_DIR", str(mirror))
+    monkeypatch.delenv("MHCMATCH_EXPRESSION", raising=False)
+    assert EX.fetch_reference(species="mouse") == str(expression / "reference_expression_mmu.tsv.gz")
+    assert EX.fetch_matrix(species="mouse") == str(expression / "toil_matrix_mmu.npz")
+    assert EX.fetch_reference(file=EX.SYNONYMS_FILE) == str(expression / "context_synonyms.tsv")
+
+
+def test_mouse_context_cache_clear_really_invalidates_the_lookup(monkeypatch):
+    contexts = {"fantom5_mouse|thymus": 0}
+    monkeypatch.setattr(EX, "_matrix", lambda *a: ({}, contexts, None, None))
+    EX._mouse_matrix_contexts.cache_clear()
+    try:
+        assert EX._mouse_matrix_contexts("test")[0] == {"thymus": "fantom5_mouse|thymus"}
+        contexts.clear()
+        contexts["gse245293|B16F10"] = 0
+        EX._mouse_matrix_contexts.cache_clear()
+        assert EX._mouse_matrix_contexts("test")[0] == {}
+    finally:
+        EX._mouse_matrix_contexts.cache_clear()
+
+
 def _rows(tpm=(), gene=()):
     """Rows as ``rank`` builds them: ``expression`` is ``log1p(TPM)``, ``gene`` may be absent."""
     n = max(len(tpm), len(gene))

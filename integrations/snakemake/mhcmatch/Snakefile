@@ -30,6 +30,12 @@ from snakemake.utils import min_version, validate
 
 min_version("8.0")
 
+# Bound numerical libraries before each task imports them. Snakemake owns outer concurrency;
+# the rule's {threads} is the one explicit budget for native searches within that task.
+KERNEL_ENV = "env " + " ".join(f"{name}=1" for name in (
+    "POLARS_MAX_THREADS", "RAYON_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+    "OMP_NUM_THREADS", "OMP_THREAD_LIMIT", "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"))
+
 
 # **Joined onto `workflow.basedir`, because a bare relative `configfile:` resolves against the
 # WORKING directory, not against this file.** `--directory /tmp/run` therefore looked for
@@ -259,7 +265,7 @@ rule mhcmatch_alleles:
     conda:
         "envs/mhcmatch.yaml"
     shell:
-        "mhcmatch alleles {input.typing} --cls {wildcards.cls} --out {output}"
+        "{KERNEL_ENV} mhcmatch alleles {input.typing} --cls {wildcards.cls} --out {output}"
 
 
 # --- the rerank arm -----------------------------------------------------------------------------
@@ -293,14 +299,15 @@ rule mhcmatch_rerank:
         epitope=lambda w: opt("--epitope", config["rank_epitope"]),
         extra=lambda w: " ".join(filter(None, [flag("--extended", config["rank_extended"]),
                                                flag("--annotate", config["rank_annotate"])])),
-    threads: 8
+    threads: config.get("threads", 1)
     resources:
         mem_mb=lambda w: 16000 if config["rank_extended"] else 8000,
         runtime=lambda w: 240 if config["rank_extended"] else 60,
     conda:
         "envs/mhcmatch.yaml"
     shell:
-        "mhcmatch rank pairs {input.table} --cls {wildcards.cls} "
+        "{KERNEL_ENV} mhcmatch rank pairs {input.table} --cls {wildcards.cls} "
+        "--threads {threads} "
         "--passthrough --prefix {params.prefix} "
         "{params.ctx} {params.tier} {params.species} {params.tumor} {params.prev} "
         "{params.epitope} {params.extra} --out {output}"
@@ -325,14 +332,14 @@ rule mhcmatch_predict:
         tier=lambda w: opt("--tier", config["tier"]),
         species=lambda w: opt("--species", config["species"]),
         thr=lambda w: opt("--rank-threshold", config["rank_threshold"]),
-    threads: 8
+    threads: 1
     resources:
         mem_mb=16000,
         runtime=240,
     conda:
         "envs/mhcmatch.yaml"
     shell:
-        "mhcmatch predict {input.fasta} {params.alleles} --cls {wildcards.cls} "
+        "{KERNEL_ENV} mhcmatch predict {input.fasta} {params.alleles} --cls {wildcards.cls} "
         "{params.tier} {params.species} {params.thr} "
         "--scored-csv {output.scored} --native {output.native}"
 
@@ -358,14 +365,15 @@ rule mhcmatch_rank:
         epitope=lambda w: opt("--epitope", config["rank_epitope"]),
         extra=lambda w: " ".join(filter(None, [flag("--extended", config["rank_extended"]),
                                                flag("--annotate", config["rank_annotate"])])),
-    threads: 8
+    threads: config.get("threads", 1)
     resources:
         mem_mb=lambda w: 16000 if config["rank_extended"] else 8000,
         runtime=lambda w: 240 if config["rank_extended"] else 60,
     conda:
         "envs/mhcmatch.yaml"
     shell:
-        "mhcmatch rank fasta {input.fasta} {params.alleles} --cls {wildcards.cls} "
+        "{KERNEL_ENV} mhcmatch rank fasta {input.fasta} {params.alleles} --cls {wildcards.cls} "
+        "--threads {threads} "
         "{params.tier} {params.species} {params.tumor} {params.prev} {params.thr} "
         "{params.epitope} {params.extra} --out {output}"
 
@@ -385,14 +393,14 @@ rule mhcmatch_neoag:
         f"{OUT}/{{arm}}/{{sample}}.mhc1.mhcmatch.neoag.tsv",
     params:
         subs=lambda w: opt("--max-subs", config["neoag_max_subs"]),
-    threads: 4
+    threads: config.get("threads", 1)
     resources:
         mem_mb=32000,
         runtime=240,
     conda:
         "envs/mhcmatch.yaml"
     shell:
-        "mhcmatch neoag --peptides {input} --cls mhc1 {params.subs} --out {output}"
+        "{KERNEL_ENV} mhcmatch neoag --peptides {input} --cls mhc1 --threads {threads} {params.subs} --out {output}"
 
 
 rule mhcmatch_mimicry:
@@ -402,14 +410,14 @@ rule mhcmatch_mimicry:
         f"{OUT}/{{arm}}/{{sample}}.mhc1.mhcmatch.mimicry.tsv",
     params:
         ann=lambda w: flag("--annotate", config["mimicry_annotate"]),
-    threads: 4
+    threads: config.get("threads", 1)
     resources:
         mem_mb=32000,
         runtime=240,
     conda:
         "envs/mhcmatch.yaml"
     shell:
-        "mhcmatch mimicry --peptides {input} --cls mhc1 {params.ann} --out {output}"
+        "{KERNEL_ENV} mhcmatch mimicry --peptides {input} --cls mhc1 --threads {threads} {params.ann} --out {output}"
 
 
 # --- the cassette -------------------------------------------------------------------------------
@@ -481,7 +489,7 @@ rule mhcmatch_cassette_select:
     conda:
         "envs/mhcmatch.yaml"
     shell:
-        "mhcmatch cassette select --candidates {input.pool} -k {params.k} {params.tol} "
+        "{KERNEL_ENV} mhcmatch cassette select --candidates {input.pool} -k {params.k} {params.tol} "
         "{params.universe} {params.scol} {params.prev} {params.rho} {params.block} "
         "--passthrough --out {output}"
 
@@ -520,14 +528,14 @@ rule mhcmatch_cassette:
         # a flat 2.0 is the weak cut for one and the STRONG cut for the other.
         binder=lambda w: opt("--map-binder", config["vector"]["map_binder"]),
         mhc2=lambda w: opt("--map-alleles-mhc2", config.get("alleles_mhc2")),
-    threads: 4
+    threads: 1
     resources:
         mem_mb=8000,
         runtime=60,
     conda:
         "envs/mhcmatch.yaml"
     shell:
-        "mhcmatch cassette order --candidates {input.units} {params.ctx} {params.alleles} "
+        "{KERNEL_ENV} mhcmatch cassette order --candidates {input.units} {params.ctx} {params.alleles} "
         "{params.tier} {params.species} {params.screen} "
         "--map {output.map} {params.binder} {params.mhc2} "
         "--fasta {output.protein} --fasta-nt {output.cds} --out {output.report}"
@@ -578,7 +586,7 @@ rule mhcmatch_cassette_score:
     conda:
         "envs/mhcmatch.yaml"
     shell:
-        "mhcmatch cassette score --cassettes {input.units} --pool {input.pools} "
+        "{KERNEL_ENV} mhcmatch cassette score --cassettes {input.units} --pool {input.pools} "
         "{params.scol} {params.prev} {params.rho} {params.per} {params.block} --out {output}"
 
 
@@ -599,5 +607,5 @@ rule mhcmatch_cassette_report:
     conda:
         "envs/mhcmatch.yaml"
     shell:
-        "mhcmatch cassette report --cassettes {input.units} --pool {input.pools} "
+        "{KERNEL_ENV} mhcmatch cassette report --cassettes {input.units} --pool {input.pools} "
         "{params.scol} {params.prev} --out {output}"

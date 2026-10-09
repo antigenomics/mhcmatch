@@ -12,6 +12,7 @@ import gzip
 from dataclasses import dataclass
 
 from seqtree import TextIndex
+from ._threads import resolve_threads
 
 #: Seed width of the one index this module builds. ``k`` belongs to the **index**, not to the query,
 #: which is the whole reason nothing here is per length any more: one build answers every peptide
@@ -178,7 +179,7 @@ class Proteome:
             rows.append(SourceHit(name, h.offset, w, h.n_subs, tuple(h.mismatches)))
         return rows
 
-    def _hits(self, queries, max_subs, exclude_exact=False, best_only=False, threads=0):
+    def _hits(self, queries, max_subs, exclude_exact=False, best_only=False, threads=1):
         """``{query: [SourceHit, ...]}``, nearest first -- the one path from a hit to a `SourceHit`.
 
         **``best_only`` and the standard-AA filter do not compose, and getting that wrong is
@@ -195,6 +196,7 @@ class Proteome:
         """
         out: dict = {q: [] for q in queries}
         qs = [q for q in queries if _AA.issuperset(q)]
+        threads = resolve_threads(threads, len(qs))
         if not qs:
             return out
         ix = self._index()
@@ -232,12 +234,12 @@ class Proteome:
         q = peptide.strip().upper()
         return self._hits([q], max_subs, exclude_exact)[q]
 
-    def find_sources(self, peptides, max_subs=1, exclude_exact=False, threads=0, best_only=False):
+    def find_sources(self, peptides, max_subs=1, exclude_exact=False, threads=1, best_only=False):
         """``{peptide: [SourceHit, ...]}`` for many peptides at once -- the batch form of
         :meth:`find_source`.
 
         **One index and one threaded C++ batch query for the whole set**, whatever lengths it spans:
-        ``search_batch`` releases the GIL, and ``threads=0`` uses every core. The per-length loop
+        ``search_batch`` releases the GIL; ``threads=0`` opts into allocated cores. The per-length loop
         this replaced is gone, and with it the advice to ask only for the lengths you need -- there
         is nothing left here that is per length.
 
@@ -363,7 +365,7 @@ class Proteome:
                         out.setdefault(w, g)
         return out
 
-    def assign_genes(self, peptides, max_subs=2, threads=0, path=None):
+    def assign_genes(self, peptides, max_subs=2, threads=1, path=None):
         """``{peptide: [gene, ...]}`` -- the HGNC symbol(s) of the gene each peptide derives from.
 
         :meth:`window_genes` answers this for a peptide that *is* a proteome window. A neoantigen is
@@ -415,6 +417,7 @@ class Proteome:
         ok = [q for q in qs if _AA.issuperset(q)]
         if not ok:
             return out
+        threads = resolve_threads(threads, len(ok))
         res = self._index().search_batch(ok, max_subs=max_subs, exclude_exact=True,
                                          best_only=True, threads=threads)
         a = res.to_numpy()
@@ -483,7 +486,7 @@ class Proteome:
         q = peptide.strip().upper()
         return self.wildtypes([q], max_subs=max_subs).get(q)
 
-    def wildtypes(self, peptides, max_subs=1, threads=0):
+    def wildtypes(self, peptides, max_subs=1, threads=1):
         """``{peptide: wild-type | None}`` -- the batch form of :meth:`wildtype`.
 
         One threaded ``search_batch`` for the whole corpus, keyed by the stripped, upper-cased

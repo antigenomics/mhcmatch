@@ -93,6 +93,9 @@ would silently fit the offset over a subset — reintroducing the defect while l
 
 ## Settings worth reading before a real run
 
+- **`threads`** (default `1`) — one native-search budget shared by rank, neoag and mimicry
+  rules. Snakemake caps it to `--cores`; scoring-only rules request one CPU. Each command
+  starts with numerical kernel limits set to one, so the scheduler owns outer concurrency.
 - **`tumor`** — a TCGA study code. Unset, expression is the GTEx cross-tissue median, which answers
   "is this gene expressed anywhere" when the question is "is it expressed in this tumour".
 - **`species`** — `human` | `mouse`. The Nextflow module derives this from `params.genome`; there
