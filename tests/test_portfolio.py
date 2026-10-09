@@ -31,6 +31,35 @@ def test_pareto_front_rejects_1d():
         pf.pareto_front(np.arange(5.0))
 
 
+@pytest.mark.parametrize("budget", [1, 64, 8 << 20])
+def test_pareto_front_handles_rounded_sums_nonfinite_values_and_block_boundaries(budget):
+    Z = np.array([[1., 1e16], [2., 1e16], [2., 1e16],
+                  [np.inf, 1.], [np.inf, 2.], [-np.inf, 2.], [np.nan, 3.]])
+    assert np.array_equal(pf.pareto_front(Z, batch_bytes=budget), _brute_front(Z))
+    assert pf.pareto_front(np.empty((0, 3)), batch_bytes=budget).shape == (0,)
+    assert pf.pareto_front(np.empty((3, 0)), batch_bytes=budget).all()
+
+
+def test_pareto_comparison_budget_is_validated():
+    with pytest.raises(ValueError, match="batch_bytes"):
+        pf.pareto_front([[1., 2.]], batch_bytes=0)
+
+
+def test_linear_feasibility_uses_one_kernel_and_does_not_hide_solver_failures(monkeypatch):
+    from types import SimpleNamespace
+    optimize = pytest.importorskip("scipy.optimize")
+    calls = []
+
+    def failed(**kwargs):
+        calls.append(kwargs["options"])
+        return SimpleNamespace(status=4, message="scheduler conflict")
+
+    monkeypatch.setattr(optimize, "linprog", failed)
+    with pytest.raises(RuntimeError, match="scheduler conflict"):
+        pf.linearly_supported([[1., 2.], [2., 1.]], 0)
+    assert calls == [{"threads": 1}]
+
+
 def test_nondominated_rank_peels_fronts():
     Z = np.random.default_rng(3).normal(size=(80, 3))
     r = pf.nondominated_rank(Z, max_fronts=3)

@@ -466,7 +466,8 @@ class Proteome:
             seg = seg[seg >= 0]
             if seg.size:
                 out[q] = sorted({genes[int(j)] for j in np.unique(seg)})
-        for q, hs in self._hits(retry, max_subs, exclude_exact=True).items() if retry else ():
+        for q, hs in self._hits(retry, max_subs, exclude_exact=True,
+                                threads=threads).items() if retry else ():
             out[q] = sorted({g for h in hs if (g := gene_of.get(h.protein))})
         return out
 
@@ -480,8 +481,8 @@ class Proteome:
         first variant found (position, then residue order).
 
         One peptide at a time. :meth:`wildtypes` is the batch form and is what a corpus should call:
-        the index is shared either way, but one ``search_batch`` releases the GIL and uses every core
-        where a Python loop over the same peptides does neither.
+        the index is shared either way, and ``search_batch`` releases the GIL within the declared
+        native-thread budget.
         """
         q = peptide.strip().upper()
         return self.wildtypes([q], max_subs=max_subs).get(q)

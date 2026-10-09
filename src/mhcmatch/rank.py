@@ -1623,7 +1623,7 @@ def _finish(rows: list, gate: dict | None, score: str = "aggregate",
         r.rank = seen.setdefault(r.score, len(seen) + 1)
     if keep:
         # **One batched C++ call for the whole table.** `Keep.reasons` hands every peptide to
-        # `seqtree.Index.search_batch` in one go -- GIL released, all cores -- rather than querying
+        # `seqtree.Index.search_batch` in one go within Keep's budget, rather than querying
         # the index once per row.
         for r, why in zip(rows, keep.reasons([r.peptide for r in rows], [r.gene for r in rows])):
             r.keep = 1 if why else 0

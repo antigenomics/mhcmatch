@@ -75,3 +75,56 @@ def test_native_failure_propagates_without_serial_retry(monkeypatch):
     monkeypatch.setattr(seqtree, "Index", BrokenIndex)
     with pytest.raises(RuntimeError, match="native worker failed"):
         mimics.neighbours(["GILGFVFTL"], {"viral": ["GILGFVFTA"]}, threads=4)
+
+
+def test_assign_genes_filtered_shell_retry_keeps_the_budget(tmp_path, monkeypatch):
+    fasta = tmp_path / "reference.fa"
+    fasta.write_text(">sp|P1|XPARENT GN=OTHER\nAAAXAAAA\n>sp|P2|CLEAN GN=CLEAN\nCAAAAAAC\n")
+    proteome = Proteome.from_fasta(str(fasta))
+    calls = []
+    original = Proteome._hits
+
+    def traced(self, *args, **kwargs):
+        calls.append(kwargs["threads"])
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Proteome, "_hits", traced)
+    got = proteome.assign_genes(["AAAAAAAA", "CCCCCCCC", "DDDDDDDD", "EEEEEEEE"], threads=4)
+    assert got["AAAAAAAA"] == ["CLEAN"]
+    assert calls == [4]
+
+
+def test_rank_cli_whitelist_uses_the_invocation_budget(tmp_path, monkeypatch, capsys):
+    from mhcmatch import cli, rank, Store
+    peptides = ["GILGFVFTL", "GILGFVFTA", "NLVPMVATV", "ACDEFGHIK"]
+    calls = []
+
+    def ranked(store, path, alleles, **kwargs):
+        keep = kwargs["keep"]
+        index = keep.index
+
+        class Traced:
+            def search_batch(self, qs, params, threads):
+                calls.append(threads)
+                return index.search_batch(qs, params, threads)
+
+        keep.index = Traced()
+        rows = [rank.Ranked(peptide=p, allele="HLA-A*02:01") for p in peptides]
+        return rank._finish(rows, None, score="gate", keep=keep)
+
+    monkeypatch.setattr(Store, "from_pmhc", lambda *args, **kwargs: None)
+    monkeypatch.setattr(rank, "rank_fasta", ranked)
+    fasta = tmp_path / "windows.fa"
+    fasta.write_text(">synthetic\nGILGFVFTL\n")
+    cli.main(["rank", "fasta", str(fasta), "--alleles", "HLA-A*02:01", "--score", "gate", "--threads", "4",
+              "--keep-epitopes", "GILGFVFTL", "--no-known-refs"])
+    assert calls == [4]
+    assert "epitope" in capsys.readouterr().out
+
+
+def test_cli_rejects_negative_budget_before_loading_a_reference(capsys):
+    from mhcmatch import cli
+    with pytest.raises(SystemExit) as error:
+        cli.main(["rank", "fasta", "missing.fa", "--threads", "-1"])
+    assert error.value.code == 2
+    assert "non-negative" in capsys.readouterr().err

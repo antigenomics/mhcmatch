@@ -108,7 +108,13 @@ def _add_batch_opts(p, what="peptide"):
 
 
 def _add_thread_opt(p):
-    p.add_argument("--threads", type=int, default=1, metavar="N",
+    def budget(value):
+        n = int(value)
+        if n < 0:
+            raise argparse.ArgumentTypeError("threads must be non-negative (0 = allocated CPUs)")
+        return n
+
+    p.add_argument("--threads", type=budget, default=1, metavar="N",
                    help="native search threads (default 1; 0 = allocated CPUs)")
 
 
@@ -144,7 +150,8 @@ def _keep(a):
     peps = getattr(a, "keep_epitopes", None) or getattr(a, "keep", None)
     if not genes and not peps:
         return None
-    k = P.Keep(genes=genes, epitopes=peps, mismatch=getattr(a, "keep_mismatch", 0) or 0)
+    k = P.Keep(genes=genes, epitopes=peps, mismatch=getattr(a, "keep_mismatch", 0) or 0,
+               threads=getattr(a, "threads", 1))
     say(f"whitelist: {len(k.genes)} gene symbol(s)"
         + (f", epitope index loaded (Hamming <= {k.mismatch})" if k.index is not None else ""),
         level=1)
