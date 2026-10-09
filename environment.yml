@@ -27,7 +27,7 @@ dependencies:
   - biopython
   - pip
   - pip:
-      - -e .             # mhcmatch (pulls seqtree>=1.0.0 from PyPI, per pyproject.toml)
+      - -e .             # mhcmatch (pulls seqtree>=1.0.1 from PyPI, per pyproject.toml)
       - -e ../tcren-ms   # tcren + arda-mapper: structure annotation + the C++ fitting aligner
       - networkx
       - logomaker
