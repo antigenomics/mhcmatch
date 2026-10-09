@@ -22,7 +22,7 @@ Pareto-efficiency is necessary for reachability but not sufficient. Measured on 
 validated-immunogenic neoantigens, 45 of the 161 Pareto-efficient ones are ranked first by *no*
 non-negative weighting whatsoever. That limit belongs to the weighted sum, not to scalarization:
 :func:`chebyshev_score` reaches the whole front, and so, in principle, does any sufficiently rich
-    nonlinear model. What none of them escapes is separability --- top-m by *any* pointwise score
+nonlinear model. What none of them escapes is separability --- top-m by *any* pointwise score
 maximises a modular set function, and ``P(>= k | S)`` is not modular whenever two units share a
 block. That is a property of the selection rule, not of the scorer, so it cannot be fitted away.
 
