@@ -6,7 +6,7 @@
 # Or included from your own workflow, which is the better spelling -- see README.md:
 #     module mhcmatch:
 #         snakefile: github("antigenomics/mhcmatch",
-#                           path="integrations/snakemake/mhcmatch/Snakefile", tag="v1.20.1")
+#                           path="integrations/snakemake/mhcmatch/Snakefile", tag="v1.20.2")
 #         config: config["mhcmatch"]
 #         prefix: "results/mhcmatch"
 #     use rule * from mhcmatch as mhcmatch_*
