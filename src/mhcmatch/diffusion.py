@@ -18,6 +18,7 @@ import zlib
 from collections import Counter
 from functools import lru_cache
 from importlib import resources
+from itertools import repeat
 
 from .pseudoseq import (Pseudoseq, learn_anchor_weights, load_pseudo,
                         substitution_conditional,
@@ -321,13 +322,8 @@ class AnchorModel:
         self.prefs_mix = None
         self.log_pi = None
         self._cache_mix = {}
-        # Memo of _frame_scores (MHC-II). Pure in (peptide, allele, raw, eps, k) while prefs / prefs_mix
-        # / bg are fixed, so it is cleared wherever those are -- the same three sites as _cache/_cache_mix
-        # (_refit_registers, _m_step, _add_pseudocounts). Cuts the K=3 build ~2.4x: the mixture EM scores
-        # every frame twice (E-step then M-step best-frame) and the panel has ~2x duplicate rows.
-        self._frame_cache = {}
         # Memo of _anchor_logodds' per-(anchor, residue) term. Same staleness contract and the same
-        # three clear sites as _frame_cache above.
+        # three clear sites as the fitted distributions above; no query-derived vectors live here.
         self._lo_cache = {}
         self._frames = {}
         self._em_passes = 0
@@ -465,7 +461,6 @@ class AnchorModel:
                 for a in list(d):
                     d[a] = smooth(d[a])
         self._cache, self._cache_len, self._cache_mix = {}, {}, {}
-        self._frame_cache = {}                       # counters modified in place -> frame scores stale
         self._lo_cache = {}
 
     def _learned_weights(self, cls, prune_dpi):
@@ -735,7 +730,6 @@ class AnchorModel:
             self.bg[j] = cc
         self._nbg = {j: (sum(self.bg[j].values()) or 1) for j in self.anchors}
         self._cache = {}
-        self._frame_cache = {}                       # prefs/bg reassigned -> frame scores stale
         self._lo_cache = {}
         return changed
 
@@ -752,8 +746,13 @@ class AnchorModel:
 
         ``k=None`` is the pooled single-PWM marginal, i.e. exactly what :meth:`score` computed before
         motif mixtures existed."""
-        terms = [f + p for f, p in zip(self._frame_scores(peptide, allele, raw, eps, k),
-                                       self._register_logprior(peptide, allele))]
+        return self._frame_marginal(self._frame_scores(peptide, allele, raw, eps, k),
+                                    self._register_logprior(peptide, allele))
+
+    @staticmethod
+    def _frame_marginal(frames, prior):
+        # Keep Python's sequential sum and math.exp: a NumPy reduction changes the last bit.
+        terms = [f + p for f, p in zip(frames, prior)]
         m = max(terms)
         return m + math.log(sum(math.exp(t - m) for t in terms))
 
@@ -769,15 +768,22 @@ class AnchorModel:
         lp = self.log_pi.get(allele) if self.log_pi else None
         lp = lp or [-math.log(K)] * K
         t = [lp[k] + self._mix_term(peptide, allele, k) for k in range(K)]
+        return self._normalise_responsibilities(t)
+
+    @staticmethod
+    def _normalise_responsibilities(t):
         m = max(t)
         if m == float("-inf"):
-            return [1.0 / K] * K
+            return [1.0 / len(t)] * len(t)
         e = [math.exp(x - m) for x in t]
         tot = sum(e)
         return [x / tot for x in e]
 
-    def _m_step(self, rows, resp):
+    def _m_step(self, rows, resp=None):
         """Re-tally per-component anchor counters and mixing weights from responsibilities ``resp``.
+
+        With ``resp=None``, compute the E-step in the same sweep, keeping only the current row's
+        frame vectors. Every row still reads the complete pre-update fit until the final assignment.
 
         Each peptide contributes ``responsibility × weight`` to every component, at *that component's*
         own best frame -- component and register are fit jointly, as in GibbsCluster. Assignment reads
@@ -797,20 +803,30 @@ class AnchorModel:
                for k in range(K)]
         mix = [{j: {} for j, _ in own[k]} for k in range(K)]
         mass = {}
-        for (ep, a, wt), rs in zip(rows, resp):
+        for (ep, a, wt), rs in zip(rows, resp if resp is not None else repeat(None)):
+            frames = None
+            if rs is None:
+                # E and M read the same pre-update model. Reduce each row's frame vectors
+                # into responsibilities and registers here, then discard them with the row.
+                frames = [self._frame_scores(ep, a, k=k) for k in range(K)]
+                prior = self._register_logprior(ep, a)
+                lp = self.log_pi.get(a) or [-math.log(K)] * K
+                rs = self._normalise_responsibilities(
+                    [lp[k] + self._frame_marginal(fs, prior) for k, fs in enumerate(frames)])
             tot = mass.setdefault(a, [0.0] * K)
             for k, r in enumerate(rs):
                 tot[k] += r * wt
                 if r <= 1e-6:                        # contributes nothing; skip the frame search
                     continue
-                w9 = ep[self._best_frame(ep, a, k):][:9]
+                st = (frames[k].index(max(frames[k])) if frames is not None
+                      else self._best_frame(ep, a, k))
+                w9 = ep[st:][:9]
                 for j, c in own[k]:
                     mix[k][j].setdefault(a, Counter())[w9[c]] += r * wt
         self.prefs_mix = mix
         self.log_pi = {a: [math.log((v + _MIX_ALPHA) / (sum(t) + K * _MIX_ALPHA)) for v in t]
                        for a, t in mass.items()}
         self._cache_mix = {}
-        self._frame_cache = {}                       # prefs_mix reassigned -> frame scores stale
         self._lo_cache = {}
 
     def _refit_mixture(self, store, passes=_MIX_PASSES, hold=()):
@@ -836,8 +852,7 @@ class AnchorModel:
         resp = [[float(zlib.crc32(ep.encode()) % K == k) for k in range(K)] for ep, _, _ in rows]
         self._m_step(rows, resp)                     # prefs_mix was None -> pooled frames, once
         for _ in range(passes):
-            resp = [self._responsibilities(ep, a) for ep, a, _ in rows]
-            self._m_step(rows, resp)
+            self._m_step(rows)
 
     def _fit_reverse(self, store):
         """Learn ``p_a``, the per-allele prior mass on the **reverse** (C-to-N) reading, from the
@@ -897,8 +912,6 @@ class AnchorModel:
         self.reverse_by_allele = {
             a: self.ps.shrink(tally, a, prior_strength=self._tau_scalar).get("R", 0.0)
             for a in tally}
-        # The reversed strings doubled the frame memo and nothing reads those entries again.
-        self._frame_cache = {}
 
     def _fit_reverse_context(self, store):
         """Learn a **per-peptide** shift on the reverse prior from the six residues at the ligand's
@@ -1058,7 +1071,7 @@ class AnchorModel:
         """``log((theta + eps) / (p_bg + eps))`` for every anchor x canonical residue, memoised.
 
         Keyed on everything the value depends on; cleared at the three sites that reassign ``prefs``
-        / ``bg`` / ``prefs_mix``, exactly like :attr:`_frame_cache`. ``length`` is passed already
+        / ``bg`` / ``prefs_mix``. ``length`` is passed already
         resolved to ``None`` when ``prefs_len`` is absent, so the pooled and per-length models cannot
         collide in the key."""
         key = (allele, raw, eps, length, k)
@@ -1164,7 +1177,6 @@ class AnchorModel:
                 self.anticore[side][d] = {
                     r: math.log(((c[r] + 0.5) / (n + 0.5 * len(_AA20))) / max(bg[r] / tot, 1e-9))
                     for r in _AA20}
-        self._frame_cache = {}
 
     def _register_logprior(self, peptide, allele):
         """``log P(frame start | peptide, length, allele)`` -- the offset prior, anticore-tilted.
@@ -1232,13 +1244,9 @@ class AnchorModel:
         """Anchor log-odds of every 9-mer core frame of ``peptide`` (MHC-II), indexed by frame start.
 
         ``peptide`` must already be stripped/upper-cased. MHC-I is end-anchored, so there is no frame
-        list to build and this is class-II only. ``k`` scores under motif component ``k``. Memoized on
-        ``self._frame_cache`` -- see the note where it is initialized.
+        list to build and this is class-II only. ``k`` scores under motif component ``k``.
+        Query-derived vectors are returned to the caller, never retained on the fitted model.
         """
-        ck = (peptide, allele, raw, eps, k)
-        hit = self._frame_cache.get(ck)
-        if hit is not None:
-            return hit
         core_pos = [j - 1 for j in self.anchors]
         mask = self._score_mask(allele)
         if k is not None and self._mix_mask:                 # component k scores its family only
@@ -1251,7 +1259,6 @@ class AnchorModel:
             ctx = [peptide[st + c - 1] if st + c > 0 else "" for c in core_pos] if markov else None
             out.append(self._anchor_logodds([w[c] for c in core_pos], allele, raw, eps, mask, ctx,
                                             k=k))
-        self._frame_cache[ck] = out
         return out
 
     def _smooth_offset_prior(self):
@@ -1466,6 +1473,87 @@ class AnchorModel:
         m = max(t)
         return m + math.log(sum(math.exp(x - m) for x in t))
 
+    def score_many(self, peptides, allele, raw=False, eps=1e-3, *, batch_bytes=8 << 20):
+        """Score an iterable for one allele, in order, without retaining peptide intermediates.
+
+        Class-II canonical peptides use NumPy table lookups over bounded batches of core
+        frames. Anchor additions and register/mixture reductions keep the scalar order, so
+        results equal :meth:`score` bit for bit. Markov, reverse and anticore models and
+        noncanonical residues use that same scalar scorer. No worker pool or BLAS operation
+        is used; callers may parallelize independent alleles with one kernel thread per worker.
+
+        ``batch_bytes`` bounds the estimated temporary array working set (8 MiB by default),
+        excluding input/output and immutable model tables. A single peptide is the minimum
+        unit of work. The returned list and fitted-model lookup tables remain caller-owned.
+        """
+        import numpy as np
+
+        if not isinstance(batch_bytes, int) or batch_bytes <= 0:
+            raise ValueError("batch_bytes must be a positive integer")
+        if (self.cls != "mhc2" or any(j < 1 or j > 9 for j in self.anchors)
+                or self.background == "markov" or self.anticore
+                or self.reverse or self.reverse_by_allele):
+            return [self.score(p, allele, raw, eps) for p in peptides]
+        out, batch, size = [], [], 0
+        for p in peptides:
+            p = p.strip().upper()
+            # Encoded residues, frame sums and gather scratch, mixture outputs, plus Python
+            # strings/indices. Each component's frame array is released before the next.
+            cost = 128 + 4 * len(p) + 24 * max(0, len(p) - 8) + 8 * self.n_motifs
+            if batch and size + cost > batch_bytes:
+                out.extend(self._score_batch(batch, allele, raw, eps, np))
+                batch, size = [], 0
+            batch.append(p)
+            size += cost
+        if batch:
+            out.extend(self._score_batch(batch, allele, raw, eps, np))
+        return out
+
+    def _score_batch(self, peptides, allele, raw, eps, np):
+        """One bounded canonical batch; the scalar reducer defines all floating semantics."""
+        out = [float("-inf")] * len(peptides)
+        by_len = {}
+        for i, p in enumerate(peptides):
+            if len(p) < 9:
+                continue
+            if any(r not in _AA20 for r in p):
+                out[i] = self.score(p, allele, raw, eps)
+            else:
+                by_len.setdefault(len(p), []).append(i)
+        for length, ids in by_len.items():
+            encoded = np.frombuffer("".join(peptides[i] for i in ids).encode("ascii"),
+                                    dtype=np.uint8).reshape(len(ids), length)
+            marginal = self.register == "marginal"
+            components = range(self.n_motifs) if marginal and self.prefs_mix is not None else [None]
+            prior = self._offset_logprior(allele, length) if marginal else None
+            terms = [[] for _ in ids]
+            for k in components:
+                mask = self._score_mask(allele)
+                if k is not None and self._mix_mask:
+                    fam = self._mix_mask[k]
+                    mask = fam if mask is None else tuple(i for i in mask if i in set(fam))
+                rows = self._lo_table(allele, raw, eps, None, k)
+                frames = np.zeros((len(ids), length - 8), dtype=np.float64)
+                for j in range(len(self.anchors)) if mask is None else mask:
+                    lookup = np.zeros(256, dtype=np.float64)
+                    for r, v in rows[j].items():
+                        lookup[ord(r)] = v
+                    start = self.anchors[j] - 1
+                    frames += lookup[encoded[:, start:start + length - 8]]
+                for i, fs in enumerate(frames):
+                    terms[i].append(self._frame_marginal(fs.tolist(), prior) if marginal
+                                    else float(fs.max()))
+                del frames
+            for i, ts in zip(ids, terms):
+                if len(ts) == 1 and components == [None]:
+                    out[i] = ts[0]
+                else:
+                    lp = self.log_pi.get(allele) or [-math.log(self.n_motifs)] * self.n_motifs
+                    t = [p + s for p, s in zip(lp, ts)]
+                    m = max(t)
+                    out[i] = m + math.log(sum(math.exp(x - m) for x in t))
+        return out
+
     def anchor_terms(self, peptide, allele, raw=False, eps=1e-3):
         """Per-position log-odds components at the best register, one per ``self.anchors`` position
         (the full footprint, ignoring the rare-allele mask), or ``None`` if the peptide is too short.
@@ -1675,6 +1763,10 @@ class RoutedAnchorModel:
         """Dispatches to :meth:`AnchorModel.score` on the frequent or rare fit, by ``allele``'s count."""
         return self._for(allele).score(peptide, allele, raw, eps)
 
+    def score_many(self, peptides, allele, raw=False, eps=1e-3, *, batch_bytes=8 << 20):
+        """Dispatches the whole batch to the same fit as :meth:`score`."""
+        return self._for(allele).score_many(peptides, allele, raw, eps, batch_bytes=batch_bytes)
+
     def best_register(self, peptide, allele, raw=False, eps=1e-3):
         """Dispatches to :meth:`AnchorModel.best_register` on the frequent or rare fit."""
         return self._for(allele).best_register(peptide, allele, raw, eps)
@@ -1720,6 +1812,8 @@ def load_vendored_anchor_model(store, cls, params):
         meta, model = pickle.loads(gzip.decompress(res.read_bytes()))
         if (meta.get("version") == __version__ and meta.get("params") == params
                 and meta.get("panel_sha") == panel_sha(store, cls)):
+            # Older pickles may carry training/query frame memos. They are not fitted state.
+            model.__dict__.pop("_frame_cache", None)
             return model
     except Exception:                       # missing / corrupt / version-incompatible -> rebuild
         pass

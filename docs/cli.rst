@@ -21,8 +21,9 @@ This page groups the commands by **what you are trying to do**; every command al
    staged: it builds one ``seqtree.TextIndex`` per proteome in **0.7 s**, answering every length
    and every substitution radius from that one build (:ref:`bootstrap-tiers`).
 
-   ``--threads`` exists **only** on ``source``, ``mimics`` and ``genes``, whose neighbour search
-   runs in C++ with the GIL released. Elsewhere it is absent rather than accepted and ignored.
+   ``--threads N`` controls native searches in ``source``, ``mimics``, ``genes``, ``neoag``,
+   ``mimicry`` and ``rank`` annotations. It defaults to one; zero opts into the available CPU
+   allocation. Scoring stays serial. Within an outer workflow, use one native thread per task.
 
 Machine-readable output
 -----------------------

@@ -72,6 +72,21 @@ any cross-allele ranking meaningful. Building the backgrounds is the real cost o
 about 5 s for the presentation and affinity calibrators, ~45 s for the binder calibrator --- and it
 is cached for the life of the process and on disk under ``$MHCMATCH_CALIBRATION_CACHE``.
 
+Class-II absolute thresholds require a background conditioned on the query's peptide length:
+``cal.percent_rank(allele, score, length=len(peptide))``. The default 10,000 draws and seeded
+random stream are unchanged. Calibration uses :meth:`mhcmatch.diffusion.AnchorModel.score_many`
+to score bounded batches of core frames, without retaining query vectors on the fitted model.
+For direct scoring, ``model.score_many(peptides, allele)`` returns scalar-identical scores in
+input order. Its ``batch_bytes`` argument bounds the temporary array working set; no Python
+worker pool or multithreaded BLAS operation is added. :meth:`mhcmatch.calibrate.RankCalibrator.clear`
+releases loaded calibration distributions between independent work units.
+
+Native searches default to one thread and accept a single explicit ``threads`` budget. Use
+``threads=0`` only to opt into available CPUs (including process affinity and SLURM's task
+allocation). When processes own parallelism, set numerical-library thread limits in the parent
+before spawning/importing workers and keep each worker's native search budget at one. The
+Nextflow and Snakemake integrations apply these limits before starting the CLI.
+
 Bands and cut-offs are per class
 --------------------------------
 

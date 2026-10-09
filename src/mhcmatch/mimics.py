@@ -330,7 +330,7 @@ def _hamming(a: str, b: str) -> int:
     return sum(x != y for x, y in zip(a, b)) if len(a) == len(b) else 1 << 30
 
 
-def neighbours(peptides, ref_sets, max_subs: int = 2, threads: int = 0) -> dict:
+def neighbours(peptides, ref_sets, max_subs: int = 2, threads: int = 1) -> dict:
     """``{peptide: {category: [(n_subs, ref_peptide), ...]}}`` -- same-length mimics, in batch.
 
     The Hamming half of :func:`scan`, and **4,300x faster than the path :func:`scan` used to take**.
@@ -358,8 +358,10 @@ def neighbours(peptides, ref_sets, max_subs: int = 2, threads: int = 0) -> dict:
         {'GILGFVFTL': {'viral': [(1, 'GILGFVFTA')]}}
     """
     from seqtree import Index, SearchParams
+    from ._threads import resolve_threads
 
     peps = sorted({p.strip().upper() for p in peptides if p})
+    threads = resolve_threads(threads, len(peps))
     out: dict = {p: {} for p in peps}
     by_len: dict[int, list[str]] = {}
     for p in peps:
@@ -383,7 +385,7 @@ def neighbours(peptides, ref_sets, max_subs: int = 2, threads: int = 0) -> dict:
 
 
 def scan(binders, self_set, foreign_sets, cls="mhc1", max_subs=2, near_subs=2, self_name="thymus",
-         exclude_query=False, evalue=False, threads=0):
+         exclude_query=False, evalue=False, threads=1):
     """Mimic-scan an iterable of ``(peptide, allele)`` binders. Returns ``list[MimicResult]`` (one
     per binder × category with >=1 same-length reference peptide within ``near_subs`` substitutions).
 
@@ -422,6 +424,8 @@ def scan(binders, self_set, foreign_sets, cls="mhc1", max_subs=2, near_subs=2, s
     self_exact = set(self_set)
     foreign_exact = {k: set(v) for k, v in foreign_sets.items()}
     binders = list(binders)
+    from ._threads import resolve_threads
+    threads = resolve_threads(threads, len(binders))
 
     if not evalue:
         cats = {"self": self_set, **foreign_sets}

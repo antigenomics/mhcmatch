@@ -35,9 +35,11 @@ def _feat(cls, k):
 
 
 def search(query, peptides, mode="tcr", cls="mhc1", k=4, max_subs=1,
-           min_shared=1, exclude_self=True, threads=0):
+           min_shared=1, exclude_self=True, threads=1):
     """Peptides in ``peptides`` similar to ``query`` under ``mode`` (``"tcr"`` or ``"mhc"``)."""
     query = query.strip().upper()
+    from ._threads import resolve_threads
+    threads = resolve_threads(threads, 1)
     feat = _feat(cls, k)[mode]
     seqs = [p.strip().upper() for p in peptides]
     idx = KmerIndex.build([feat(s) for s in seqs], alphabet="aa")

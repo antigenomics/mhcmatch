@@ -125,3 +125,24 @@ def test_concurrent_writers_agree_and_leave_no_partial_file(tmp_path):
     for n in names:
         with open(tmp_path / n) as fh:
             json.load(fh)
+
+
+def test_equal_positive_counts_cannot_alias_different_isotonic_fits(tmp_path, monkeypatch):
+    monkeypatch.setenv(C.CACHE_ENV, str(tmp_path))
+    a = C.RankCalibrator(_Toy(), ["A"], CORPUS, n=50, positives={"A": ["SIINFEKL"]}, fingerprint="fp")
+    b = C.RankCalibrator(_Toy(), ["A"], CORPUS, n=50, positives={"A": ["AAAAAAAAA"]}, fingerprint="fp")
+    assert a._fp != b._fp
+    a.p_present("A", 12.)
+    b.p_present("A", 12.)
+    assert a._iso != b._iso
+
+
+def test_positive_map_boundaries_are_part_of_the_cache_identity(tmp_path, monkeypatch):
+    monkeypatch.setenv(C.CACHE_ENV, str(tmp_path))
+    # Both maps flatten to A,C,D,E, but describe different per-allele isotonic fits.
+    a = C.RankCalibrator(_Toy(), ["A", "D"], CORPUS, n=50,
+                         positives={"A": ["C"], "D": ["E"]}, fingerprint="fp")
+    b = C.RankCalibrator(_Toy(), ["A", "D"], CORPUS, n=50,
+                         positives={"A": ["C", "D", "E"]}, fingerprint="fp")
+    assert a._fp != b._fp
+    assert a._cache_path("A") != b._cache_path("A")

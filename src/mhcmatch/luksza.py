@@ -120,7 +120,7 @@ def counts_by_distance(peptides, hits: dict, category: str, max_subs: int = FIT_
 
 
 def viral_r(peptides, ref_sets=None, *, max_subs: int = FIT_MAX_SUBS, k: float | None = None,
-            a0: float | None = None, threads: int = 0, category: str = "viral") -> np.ndarray:
+            a0: float | None = None, threads: int = 1, category: str = "viral") -> np.ndarray:
     """``viral_R`` end to end -- the published recognition term, computed standalone.
 
     Searches ``peptides`` against the viral ligandome with
