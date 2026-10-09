@@ -18,6 +18,7 @@ import zlib
 from collections import Counter
 from functools import lru_cache
 from importlib import resources
+from itertools import repeat
 
 from .pseudoseq import (Pseudoseq, learn_anchor_weights, load_pseudo,
                         substitution_conditional,
@@ -767,15 +768,22 @@ class AnchorModel:
         lp = self.log_pi.get(allele) if self.log_pi else None
         lp = lp or [-math.log(K)] * K
         t = [lp[k] + self._mix_term(peptide, allele, k) for k in range(K)]
+        return self._normalise_responsibilities(t)
+
+    @staticmethod
+    def _normalise_responsibilities(t):
         m = max(t)
         if m == float("-inf"):
-            return [1.0 / K] * K
+            return [1.0 / len(t)] * len(t)
         e = [math.exp(x - m) for x in t]
         tot = sum(e)
         return [x / tot for x in e]
 
-    def _m_step(self, rows, resp):
+    def _m_step(self, rows, resp=None):
         """Re-tally per-component anchor counters and mixing weights from responsibilities ``resp``.
+
+        With ``resp=None``, compute the E-step in the same sweep, keeping only the current row's
+        frame vectors. Every row still reads the complete pre-update fit until the final assignment.
 
         Each peptide contributes ``responsibility × weight`` to every component, at *that component's*
         own best frame -- component and register are fit jointly, as in GibbsCluster. Assignment reads
@@ -795,13 +803,24 @@ class AnchorModel:
                for k in range(K)]
         mix = [{j: {} for j, _ in own[k]} for k in range(K)]
         mass = {}
-        for (ep, a, wt), rs in zip(rows, resp):
+        for (ep, a, wt), rs in zip(rows, resp if resp is not None else repeat(None)):
+            frames = None
+            if rs is None:
+                # E and M read the same pre-update model. Reduce each row's frame vectors
+                # into responsibilities and registers here, then discard them with the row.
+                frames = [self._frame_scores(ep, a, k=k) for k in range(K)]
+                prior = self._register_logprior(ep, a)
+                lp = self.log_pi.get(a) or [-math.log(K)] * K
+                rs = self._normalise_responsibilities(
+                    [lp[k] + self._frame_marginal(fs, prior) for k, fs in enumerate(frames)])
             tot = mass.setdefault(a, [0.0] * K)
             for k, r in enumerate(rs):
                 tot[k] += r * wt
                 if r <= 1e-6:                        # contributes nothing; skip the frame search
                     continue
-                w9 = ep[self._best_frame(ep, a, k):][:9]
+                st = (frames[k].index(max(frames[k])) if frames is not None
+                      else self._best_frame(ep, a, k))
+                w9 = ep[st:][:9]
                 for j, c in own[k]:
                     mix[k][j].setdefault(a, Counter())[w9[c]] += r * wt
         self.prefs_mix = mix
@@ -833,8 +852,7 @@ class AnchorModel:
         resp = [[float(zlib.crc32(ep.encode()) % K == k) for k in range(K)] for ep, _, _ in rows]
         self._m_step(rows, resp)                     # prefs_mix was None -> pooled frames, once
         for _ in range(passes):
-            resp = [self._responsibilities(ep, a) for ep, a, _ in rows]
-            self._m_step(rows, resp)
+            self._m_step(rows)
 
     def _fit_reverse(self, store):
         """Learn ``p_a``, the per-allele prior mass on the **reverse** (C-to-N) reading, from the

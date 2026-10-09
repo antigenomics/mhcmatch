@@ -570,11 +570,12 @@ class Store:
         ``restriction``, ``binder`` and ``explain``. :func:`mhcmatch.predict.build_scorer` has
         always passed one; this did not.
 
-        ``cls``, ``n`` and ``seed`` identify both the in-memory calibrator and its disk entry,
-        so a caller changing draw parameters never receives a previous background.
+        ``cls``, ``n`` and ``seed`` identify both the in-memory calibrator and its disk entry.
+        Keep only the current configuration per class: changing draws replaces the store-owned
+        calibrator rather than retaining every previous background for the store's lifetime.
         """
-        key = (cls, n, seed)
-        if key not in self._rc:
+        current = self._rc.get(cls)
+        if current is None or (current._n, current._seed) != (n, seed):
             from .calibrate import RankCalibrator
             from .predict import _fingerprint
             panel = self._panel[cls]
@@ -585,9 +586,9 @@ class Store:
             # is the ligand background over the anchor footprint. Both belong in the key.
             fp = "|".join([_fingerprint(self, cls, "ligand", "anchor", "restriction"),
                            str(n), str(seed)])
-            self._rc[key] = RankCalibrator(self._anchor_model(cls), list(pos), panel.epitopes,
+            self._rc[cls] = RankCalibrator(self._anchor_model(cls), list(pos), panel.epitopes,
                                            n=n, seed=seed, positives=pos, fingerprint=fp)
-        return self._rc[key]
+        return self._rc[cls]
 
     def percent_ranks(self, peptides, cls=None, alleles="all") -> list:
         """``[{allele: %rank}, ...]``, one dict per peptide -- :meth:`restriction`'s ranking half

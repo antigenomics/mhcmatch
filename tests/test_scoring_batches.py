@@ -1,5 +1,6 @@
 """Exact batch/scalar semantics and bounded ownership of class-II calibration intermediates."""
 import os
+import copy
 import random
 import struct
 from concurrent.futures import ProcessPoolExecutor
@@ -52,6 +53,24 @@ def test_routed_batch_uses_the_same_fit_as_scalar():
     for allele in router._counts:
         peptides = ["ACDEFGHIK", "ACDEFGHIKLMNPQR"]
         assert _bits(router.score_many(peptides, allele)) == _bits(router.score(p, allele) for p in peptides)
+
+
+@pytest.mark.parametrize("options", [{}, {"background": "markov"}, {"anticore": 0.5},
+                                      {"footprint": "core", "families": [([1, 4, 6, 9], 2),
+                                                                         ([2, 3, 5, 7, 8], 1)]}])
+def test_fused_em_matches_the_separate_estep_and_mstep(options):
+    store = _store()
+    reference = store.anchor_model("mhc2", n_motifs=3, **options)
+    fused = copy.deepcopy(reference)
+    panel = store._panel["mhc2"]
+    rows = list(zip(panel.epitopes, panel.alleles, panel.weights))
+    for _ in range(2):
+        responsibilities = [reference._responsibilities(p, a) for p, a, _ in rows]
+        reference._m_step(rows, responsibilities)
+        fused._m_step(iter(rows))
+        assert fused.prefs_mix == reference.prefs_mix
+        assert fused.log_pi == reference.log_pi
+        assert "_frame_cache" not in fused.__dict__
 
 
 class _ScalarOnly:
@@ -148,3 +167,6 @@ def test_store_calibrator_configuration_is_part_of_its_identity():
     third = store._rank_calibrator("mhc2", n=20, seed=2)
     assert len({id(first), id(second), id(third)}) == 3
     assert first._rands != third._rands
+    assert store._rc == {"mhc2": third}
+    rebuilt = store._rank_calibrator("mhc2", n=20, seed=1)
+    assert rebuilt is not first and rebuilt._rands == first._rands

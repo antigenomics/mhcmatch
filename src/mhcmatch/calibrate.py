@@ -207,7 +207,9 @@ class RankCalibrator:
         # length-conditional stream. Counts alone cannot identify an isotonic positive set.
         h.update(str(list(self._aa.items())).encode())
         h.update(str(sorted(self._lens.items())).encode())
+        h.update(len(self._positives).to_bytes(8, "little"))
         for allele, peptides in sorted(self._positives.items()):
+            h.update(len(peptides).to_bytes(8, "little"))
             for value in chain((allele,), peptides):
                 encoded = value.encode()
                 h.update(len(encoded).to_bytes(8, "little"))
