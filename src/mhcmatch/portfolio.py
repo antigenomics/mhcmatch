@@ -76,22 +76,34 @@ class MarginalExceedsBlock(ValueError):
 
 
 # ---------------------------------------------------------------- objective-space geometry
-def pareto_front(Z) -> np.ndarray:
+def pareto_front(Z, *, batch_bytes: int = 8 << 20) -> np.ndarray:
     """Boolean mask of non-dominated rows of ``Z`` (n x K), **higher is better on every column**.
 
     Orient every column that way before calling: a ``%rank`` is lower-is-better and has to enter as
     ``-log10(rank)`` or the front is the wrong end of the cloud.
+    Dominance comparisons use bounded array blocks (estimated ``batch_bytes`` working set),
+    with one reference row as the minimum block. No candidate-by-candidate matrix is retained.
     """
     Z = np.asarray(Z, dtype=float)
     if Z.ndim != 2:
         raise ValueError(f"Z must be 2-D (n candidates x K objectives), got shape {Z.shape}")
+    if not isinstance(batch_bytes, int) or batch_bytes <= 0:
+        raise ValueError("batch_bytes must be a positive integer")
     keep = np.ones(Z.shape[0], dtype=bool)
+    if not Z.shape[1]:
+        return keep
     front: list[int] = []
-    for i in np.argsort(-Z.sum(1), kind="stable"):     # good points first shortens the scan
+    # A strict dominator must precede its target, even when sums round equal or overflow.
+    order = np.lexsort(Z[:, ::-1].T)[::-1]
+    block = max(1, batch_bytes // (10 * Z.shape[1] + 32))
+    for i in order:
         zi = Z[i]
-        if any(np.all(Z[j] >= zi) and np.any(Z[j] > zi) for j in front):
-            keep[i] = False
-        else:
+        for start in range(0, len(front), block):
+            candidates = Z[front[start:start + block]]
+            if np.any(np.all(candidates >= zi, axis=1) & np.any(candidates > zi, axis=1)):
+                keep[i] = False
+                break
+        if keep[i]:
             front.append(int(i))
     return keep
 
@@ -134,16 +146,27 @@ def linearly_supported(Z, i: int) -> bool:
     True exactly when ``Z[i]`` lies on the upper convex hull. A Pareto-efficient row inside the hull
     returns False: no weighting of the objectives ever puts it on top, and tuning them is wasted
     effort. Use :func:`chebyshev_score` for those.
+    The small feasibility problem uses one HiGHS thread; solver failures raise instead of
+    reporting an unsupported point. An incompatible pre-existing HiGHS scheduler is a failure
+    too; this function does not reset process-global state owned by another caller.
     """
     try:
-        from scipy.optimize import linprog
+        from scipy.optimize import linprog, OptimizeWarning
     except ImportError as exc:                                    # pragma: no cover
         raise ImportError("linearly_supported needs SciPy: pip install 'mhcmatch[stats]'") from exc
     Z = np.asarray(Z, dtype=float)
     A = np.delete(Z - Z[i], i, axis=0)                            # need A @ beta <= 0
-    res = linprog(c=np.zeros(Z.shape[1]), A_ub=A, b_ub=np.zeros(A.shape[0]),
-                  A_eq=np.ones((1, Z.shape[1])), b_eq=[1.0],
-                  bounds=[(0, None)] * Z.shape[1], method="highs")
+    import warnings
+    # SciPy forwards backend options but warns for ones absent from its own option list.
+    # HiGHS ignores the BLAS/OpenMP limits and otherwise starts a separate all-core pool.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=r"Unrecognized options detected:.*'threads'",
+                                category=OptimizeWarning)
+        res = linprog(c=np.zeros(Z.shape[1]), A_ub=A, b_ub=np.zeros(A.shape[0]),
+                      A_eq=np.ones((1, Z.shape[1])), b_eq=[1.0],
+                      bounds=[(0, None)] * Z.shape[1], method="highs", options={"threads": 1})
+    if res.status not in (0, 2):  # optimal or infeasible; other states establish neither
+        raise RuntimeError(f"linear-programming feasibility failed: {res.message}")
     return bool(res.status == 0)
 
 

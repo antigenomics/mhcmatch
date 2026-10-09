@@ -1027,7 +1027,7 @@ def corpus_R(peptides, spectrum: dict, cls: str = "mhc1", registers=None) -> lis
     return out
 
 
-def features(peptides, refs: dict, cls: str = "mhc1") -> list[dict]:
+def features(peptides, refs: dict, cls: str = "mhc1", *, threads: int = 1) -> list[dict]:
     """Per-(component, channel) mimic **density**: hits per million same-length reference windows.
 
     Density and not a raw count because the window totals span three orders of magnitude across
@@ -1047,6 +1047,8 @@ def features(peptides, refs: dict, cls: str = "mhc1") -> list[dict]:
     from seqtree import SearchParams
     rad = params(cls)["radius"]
     peps = list(peptides)
+    from ._threads import resolve_threads
+    threads = resolve_threads(threads, len(peps))
     out: list[dict] = [{} for _ in peps]
 
     # `masks` is deterministic in (length, cls, peptide), so project each peptide once for both
@@ -1068,7 +1070,7 @@ def features(peptides, refs: dict, cls: str = "mhc1") -> list[dict]:
                     continue
                 index, nwin, back = refs[key]
                 qs = [masked[i][ch] for i in idxs]
-                for i, hits in zip(idxs, index.search_batch(qs, sp[ch], 0)):
+                for i, hits in zip(idxs, index.search_batch(qs, sp[ch], threads)):
                     out[i][f"{comp}_{ch}"] = math.log1p(1e6 * len(hits) / max(nwin, 1))
                     if hits:
                         h = min(hits, key=lambda x: x.score)
@@ -1079,7 +1081,7 @@ def features(peptides, refs: dict, cls: str = "mhc1") -> list[dict]:
 
 
 def score(peptides, refs: dict, cls: str = "mhc1",
-          allow_missing: bool = False) -> list[MimicryScore]:
+          allow_missing: bool = False, *, threads: int = 1) -> list[MimicryScore]:
     """Signed per-component log-odds contributions and their sum, one per peptide.
 
     Raises if ``refs`` is missing a component. A missing feature standardizes to zero, so the
@@ -1101,7 +1103,8 @@ def score(peptides, refs: dict, cls: str = "mhc1",
     coef = dict(zip(p["features"], p["logistic"]["coef"]))
     nan = float("nan")
     out = []
-    for pep, row in zip(peptides, features(peptides, refs, cls)):
+    peptides = list(peptides)
+    for pep, row in zip(peptides, features(peptides, refs, cls, threads=threads)):
         comp: dict[str, dict[str, float]] = {c: {} for c in COMPONENTS}
         tot = 0.0
         for i, f in enumerate(p["features"]):
@@ -1153,7 +1156,8 @@ def probability(scores, corpus: str = "screens", cls: str = "mhc1") -> list[floa
 NEOAG_COLUMNS: tuple = ("neoag_distance", "neoag_nearest", "neoag_n_within", "known")
 
 
-def annotate(peptides, pmhc_dir=None, cls: str = "mhc1", max_subs: int = 2) -> list[dict]:
+def annotate(peptides, pmhc_dir=None, cls: str = "mhc1", max_subs: int = 2,
+             *, threads: int = 1) -> list[dict]:
     """Nearest validated-immunogenic neoantigen and its distance. **Prior evidence, not a score.**
 
     This is kept out of :func:`score` on purpose. Every labelled screen we hold is contained in the
@@ -1162,6 +1166,9 @@ def annotate(peptides, pmhc_dir=None, cls: str = "mhc1", max_subs: int = 2) -> l
     with the test screen removed from the database, matching at two substitutions recovers 0.08-0.34
     of its positives against 0.00-0.26 for exact lookup -- which is why it is reported at all."""
     from seqtree import Index, SearchParams
+    from ._threads import resolve_threads
+    peptides = list(peptides)
+    threads = resolve_threads(threads, len(peptides))
     ref = sorted(set(mimics.load_peptides(pmhc_dir, mimics.DEFAULT_REFS["neoag"][0], cls)))
     by_len: dict[int, list[str]] = {}
     for p in peptides:
@@ -1174,7 +1181,7 @@ def annotate(peptides, pmhc_dir=None, cls: str = "mhc1", max_subs: int = 2) -> l
             continue
         index = Index.build(win, alphabet="aa")
         for q, hits in zip(qs, index.search_batch(qs, SearchParams(max_subs=max_subs,
-                                                                   engine="seqtm"), 0)):
+                                                                   engine="seqtm"), threads)):
             if hits:
                 h = min(hits, key=lambda x: x.score)
                 best[q] = (int(h.score), index.ref_seq(h.ref_id), len(hits))

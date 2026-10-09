@@ -202,10 +202,14 @@ class Keep:
     matched against both fields (which is what ``--keep`` did) cannot say which claim a
     surviving row rests on.
     """
-    __slots__ = ("genes", "index", "params", "mismatch")
+    __slots__ = ("genes", "index", "params", "mismatch", "threads")
 
-    def __init__(self, genes=None, epitopes=None, mismatch: int = 0, quiet: bool = False):
+    def __init__(self, genes=None, epitopes=None, mismatch: int = 0, quiet: bool = False,
+                 *, threads=1):
         import seqtree
+        from ._threads import resolve_threads
+        resolve_threads(threads, 1)  # validate, retaining zero for allocation at query time
+        self.threads = threads
         self.genes = keep_genes(genes)
         self.mismatch = int(mismatch)
         if self.mismatch not in (0, 1):
@@ -217,18 +221,20 @@ class Keep:
     def __bool__(self) -> bool:
         return bool(self.genes) or self.index is not None
 
-    def reasons(self, peptides, genes=()) -> list:
+    def reasons(self, peptides, genes=(), *, threads=None) -> list:
         """Why each row is kept, ``""`` where it is not -- **one batched C++ call for the table**.
 
-        ``search_batch`` releases the GIL and uses every core, so the epitope side costs one call
+        ``search_batch`` releases the GIL within the declared thread budget, so the epitope side costs one call
         for N rows rather than N calls. Returns a list as long as ``peptides``.
         """
         peptides = list(peptides)
+        from ._threads import resolve_threads
+        threads = resolve_threads(self.threads if threads is None else threads, len(peptides))
         genes = list(genes) + [""] * (len(peptides) - len(genes))
         out = ["gene" if g and g.upper() in self.genes else "" for g in genes]
         if self.index is None:
             return out
-        hits = self.index.search_batch([p.upper() for p in peptides], self.params, 0)
+        hits = self.index.search_batch([p.upper() for p in peptides], self.params, threads)
         for i, hs in enumerate(hits):
             if not hs:
                 continue
@@ -1008,7 +1014,7 @@ def predict_windows(store, cls, records, alleles, rank_threshold=None, top=None,
         base = protein.find(seq)
         base = base if base >= 0 else 0
         # **One batched C++ call per record, not one per window.** `Keep.reasons` hands every tile
-        # of this record to `seqtree.Index.search_batch`, which releases the GIL and uses all cores.
+        # of this record to `seqtree.Index.search_batch`, serial by default within outer workflows.
         tiles = list(tile(seq, lengths))
         gene = var.get("gene_name", "")
         whys = (_keep.reasons([p for p, _ in tiles], [gene] * len(tiles))

@@ -338,7 +338,7 @@ class _Panel:
         """Counter(allele -> votes) from the query's anchored-signature neighbours, scope-widened."""
         return self.tally_many([query], lo, hi, threads=1)[0]
 
-    def tally_many(self, queries, lo=10, hi=100, threads=0):
+    def tally_many(self, queries, lo=10, hi=100, threads=1):
         """:meth:`tally` for many queries at once --- one C++ call per scope, not per query.
 
         ``seed_and_gather`` is a batch entry point (list in, list out) and was being handed a
@@ -350,6 +350,8 @@ class _Panel:
         --- widening everything together would give a query that was already satisfied at scope 0 a
         scope-3 neighbourhood and a different tally. Each query therefore keeps the result of the
         scope it stopped at, exactly as the serial loop left it."""
+        from ._threads import resolve_threads
+        threads = resolve_threads(threads, len(queries))
         if self.index is None:
             return [None] * len(queries)
         feats = [layout.presentation_features(q, self.cls, register="anchored") for q in queries]
@@ -568,12 +570,12 @@ class Store:
         ``restriction``, ``binder`` and ``explain``. :func:`mhcmatch.predict.build_scorer` has
         always passed one; this did not.
 
-        ``n`` and ``seed`` are in the key because they define the background. They are *not* in the
-        in-memory memo, which is keyed on ``cls`` alone -- a caller passing a non-default ``n``
-        after a default-``n`` call gets the first calibrator back. No caller does, and fixing the
-        memo is a separate question from fixing the cache.
+        ``cls``, ``n`` and ``seed`` identify both the in-memory calibrator and its disk entry.
+        Keep only the current configuration per class: changing draws replaces the store-owned
+        calibrator rather than retaining every previous background for the store's lifetime.
         """
-        if cls not in self._rc:
+        current = self._rc.get(cls)
+        if current is None or (current._n, current._seed) != (n, seed):
             from .calibrate import RankCalibrator
             from .predict import _fingerprint
             panel = self._panel[cls]
@@ -736,7 +738,7 @@ class Store:
         return any(r.binder for r in self.restriction(peptide, cls=cls, alpha=alpha))
 
     def scan_protein(self, protein, cls="mhc1", alleles="all", lengths=None, alpha=0.05, top=3,
-                     correction=None):
+                     correction=None, *, threads=1):
         """Slide all binding-length windows over ``protein`` and return presented peptides.
 
         Returns ``[(position, peptide, [Restriction, ...]), ...]`` for windows with >=1 binder.
@@ -761,7 +763,7 @@ class Store:
             wins = [(i, p) for i, p in wins if all(c in _AA for c in p)]
             if not wins:
                 continue
-            for (i, pep), tal in zip(wins, panel.tally_many([p for _, p in wins])):
+            for (i, pep), tal in zip(wins, panel.tally_many([p for _, p in wins], threads=threads)):
                 rs = self.restriction(pep, cls, alleles, top=nA, alpha=alpha, _tally=tal)
                 if rs:
                     hits.append((i, pep, rs))

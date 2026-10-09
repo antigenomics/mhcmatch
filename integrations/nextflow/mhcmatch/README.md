@@ -124,6 +124,11 @@ help from the same unit.
 Every `mhcmatch_*` param is declared in `nextflow.config` with its default and the CLI flag it
 sets. Four are worth reading before a real run:
 
+`--mhcmatch_threads N` sets the CPU allocation and native-search thread budget for rank,
+neoag and mimicry tasks (default 1). Scoring-only tasks request one CPU. Numerical kernels
+are limited to one thread before each task starts; Nextflow schedules tasks within its CPU
+allocation. Increase this setting for large native-search batches after measuring them.
+
 - **`--mhcmatch_tumor`** — a TCGA study code. Unset, expression is the GTEx cross-tissue median,
   which answers "is this gene expressed anywhere" when the question is "is it expressed in this
   tumour". `mhcmatch expression --list-contexts`.

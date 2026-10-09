@@ -252,7 +252,7 @@ def mimicry_masks(length, cls, peptide, register):
 
 
 def sequence_overlap(peptides, cls: str = "mhc1", registers=None, mask: str = "face",
-                     h: float | None = None, threads: int = 0) -> np.ndarray:
+                     h: float | None = None, threads: int = 1) -> np.ndarray:
     """BLOSUM-graded pairwise sequence similarity in ``[0, 1]``, one ``(n, n)`` matrix.
 
     **This replaces a channel that was measured to be a duplicate detector.** Counting *exactly*
@@ -328,6 +328,8 @@ def sequence_overlap(peptides, cls: str = "mhc1", registers=None, mask: str = "f
     else:
         raise ValueError(f"mask must be 'face' or 'full'; got {mask!r}")
 
+    from ._threads import resolve_threads
+    threads = resolve_threads(threads, len(seqs) * len(seqs))
     d = np.asarray(pairwise.dist_matrix(seqs, seqs, seqtree.SubstitutionMatrix.blosum62(),
                                         mode="global", threads=threads), dtype=float)
     if n > 1:

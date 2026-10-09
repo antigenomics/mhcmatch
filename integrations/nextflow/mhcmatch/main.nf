@@ -195,6 +195,7 @@ process MHCMATCH_RANK {
     def prev  = params.mhcmatch_prevalence ? "--prevalence ${params.mhcmatch_prevalence} " : ''
     """
     mhcmatch rank ${params.mhcmatch_rank_mode} ${input} \\
+        --threads ${task.cpus} \\
         --alleles '${alleles}' \\
         --cls ${cls} \\
         --tier ${params.mhcmatch_tier} \\
@@ -258,6 +259,7 @@ process MHCMATCH_RERANK {
     def ctx    = context.name != 'NO_FILE' ? "--context ${context} " : ''
     """
     mhcmatch rank pairs ${table} \\
+        --threads ${task.cpus} \\
         --cls ${cls} \\
         --tier ${params.mhcmatch_tier} \\
         --passthrough --prefix '${params.mhcmatch_rerank_prefix}' \\
@@ -300,6 +302,7 @@ process MHCMATCH_NEOAG {
     def prefix = armPrefix(meta, task.ext.prefix)
     """
     mhcmatch neoag --peptides ${peptides} --cls ${cls} \\
+        --threads ${task.cpus} \\
         --max-subs ${params.mhcmatch_neoag_max_subs} \\
         ${isOn(params.mhcmatch_neoag_core) ? '--core ' : ''}${task.ext.args ?: ''} \\
         --out ${prefix}.${cls}.mhcmatch.neoag.tsv
@@ -335,6 +338,7 @@ process MHCMATCH_MIMICRY {
     def prefix = armPrefix(meta, task.ext.prefix)
     """
     mhcmatch mimicry --peptides ${peptides} --cls ${cls} \\
+        --threads ${task.cpus} \\
         ${isOn(params.mhcmatch_mimicry_annotate) ? '--annotate ' : ''}${task.ext.args ?: ''} \\
         --out ${prefix}.${cls}.mhcmatch.mimicry.tsv
     """

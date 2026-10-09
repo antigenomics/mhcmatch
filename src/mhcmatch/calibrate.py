@@ -17,6 +17,7 @@ import os
 import random
 import tempfile
 from collections import Counter
+from itertools import chain
 
 _AA = "ACDEFGHIKLMNPQRSTVWY"
 
@@ -174,6 +175,7 @@ class RankCalibrator:
         aa, lens = corpus_stats(corpus)
         self._model = model
         self._aa = aa
+        self._lens = lens
         self._n = n
         self._seed = seed
         self._rands = random_peptides(aa, lens, n, rng, length_bg)
@@ -201,8 +203,17 @@ class RankCalibrator:
                      self._rands[-1] if self._rands else ""):
             h.update(part.encode())
             h.update(b"\x00")
-        # the positives feed the isotonic fit, so they are part of the key
-        h.update(str(sorted((a, len(v)) for a, v in self._positives.items())).encode())
+        # The residue ordering affects rng.choices; the full distribution also governs the
+        # length-conditional stream. Counts alone cannot identify an isotonic positive set.
+        h.update(str(list(self._aa.items())).encode())
+        h.update(str(sorted(self._lens.items())).encode())
+        h.update(len(self._positives).to_bytes(8, "little"))
+        for allele, peptides in sorted(self._positives.items()):
+            h.update(len(peptides).to_bytes(8, "little"))
+            for value in chain((allele,), peptides):
+                encoded = value.encode()
+                h.update(len(encoded).to_bytes(8, "little"))
+                h.update(encoded)
         return h.hexdigest()[:32]
 
     def _cache_path(self, allele: str, length: int | None = None):
@@ -212,6 +223,21 @@ class RankCalibrator:
         safe = "".join(c if c.isalnum() or c in "-._" else "_" for c in allele)
         tag = f"{safe}" if length is None else f"{safe}.L{length}"
         return os.path.join(d, f"{self._fp}.{tag}.json")
+
+    def _scores(self, peptides, allele):
+        batch = getattr(self._model, "score_many", None)
+        return (batch(peptides, allele) if batch is not None
+                else (self._model.score(p, allele) for p in peptides))
+
+    def clear(self):
+        """Release loaded calibration distributions and isotonic fits, retaining the seeded null.
+
+        The next query recomputes or reloads them. This does not mutate the fitted scorer or
+        delete disk entries. Call between independent work units, when no queries are active.
+        """
+        self._bg.clear()
+        self._bg_len.clear()
+        self._iso.clear()
 
     def _ensure(self, allele: str):
         """Compute and cache the allele's background (and isotonic P) on first use -- so a query over
@@ -229,17 +255,19 @@ class RankCalibrator:
                 return
             except (OSError, ValueError, KeyError):
                 pass          # a damaged or half-written cache entry is recomputed, never trusted
-        bg = sorted(s for s in (self._model.score(p, allele) for p in self._rands)
+        bg = sorted(s for s in self._scores(self._rands, allele)
                     if s != float("-inf"))
-        self._bg[allele] = bg
+        iso = None
         pos = self._positives.get(allele)
         if pos and bg:
-            ps = [s for s in (self._model.score(p, allele) for p in pos) if s != float("-inf")]
+            ps = [s for s in self._scores(pos, allele) if s != float("-inf")]
             if ps:
-                self._iso[allele] = _isotonic([(s, 1) for s in ps] + [(s, 0) for s in bg])
+                iso = _isotonic([(s, 1) for s in ps] + [(s, 0) for s in bg])
         if path:
-            iso = self._iso.get(allele)
             _write_atomic(path, {"bg": bg, "iso": [list(iso[0]), list(iso[1])] if iso else None})
+        if iso is not None:
+            self._iso[allele] = iso
+        self._bg[allele] = bg
 
     def _ensure_len(self, allele: str, length: int):
         """Background of random peptides of **exactly** ``length`` for ``allele`` (lazy, per (a, L)).
@@ -263,11 +291,11 @@ class RankCalibrator:
                 pass
         rng = random.Random(f"{self._seed}:{length}")   # per-length stream, deterministic
         res, rw = zip(*self._aa.items())
-        peps = ["".join(rng.choices(res, rw, k=length)) for _ in range(self._n)]
-        self._bg_len[key] = sorted(s for s in (self._model.score(p, allele) for p in peps)
-                                   if s != float("-inf"))
+        peps = ("".join(rng.choices(res, rw, k=length)) for _ in range(self._n))
+        bg = sorted(s for s in self._scores(peps, allele) if s != float("-inf"))
         if path:
-            _write_atomic(path, {"bg": self._bg_len[key]})
+            _write_atomic(path, {"bg": bg})
+        self._bg_len[key] = bg
 
     def percent_rank(self, allele: str, score: float, length: int | None = None) -> float:
         """Percentile of ``score`` in the allele's background: % of random peptides scoring higher
@@ -343,4 +371,3 @@ def band(percent_rank: float, strong: float = STRONG_RANK, weak: float = WEAK_RA
     if percent_rank != percent_rank:
         return "unknown"
     return "strong" if percent_rank <= strong else "weak" if percent_rank <= weak else "non-binder"
-
